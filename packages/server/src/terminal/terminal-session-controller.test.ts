@@ -677,6 +677,41 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
       },
     ]);
   });
+
+  test("an empty cwd is rejected before a subscription is created", async () => {
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async () => []),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      replayTerminal: async () => null,
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+
+    const controller = createController({
+      terminalManager,
+      emit: vi.fn(),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+
+    await expect(
+      controller.dispatch({ type: "subscribe_terminals_request", cwd: "" }),
+    ).rejects.toThrow("cwd must be absolute path");
+    await expect(controller.hasDirectorySubscription({ cwd: "" })).resolves.toBe(false);
+  });
 });
 
 describe("terminal-session-controller backpressure snapshot fallback", () => {
