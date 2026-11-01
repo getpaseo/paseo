@@ -5,6 +5,7 @@
 //            "notify-then-reject" does the same and then fails the write
 //   moves:   { [configId]: { [id]: value } } writes that also move another select, announced
 //            by a config_option_update after the write is answered
+//   adds:    { [configId]: option[] } writes that make more selects appear, announced the same way
 import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 
@@ -39,8 +40,10 @@ export const connection = new AgentSideConnection(
         return { configOptions: options };
       }
       const moves = scenario.moves?.[configId];
-      if (moves) {
-        for (const [id, moved] of Object.entries(moves)) set(id, moved);
+      const adds = scenario.adds?.[configId];
+      if (moves || adds) {
+        for (const [id, moved] of Object.entries(moves ?? {})) set(id, moved);
+        options = [...options, ...(adds ?? [])];
         setTimeout(() => void announce(), 20);
       }
       return { configOptions: options };
