@@ -40,8 +40,6 @@ export const CodexProviderOptionsSchema = z
     // Composer controls, not Codex config: the provider reads them and keeps them out of `config`.
     service_tier: z.string().optional(),
     plan_mode: z.boolean().optional(),
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-    fast_mode: z.boolean().optional(),
     approval_policy: ApprovalPolicySchema.optional(),
     sandbox_mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
     sandbox_workspace_write: z

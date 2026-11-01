@@ -48,7 +48,8 @@ import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
-import { ToolPolicyUnsupportedError, mergeDefaultsUnderOwn } from "./provider-options.js";
+import { convertLegacyOptions } from "./option-controls.js";
+import { ToolPolicyUnsupportedError, mergeProviderOptions } from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -490,7 +491,7 @@ function wrapClientProvider(
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
-  providerOptions: ProviderOptions | undefined,
+  configuredOptions: ProviderOptions | undefined,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -498,8 +499,12 @@ function wrapClientProvider(
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
+  const providerOptions = convertLegacyOptions({
+    provider: inner.provider,
+    options: configuredOptions,
+  });
   const withDefaults = (own: ProviderOptions | undefined) =>
-    mergeDefaultsUnderOwn({ provider: inner.provider, defaults: providerOptions, own });
+    mergeProviderOptions(providerOptions, own);
 
   return {
     provider,

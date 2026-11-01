@@ -34,6 +34,35 @@ export interface LegacyFeatureValues {
 }
 
 /**
+ * COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast
+ * preferences have migrated. Codex used to take `fast_mode`; it takes `service_tier` now. Old
+ * data (stored records, config.json defaults, profiles, older clients, hooks) is converted here
+ * as it enters, so nothing past this point sees `fast_mode` for Codex. A `service_tier` in the
+ * same input wins. A patch's `null` stays `null`, which removes the speed.
+ */
+interface LegacyOptionsInput<O> {
+  provider: string | undefined;
+  options: O;
+}
+
+export function convertLegacyOptions(
+  input: LegacyOptionsInput<Record<string, unknown>>,
+): Record<string, unknown>;
+export function convertLegacyOptions(
+  input: LegacyOptionsInput<Record<string, unknown> | undefined>,
+): Record<string, unknown> | undefined;
+export function convertLegacyOptions(
+  input: LegacyOptionsInput<Record<string, unknown> | undefined>,
+): Record<string, unknown> | undefined {
+  const { provider, options } = input;
+  if (provider !== "codex" || !options || !("fast_mode" in options)) return options;
+  const { fast_mode: legacy, ...rest } = options;
+  if ("service_tier" in rest || legacy === undefined) return rest;
+  if (legacy === null) return { ...rest, service_tier: null };
+  return { ...rest, service_tier: legacy ? "fast" : "default" };
+}
+
+/**
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
  * Older clients, stored records, profiles, and plugin hooks carry composer values in
  * `featureValues`. This is the one place they become `providerOptions`; an explicit
@@ -44,12 +73,14 @@ export function foldFeatureValues<
     providerOptions?: ProviderOptions | null;
     featureValues?: Record<string, unknown> | null;
   },
->(input: T): Omit<T, "featureValues"> {
-  const { featureValues, ...rest } = input;
-  if (!featureValues || Object.keys(featureValues).length === 0) {
-    return rest;
-  }
-  return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions } };
+>(input: { config: T; provider: string | undefined }): Omit<T, "featureValues"> {
+  const { featureValues, ...rest } = input.config;
+  const merged =
+    featureValues && Object.keys(featureValues).length > 0
+      ? { ...featureValues, ...rest.providerOptions }
+      : (rest.providerOptions ?? undefined);
+  const providerOptions = convertLegacyOptions({ provider: input.provider, options: merged });
+  return providerOptions === rest.providerOptions ? rest : { ...rest, providerOptions };
 }
 
 /**
@@ -67,14 +98,18 @@ export function exposeFeatureValuesToHook<
 }
 
 export function foldHookFeatureValues<
-  T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
+  T extends {
+    provider?: string;
+    providerOptions?: ProviderOptions | null;
+    featureValues?: Record<string, unknown>;
+  },
 >(input: { returned: T; sent: T }): Omit<T, "featureValues"> {
   const { returned, sent } = input;
   const { featureValues, ...rest } = returned;
   const before = sent.featureValues;
   if (!before) {
     // No copy was sent, so everything the hook put in `featureValues` is new.
-    return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions } };
+    return foldFeatureValues({ config: returned, provider: returned.provider });
   }
   const after = featureValues ?? {};
   const patch: ProviderOptionsPatch = {};
@@ -85,8 +120,11 @@ export function foldHookFeatureValues<
   return {
     ...rest,
     providerOptions: applyProviderOptionsPatch({
-      options: rest.providerOptions ?? undefined,
-      patch,
+      options: convertLegacyOptions({
+        provider: returned.provider,
+        options: rest.providerOptions ?? undefined,
+      }),
+      patch: convertLegacyOptions({ provider: returned.provider, options: patch }),
     }),
   };
 }
@@ -115,7 +153,8 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   source: "stored" | "client write";
 }): Omit<T, "featureValues"> {
   const { profile, stored, source } = input;
-  const { featureValues, ...rest } = profile;
+  const { featureValues: legacyValues, ...rest } = profile;
+  const featureValues = convertLegacyOptions({ provider: profile.provider, options: legacyValues });
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
   }

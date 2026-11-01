@@ -6320,7 +6320,7 @@ describe("Codex app-server provider", () => {
 
   test("emits a synthetic plan approval permission after a successful Codex plan turn", async () => {
     const session = createSession({
-      providerOptions: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -6390,7 +6390,7 @@ describe("Codex app-server provider", () => {
 
   test("does not complete Codex plan timeline cards while plan approval is pending", async () => {
     const session = createSession({
-      providerOptions: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -7239,7 +7239,7 @@ describe("Codex app-server provider", () => {
 
   test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
-      providerOptions: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -7294,7 +7294,7 @@ describe("Codex app-server provider", () => {
 
   test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
     const session = createSession({
-      providerOptions: { plan_mode: true, fast_mode: false },
+      providerOptions: { plan_mode: true, service_tier: "default" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -7323,7 +7323,7 @@ describe("Codex app-server provider", () => {
       selectedActionId: "implement",
     });
 
-    expect(asInternals(session).serviceTier).toBeNull();
+    expect(asInternals(session).serviceTier).toBe("default");
     expect(asInternals(session).planModeEnabled).toBe(false);
     expect(events).toContainEqual({
       type: "options_changed",
@@ -7337,7 +7337,7 @@ describe("Codex app-server provider", () => {
 
   test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
     const session = createSession({
-      providerOptions: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     asInternals(session).collaborationModes = [
       {
