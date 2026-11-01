@@ -91,7 +91,7 @@ import {
   type CodexThreadRollbackResponse,
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
-import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
+import { type CodexUserMessage, revertCodexConversation } from "./codex/rewind.js";
 import {
   type CodexHistoryRow,
   CodexThreadHistoryTooLargeError,
@@ -4561,16 +4561,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private codexUserMessageTurns(): CodexUserMessageTurnIndex {
-    return {
-      resolve: (messageId) => {
-        const index = this.userMessageTurnIndexes.get(messageId);
-        return index === undefined
-          ? null
-          : { index, turnId: this.userMessageProviderTurnIds.get(messageId) ?? null };
-      },
-      count: () => this.userMessageTurnIds.length,
-    };
+  private codexUserMessages(): CodexUserMessage[] {
+    return this.userMessageTurnIds.map((messageId) => ({
+      messageId,
+      turnId: this.userMessageProviderTurnIds.get(messageId) ?? null,
+    }));
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -4989,7 +4984,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
       config: this.buildCodexInnerConfig(),
-      userMessageTurns: this.codexUserMessageTurns(),
+      userMessages: this.codexUserMessages(),
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
