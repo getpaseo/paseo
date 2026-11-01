@@ -31,6 +31,20 @@ function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent 
   return turn === incoming.turn ? incoming : { ...incoming, turn };
 }
 
+function resolveRunningTransition(
+  previous: Agent | undefined,
+  accepted: Agent,
+): { startedRunning: boolean; stoppedRunning: boolean } {
+  return {
+    startedRunning: previous?.status !== "running" && accepted.status === "running",
+    stoppedRunning:
+      (previous?.turn.phase === "open" && accepted.turn.phase === "idle") ||
+      (previous?.turn.phase === "idle" &&
+        previous.status === "running" &&
+        accepted.status !== "running"),
+  };
+}
+
 export class AgentStoreProjection {
   constructor(private readonly serverId: string) {}
 
@@ -70,12 +84,13 @@ export class AgentStoreProjection {
 
   applyDelta(delta: AgentDirectoryDelta): {
     agentId: string;
+    startedRunning: boolean;
     stoppedRunning: boolean;
     agent?: Agent;
   } {
     if (delta.kind === "remove") {
       this.removeFromDirectory(delta.agentId);
-      return { agentId: delta.agentId, stoppedRunning: false };
+      return { agentId: delta.agentId, startedRunning: false, stoppedRunning: false };
     }
     const normalized = normalizeAgentSnapshot(delta.agent, this.serverId);
     const session = useSessionStore.getState().sessions[this.serverId];
@@ -99,9 +114,11 @@ export class AgentStoreProjection {
     }
     this.replacePendingPermissions(accepted);
     useSessionStore.getState().setAgentLastActivity(accepted.id, accepted.lastActivityAt);
+    const { startedRunning, stoppedRunning } = resolveRunningTransition(previous, accepted);
     return {
       agentId: accepted.id,
-      stoppedRunning: previous?.turn.phase === "open" && accepted.turn.phase === "idle",
+      startedRunning,
+      stoppedRunning,
       agent: accepted,
     };
   }
