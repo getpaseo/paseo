@@ -1,3 +1,4 @@
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
   Terminal as HeadlessTerminal,
   type IBufferCell,
@@ -297,6 +298,9 @@ export function createNativeHeadlessTerminal(
     scrollback: options.scrollbackLines ?? 1000,
     allowProposedApi: true,
   });
+  // Match the web renderer's character widths so emoji occupy two cells, as they do in the PTY app.
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
   const coordinateStorage = new Map<object, TerminalCoordinateStorage>();
