@@ -100,7 +100,11 @@ export class OpenCodeV2Session implements AgentSession {
         ),
       clearPermissions: async () => {
         for (const request of this.permissions.list())
-          await this.permissions.respondToPermission(request.id, { behavior: "deny" });
+          await this.permissions.respondToPermission(request.id, {
+            behavior: "deny",
+            message:
+              "The user answered with a message instead of approving. Their message follows.",
+          });
       },
     });
     this.usage = new SessionUsage({

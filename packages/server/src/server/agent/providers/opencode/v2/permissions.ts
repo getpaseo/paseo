@@ -68,6 +68,9 @@ export class SessionPermissions {
         sessionID: this.permissionOwners.get(requestId) ?? this.id,
         requestID: requestId,
         decision: permissionReply(response),
+        ...(response.behavior === "deny" && response.message !== undefined
+          ? { message: response.message }
+          : {}),
       });
     }
     this.resolvePending(requestId, response);
