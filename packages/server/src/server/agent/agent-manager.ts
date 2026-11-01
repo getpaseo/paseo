@@ -1441,9 +1441,11 @@ export class AgentManager {
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
+    const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
+      launchedOptions,
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
@@ -1567,6 +1569,7 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
     const session = await client.resumeSession(
       handle,
       providerLaunchConfig,
@@ -1576,6 +1579,7 @@ export class AgentManager {
     if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
+      launchedOptions,
       ...options,
       launchEnv,
       persistence: handle,
@@ -1754,6 +1758,7 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
@@ -1772,6 +1777,7 @@ export class AgentManager {
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
       return this.registerSession(session, storedConfig, agentId, {
+        launchedOptions,
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
@@ -2373,11 +2379,35 @@ export class AgentManager {
     });
   }
 
+  /**
+   * Defaults merge into what the session was given; what it reports it ended up with comes
+   * after, so an option it dropped does not come back from a default.
+   */
+  private openedEffectiveOptions(input: {
+    session: AgentSession;
+    openedConfig: AgentSessionConfig;
+    launchedOptions: ProviderOptions | undefined;
+  }): ProviderOptions {
+    const { session, openedConfig, launchedOptions } = input;
+    return applyProviderOptionsPatch({
+      options:
+        launchedOptions ??
+        this.effectiveOptionsFor(openedConfig.provider, openedConfig.providerOptions),
+      patch: session.openOptionsPatch ?? {},
+    });
+  }
+
+  /** The options a client opens with: its own defaults merged under the agent's. */
+  private launchOptionsFor(client: AgentClient, own: ProviderOptions | undefined): ProviderOptions {
+    return client.effectiveOptions?.(own) ?? own ?? {};
+  }
+
   private effectiveOptionsFor(
     provider: AgentProvider,
     own: ProviderOptions | undefined,
   ): ProviderOptions {
-    return this.clients.get(provider)?.effectiveOptions?.(own) ?? own ?? {};
+    const client = this.clients.get(provider);
+    return client ? this.launchOptionsFor(client, own) : (own ?? {});
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -3949,6 +3979,12 @@ export class AgentManager {
        * attention come from what was already recorded, and installing the session is not
        * activity in it.
        */
+      /**
+       * The effective options the opening resolved before the session started. Registration
+       * starts from these rather than reading the defaults again, which may have been edited
+       * while the provider was opening.
+       */
+      launchedOptions?: ProviderOptions;
       restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -3983,11 +4019,10 @@ export class AgentManager {
         resolvedAgentId,
         session,
         config,
-        // Defaults merge into what the session was given; what it reports it ended up with comes
-        // after, so an option it dropped does not come back from a default.
-        effectiveOptions: applyProviderOptionsPatch({
-          options: this.effectiveOptionsFor(openedConfig.provider, openedConfig.providerOptions),
-          patch: session.openOptionsPatch ?? {},
+        effectiveOptions: this.openedEffectiveOptions({
+          session,
+          openedConfig,
+          launchedOptions: options?.launchedOptions,
         }),
         now,
         durableTimelineHasRows,
