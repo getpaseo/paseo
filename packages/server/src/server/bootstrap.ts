@@ -161,6 +161,16 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { GoalEventLog } from "./goal/event-log.js";
+import { createGitPort } from "./goal/git-ops.js";
+import {
+  createGoalConfigUpdateValidator,
+  createGoalConfigValidator,
+} from "./goal/goal-config-validation.js";
+import { GoalManager } from "./goal/goal-manager.js";
+import { createGoalAgentPort, createGoalWorkspacePort } from "./goal/goal-ports.js";
+import { GoalService } from "./goal/goal-service.js";
+import { GoalStore } from "./goal/goal-store.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import {
@@ -190,6 +200,11 @@ import { admitSecuredRelaySocket } from "./websocket/secure-relay-ingress.js";
 import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
+import {
+  listResolvedAgentTeams,
+  readAgentTeamsConfig,
+  type AgentTeamsConfig,
+} from "./agent/agent-teams.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
   AgentProfile,
@@ -431,6 +446,10 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  /** Seeds `teams` in the mutable config; later edits go through DaemonConfigStore. */
+  teams?: AgentTeamsConfig;
+  /** Seeds `goals` in the mutable config; later edits go through DaemonConfigStore. */
+  goals?: { maxConcurrentRuns?: number };
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
@@ -616,7 +635,40 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     initialConfig.agentProfiles = config.agentProfiles;
   }
 
+  seedMutableTeams(initialConfig, config.teams);
+  seedMutableGoals(initialConfig, config.goals);
+
   return initialConfig;
+}
+
+/** Only a configured cap is seeded; without one the Goal Manager uses its default. */
+function seedMutableGoals(
+  initialConfig: MutableDaemonConfig,
+  goals: PaseoDaemonConfig["goals"],
+): void {
+  if (goals?.maxConcurrentRuns !== undefined) {
+    initialConfig.goals = { maxConcurrentRuns: goals.maxConcurrentRuns };
+  }
+}
+
+/** An empty record is stored as no teams, matching what a config patch persists. */
+function seedMutableTeams(
+  initialConfig: MutableDaemonConfig,
+  teams: AgentTeamsConfig | undefined,
+): void {
+  if (teams !== undefined && Object.keys(teams).length > 0) initialConfig.teams = teams;
+}
+
+function warnAboutUnusableTeams(
+  teams: AgentTeamsConfig | undefined,
+  daemonConfigStore: DaemonConfigStore,
+  logger: Logger,
+): void {
+  const { error } = listResolvedAgentTeams({
+    teams,
+    agentProfiles: daemonConfigStore.get().agentProfiles,
+  });
+  if (error) logger.warn({ problems: error }, "Some teams in daemon.teams cannot be used");
 }
 
 export async function createPaseoDaemon(
@@ -665,6 +717,7 @@ export async function createPaseoDaemon(
       },
     },
   });
+  warnAboutUnusableTeams(config.teams, daemonConfigStore, logger);
   const orchestrationSkills = createOrchestrationSkills(daemonConfigStore);
   void orchestrationSkills.autoUpdate().catch((error) => {
     logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
@@ -1398,14 +1451,10 @@ export async function createPaseoDaemon(
     await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
     return workspace;
   };
-  const createSchedulePaseoWorktreeExternal = async (input: {
-    cwd: string;
-    firstAgentContext: FirstAgentContext;
-  }) => {
-    const result = await createPaseoWorktreeForTools({
-      cwd: input.cwd,
-      firstAgentContext: input.firstAgentContext,
-    });
+  const createSchedulePaseoWorktreeExternal = async (
+    input: Parameters<typeof createPaseoWorktreeForTools>[0],
+  ) => {
+    const result = await createPaseoWorktreeForTools(input);
     await emitWorkspaceUpdatesExternal([result.workspace.workspaceId]);
     return result;
   };
@@ -1464,6 +1513,57 @@ export async function createPaseoDaemon(
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  const goalEventLog = new GoalEventLog({ dir: path.join(config.paseoHome, "goals") });
+  const goalStore = new GoalStore(goalEventLog);
+  const goalGit = createGitPort();
+  const goalModelCatalog = (provider: string, cwd: string) =>
+    providerSnapshotManager.listModels({ provider, cwd, wait: true });
+  const goalModeCatalog = (provider: string, cwd: string) =>
+    providerSnapshotManager.listModes({ provider, cwd, wait: true });
+  const goalService = new GoalService(
+    goalStore,
+    goalEventLog,
+    createGoalConfigValidator({
+      git: goalGit,
+      knownProviders: () => agentManager.getRegisteredProviderIds(),
+      modelCatalog: goalModelCatalog,
+      modeCatalog: goalModeCatalog,
+    }),
+    createGoalConfigUpdateValidator({ modeCatalog: goalModeCatalog }),
+  );
+  await goalService.start();
+  for (const [goalId, error] of goalStore.unreadable) {
+    logger.error({ err: error, goalId }, "Goal log is unreadable; the goal is unavailable");
+  }
+  const goalPortDeps = {
+    logger,
+    agentManager,
+    agentStorage,
+    createAgent,
+    cancelAgentRun: (agentId: string) => cancelAgentRunCommand({ agentManager, logger }, agentId),
+    createDirectoryWorkspace: createScheduleLocalWorkspaceExternal,
+    createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
+    archiveWorkspace: archiveScheduleWorkspaceExternal,
+    waitForWorkspaceSetup: (workspaceId: string) => workspaceSetupRuntime.wait(workspaceId),
+    modelCatalog: goalModelCatalog,
+    modeCatalog: goalModeCatalog,
+    defaultModeId: async (provider: string, cwd: string) =>
+      (await providerSnapshotManager.getProvider({ provider, cwd, wait: true })).defaultModeId ??
+      null,
+  };
+  const goalManager = new GoalManager({
+    store: goalStore,
+    agents: createGoalAgentPort(goalPortDeps),
+    workspaces: createGoalWorkspacePort(goalPortDeps),
+    git: goalGit,
+    logger,
+    // Read at use time, so a config change applies without a restart.
+    maxConcurrentRuns: () => daemonConfigStore.get().goals?.maxConcurrentRuns,
+  });
+  daemonConfigStore.onFieldChange("goals.maxConcurrentRuns", () => goalManager.capacityChanged());
+  goalService.attachActivityProbe(goalManager);
+  await goalManager.start();
+  logger.info({ elapsed: elapsed() }, "Goal service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
   logger.info(
@@ -1536,6 +1636,7 @@ export async function createPaseoDaemon(
     terminalManager,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
+    goalService,
     providerSnapshotManager,
     daemonConfigStore,
     github,
@@ -1586,6 +1687,7 @@ export async function createPaseoDaemon(
       (runtime.callerAgentId ? agentManager.getPaseoToolPolicy(runtime.callerAgentId) : undefined),
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    getAgentTeams: () => readAgentTeamsConfig(daemonConfigStore.get()),
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
@@ -1886,6 +1988,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              goalService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1978,6 +2081,9 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    // Stop the goal manager first so closing agents is not read as run failure;
+    // the next start records those runs as interrupted and resumes them.
+    goalManager.stop();
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.

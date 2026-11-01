@@ -152,7 +152,7 @@ Existing Maestro flows live in `packages/app/maestro/`. Agent Device can execute
 
 ### Existing flows
 
-Maestro flows live in `packages/app/maestro/`. Reusable sub-flows live in `packages/app/maestro/flows/`.
+Maestro flows live in `packages/app/maestro/`. Reusable sub-flows live in `packages/app/maestro/flows/`. The Goals flows and their preconditions are in [the Maestro README](../packages/app/maestro/README.md#goals); the device checks they cannot make are in [Goals native checks](goals.md#native-checks).
 
 Run a flow:
 

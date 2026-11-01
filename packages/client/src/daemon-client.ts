@@ -8,6 +8,17 @@ import {
   decodeHostRouteFrame,
   type HostRouteFrame,
 } from "@getpaseo/protocol/binary-frames/index";
+import type { GoalListArchivedFilter } from "@getpaseo/protocol/goal/rpc-schemas";
+import type {
+  GoalConfig,
+  GoalConfigChanges,
+  GoalPriority,
+  GoalStatus,
+  GoalTimeMode,
+  GuidanceChanges,
+  PlanRevisionOp,
+  TaskSpec,
+} from "@getpaseo/protocol/goal/types";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
@@ -109,6 +120,7 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
+  AgentTeamsListResponse,
   UsageReportEntry,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -504,6 +516,10 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+  /** A team from the host's daemon.teams. Requires server_info.features.agentTeams. */
+  team?: string;
+  /** Role name -> model for this chat's roster. Requires `team`. */
+  teamModelOverrides?: Record<string, string>;
 }
 
 export interface CreateWorkspaceRequestOptions {
@@ -605,6 +621,7 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+type AgentTeamsListPayload = AgentTeamsListResponse["payload"];
 interface UsageListReportsPayload {
   requestId: string;
   reports: UsageReportEntry[];
@@ -654,6 +671,29 @@ type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
+type GoalMutationPayload = Extract<
+  SessionOutboundMessage,
+  { type: "goal.create.response" }
+>["payload"];
+type GoalListPayload = Extract<SessionOutboundMessage, { type: "goal.list.response" }>["payload"];
+export type GoalDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "goal.delete.response" }
+>["payload"];
+
+/** goal.list filters; see GoalListRequestSchema. Needs server_info.features.goalManagement. */
+export interface GoalListFilterOptions {
+  query?: string;
+  status?: GoalStatus[];
+  priority?: GoalPriority[];
+  cwd?: string;
+  archived?: GoalListArchivedFilter;
+  requestId?: string;
+}
+type GoalInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "goal.inspect.response" }
+>["payload"];
 type ScheduleCreatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/create/response" }
@@ -3267,6 +3307,7 @@ export class DaemonClient {
       );
     }
     if (options.background !== undefined) this.requireBackgroundWorkspaces();
+    if (options.team !== undefined) this.requireAgentTeams();
     const result = await this.creations.createAgent({
       ...options,
       config: resolveAgentConfig(options),
@@ -3304,6 +3345,7 @@ export class DaemonClient {
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
         : {}),
+      ...(options.team !== undefined ? { team: options.team } : {}),
     });
 
     const status = await this.sendRequest({
@@ -6604,6 +6646,678 @@ export class DaemonClient {
     });
   }
 
+  private requireAgentTeams(): void {
+    if (this.lastServerInfoMessage?.features?.agentTeams !== true) {
+      throw new Error("Update the host to use teams.");
+    }
+  }
+
+  supportsAgentTeams(): boolean {
+    return this.lastServerInfoMessage?.features?.agentTeams === true;
+  }
+
+  async listAgentTeams(options?: { requestId?: string }): Promise<AgentTeamsListPayload> {
+    this.requireAgentTeams();
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.teams.list.response">({
+      requestId: options?.requestId,
+      message: { type: "agent.teams.list.request" },
+    });
+  }
+
+  private requireGoals(): void {
+    if (this.lastServerInfoMessage?.features?.goals !== true) {
+      throw new Error("Update the host to use goals.");
+    }
+  }
+
+  async goalCreate(options: {
+    goalId?: string;
+    title: string;
+    objective: string;
+    criteria: string[];
+    config?: GoalConfig;
+    priority?: GoalPriority;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    if (options.priority) this.requireGoalManagement();
+    const config = options.config;
+    if (
+      config &&
+      (config.leadThinking ||
+        config.workerThinking ||
+        config.reviewThinking ||
+        config.verifyThinking) &&
+      this.lastServerInfoMessage?.features?.goalThinking !== true
+    ) {
+      // An older daemon would drop the thinking settings and run on model defaults.
+      throw new Error("Update the host to choose a thinking level per goal role.");
+    }
+    if (config?.onPermissionRequest === "auto") this.requireGoalConfigEdit();
+    if (config?.leadInterventions) this.requireGoalLeadInterventions();
+    if (config?.limits?.userWaitMinutes !== undefined) this.requireGoalUserWait();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.create.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.create.request",
+        ...(options.goalId ? { goalId: options.goalId } : {}),
+        title: options.title,
+        objective: options.objective,
+        criteria: options.criteria,
+        ...(options.config ? { config: options.config } : {}),
+        ...(options.priority ? { priority: options.priority } : {}),
+      },
+    });
+  }
+
+  /**
+   * Goals, higher priority first. Archived goals are left out unless `archived` asks
+   * for them. Pass a requestId string for the unfiltered list.
+   */
+  async goalList(options?: string | GoalListFilterOptions): Promise<GoalListPayload> {
+    this.requireGoals();
+    const { requestId, ...filter } =
+      typeof options === "string" ? { requestId: options } : (options ?? {});
+    const filtered = Object.values(filter).some((value) => value !== undefined);
+    if (filtered) this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.list.response">({
+      requestId,
+      message: {
+        type: "goal.list.request",
+        ...(filter.query !== undefined ? { query: filter.query } : {}),
+        ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.priority ? { priority: filter.priority } : {}),
+        ...(filter.cwd !== undefined ? { cwd: filter.cwd } : {}),
+        ...(filter.archived ? { archived: filter.archived } : {}),
+      },
+    });
+  }
+
+  supportsGoalManagement(): boolean {
+    return this.lastServerInfoMessage?.features?.goalManagement === true;
+  }
+
+  private requireGoalManagement(): void {
+    if (!this.supportsGoalManagement()) {
+      throw new Error("Update the host to rename, prioritise, archive, delete or filter goals.");
+    }
+  }
+
+  async goalRename(options: {
+    goalId: string;
+    title: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.rename.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.rename.request",
+        goalId: options.goalId,
+        title: options.title,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalSetPriority(options: {
+    goalId: string;
+    priority: GoalPriority;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.set_priority.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.set_priority.request",
+        goalId: options.goalId,
+        priority: options.priority,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Only an ended goal can be archived; stop a live one with goalCancel first. */
+  async goalArchive(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.archive.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.archive.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalUnarchive(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.unarchive.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.unarchive.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /**
+   * Delete an ended goal for good. The daemon does not ask for confirmation; ask the
+   * person first. `retained` lists what the goal created that was left in place.
+   */
+  async goalDelete(options: { goalId: string; requestId?: string }): Promise<GoalDeletePayload> {
+    this.requireGoalManagement();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.delete.response">({
+      requestId: options.requestId,
+      message: { type: "goal.delete.request", goalId: options.goalId },
+    });
+  }
+
+  async goalInspect(goalId: string, requestId?: string): Promise<GoalInspectPayload> {
+    this.requireGoals();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.inspect.response">({
+      requestId,
+      message: { type: "goal.inspect.request", goalId },
+    });
+  }
+
+  async goalProposePlan(options: {
+    goalId: string;
+    tasks: TaskSpec[];
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    if (options.tasks.some((task) => task.runTimeoutMinutes !== undefined)) {
+      // An older daemon would drop the limit and run the task under the goal's.
+      this.requireGoalPlanRevision();
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.propose_plan.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.propose_plan.request",
+        goalId: options.goalId,
+        tasks: options.tasks,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalApprovePlan(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.approve_plan.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.approve_plan.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalApproveChangeSet(options: {
+    goalId: string;
+    changeSetId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.approve_changeset.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.approve_changeset.request",
+        goalId: options.goalId,
+        changeSetId: options.changeSetId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalRequestChanges(options: {
+    goalId: string;
+    changeSetId: string;
+    findings: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.request_changes.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.request_changes.request",
+        goalId: options.goalId,
+        changeSetId: options.changeSetId,
+        findings: options.findings,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalCancel(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoals();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.cancel.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.cancel.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  supportsGoalConfigEdit(): boolean {
+    return this.lastServerInfoMessage?.features?.goalConfigEdit === true;
+  }
+
+  /** Goals carry usage per role and per agent, and turns that reported cost or tokens. */
+  supportsGoalUsageBreakdown(): boolean {
+    return this.lastServerInfoMessage?.features?.goalUsageBreakdown === true;
+  }
+
+  /** goal.retry also merges again a failed goal's change sets whose integration failed. */
+  supportsGoalIntegrationRetry(): boolean {
+    return this.lastServerInfoMessage?.features?.goalIntegrationRetry === true;
+  }
+
+  private requireGoalConfigEdit(): void {
+    if (!this.supportsGoalConfigEdit()) {
+      throw new Error("Update the host to change goal settings or use the auto permission policy.");
+    }
+  }
+
+  /**
+   * Change a goal's settings after creation; see GoalConfigChangesSchema. Absent keeps a
+   * setting, null clears an optional one. Refused for an archived goal.
+   */
+  async goalUpdateConfig(options: {
+    goalId: string;
+    changes: GoalConfigChanges;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalConfigEdit();
+    if (options.changes.leadInterventions) this.requireGoalLeadInterventions();
+    if (options.changes.limits?.userWaitMinutes !== undefined) this.requireGoalUserWait();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.update_config.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.update_config.request",
+        goalId: options.goalId,
+        changes: options.changes,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** The goal setting leadInterventions, and the intervention.* events. */
+  supportsGoalLeadInterventions(): boolean {
+    return this.lastServerInfoMessage?.features?.goalLeadInterventions === true;
+  }
+
+  private requireGoalLeadInterventions(): void {
+    if (!this.supportsGoalLeadInterventions()) {
+      // An older daemon would drop the setting and never wake the Lead.
+      throw new Error("Update the host to let the Lead decide about failing tasks.");
+    }
+  }
+
+  /** The goal setting limits.userWaitMinutes, the wait.* events and goals' `waits`. */
+  supportsGoalUserWait(): boolean {
+    return this.lastServerInfoMessage?.features?.goalUserWait === true;
+  }
+
+  private requireGoalUserWait(): void {
+    if (!this.supportsGoalUserWait()) {
+      // An older daemon would drop the setting and count waiting toward the time limits.
+      throw new Error("Update the host to limit how long a goal waits for an answer.");
+    }
+  }
+
+  /** goal.retry's timeMode, and goals' timeBaseAt. */
+  supportsGoalTimeBase(): boolean {
+    return this.lastServerInfoMessage?.features?.goalTimeBase === true;
+  }
+
+  /** Revising an executing goal's plan, and a task's own runTimeoutMinutes. */
+  supportsGoalPlanRevision(): boolean {
+    return this.lastServerInfoMessage?.features?.goalPlanRevision === true;
+  }
+
+  private requireGoalPlanRevision(): void {
+    if (!this.supportsGoalPlanRevision()) {
+      throw new Error(
+        "Update the host to revise a running goal's plan or set a task's run timeout.",
+      );
+    }
+  }
+
+  /**
+   * Change an executing goal's plan: `ops`, or the desired plan as `tasks` with `remove`
+   * naming each pending, failed or cancelled task left out. Without `agentId` the revision is
+   * a person's and applies at once; with the goal's Lead agent id it is the Lead's.
+   */
+  async goalRevisePlan(options: {
+    goalId: string;
+    ops?: PlanRevisionOp[];
+    tasks?: TaskSpec[];
+    remove?: string[];
+    reason: string;
+    agentId?: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalPlanRevision();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.plan.revise.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.plan.revise.request",
+        goalId: options.goalId,
+        ...(options.ops ? { ops: options.ops } : {}),
+        ...(options.tasks ? { tasks: options.tasks } : {}),
+        ...(options.remove ? { remove: options.remove } : {}),
+        reason: options.reason,
+        ...(options.agentId ? { agentId: options.agentId } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Approve a plan revision held for a person. */
+  async goalApprovePlanRevision(options: {
+    goalId: string;
+    revisionId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalPlanRevision();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.plan.approve_revision.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.plan.approve_revision.request",
+        goalId: options.goalId,
+        revisionId: options.revisionId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Reject a plan revision held for a person; the plan stays as it was. */
+  async goalRejectPlanRevision(options: {
+    goalId: string;
+    revisionId: string;
+    feedback?: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalPlanRevision();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.plan.reject_revision.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.plan.reject_revision.request",
+        goalId: options.goalId,
+        revisionId: options.revisionId,
+        ...(options.feedback ? { feedback: options.feedback } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  private requireGoalControls(): void {
+    if (this.lastServerInfoMessage?.features?.goalControls !== true) {
+      throw new Error("Update the host to reject plans, retry, pause or resume goals.");
+    }
+  }
+
+  /** Send the proposed plan back; a fresh Lead plans again with the feedback. */
+  async goalRejectPlan(options: {
+    goalId: string;
+    feedback?: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalControls();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.reject_plan.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.reject_plan.request",
+        goalId: options.goalId,
+        ...(options.feedback ? { feedback: options.feedback } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /**
+   * Retry one failed or cancelled task, or all of them; a failed goal is reopened. With
+   * goalConfigEdit, a goal that failed while planning is reopened with a fresh Lead. With
+   * goalIntegrationRetry, a failed goal's change sets whose merge failed are merged again.
+   */
+  async goalRetry(options: {
+    goalId: string;
+    taskId?: string;
+    /** How the time limit restarts; needs goalTimeBase. */
+    timeMode?: GoalTimeMode;
+    /** The person's instruction for the goal's workers; needs goalRecovery. */
+    guidance?: GuidanceChanges;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalControls();
+    if (options.timeMode && !this.supportsGoalTimeBase()) {
+      // An older daemon would drop the mode and refuse the retry for its passed time limit.
+      throw new Error("Update the host to choose how a retried goal's time limit restarts.");
+    }
+    // An older daemon would drop the guidance and retry without it.
+    if (options.guidance) this.requireGoalRecovery();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.retry.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.retry.request",
+        goalId: options.goalId,
+        ...(options.taskId ? { taskId: options.taskId } : {}),
+        ...(options.timeMode ? { timeMode: options.timeMode } : {}),
+        ...(options.guidance ? { guidance: options.guidance } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Recovering a failed goal through its Lead, and guidance on goal.retry. */
+  supportsGoalRecovery(): boolean {
+    return this.lastServerInfoMessage?.features?.goalRecovery === true;
+  }
+
+  private requireGoalRecovery(): void {
+    if (!this.supportsGoalRecovery()) {
+      throw new Error("Update the host to recover a failed goal or give its workers guidance.");
+    }
+  }
+
+  /**
+   * Ask a fresh Lead to decide how a failed goal continues. `timeMode` is required once the
+   * time limit has passed (needs goalTimeBase too); `guidance` is the person's instruction.
+   */
+  async goalRecoveryStart(options: {
+    goalId: string;
+    timeMode?: GoalTimeMode;
+    guidance?: GuidanceChanges;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalRecovery();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.recovery.start.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.recovery.start.request",
+        goalId: options.goalId,
+        ...(options.timeMode ? { timeMode: options.timeMode } : {}),
+        ...(options.guidance ? { guidance: options.guidance } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** A person accepting a failed goal as is (goal.outcome.accept). */
+  supportsGoalAccept(): boolean {
+    return this.lastServerInfoMessage?.features?.goalAccept === true;
+  }
+
+  /**
+   * Accept a failed goal as is: it completes with `criterionIds`, every criterion still
+   * unverified, waived. `note` says why and is required. `client` is "app" or "cli".
+   */
+  async goalOutcomeAccept(options: {
+    goalId: string;
+    criterionIds: string[];
+    note: string;
+    client?: string;
+    agentId?: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    if (!this.supportsGoalAccept()) {
+      throw new Error("Update the host to accept a failed goal as is.");
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.outcome.accept.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.outcome.accept.request",
+        goalId: options.goalId,
+        criterionIds: options.criterionIds,
+        note: options.note,
+        ...(options.client ? { client: options.client } : {}),
+        ...(options.agentId ? { agentId: options.agentId } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Approve or reject the Lead's revise while a recovery waits for approval. */
+  async goalRecoveryDecide(options: {
+    goalId: string;
+    recoveryId: string;
+    approve: boolean;
+    message?: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalRecovery();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.recovery.decide.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.recovery.decide.request",
+        goalId: options.goalId,
+        recoveryId: options.recoveryId,
+        approve: options.approve,
+        ...(options.message ? { message: options.message } : {}),
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Stop a recovery that is deciding or waiting for approval. */
+  async goalRecoveryCancel(options: {
+    goalId: string;
+    recoveryId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalRecovery();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.recovery.cancel.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.recovery.cancel.request",
+        goalId: options.goalId,
+        recoveryId: options.recoveryId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalPause(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalControls();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.pause.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.pause.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  async goalResume(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    this.requireGoalControls();
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.resume.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.resume.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /** Dismiss an ended goal so it stops asking for attention. It does not block a retry. */
+  async goalAcknowledge(options: {
+    goalId: string;
+    eventId?: string;
+    requestId?: string;
+  }): Promise<GoalMutationPayload> {
+    if (this.lastServerInfoMessage?.features?.goalAcknowledge !== true) {
+      throw new Error("Update the host to dismiss goals.");
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"goal.acknowledge.response">({
+      requestId: options.requestId,
+      message: {
+        type: "goal.acknowledge.request",
+        goalId: options.goalId,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+      },
+    });
+  }
+
+  /**
+   * Push goal.update messages to this connection until released. Each carries one
+   * goal as goal.list returns it. Keep polling goal.list as well: a push can be missed
+   * across a reconnect.
+   */
+  observeGoalUpdates(options?: {
+    signal?: AbortSignal;
+  }): OwnedSubscription<CorrelatedResponsePayload<"session.events.set_subscription.response">> {
+    if (this.lastServerInfoMessage?.features?.goalUpdates !== true) {
+      throw new Error("Update the host to receive goal updates.");
+    }
+    return this.observeEvents(["goal.update"], options);
+  }
+
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
@@ -7596,6 +8310,8 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     worktreeName: _worktreeName,
     requestId: _requestId,
     labels: _labels,
+    team: _team,
+    teamModelOverrides: _teamModelOverrides,
     ...overrides
   } = options;
 

@@ -30,6 +30,7 @@ import {
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
+  type AgentUsageTotals,
   type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
@@ -39,6 +40,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
+import { usageTotalsSince } from "../usage-totals.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -273,6 +275,8 @@ const CODEX_MODES: AgentMode[] = [
     id: "full-access",
     label: "Full Access",
     description: "Edit files, run commands, and access the network without additional prompts.",
+    // Unattended creates (a goal's `fail` policy, unattended parents) pick this mode.
+    isUnattended: true,
   },
 ];
 
@@ -1085,6 +1089,46 @@ export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
     ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
     ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
   };
+}
+
+function readCodexCount(record: Record<string, unknown>, camel: string, snake: string) {
+  const value = record[camel] ?? record[snake];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Codex input includes cache reads; fresh input is the difference. */
+function toCodexUsageTotals(record: Record<string, unknown> | undefined): AgentUsageTotals | null {
+  if (!record) return null;
+  const input = readCodexCount(record, "inputTokens", "input_tokens");
+  const outputTokens = readCodexCount(record, "outputTokens", "output_tokens");
+  if (input === undefined || outputTokens === undefined) return null;
+  const cached = readCodexCount(record, "cachedInputTokens", "cached_input_tokens") ?? 0;
+  return { inputTokens: Math.max(0, input - cached), cachedInputTokens: cached, outputTokens };
+}
+
+/**
+ * A thread's running totals from a token usage update: `total` after the update and
+ * before its latest model call (`last`), so the first update of a turn shows where the
+ * turn started even when the thread was resumed with an earlier count.
+ */
+export function readCodexThreadTotals(
+  tokenUsage: unknown,
+): { total: AgentUsageTotals; beforeLast: AgentUsageTotals } | null {
+  const usage = toObjectRecord(tokenUsage);
+  const total = toCodexUsageTotals(toObjectRecord(usage?.total));
+  if (!total) return null;
+  const last = toCodexUsageTotals(toObjectRecord(usage?.last));
+  const beforeLast = last
+    ? {
+        inputTokens: Math.max(0, (total.inputTokens ?? 0) - (last.inputTokens ?? 0)),
+        cachedInputTokens: Math.max(
+          0,
+          (total.cachedInputTokens ?? 0) - (last.cachedInputTokens ?? 0),
+        ),
+        outputTokens: Math.max(0, (total.outputTokens ?? 0) - (last.outputTokens ?? 0)),
+      }
+    : total;
+  return { total, beforeLast };
 }
 
 function extractUserText(content: unknown): string | null {
@@ -3494,6 +3538,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private warnedInvalidNotificationPayloads = new Set<string>();
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
+  // Per thread, its running totals where the current turn started and now.
+  private readonly turnThreadUsage = new Map<
+    string,
+    { start: AgentUsageTotals; total: AgentUsageTotals }
+  >();
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
   private readonly userMessageTurnIndexes = new Map<string, number>();
   private readonly userMessageTurnIds: string[] = [];
@@ -6179,6 +6228,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification = null;
     }
     this.resetTurnTrackingState();
+    this.turnThreadUsage.clear();
     this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
   }
 
@@ -6287,7 +6337,17 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handleTokenUsageUpdatedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "token_usage_updated" }>,
   ): void {
-    this.latestUsage = toAgentUsage(parsed.tokenUsage);
+    const usage = toAgentUsage(parsed.tokenUsage);
+    const thread = readCodexThreadTotals(parsed.tokenUsage);
+    if (thread) {
+      const key = parsed.threadId ?? "";
+      const start = this.turnThreadUsage.get(key)?.start ?? thread.beforeLast;
+      this.turnThreadUsage.set(key, { start, total: thread.total });
+    }
+    this.latestUsage =
+      usage && this.turnThreadUsage.size > 0
+        ? { ...usage, turnTotals: this.currentTurnTotals() }
+        : usage;
     if (this.latestUsage) {
       this.notifySubscribers({
         type: "usage_updated",
@@ -6295,6 +6355,18 @@ export class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+  }
+
+  /** The turn's usage over every model call so far, summed over the threads that reported. */
+  private currentTurnTotals(): AgentUsageTotals {
+    const sum: AgentUsageTotals = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+    for (const { start, total } of this.turnThreadUsage.values()) {
+      const grown = usageTotalsSince(total, start);
+      sum.inputTokens = (sum.inputTokens ?? 0) + (grown.inputTokens ?? 0);
+      sum.cachedInputTokens = (sum.cachedInputTokens ?? 0) + (grown.cachedInputTokens ?? 0);
+      sum.outputTokens = (sum.outputTokens ?? 0) + (grown.outputTokens ?? 0);
+    }
+    return sum;
   }
 
   private resolveContextCompactionTrigger(itemId?: string): "auto" | "manual" | undefined {

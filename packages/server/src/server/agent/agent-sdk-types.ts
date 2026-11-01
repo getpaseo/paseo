@@ -225,6 +225,27 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /**
+   * Accounting for goal usage, which the top-level fields cannot give: they keep each
+   * provider's own meaning for the context display. `turnTotals` is the whole turn so far,
+   * every model call included. `sessionTotals` is the provider's running total for the
+   * session, from which goal usage takes the growth since the agent's previous turn; an
+   * adapter that knows when its count restarts reports `turnTotals` instead. Never sent
+   * to clients.
+   */
+  turnTotals?: AgentUsageTotals;
+  sessionTotals?: AgentUsageTotals;
+}
+
+/**
+ * Usage counted the same way for every provider. `inputTokens` is fresh input, cache
+ * writes included; `cachedInputTokens` is input read from the prompt cache.
+ */
+export interface AgentUsageTotals {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

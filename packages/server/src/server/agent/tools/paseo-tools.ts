@@ -1,5 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { registerPluginTools } from "./plugin-tools.js";
-import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
+import type {
+  FinishNotificationHold,
+  FinishRegistration,
+  FinishSubscriptions,
+  WaitDeliveredOutcome,
+} from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
@@ -15,7 +21,7 @@ import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
-import type { AgentManager } from "../agent-manager.js";
+import type { AgentManager, ManagedAgent } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
@@ -32,7 +38,7 @@ import {
   toAgentPayload,
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
-import type { AgentStorage } from "../agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "../agent-storage.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -81,6 +87,8 @@ import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
 } from "../agent-prompt.js";
+import type { AgentPermissionRequest } from "../agent-sdk-types.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { respondToAgentPermission } from "../permission-response.js";
 import {
   archiveAgentCommand,
@@ -114,7 +122,24 @@ import {
   type PaseoToolResult,
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
+import { PlanRevisionOpSchema, TaskSpecSchema } from "@getpaseo/protocol/goal/types";
+import { GoalNotFoundError, type GoalService } from "../../goal/goal-service.js";
+import { GoalTransitionError } from "../../goal/goal-reducer.js";
+import { PlanRevisionError } from "../../goal/plan-revision.js";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import {
+  AGENT_TEAM_LABEL,
+  AGENT_TEAM_ROLE_LABEL,
+  AGENT_TEAM_RUN_LABEL,
+  DAEMON_OWNED_TEAM_LABELS,
+  resolveTeamRunId,
+  type AgentTeamsConfig,
+} from "../agent-teams.js";
+import {
+  defaultTeamMessageLimiter,
+  TEAM_MESSAGE_MAX_LENGTH,
+  type TeamMessageLimiter,
+} from "../team-messaging.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
@@ -126,6 +151,8 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
+  /** Lets a goal's Lead revise its running plan (goal_revise_plan). */
+  goalService?: Pick<GoalService, "revisePlan"> | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   github?: ForgeService;
@@ -160,6 +187,10 @@ export interface PaseoToolHostDependencies {
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   paseoHome?: string;
   worktreesRoot?: string;
+  /** Current daemon.teams. Gates list_team_members and send_team_message. */
+  getAgentTeams?: () => AgentTeamsConfig | undefined;
+  /** Defaults to one limiter shared by the whole daemon process. */
+  teamMessageLimiter?: TeamMessageLimiter;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -232,6 +263,233 @@ function assertOptionsAbsent(
   if (options.some(([, value]) => value !== undefined)) {
     throw new PaseoToolInputError(message);
   }
+}
+
+const WAIT_FOR_AGENT_DEFAULT_TIMEOUT_SECONDS = 600;
+const WAIT_FOR_AGENT_MIN_TIMEOUT_SECONDS = 1;
+const WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS = 1800;
+const WAIT_FOR_AGENT_MESSAGE_LIMIT = 4000;
+
+type WaitForAgentOutcome = "finished" | "error" | "permission_requested" | "timeout" | "closed";
+
+interface WaitForAgentResultInput {
+  outcome: WaitForAgentOutcome;
+  agentId: string;
+  agentStatus: string;
+  lastMessage: string | null;
+  permission?: AgentPermissionRequest | null;
+}
+
+function toWaitForAgentTurnOutcome(agentStatus: string): WaitForAgentOutcome {
+  if (agentStatus === "error") return "error";
+  if (agentStatus === "closed") return "closed";
+  return "finished";
+}
+
+function buildWaitForAgentResult(input: WaitForAgentResultInput): PaseoToolResult {
+  const message = input.lastMessage?.trim() ?? null;
+  const truncated = message !== null && message.length > WAIT_FOR_AGENT_MESSAGE_LIMIT;
+  const guidance: Record<WaitForAgentOutcome, string> = {
+    finished: "The agent's turn ended. lastMessage is its final response.",
+    error: "The agent's turn failed. Inspect it with get_agent_activity.",
+    permission_requested:
+      "The agent is blocked on a permission request. Answer it with respond_to_permission using agentId and requestId, then call wait_for_agent again.",
+    timeout:
+      "The wait timed out. The agent is still running; call wait_for_agent again to keep waiting.",
+    closed: "The agent was closed or archived and will not run further.",
+  };
+  return {
+    content: [],
+    structuredContent: ensureValidJson({
+      status: input.outcome,
+      agentId: input.agentId,
+      agentStatus: input.agentStatus,
+      lastMessage: truncated ? message.slice(0, WAIT_FOR_AGENT_MESSAGE_LIMIT) : message,
+      lastMessageTruncated: truncated,
+      ...(input.permission
+        ? {
+            permission: {
+              agentId: input.agentId,
+              requestId: input.permission.id,
+              request: sanitizePermissionRequest(input.permission),
+            },
+          }
+        : {}),
+      guidance: truncated
+        ? `${guidance[input.outcome]} lastMessage was truncated; use get_agent_activity for the full response.`
+        : guidance[input.outcome],
+    }),
+  };
+}
+
+interface WaitForSubagentTurnParams {
+  agentManager: AgentManager;
+  agentId: string;
+  /** Keeps finish notifications for this caller/child pair from repeating the wait's result. */
+  hold: FinishNotificationHold;
+  timeoutSeconds: number;
+  signal?: AbortSignal;
+  observesTurn: boolean;
+}
+
+async function waitForSubagentTurn(params: WaitForSubagentTurnParams): Promise<PaseoToolResult> {
+  const { agentManager, agentId, hold, timeoutSeconds, signal, observesTurn } = params;
+  const timeoutAbort = new AbortController();
+  const closedAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), timeoutSeconds * 1000);
+  const unsubscribeClosed = agentManager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.lifecycle === "closed") {
+        closedAbort.abort();
+      }
+    },
+    { agentId, replayState: false },
+  );
+  let delivered: WaitDeliveredOutcome | null = null;
+  try {
+    const result = await agentManager.waitForAgentEvent(agentId, {
+      waitForActive: true,
+      signal: AbortSignal.any([
+        timeoutAbort.signal,
+        closedAbort.signal,
+        ...(signal ? [signal] : []),
+      ]),
+    });
+    if (result.permission) {
+      delivered = { kind: "permission", requestId: result.permission.id };
+      return buildWaitForAgentResult({
+        outcome: "permission_requested",
+        agentId,
+        agentStatus: result.status,
+        lastMessage: result.lastMessage,
+        permission: result.permission,
+      });
+    }
+    if (observesTurn) {
+      delivered = { kind: "terminal" };
+    }
+    return buildWaitForAgentResult({
+      outcome: toWaitForAgentTurnOutcome(result.status),
+      agentId,
+      agentStatus: result.status,
+      lastMessage: result.lastMessage,
+    });
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+    if (closedAbort.signal.aborted) {
+      if (observesTurn) {
+        delivered = { kind: "terminal" };
+      }
+      return buildWaitForAgentResult({
+        outcome: "closed",
+        agentId,
+        agentStatus: "closed",
+        lastMessage: await agentManager.getLastAssistantMessage(agentId),
+      });
+    }
+    if (timeoutAbort.signal.aborted) {
+      return buildWaitForAgentResult({
+        outcome: "timeout",
+        agentId,
+        agentStatus: agentManager.getAgent(agentId)?.lifecycle ?? "closed",
+        lastMessage: await agentManager.getLastAssistantMessage(agentId),
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    unsubscribeClosed();
+    hold.settle(delivered);
+  }
+}
+
+/**
+ * Drops daemon-owned team labels a caller tried to set, then stamps the team
+ * run the caller belongs to, so membership cannot be forged through labels.
+ */
+function withDaemonOwnedTeamLabels(
+  labels: Record<string, string> | undefined,
+  teamRunId: string | null,
+): Record<string, string> | undefined {
+  const kept = Object.fromEntries(
+    Object.entries(labels ?? {}).filter(([key]) => !DAEMON_OWNED_TEAM_LABELS.includes(key)),
+  );
+  if (teamRunId) kept[AGENT_TEAM_RUN_LABEL] = teamRunId;
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+/**
+ * Agent-scoped callers cannot set daemon-owned `paseo.*` labels: parentage,
+ * team membership, schedule and goal markers all drive ownership checks.
+ * The team role is the one exception; the roster tells the chat to set it.
+ */
+function assertAgentSettableLabels(labels: Record<string, string> | undefined): void {
+  const reserved = Object.keys(labels ?? {}).filter(
+    (key) => key.startsWith("paseo.") && key !== AGENT_TEAM_ROLE_LABEL,
+  );
+  if (reserved.length > 0) {
+    throw new PaseoToolInputError(
+      `Labels ${reserved.join(", ")} are set by the daemon and cannot be changed; agents may only set ${AGENT_TEAM_ROLE_LABEL} among paseo.* labels`,
+    );
+  }
+}
+
+interface TeamAgentView {
+  id: string;
+  title: string | null;
+  labels: Record<string, string>;
+  provider: string;
+  status: string;
+  archived: boolean;
+  internal: boolean;
+}
+
+function toTeamAgentView(
+  live: ManagedAgent | null,
+  record: StoredAgentRecord | null,
+): TeamAgentView | null {
+  if (live) {
+    return {
+      id: live.id,
+      title: record?.title ?? live.config.title ?? null,
+      labels: live.labels,
+      provider: live.provider,
+      status: live.lifecycle,
+      archived: Boolean(record?.archivedAt),
+      internal: Boolean(live.internal),
+    };
+  }
+  if (!record) return null;
+  return {
+    id: record.id,
+    title: record.title ?? null,
+    labels: record.labels,
+    provider: record.provider,
+    status: record.lastStatus,
+    archived: Boolean(record.archivedAt),
+    internal: Boolean(record.internal),
+  };
+}
+
+type TeamMessageOutcome = "delivered" | "queued" | "failed";
+
+function describeTeamMessageDisposition(disposition: PromptDispatchDisposition): {
+  outcome: TeamMessageOutcome;
+  detail: string;
+} {
+  if (disposition === "steered") {
+    return {
+      outcome: "queued",
+      detail:
+        "The receiver is mid-turn; the message joined its running turn and is read when its provider next accepts input.",
+    };
+  }
+  return {
+    outcome: "delivered",
+    detail: "The receiver accepted the message and started a turn on it.",
+  };
 }
 
 async function isExistingDirectory(path: string): Promise<boolean> {
@@ -1614,6 +1872,11 @@ function createToolCatalog(
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const callerForTeam = resolvedArgs.detached ? null : resolveCallerAgent();
+      const labels = withDaemonOwnedTeamLabels(
+        parsedArgs.labels,
+        callerForTeam ? resolveTeamRunId(callerForTeam) : null,
+      );
       const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
@@ -1640,7 +1903,7 @@ function createToolCatalog(
           thinking: parsedArgs.settings?.thinkingOptionId,
           features: parsedArgs.settings?.features,
           labels: {
-            ...parsedArgs.labels,
+            ...labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
               ? { "paseo.parent-server-id": options.serverId }
               : {}),
@@ -1722,6 +1985,7 @@ function createToolCatalog(
         // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
         // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
         const parsed = parseToolArguments(legacyAgentToAgentCreateAgentArgsSchema, args);
+        assertAgentSettableLabels(parsed.labels);
         const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsed.workspace, {
           prompt: parsed.initialPrompt,
         });
@@ -1734,6 +1998,7 @@ function createToolCatalog(
         };
       }
       const parsed = parseToolArguments(agentToAgentCreateAgentArgsSchema, args);
+      assertAgentSettableLabels(parsed.labels);
       const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(parsed.workspaceId, {
         prompt: parsed.initialPrompt,
       });
@@ -1941,12 +2206,44 @@ function createToolCatalog(
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
 
+  async function loadAgentLabels(agentId: string): Promise<Record<string, string> | null> {
+    const snapshot = agentManager.getAgent(agentId);
+    if (snapshot) return snapshot.labels;
+    const record = await agentStorage.get(agentId);
+    return record && !record.internal ? (record.labels ?? {}) : null;
+  }
+
+  /** Agent-scoped callers may prompt their own subagents and the agent that created them. */
+  async function assertCallerMayPrompt(agentId: string): Promise<void> {
+    if (!callerAgentId) return;
+    if (agentId === callerAgentId) {
+      throw new PaseoToolInputError("send_agent_prompt cannot send a prompt to yourself");
+    }
+    const targetLabels = await loadAgentLabels(agentId);
+    if (!targetLabels) {
+      throw new PaseoToolInputError(`Agent ${agentId} not found`);
+    }
+    if (getParentAgentIdFromLabels(targetLabels) === callerAgentId) return;
+    if (getParentAgentIdFromLabels(await loadAgentLabels(callerAgentId)) === agentId) return;
+    const peerMessaging = await requireTeamPeerContext("send_team_message").then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof PaseoToolInputError) return false;
+        throw error;
+      },
+    );
+    throw new PaseoToolInputError(
+      `Agent ${agentId} is neither a subagent of ${callerAgentId} nor its parent; send_agent_prompt only reaches agents you created and the agent that created you` +
+        (peerMessaging ? ". To reach a member of your team run, use send_team_message" : ""),
+    );
+  }
+
   registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Agents can only prompt their own subagents and the agent that created them. Paseo supplies caller identity.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -1967,6 +2264,7 @@ function createToolCatalog(
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
+      await assertCallerMayPrompt(agentId);
       const notifying = Boolean(callerAgentId && notifyOnFinish);
       const notification =
         notifying && callerAgentId
@@ -2280,6 +2578,15 @@ function createToolCatalog(
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      if (callerAgentId) assertAgentSettableLabels(labels);
+      const daemonOwned = Object.keys(labels ?? {}).filter((key) =>
+        DAEMON_OWNED_TEAM_LABELS.includes(key),
+      );
+      if (daemonOwned.length > 0) {
+        throw new PaseoToolInputError(
+          `Labels ${daemonOwned.join(", ")} are set by the daemon and cannot be changed`,
+        );
+      }
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
@@ -2692,6 +2999,80 @@ function createToolCatalog(
       return {
         content: [],
         structuredContent: ensureValidJson(toScheduleSummary(schedule)),
+      };
+    },
+  );
+
+  registerTool(
+    "goal_revise_plan",
+    {
+      title: "Revise goal plan",
+      description:
+        "As a goal's Lead, change its running plan: replace or remove tasks that are pending, failed or cancelled, or add tasks with new ids. Give ops, or the desired plan as tasks with remove naming each pending, failed or cancelled task you leave out. Running and succeeded tasks cannot change, and a task id used before cannot be reused. The change waits for a person's approval unless the goal approves plans on its own.",
+      inputSchema: {
+        ops: z
+          .array(PlanRevisionOpSchema)
+          .optional()
+          .describe(
+            'Changes: {"op":"add","task":{...}}, {"op":"replace","task":{...}} (same id) or {"op":"remove","taskId":"t7"}.',
+          ),
+        tasks: z
+          .array(TaskSpecSchema)
+          .optional()
+          .describe("The desired plan instead of ops. Unchanged succeeded tasks may be left out."),
+        remove: z
+          .array(z.string().trim().min(1))
+          .optional()
+          .describe("With tasks: ids of pending, failed or cancelled tasks to drop."),
+        reason: z.string().trim().min(1, "reason is required").max(2000),
+      },
+      outputSchema: {
+        goalId: z.string(),
+        revisionId: z.string(),
+        status: z.string(),
+        decisionReason: z.string().optional(),
+        tasks: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
+      },
+    },
+    async ({ ops, tasks, remove, reason }) => {
+      if (!options.goalService) {
+        throw new Error("Goal service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new PaseoToolInputError("goal_revise_plan requires an agent-scoped session");
+      }
+      // Agents cannot set paseo.* labels, so this names the goal the daemon started the caller for.
+      const goalId = (await loadAgentLabels(callerAgentId))?.["paseo.goal-id"];
+      if (!goalId) {
+        throw new PaseoToolInputError("goal_revise_plan is only for the Lead of a goal");
+      }
+      // The service refuses a caller that is not this goal's Lead. While the Manager waits on
+      // the Lead's decision about a failed task, the reducer refuses a revision from here and
+      // the Lead answers the decision prompt instead.
+      // An id per call, so the reply names this call's revision even when another lands too.
+      const eventId = randomUUID();
+      const goal = await options.goalService
+        .revisePlan(goalId, { ops, tasks, remove, reason, agentId: callerAgentId }, eventId)
+        .catch((error: unknown) => {
+          if (
+            error instanceof PlanRevisionError ||
+            error instanceof GoalTransitionError ||
+            error instanceof GoalNotFoundError
+          ) {
+            throw new PaseoToolInputError(error.message);
+          }
+          throw error;
+        });
+      const revision = goal.planRevisions?.find((r) => r.id === `rev-${eventId}`);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          goalId,
+          revisionId: revision?.id ?? "",
+          status: revision?.status ?? "unknown",
+          ...(revision?.decisionReason ? { decisionReason: revision.decisionReason } : {}),
+          tasks: goal.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+        }),
       };
     },
   );
@@ -3184,6 +3565,268 @@ function createToolCatalog(
           currentModeId: snapshot?.currentModeId ?? null,
         }),
       };
+    },
+  );
+
+  registerTool(
+    "wait_for_agent",
+    {
+      title: "Wait for agent",
+      description: `Block until one of your own subagents (created by you with create_agent) ends its current turn, then return its final message. Returns immediately with status "permission_requested" when the agent needs permission, and immediately with the current state when the agent is not running a turn. timeoutSeconds defaults to ${WAIT_FOR_AGENT_DEFAULT_TIMEOUT_SECONDS} (min ${WAIT_FOR_AGENT_MIN_TIMEOUT_SECONDS}, max ${WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS}); on "timeout" the agent keeps running and you may wait again.`,
+      inputSchema: {
+        agentId: z.string(),
+        timeoutSeconds: z
+          .number()
+          .int()
+          .min(WAIT_FOR_AGENT_MIN_TIMEOUT_SECONDS)
+          .max(WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS)
+          .optional()
+          .describe(
+            `Seconds to wait before returning "timeout". Default ${WAIT_FOR_AGENT_DEFAULT_TIMEOUT_SECONDS}, max ${WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS}.`,
+          ),
+      },
+      outputSchema: {
+        status: z.enum(["finished", "error", "permission_requested", "timeout", "closed"]),
+        agentId: z.string(),
+        agentStatus: z.string(),
+        lastMessage: z.string().nullable(),
+        lastMessageTruncated: z.boolean(),
+        permission: z
+          .object({
+            agentId: z.string(),
+            requestId: z.string(),
+            request: AgentPermissionRequestPayloadSchema,
+          })
+          .optional(),
+        guidance: z.string(),
+      },
+    },
+    async ({ agentId, timeoutSeconds = WAIT_FOR_AGENT_DEFAULT_TIMEOUT_SECONDS }, context) => {
+      if (!callerAgentId) {
+        throw new PaseoToolInputError(
+          "wait_for_agent is only available to agents; it waits on the caller's own subagents",
+        );
+      }
+      const snapshot = agentManager.getAgent(agentId);
+      const record = snapshot ? null : await agentStorage.get(agentId);
+      if (!snapshot && (!record || record.internal)) {
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
+      }
+      const labels = snapshot?.labels ?? record?.labels;
+      if (getParentAgentIdFromLabels(labels) !== callerAgentId) {
+        throw new PaseoToolInputError(
+          `Agent ${agentId} is not a subagent of ${callerAgentId}; wait_for_agent only waits on agents you created`,
+        );
+      }
+      if (!snapshot || snapshot.lifecycle === "closed") {
+        return buildWaitForAgentResult({
+          outcome: "closed",
+          agentId,
+          agentStatus: "closed",
+          lastMessage: await agentManager.getLastAssistantMessage(agentId),
+        });
+      }
+
+      return await waitForSubagentTurn({
+        agentManager,
+        agentId,
+        hold: options.finishSubscriptions?.().hold({ callerAgentId, childAgentId: agentId }) ?? {
+          settle() {},
+        },
+        timeoutSeconds,
+        signal: context.signal,
+        // A turn that is running or queued ends in an outcome this wait delivers.
+        observesTurn:
+          snapshot.lifecycle === "running" ||
+          snapshot.lifecycle === "initializing" ||
+          agentManager.hasInFlightRun(agentId),
+      });
+    },
+  );
+
+  const teamMessageLimiter = options.teamMessageLimiter ?? defaultTeamMessageLimiter;
+
+  async function loadTeamAgentView(agentId: string): Promise<TeamAgentView | null> {
+    return toTeamAgentView(agentManager.getAgent(agentId), await agentStorage.get(agentId));
+  }
+
+  async function requireTeamPeerContext(
+    toolName: string,
+  ): Promise<{ caller: TeamAgentView; runId: string; teamName: string }> {
+    if (!callerAgentId) {
+      throw new PaseoToolInputError(`${toolName} is only available to agents in a team run`);
+    }
+    const caller = await loadTeamAgentView(callerAgentId);
+    if (!caller) {
+      throw new PaseoToolInputError(`Caller agent ${callerAgentId} not found`);
+    }
+    const runId = resolveTeamRunId(caller);
+    if (!runId) {
+      throw new PaseoToolInputError(
+        `${toolName} is only available to members of a team run; you are not in one`,
+      );
+    }
+    const lead = runId === caller.id ? caller : await loadTeamAgentView(runId);
+    const teamName = lead?.labels[AGENT_TEAM_LABEL]?.trim();
+    if (!teamName) {
+      throw new PaseoToolInputError(`Team run ${runId} has no team chat`);
+    }
+    if (options.getAgentTeams?.()?.[teamName]?.peerMessaging !== true) {
+      throw new PaseoToolInputError(
+        `Team "${teamName}" does not enable peer messaging; set daemon.teams.${teamName}.peerMessaging to true`,
+      );
+    }
+    return { caller, runId, teamName };
+  }
+
+  async function listTeamRunMembers(runId: string): Promise<TeamAgentView[]> {
+    const records = new Map((await agentStorage.list()).map((record) => [record.id, record]));
+    const views = new Map<string, TeamAgentView>();
+    for (const live of agentManager.listAgents()) {
+      const view = toTeamAgentView(live, records.get(live.id) ?? null);
+      if (view) views.set(view.id, view);
+    }
+    for (const record of records.values()) {
+      if (views.has(record.id)) continue;
+      const view = toTeamAgentView(null, record);
+      if (view) views.set(view.id, view);
+    }
+    return [...views.values()]
+      .filter((view) => !view.internal && !view.archived && resolveTeamRunId(view) === runId)
+      .sort((a, b) => Number(b.id === runId) - Number(a.id === runId));
+  }
+
+  registerTool(
+    "list_team_members",
+    {
+      title: "List team members",
+      description:
+        "List the members of your team run: the team chat and every helper it (or its helpers) created. Only available when your team enables peer messaging.",
+      inputSchema: {},
+      outputSchema: {
+        teamRunId: z.string(),
+        team: z.string(),
+        members: z.array(
+          z.object({
+            agentId: z.string(),
+            title: z.string().nullable(),
+            role: z.string().optional(),
+            provider: z.string(),
+            status: z.string(),
+            isParent: z.boolean(),
+            isSelf: z.boolean(),
+          }),
+        ),
+      },
+    },
+    async () => {
+      const { caller, runId, teamName } = await requireTeamPeerContext("list_team_members");
+      const parentId = getParentAgentIdFromLabels(caller.labels);
+      const members: Array<Record<string, string | boolean | null>> = [];
+      for (const member of await listTeamRunMembers(runId)) {
+        const entry: Record<string, string | boolean | null> = {
+          agentId: member.id,
+          title: member.title,
+          provider: member.provider,
+          status: member.status,
+          isParent: member.id === parentId,
+          isSelf: member.id === caller.id,
+        };
+        const role = member.labels[AGENT_TEAM_ROLE_LABEL]?.trim();
+        if (role) entry.role = role;
+        members.push(entry);
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ teamRunId: runId, team: teamName, members }),
+      };
+    },
+  );
+
+  registerTool(
+    "send_team_message",
+    {
+      title: "Send team message",
+      description: `Send a message to another member of your team run (a teammate or the team chat). The receiver sees who sent it. Returns outcome "delivered" (it started a turn), "queued" (it joined the receiver's running turn) or "failed" with the reason. Limits: ${TEAM_MESSAGE_MAX_LENGTH} characters, 20 messages per sender per minute, 200 per team run. Only available when your team enables peer messaging.`,
+      inputSchema: {
+        agentId: z.string().min(1).describe("A member id from list_team_members."),
+        message: z
+          .string()
+          .trim()
+          .min(1, "message is required")
+          .max(
+            TEAM_MESSAGE_MAX_LENGTH,
+            `message must be ${TEAM_MESSAGE_MAX_LENGTH} characters or fewer`,
+          ),
+      },
+      outputSchema: {
+        outcome: z.enum(["delivered", "queued", "failed"]),
+        detail: z.string(),
+        agentId: z.string(),
+        disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
+      },
+    },
+    async ({ agentId, message }: { agentId: string; message: string }) => {
+      const { caller, runId } = await requireTeamPeerContext("send_team_message");
+      if (agentId === caller.id) {
+        throw new PaseoToolInputError("You cannot send a team message to yourself");
+      }
+      const target = await loadTeamAgentView(agentId);
+      if (!target || target.internal) {
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
+      }
+      if (resolveTeamRunId(target) !== runId) {
+        throw new PaseoToolInputError(`Agent ${agentId} is not a member of your team run`);
+      }
+      if (target.archived || agentManager.getAgent(agentId)?.lifecycle === "closed") {
+        throw new PaseoToolInputError(
+          `Agent ${agentId} is archived or closed and cannot receive messages`,
+        );
+      }
+      const failed = (detail: string): PaseoToolResult => ({
+        content: [],
+        structuredContent: ensureValidJson({ outcome: "failed", detail, agentId }),
+      });
+      const admission = teamMessageLimiter.admit({ senderId: caller.id, runId });
+      if (!admission.admitted) {
+        return failed(admission.reason);
+      }
+
+      const role = caller.labels[AGENT_TEAM_ROLE_LABEL]?.trim();
+      const sender = `${caller.title ?? "Teammate"}${role ? ` (${role})` : ""} [agent ${caller.id}]`;
+      const prompt = [
+        `Message from ${sender}:`,
+        "",
+        message,
+        "",
+        `To reply, call send_team_message with agentId "${caller.id}".`,
+      ].join("\n");
+      try {
+        const { disposition } = await sendPromptToAgent({
+          agentManager,
+          agentStorage,
+          agentId,
+          prompt,
+          source: { kind: "agent-message", agentId: caller.id },
+          activeTurnBehavior: "steer",
+          unarchive: false,
+          logger: childLogger,
+        });
+        if (disposition === "turn_started") {
+          await waitForAgentRunStartWithTimeout(agentManager, agentId);
+        }
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            ...describeTeamMessageDisposition(disposition),
+            agentId,
+            disposition,
+          }),
+        };
+      } catch (error) {
+        childLogger.warn({ err: error, agentId, senderId: caller.id }, "Team message failed");
+        return failed(error instanceof Error ? error.message : String(error));
+      }
     },
   );
 

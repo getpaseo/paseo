@@ -22,6 +22,7 @@ import {
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
 import { AgentProfilesSection } from "@/agent-profiles";
+import { AgentTeamsSection } from "@/agent-teams/settings/agent-teams-section";
 import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
@@ -67,6 +68,7 @@ import { useProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
 import { RestartRecoveryCard } from "./restart-recovery-card";
 import { IdleRuntimeCleanupCard } from "./idle-runtime-cleanup-card";
+import { GoalRunCapSection } from "./goal-run-cap-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
 
 const ThemedRestart = withUnistyles(RotateCw);
@@ -303,6 +305,8 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
       )}
       <AgentSkillsSection serverId={serverId} />
       <AgentProfilesSection serverId={serverId} />
+      <AgentTeamsSection serverId={serverId} />
+      <GoalRunCapSection serverId={serverId} />
     </View>
   );
 }

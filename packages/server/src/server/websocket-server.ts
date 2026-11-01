@@ -15,6 +15,9 @@ import { createToolHosts } from "./agent/host-operations/index.js";
 import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
 import { ConnectedHosts } from "./connected-hosts/index.js";
+import type { GoalService } from "./goal/goal-service.js";
+import { GoalUpdatePublisher } from "./goal/goal-update-publisher.js";
+import { publishGoalUpdate } from "./session/goal/goal-session.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
@@ -569,6 +572,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private readonly goalService: GoalService | undefined;
+  private readonly goalUpdates: GoalUpdatePublisher | null;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
@@ -693,6 +698,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    goalService?: GoalService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -747,6 +753,8 @@ export class VoiceAssistantWebSocketServer {
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
+    this.goalService = goalService;
+    this.goalUpdates = this.createGoalUpdatePublisher(goalService);
     const requiredServices = requireWebSocketServices({
       scheduleService,
       checkoutDiffManager,
@@ -1029,6 +1037,18 @@ export class VoiceAssistantWebSocketServer {
     this.sendMessageToSockets(this.sessions.keys(), message);
   }
 
+  /** Sessions deliver goal.update only to connections that subscribed to it. */
+  private createGoalUpdatePublisher(
+    goalService: GoalService | undefined,
+  ): GoalUpdatePublisher | null {
+    if (!goalService) return null;
+    return new GoalUpdatePublisher({
+      subscribe: (listener) => goalService.subscribe(listener),
+      subscribeRemoved: (listener) => goalService.subscribeRemoved(listener),
+      publish: (goal, options) => publishGoalUpdate(this.listSessions(), goal, options),
+    });
+  }
+
   public listSessions(): Session[] {
     return Array.from(
       new Set(
@@ -1139,6 +1159,7 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    this.goalUpdates?.stop();
     await this.agentMessages.close();
     await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
@@ -1661,6 +1682,7 @@ export class VoiceAssistantWebSocketServer {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceLabelService: this.workspaceLabelService ?? undefined,
+      goalService: this.goalService,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
@@ -2017,6 +2039,39 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        ...(this.goalService
+          ? {
+              goals: true,
+              goalControls: true,
+              goalBudgets: true,
+              goalUpdates: true,
+              goalAcknowledge: true,
+              goalThinking: true,
+              goalManagement: true,
+              goalConfigEdit: true,
+              goalUsageBreakdown: true,
+              // COMPAT(goalIntegrationRetry): added in v0.13.10, remove gate after 2027-10-27.
+              goalIntegrationRetry: true,
+              // COMPAT(goalPlanRevision): added in v0.13.13, remove gate after 2027-10-28.
+              goalPlanRevision: true,
+              // COMPAT(goalLeadInterventions): added in v0.13.13, remove gate after 2027-10-28.
+              goalLeadInterventions: true,
+              // COMPAT(goalTimeBase): added in v0.13.13, remove gate after 2027-10-28.
+              goalTimeBase: true,
+              // COMPAT(goalRecovery): added in v0.13.13, remove gate after 2027-10-28.
+              goalRecovery: true,
+              // COMPAT(goalReworkRetry): added in v0.13.14, remove gate after 2027-10-28.
+              goalReworkRetry: true,
+              // COMPAT(goalVerificationRecovery): added in v0.13.14, remove gate after 2027-10-28.
+              goalVerificationRecovery: true,
+              // COMPAT(goalAccept): added in v0.13.14, remove gate after 2027-10-28.
+              goalAccept: true,
+              // COMPAT(goalUserWait): added in v0.13.14, remove gate after 2027-10-28.
+              goalUserWait: true,
+              // COMPAT(goalConcurrencyConfig): added in v0.13.9, remove gate after 2027-10-27.
+              goalConcurrencyConfig: true,
+            }
+          : {}),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         workspaceSetupObservation: true,
@@ -2177,6 +2232,10 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(agentTeams): added in v0.12.0, remove gate after 2027-10-21.
+        agentTeams: true,
+        // COMPAT(agentTeamsConfig): added in v0.13.0, remove gate after 2027-10-26.
+        agentTeamsConfig: true,
       },
     };
   }

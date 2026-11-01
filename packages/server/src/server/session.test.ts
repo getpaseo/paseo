@@ -6045,3 +6045,65 @@ test("a failing direct source observes fire-and-forget file replies without unha
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("pushes goal.update only to sockets that subscribed to it", async () => {
+  const goal = {
+    id: "g1",
+    title: "T",
+    objective: "",
+    status: "executing" as const,
+    config: null,
+    leadAgentId: null,
+    leadWorkspaceId: null,
+    criteria: [],
+    tasks: [],
+    runs: [],
+    changeSets: [],
+    integration: null,
+    lastSeq: 1,
+    failureReason: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    progress: { tasksTotal: 0, tasksDone: 0, tasksFailed: 0, tasksRunning: 0 },
+  };
+  const update: SessionOutboundMessage = { type: "goal.update", payload: { goal } };
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const session = createSessionForTest({ messages, targetedMessages });
+  // A client that predates goal.update gets legacy broadcasts, but never this type.
+  const legacySocket = {};
+  const subscribedSocket = {};
+  const quietSocket = {};
+  session.updateClientCapabilities(null, legacySocket);
+  for (const socket of [subscribedSocket, quietSocket]) {
+    session.updateClientCapabilities(
+      {
+        [CLIENT_CAPS.ownedSubscriptions]: true,
+        [CLIENT_CAPS.explicitEventSubscriptions]: true,
+      },
+      socket,
+    );
+  }
+  await session.handleMessage(
+    {
+      type: "session.events.set_subscription.request",
+      requestId: "goals",
+      events: ["goal.update"],
+    },
+    subscribedSocket,
+  );
+  targetedMessages.length = 0;
+
+  session.publish(update);
+
+  expect(messages).toEqual([]);
+  expect(targetedMessages).toEqual([
+    {
+      source: subscribedSocket,
+      message: {
+        type: "goal.update",
+        payload: { goal, subscriptionId: expect.any(String) },
+      },
+    },
+  ]);
+});

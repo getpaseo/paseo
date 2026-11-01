@@ -120,6 +120,8 @@ Accepting new work after an ambiguous interruption would create a split-brain se
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
 
+Agents cannot forge parentage or other daemon markers. Agent-scoped `create_agent` and `update_agent` refuse every `paseo.*` label except `paseo.team-role`: `paseo.parent-agent-id`, team, schedule and goal labels drive ownership checks, so only the daemon and the app set them. Top-level MCP clients and the app are not restricted; those callers are people. Agent-scoped `send_agent_prompt` reaches only the caller's own subagents and the agent that created it, so a subagent can report back to its creator but cannot prompt siblings or unrelated agents. Team members message each other with `send_team_message` ([agent-teams.md](agent-teams.md)).
+
 - **Subagents** — exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
 - **Detached agents** — stand on their own after an explicit detach transition, do not appear in the former parent's subagent track, and are not archived with it.
 
@@ -175,6 +177,8 @@ so that callback can repeat after restart. This is an at-least-once wakeup, with
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
+
+A caller that needs the result inline calls `wait_for_agent` instead of waiting for the notification. It only accepts the caller's own subagents (matched by `paseo.parent-agent-id`), returns when the current or queued turn ends, and returns at once on a pending permission or when no turn is running. `timeoutSeconds` is capped at 1800 so a tool call never blocks indefinitely; a timeout leaves the child running. While a wait is open, notifications for the same caller and child are held, and an outcome the wait returned (the turn's end, or a specific permission request) is not notified again. A wait that returns at once without observing a turn suppresses nothing, so a notification already in flight for an earlier finish can still arrive. The suppression lives in `packages/server/src/server/agent/agent-prompt.ts` (`holdFinishNotifications`).
 
 ## Provider-managed child agents
 
@@ -373,7 +377,7 @@ Each agent is a single JSON file. Fields relevant to this doc:
 | -------------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
 | `id`                                         | `string`      | Stable identifier                                                                  |
 | `archivedAt`                                 | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
-| `labels["paseo.parent-agent-id"]`            | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
+| `labels["paseo.parent-agent-id"]`            | `string?`     | Parent agent ID, set by the daemon for agent-scoped creation and removed by detach |
 | `labels["paseo.open-agent-tab.<client-id>"]` | `string?`     | `"true"` protects an open tab on that client; detach clears every matching label   |
 | `lastStatus`                                 | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
 

@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ComponentProps, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Keyboard, Pressable, Text, View } from "react-native";
-import type { DimensionValue, StyleProp, ViewProps, ViewStyle } from "react-native";
+import type {
+  AccessibilityActionEvent,
+  DimensionValue,
+  PointerEvent as RNPointerEvent,
+  StyleProp,
+  ViewProps,
+  ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -93,6 +100,7 @@ const styles = StyleSheet.create((theme) => ({
     pointerEvents: "auto" as const,
   },
   desktopCard: {
+    position: "relative",
     overflow: "hidden",
     width: "100%",
     maxWidth: 520,
@@ -227,10 +235,463 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
+  desktopResizableFooter: {
+    paddingRight: 48,
+  },
+  desktopResizeHandle: {
+    position: "absolute",
+    right: theme.spacing[1],
+    bottom: theme.spacing[1],
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+    zIndex: 2,
+  },
+  desktopResizeGrip: {
+    width: 12,
+    height: 12,
+    borderRightWidth: 2,
+    borderBottomWidth: 2,
+    borderColor: theme.colors.foregroundMuted,
+  },
 }));
 
 const WEB_EXIT_DURATION_MS = 160;
+const DESKTOP_RESIZE_MIN_WIDTH = 480;
+const DESKTOP_RESIZE_MIN_HEIGHT = 360;
+const DESKTOP_RESIZE_STEP = 24;
+const DESKTOP_RESIZE_HANDLE_WEB_STYLE = {
+  cursor: "nwse-resize",
+  touchAction: "none",
+  userSelect: "none",
+} as object;
 
+interface DesktopResizeSize {
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+interface DesktopResizeLimits {
+  minWidth: number;
+  maxWidth: number;
+  minHeight: number;
+  maxHeight: number;
+}
+
+function getDesktopPadding(
+  style: CSSStyleDeclaration | null,
+  side: "left" | "right" | "top" | "bottom",
+) {
+  const value = style?.getPropertyValue("padding-" + side) ?? "0";
+  return Number.parseFloat(value) || 0;
+}
+
+function getDesktopResizeFrame(card: HTMLElement) {
+  const overlay = card.parentElement;
+  const overlayRect = overlay?.getBoundingClientRect() ?? null;
+  const cardRect = card.getBoundingClientRect();
+  const overlayStyle = overlay ? window.getComputedStyle(overlay) : null;
+  const paddingLeft = getDesktopPadding(overlayStyle, "left");
+  const paddingRight = getDesktopPadding(overlayStyle, "right");
+  const paddingTop = getDesktopPadding(overlayStyle, "top");
+  const paddingBottom = getDesktopPadding(overlayStyle, "bottom");
+  const contentWidth = Math.max(
+    0,
+    (overlay?.clientWidth ?? window.innerWidth) - paddingLeft - paddingRight,
+  );
+  const contentHeight = Math.max(
+    0,
+    (overlay?.clientHeight ?? window.innerHeight) - paddingTop - paddingBottom,
+  );
+
+  return {
+    left: overlayRect?.left ?? 0,
+    right: overlayRect?.right ?? window.innerWidth,
+    top: overlayRect?.top ?? 0,
+    bottom: overlayRect?.bottom ?? window.innerHeight,
+    cardRect,
+    contentWidth,
+    contentHeight,
+    paddingLeft,
+    paddingRight,
+    paddingTop,
+    paddingBottom,
+  };
+}
+
+function getDesktopResizeLimits(
+  card: HTMLElement,
+  maxWidth: number,
+  fitCentered = false,
+): DesktopResizeLimits {
+  if (!isWeb) return { minWidth: 0, maxWidth: 0, minHeight: 0, maxHeight: 0 };
+  const frame = getDesktopResizeFrame(card);
+  const centeredCardLeft =
+    frame.left + frame.paddingLeft + (frame.contentWidth - frame.cardRect.width) / 2;
+  const centeredCardTop =
+    frame.top + frame.paddingTop + (frame.contentHeight - frame.cardRect.height) / 2;
+  const availableWidth = Math.max(
+    0,
+    frame.right - frame.paddingRight - (fitCentered ? centeredCardLeft : frame.cardRect.left),
+  );
+  const availableHeight = Math.max(
+    0,
+    frame.bottom - frame.paddingBottom - (fitCentered ? centeredCardTop : frame.cardRect.top),
+  );
+  const boundedWidth = Math.min(maxWidth, availableWidth);
+  const boundedHeight = Math.min(
+    availableHeight,
+    frame.contentHeight * 0.85,
+    window.innerHeight * 0.85,
+  );
+
+  return {
+    minWidth: Math.min(DESKTOP_RESIZE_MIN_WIDTH, boundedWidth),
+    maxWidth: boundedWidth,
+    minHeight: Math.min(DESKTOP_RESIZE_MIN_HEIGHT, boundedHeight),
+    maxHeight: boundedHeight,
+  };
+}
+function clampDesktopResizeSize(
+  width: number,
+  height: number,
+  limits: DesktopResizeLimits,
+): Pick<DesktopResizeSize, "width" | "height"> {
+  return {
+    width: Math.max(limits.minWidth, Math.min(width, limits.maxWidth)),
+    height: Math.max(limits.minHeight, Math.min(height, limits.maxHeight)),
+  };
+}
+
+function isDesktopResizeEnabled(resizable: boolean, isMobile: boolean) {
+  return resizable && isWeb && !isMobile;
+}
+
+function getDesktopFooterStyle(resizable: boolean, footerContainerStyle: StyleProp<ViewStyle>) {
+  return [styles.footer, resizable && styles.desktopResizableFooter, footerContainerStyle];
+}
+
+function getWebDesktopPortal(enabled: boolean, shouldRender: boolean, content: ReactNode) {
+  if (!enabled || typeof document === "undefined") return undefined;
+  if (!shouldRender) return null;
+  return createPortal(content, getOverlayRoot());
+}
+
+function getDesktopCardStyle({
+  desktopHeight,
+  desktopMaxWidth,
+  resizeEnabled,
+  resizeSize,
+  initialResizeWidth,
+}: {
+  desktopHeight?: DimensionValue;
+  desktopMaxWidth?: number;
+  resizeEnabled: boolean;
+  resizeSize: DesktopResizeSize | null;
+  initialResizeWidth: number;
+}) {
+  return [
+    styles.desktopCard,
+    desktopHeight != null && { height: desktopHeight },
+    resizeEnabled
+      ? {
+          width: resizeSize?.width ?? initialResizeWidth,
+          height: resizeSize?.height ?? desktopHeight,
+          maxWidth: "100%" as const,
+          transform: [
+            { translateX: resizeSize?.offsetX ?? 0 },
+            { translateY: resizeSize?.offsetY ?? 0 },
+          ],
+        }
+      : desktopMaxWidth != null && { maxWidth: desktopMaxWidth },
+  ];
+}
+
+function resizeDesktopSizeFromBase(
+  width: number,
+  height: number,
+  base: DesktopResizeSize,
+  limits: DesktopResizeLimits,
+): DesktopResizeSize {
+  const size = clampDesktopResizeSize(width, height, limits);
+  return {
+    ...size,
+    offsetX: base.offsetX + (size.width - base.width) / 2,
+    offsetY: base.offsetY + (size.height - base.height) / 2,
+  };
+}
+
+function useDesktopResizeController({
+  enabled,
+  visible,
+  maxWidth,
+}: {
+  enabled: boolean;
+  visible: boolean;
+  maxWidth: number;
+}) {
+  const [size, setSize] = useState<DesktopResizeSize | null>(null);
+  const [limits, setLimits] = useState<DesktopResizeLimits | null>(null);
+  const sizeRef = useRef<DesktopResizeSize | null>(null);
+  const handleElementRef = useRef<HTMLElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const setHandleElement = useCallback((element: unknown) => {
+    handleElementRef.current = element as HTMLElement | null;
+  }, []);
+
+  const commitSize = useCallback(
+    (width: number, height: number, base: DesktopResizeSize, nextLimits: DesktopResizeLimits) => {
+      const next = resizeDesktopSizeFromBase(width, height, base, nextLimits);
+      sizeRef.current = next;
+      setSize(next);
+      setLimits(nextLimits);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isWeb || !enabled || !visible) {
+      cleanupRef.current?.();
+      sizeRef.current = null;
+      setSize(null);
+      setLimits(null);
+      return;
+    }
+    const card = handleElementRef.current?.parentElement;
+    if (!card || sizeRef.current) return;
+    const rect = card.getBoundingClientRect();
+    const initial = { width: rect.width, height: rect.height, offsetX: 0, offsetY: 0 };
+    sizeRef.current = initial;
+    setSize(initial);
+    setLimits(getDesktopResizeLimits(card, maxWidth));
+  }, [enabled, maxWidth, visible]);
+
+  useEffect(() => {
+    if (!isWeb || !enabled || !visible) return;
+    const card = handleElementRef.current?.parentElement;
+    if (!card) return;
+
+    const handleViewportResize = () => {
+      cleanupRef.current?.();
+      const nextLimits = getDesktopResizeLimits(card, maxWidth, true);
+      const current = sizeRef.current;
+      const rect = card.getBoundingClientRect();
+      const nextSize = clampDesktopResizeSize(
+        current?.width ?? rect.width,
+        current?.height ?? rect.height,
+        nextLimits,
+      );
+      const next = { ...nextSize, offsetX: 0, offsetY: 0 };
+      sizeRef.current = next;
+      setLimits(nextLimits);
+      setSize(next);
+    };
+
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
+  }, [enabled, maxWidth, visible]);
+
+  useEffect(() => () => cleanupRef.current?.(), []);
+
+  const onPointerDown = useCallback(
+    (event: RNPointerEvent) => {
+      if (!isWeb || !enabled || cleanupRef.current || event.nativeEvent.button > 0) return;
+      const handle = event.currentTarget as unknown as HTMLElement;
+      const card = handle.parentElement;
+      if (!card) return;
+
+      const rect = card.getBoundingClientRect();
+      const current = sizeRef.current;
+      const base = {
+        width: rect.width,
+        height: rect.height,
+        offsetX: current?.offsetX ?? 0,
+        offsetY: current?.offsetY ?? 0,
+      };
+      const nextLimits = getDesktopResizeLimits(card, maxWidth);
+      setLimits(nextLimits);
+      const pointerId = event.nativeEvent.pointerId;
+      const startX = event.nativeEvent.clientX;
+      const startY = event.nativeEvent.clientY;
+      const cursorBefore = document.body.style.cursor;
+      const userSelectBefore = document.body.style.userSelect;
+
+      event.preventDefault();
+      event.stopPropagation();
+      handle.setPointerCapture?.(pointerId);
+      document.body.style.cursor = "nwse-resize";
+      document.body.style.userSelect = "none";
+
+      function cleanup() {
+        cleanupRef.current = null;
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerEnd);
+        window.removeEventListener("pointercancel", handlePointerEnd);
+        if (handle.hasPointerCapture?.(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
+        document.body.style.cursor = cursorBefore;
+        document.body.style.userSelect = userSelectBefore;
+      }
+
+      function handlePointerMove(moveEvent: PointerEvent) {
+        if (moveEvent.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
+        commitSize(
+          rect.width + moveEvent.clientX - startX,
+          rect.height + moveEvent.clientY - startY,
+          base,
+          nextLimits,
+        );
+      }
+
+      function handlePointerEnd(endEvent: PointerEvent) {
+        if (endEvent.pointerId === pointerId) cleanup();
+      }
+
+      cleanupRef.current = cleanup;
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerEnd);
+      window.addEventListener("pointercancel", handlePointerEnd);
+    },
+    [commitSize, enabled, maxWidth],
+  );
+
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!isWeb || !enabled) return;
+      const card = (event.currentTarget as HTMLElement).parentElement;
+      if (!card) return;
+      const rect = card.getBoundingClientRect();
+      const current = sizeRef.current;
+      const base = {
+        width: rect.width,
+        height: rect.height,
+        offsetX: current?.offsetX ?? 0,
+        offsetY: current?.offsetY ?? 0,
+      };
+      const nextLimits = getDesktopResizeLimits(card, maxWidth);
+      let width = base.width;
+      let height = base.height;
+      const step = event.shiftKey ? DESKTOP_RESIZE_STEP * 4 : DESKTOP_RESIZE_STEP;
+      switch (event.key) {
+        case "ArrowLeft":
+        case "ArrowDown":
+          width -= step;
+          break;
+        case "ArrowRight":
+        case "ArrowUp":
+          width += step;
+          break;
+        case "Home":
+          width = nextLimits.minWidth;
+          break;
+        case "End":
+          width = nextLimits.maxWidth;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      commitSize(width, height, base, nextLimits);
+    },
+    [commitSize, enabled, maxWidth],
+  );
+
+  const onAccessibilityAction = useCallback(
+    (event: AccessibilityActionEvent) => {
+      if (!isWeb || !enabled) return;
+      const card = handleElementRef.current?.parentElement;
+      if (!card) return;
+      const action = event.nativeEvent.actionName;
+      if (action !== "increment" && action !== "decrement") return;
+      const rect = card.getBoundingClientRect();
+      const current = sizeRef.current;
+      const base = {
+        width: rect.width,
+        height: rect.height,
+        offsetX: current?.offsetX ?? 0,
+        offsetY: current?.offsetY ?? 0,
+      };
+      const nextLimits = getDesktopResizeLimits(card, maxWidth);
+      const step = action === "increment" ? DESKTOP_RESIZE_STEP : -DESKTOP_RESIZE_STEP;
+      commitSize(base.width + step, base.height, base, nextLimits);
+    },
+    [commitSize, enabled, maxWidth],
+  );
+
+  return { size, limits, setHandleElement, onPointerDown, onKeyDown, onAccessibilityAction };
+}
+
+function DesktopResizeHandle({
+  enabled,
+  title,
+  testID,
+  initialWidth,
+  maxWidth,
+  size,
+  limits,
+  setElementRef,
+  onPointerDown,
+  onKeyDown,
+  onAccessibilityAction,
+}: {
+  enabled: boolean;
+  title: string;
+  testID?: string;
+  initialWidth: number;
+  maxWidth: number;
+  size: DesktopResizeSize | null;
+  limits: DesktopResizeLimits | null;
+  setElementRef: (element: unknown) => void;
+  onPointerDown: (event: RNPointerEvent) => void;
+  onKeyDown: (event: KeyboardEvent) => void;
+  onAccessibilityAction: (event: AccessibilityActionEvent) => void;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  const accessibilityActions = useMemo(
+    () => [
+      { name: "decrement" as const, label: t("goals.form.decrease", { label: title }) },
+      { name: "increment" as const, label: t("goals.form.increase", { label: title }) },
+    ],
+    [t, title],
+  );
+  const accessibilityValue = useMemo(
+    () => ({
+      min: limits?.minWidth ?? Math.min(DESKTOP_RESIZE_MIN_WIDTH, maxWidth),
+      max: limits?.maxWidth ?? maxWidth,
+      now: Math.round(size?.width ?? initialWidth),
+    }),
+    [initialWidth, limits, maxWidth, size],
+  );
+
+  if (!enabled) return null;
+
+  return (
+    <View
+      ref={setElementRef}
+      accessible
+      focusable
+      tabIndex={0}
+      accessibilityRole="adjustable"
+      accessibilityLabel={title}
+      accessibilityValue={accessibilityValue}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={onAccessibilityAction}
+      onPointerDown={onPointerDown}
+      {...({ onKeyDown } as object)}
+      style={[styles.desktopResizeHandle, DESKTOP_RESIZE_HANDLE_WEB_STYLE]}
+      testID={testID}
+    >
+      <View style={styles.desktopResizeGrip} />
+    </View>
+  );
+}
 /** The compact sheet's surface: Gorhom's `backgroundComponent` for every bottom sheet. */
 export function SheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
@@ -506,6 +967,12 @@ export interface AdaptiveModalSheetProps {
   testID?: string;
   /** Override the max width of the desktop card. */
   desktopMaxWidth?: number;
+  /** Enable pointer and keyboard resizing of the desktop card. Compact sheets ignore this. */
+  desktopResizable?: boolean;
+  /** Starting width when desktop resizing is enabled. */
+  desktopResizeInitialWidth?: number;
+  /** Maximum width reached through desktop resizing. */
+  desktopResizeMaxWidth?: number;
   /** Bound an author-owned list without changing content-sized first-party dialogs. */
   desktopHeight?: DimensionValue;
   /** Whether the host supplies the scroll container. Caller-owned lists still share sheet gestures. */
@@ -600,6 +1067,9 @@ export function AdaptiveModalSheet({
   snapPoints,
   testID,
   desktopMaxWidth,
+  desktopResizable = false,
+  desktopResizeInitialWidth,
+  desktopResizeMaxWidth,
   desktopHeight,
   scrollable = true,
   presentation,
@@ -609,11 +1079,34 @@ export function AdaptiveModalSheet({
 }: AdaptiveModalSheetProps) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const desktopResizeEnabled = isDesktopResizeEnabled(desktopResizable, isMobile);
+  const configuredResizeMaxWidth = desktopResizeMaxWidth ?? desktopMaxWidth ?? 520;
+  const initialResizeWidth = Math.min(
+    desktopResizeInitialWidth ?? desktopMaxWidth ?? 520,
+    configuredResizeMaxWidth,
+  );
+  const {
+    size: desktopResizeSize,
+    limits: desktopResizeLimits,
+    setHandleElement: setResizeHandleElement,
+    onPointerDown: handleDesktopResizePointerDown,
+    onKeyDown: handleDesktopResizeKeyDown,
+    onAccessibilityAction: handleDesktopResizeAccessibilityAction,
+  } = useDesktopResizeController({
+    enabled: desktopResizeEnabled,
+    visible,
+    maxWidth: configuredResizeMaxWidth,
+  });
   const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const footerView = useMemo(
-    () => (footer ? <View style={[styles.footer, footerContainerStyle]}>{footer}</View> : null),
-    [footer, footerContainerStyle],
+    () =>
+      footer ? (
+        <View style={getDesktopFooterStyle(desktopResizeEnabled, footerContainerStyle)}>
+          {footer}
+        </View>
+      ) : null,
+    [desktopResizeEnabled, footer, footerContainerStyle],
   );
   useEffect(() => {
     if (!isWeb && visible) {
@@ -637,12 +1130,15 @@ export function AdaptiveModalSheet({
   }, [handleSheetDismiss, onDismiss]);
 
   const desktopCardStyle = useMemo(
-    () => [
-      styles.desktopCard,
-      desktopHeight != null && { height: desktopHeight },
-      desktopMaxWidth != null && { maxWidth: desktopMaxWidth },
-    ],
-    [desktopMaxWidth, desktopHeight],
+    () =>
+      getDesktopCardStyle({
+        desktopHeight,
+        desktopMaxWidth,
+        resizeEnabled: desktopResizeEnabled,
+        resizeSize: desktopResizeSize,
+        initialResizeWidth,
+      }),
+    [desktopHeight, desktopMaxWidth, desktopResizeEnabled, desktopResizeSize, initialResizeWidth],
   );
   const desktopOverlayStyle = useMemo(
     () => [
@@ -764,15 +1260,26 @@ export function AdaptiveModalSheet({
         tabIndex={-1}
       >
         {cardInner}
+        <DesktopResizeHandle
+          enabled={desktopResizeEnabled}
+          title={header.title}
+          testID={testID ? testID + "-resize-handle" : undefined}
+          initialWidth={initialResizeWidth}
+          maxWidth={configuredResizeMaxWidth}
+          size={desktopResizeSize}
+          limits={desktopResizeLimits}
+          setElementRef={setResizeHandleElement}
+          onPointerDown={handleDesktopResizePointerDown}
+          onKeyDown={handleDesktopResizeKeyDown}
+          onAccessibilityAction={handleDesktopResizeAccessibilityAction}
+        />
       </View>
     </View>
   );
 
   // On web, use portal to overlay root for consistent stacking with toasts
-  if (isWeb && typeof document !== "undefined") {
-    if (!shouldRenderWeb) return null;
-    return createPortal(desktopContent, getOverlayRoot());
-  }
+  const webPortal = getWebDesktopPortal(isWeb, shouldRenderWeb, desktopContent);
+  if (webPortal !== undefined) return webPortal;
 
   return (
     // Both native presentations share Gorhom's app-wide stack. Independent RN Modals

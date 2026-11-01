@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { SquarePen, SquareTerminal } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import { useStartGoalFromChat } from "@/hooks/use-start-goal-from-chat";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useIconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
 import {
@@ -189,6 +190,7 @@ function MobileWorkspaceTabOption({
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
+      startGoal: t("workspace.tabs.menu.startGoal"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
@@ -201,6 +203,7 @@ function MobileWorkspaceTabOption({
     }),
     [t],
   );
+  const startGoalFromChat = useStartGoalFromChat(normalizedServerId);
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
@@ -213,6 +216,7 @@ function MobileWorkspaceTabOption({
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onStartGoal: startGoalFromChat ?? undefined,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore: onCloseTabsAbove,
