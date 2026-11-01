@@ -842,6 +842,10 @@ export class AgentManager {
     this.clients.set(provider, client);
   }
 
+  getStartupRecoveryPolicy(provider: AgentProvider): "prompt" | "observe" {
+    return this.clients.get(provider)?.startupRecovery ?? "prompt";
+  }
+
   updateProviderRegistry(input: {
     providerDefinitions: ProviderEnabledMap;
     clients: ProviderClientMap;

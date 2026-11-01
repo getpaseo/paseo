@@ -10,6 +10,7 @@ export const PROVIDER_CAPABILITIES = [
   "prompt.output_schema",
   "prompt.steer",
   "session.can_stop_runtime",
+  "session.startup_observation",
   "session.archive",
   "session.configure",
   "session.list",
@@ -27,6 +28,8 @@ export const PROVIDER_CAPABILITIES = [
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
 export interface ProviderRegistration {
+  /** Observe an externally owned runtime after daemon startup instead of submitting a resume prompt. Defaults to prompt. */
+  startupRecovery?: "prompt" | "observe";
   /** Activate only while agents.providers contains this provider ID, independently of enabled. */
   requiresConfiguration?: boolean;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */

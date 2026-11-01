@@ -402,6 +402,29 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("preserves startup observation through direct and configured provider clients", async () => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([{ ...harness.registration, startupRecovery: "observe" }]);
+    const registry = buildProviderRegistry(logger, {
+      pluginProviders: plugins.definitions(),
+      providerOverrides: { "plugin-direct": { command: ["configured-agent"] } },
+    });
+    const manager = new AgentManager({
+      logger,
+      clients: {
+        "plugin-direct": registry["plugin-direct"].createClient(logger),
+      },
+      providerDefinitions: registry,
+    });
+    expect(plugins.clients()["plugin-direct"].startupRecovery).toBe("observe");
+    expect(manager.getStartupRecoveryPolicy("plugin-direct")).toBe("observe");
+    expect(manager.getStartupRecoveryPolicy("codex")).toBe("prompt");
+    expect(harness.inputs).toEqual([]);
+    await plugins.shutdown();
+  });
+
   test("stores only agent options while the plugin receives merged defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();

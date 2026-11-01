@@ -944,6 +944,7 @@ interface PendingChild {
 }
 
 class PluginAgentClient implements AgentClient {
+  readonly startupRecovery: ProviderRegistration["startupRecovery"];
   readonly provider: string;
   private readonly runtime: ProviderRuntime;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
@@ -952,6 +953,7 @@ class PluginAgentClient implements AgentClient {
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
+    this.startupRecovery = registration.startupRecovery;
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)

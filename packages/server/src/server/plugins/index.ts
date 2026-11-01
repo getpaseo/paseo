@@ -686,6 +686,7 @@ export class PluginService {
           description: provider.description,
           command: provider.command,
           requiresConfiguration: provider.requiresConfiguration,
+          startupRecovery: provider.startupRecovery,
           status: provider.hasStatus
             ? (request) => {
                 if (!this.runtime.getProviderStatus)
