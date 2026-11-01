@@ -129,6 +129,8 @@ Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafte
 
 Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
 
+Setup commands inherit the daemon's environment. If that environment has `NODE_ENV=production`, npm reads it as `--omit=dev` and skips your dev dependencies, which usually makes the rest of setup fail on a missing build tool. Use `npm ci --include=dev` to pin the behavior regardless of how the daemon was launched.
+
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
 ## Scripts and services
