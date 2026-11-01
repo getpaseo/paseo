@@ -64,6 +64,7 @@ import {
   createProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
+import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -1437,11 +1438,20 @@ class PluginAgentSession implements AgentSession {
   async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentSettings();
+    // A key the plugin does not report as a setting is one it only reads when the session opens.
+    const unsupported = Object.keys(options).filter((key) => !(key in before));
+    if (unsupported.length > 0) {
+      throw new ProviderOptionsValidationError(
+        this.provider,
+        unsupported.map((key) => ({
+          path: [key],
+          message: "cannot change on a running session; it applies when the agent is opened",
+        })),
+      );
+    }
     const settings: Record<string, JsonValue> = {};
-    for (const setting of this.bridge.config.settings) {
-      const value = options[setting.id];
-      if (value === undefined) continue;
-      settings[setting.id] = toJsonValue(value, `setting '${setting.id}'`);
+    for (const [id, value] of Object.entries(options)) {
+      settings[id] = toJsonValue(value, `setting '${id}'`);
     }
     if (Object.keys(settings).length === 0) return {};
     this.applyingOptions = true;

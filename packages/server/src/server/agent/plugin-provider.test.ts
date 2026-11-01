@@ -1136,6 +1136,18 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
+    test("rejects a key the plugin does not report as a setting, and configures none of a mixed patch", async () => {
+      const { harness, session } = await openStubbornVoiceSession({ launch_key: "original" });
+      const configureBefore = lastConfigure(harness.inputs);
+
+      await expect(session.applyOptions?.({ loud: true, launch_key: "changed" })).rejects.toThrow(
+        /launch_key.*cannot change on a running session/,
+      );
+
+      expect(lastConfigure(harness.inputs)).toBe(configureBefore);
+      await session.close();
+    });
+
     test("applying options returns the settings that ended up different, and emits nothing", async () => {
       const { session, events } = await openStubbornVoiceSession({});
 
