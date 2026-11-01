@@ -5,7 +5,7 @@ import {
   createCodexAppServerChildProcess,
   createFakeCodexAppServer,
 } from "./test-utils/fake-app-server.js";
-import { CODEX_PROVIDER_LINE_BYTES, CodexAppServerClient } from "./app-server-transport.js";
+import { CodexAppServerClient } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
@@ -185,28 +185,6 @@ describe("Codex app-server transport", () => {
 });
 
 describe("Codex stdout byte admission", () => {
-  test("resumes a thread whose streamed response exceeds 128 MiB", async () => {
-    const child = createCodexAppServerChildProcess();
-    const client = new CodexAppServerClient(child, createTestLogger());
-    const request = client.request("thread/resume", {});
-    const chunk = Buffer.alloc(64 * 1024, "x");
-    const chunkCount = (129 * 1024 * 1024) / chunk.byteLength;
-    child.stdout.write('{"id":1,"result":{"text":"');
-    for (let index = 0; index < chunkCount; index++) child.stdout.write(chunk);
-    child.stdout.write('"}}\n');
-
-    try {
-      const response = (await request) as { text: string };
-      expect(response.text.length).toBe(129 * 1024 * 1024);
-      expect(response.text.startsWith("xxx")).toBe(true);
-      expect(response.text.endsWith("xxx")).toBe(true);
-    } finally {
-      await client.dispose();
-      child.stdout.end();
-      child.stderr.end();
-    }
-  });
-
   test("an oversized response fails only its own request", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
@@ -216,15 +194,13 @@ describe("Codex stdout byte admission", () => {
     const other = client.request("model/list", {});
     const chunk = Buffer.alloc(64 * 1024, "x");
     child.stdout.write('{"id":1,"result":"');
-    for (let index = 0; index <= CODEX_PROVIDER_LINE_BYTES / chunk.byteLength; index++) {
-      child.stdout.write(chunk);
-    }
+    for (let index = 0; index < 2049; index++) child.stdout.write(chunk);
     child.stdout.write('"}\n{"id":2,"result":{"data":[]}}\n');
 
     expect(await oversized).toMatchObject({
       name: "CodexAppServerResponseTooLargeError",
       method: "thread/items/list",
-      limitBytes: 512 * 1024 * 1024,
+      limitBytes: 128 * 1024 * 1024,
     });
     await expect(other).resolves.toEqual({ data: [] });
     const next = client.request("model/list", {});
@@ -244,14 +220,12 @@ describe("Codex stdout byte admission", () => {
     const request = client.request("thread/resume", {}, 1000).catch((error: Error) => error);
     const chunk = Buffer.alloc(64 * 1024, "x");
     child.stdout.write('{"method":"item/completed","params":"');
-    for (let index = 0; index <= CODEX_PROVIDER_LINE_BYTES / chunk.byteLength; index++) {
-      child.stdout.write(chunk);
-    }
+    for (let index = 0; index < 2048; index++) child.stdout.write(chunk);
     const error = await request;
     expect(error).toMatchObject({
       name: "ProviderStreamLimitError",
       code: "PROVIDER_STREAM_LINE_TOO_LARGE",
-      limitBytes: 512 * 1024 * 1024,
+      limitBytes: 128 * 1024 * 1024,
     });
     expect(terminations).toEqual([error]);
     expect(client.hasPendingRequests()).toBe(false);

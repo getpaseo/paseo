@@ -6,9 +6,9 @@ import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 
 import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-decoder.js";
 
-// Large imported threads can exceed 128 MiB in a single Codex response.
-// This provider stdout cap is independent of the smaller client timeline page budget.
-export const CODEX_PROVIDER_LINE_BYTES = 512 * 1024 * 1024;
+// A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
+// with 4x margin for longer threads. This is provider stdout, not the client protocol.
+export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
