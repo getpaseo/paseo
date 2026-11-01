@@ -181,6 +181,12 @@ Codex MultiAgentV2 real tests use local Codex authentication rather than the Ope
 
 ## Running tests locally
 
+The app's Android hardware-keyboard unit test compiles the production Kotlin
+handlers against typed in-memory framework adapters. Install a JDK and `kotlinc`
+on PATH before running it (Ubuntu: `sudo apt-get install kotlin`). The existing
+`app-tests` CI job installs the compiler. This JVM coverage verifies handler
+decisions and event consumption; it does not replace device/IME testing.
+
 Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.
 
 - Run only the file you changed: `npx vitest run <path> --bail=1`
