@@ -1,7 +1,7 @@
 import type { UsageInput } from "../shared/input.js";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { z } from "zod";
 import {
   unavailable,
@@ -19,6 +19,10 @@ const ApiOptionalStringSchema = z.preprocess(
 
 const MINIMAX_GLOBAL_BASE_URL = "https://api.minimax.io";
 const MINIMAX_CN_BASE_URL = "https://api.minimaxi.com";
+
+// The coding-plan quota endpoint the CLI itself calls. The older
+// `/v1/token_plan/remains` path is not the one the agent backend serves.
+const MINIMAX_CODING_PLAN_PATH = "/v1/api/openplatform/coding_plan/remains";
 
 const MiniMaxModelRemainSchema = z.object({
   model_name: ApiOptionalStringSchema,
@@ -66,6 +70,31 @@ const MiniMaxConfigSchema = z.object({
   region: z.string().optional(),
   base_url: ApiOptionalStringSchema,
   oauth: MiniMaxCredentialsSchema.optional(),
+});
+
+/**
+ * The `mcode` CLI stores its OAuth login under `~/.minimax/auth/<env>/<region>/<clientId>/`.
+ * Each client directory holds an `auth.json` with the token and an
+ * `auth-state.json` with the region and expiry.
+ */
+const MiniMaxOAuthAuthSchema = z.object({
+  schemaVersion: z.number().optional(),
+  records: z.record(
+    z.string(),
+    z.object({
+      accessToken: z.string().optional(),
+      refreshToken: z.string().optional(),
+      expiresAtMs: z.number().optional(),
+    }),
+  ),
+});
+
+const MiniMaxOAuthStateSchema = z.object({
+  status: z.string().optional(),
+  clientId: z.string().optional(),
+  buildEnv: z.string().optional(),
+  region: z.string().optional(),
+  expiresAtMs: z.number().optional(),
 });
 
 type MiniMaxModelRemain = z.infer<typeof MiniMaxModelRemainSchema>;
@@ -154,7 +183,7 @@ export async function fetchUsage(
   if (auth.expiresAt && Date.parse(auth.expiresAt) <= Date.now())
     return unavailable({ kind: "expired", expiresAt: new Date(auth.expiresAt).toISOString() });
 
-  const res = await fetchApi(`${auth.baseUrl}/v1/token_plan/remains`, {
+  const res = await fetchApi(`${auth.baseUrl}${MINIMAX_CODING_PLAN_PATH}`, {
     signal: AbortSignal.timeout(15_000),
     headers: {
       Authorization: `Bearer ${auth.token}`,
@@ -207,6 +236,9 @@ async function readAuth(
       ? { token, baseUrl: resolveBaseUrl({ baseUrl: process.env.MINIMAX_BASE_URL }) }
       : undefined;
   }
+  if (input.store === "oauth") {
+    return readOAuthAuth(input);
+  }
   try {
     const raw: unknown = JSON.parse(await fs.readFile(input.locator, "utf8"));
     if (input.store === "credentials") {
@@ -239,6 +271,101 @@ async function readAuth(
     return undefined;
   }
 }
+
+/**
+ * Reads the OAuth login the `mcode` CLI writes to
+ * `~/.minimax/auth/<buildEnv>/<region>/<clientId>/auth.json`. The region
+ * decides which host serves the account, and the token lives inside a
+ * `records` map keyed by the OAuth grant.
+ */
+async function readOAuthAuth(
+  input: UsageInput,
+): Promise<(MiniMaxResolvedAuth & { expiresAt?: string }) | undefined> {
+  try {
+    const raw: unknown = JSON.parse(await fs.readFile(input.locator, "utf8"));
+    const auth = MiniMaxOAuthAuthSchema.parse(raw);
+    const record = Object.values(auth.records).find((entry) => entry.accessToken);
+    if (!record?.accessToken) return undefined;
+
+    const state = await readOAuthState(input.locator);
+    const expiresAtMs = record.expiresAtMs ?? state?.expiresAtMs;
+    return {
+      token: record.accessToken,
+      baseUrl: resolveBaseUrl({
+        baseUrl: input.baseUrl,
+        region: state?.region,
+      }),
+      expiresAt: typeof expiresAtMs === "number" ? new Date(expiresAtMs).toISOString() : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readOAuthState(
+  authPath: string,
+): Promise<z.infer<typeof MiniMaxOAuthStateSchema> | undefined> {
+  try {
+    const statePath = join(dirname(authPath), "auth-state.json");
+    const raw: unknown = JSON.parse(await fs.readFile(statePath, "utf8"));
+    return MiniMaxOAuthStateSchema.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * Locates the `mcode` CLI's OAuth login. The layout is
+ * `~/.minimax/auth/<buildEnv>/<region>/<clientId>/auth.json`, so the client
+ * directory is found by scanning the region directories rather than by
+ * assuming a fixed client id.
+ */
+async function discoverOAuthLogins(): Promise<UsageInput[]> {
+  const authRoot = join(homedir(), ".minimax", "auth");
+  const inputs: UsageInput[] = [];
+  let buildEnvDirs: string[];
+  try {
+    buildEnvDirs = (await fs.readdir(authRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return inputs;
+  }
+
+  for (const buildEnv of buildEnvDirs) {
+    const envRoot = join(authRoot, buildEnv);
+    let regionDirs: string[];
+    try {
+      regionDirs = (await fs.readdir(envRoot, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      continue;
+    }
+    for (const region of regionDirs) {
+      const regionRoot = join(envRoot, region);
+      let clientDirs: string[];
+      try {
+        clientDirs = (await fs.readdir(regionRoot, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+      } catch {
+        continue;
+      }
+      for (const clientId of clientDirs) {
+        const authPath = join(regionRoot, clientId, "auth.json");
+        const auth = await readOAuthAuth({ store: "oauth", locator: authPath });
+        if (!auth) continue;
+        inputs.push({
+          store: "oauth",
+          locator: authPath,
+          baseUrl: auth.baseUrl,
+        });
+      }
+    }
+  }
+  return inputs;
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   const candidates: UsageInput[] = [
     { store: "env", locator: "MINIMAX_API_KEY" },
@@ -248,5 +375,14 @@ export async function discover(): Promise<UsageAccount[]> {
   const accounts: UsageAccount[] = [];
   for (const input of candidates)
     if (await readAuth(input)) accounts.push({ key: "default", input });
+  if (accounts.length > 0) return accounts;
+
+  const oauthInputs = await discoverOAuthLogins();
+  for (const input of oauthInputs) {
+    if (await readAuth(input)) {
+      accounts.push({ key: "default", input });
+      break;
+    }
+  }
   return accounts;
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +37,7 @@ describe("zai usage source", () => {
       "GITHUB_PAT",
       "CURSOR_ACCESS_TOKEN",
       "CURSOR_TOKEN",
+      "Z_AI_API_KEY",
       "ZAI_API_KEY",
       "GLM_API_KEY",
       "GROK_API_KEY",
@@ -115,6 +116,59 @@ describe("zai usage source", () => {
       planLabel: "GLM Coding Max",
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
     });
+  });
+
+  it("fetches Z.ai usage from Z_AI_API_KEY, the name the glm-acp-agent CLI uses", async () => {
+    process.env["Z_AI_API_KEY"] = "zai_cli_token";
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_cli_token");
+    expect(zai).toMatchObject({ status: "available", planLabel: "GLM Coding Max" });
+  });
+
+  it("reads Z.ai usage from the credentials file the glm-acp-agent CLI writes", async () => {
+    const configDir = join(homeDir, ".config", "glm-acp-agent");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "credentials.json"),
+      JSON.stringify({ z_ai_api_key: "zai_file_token" }),
+    );
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_file_token");
+    expect(zai).toMatchObject({ status: "available" });
+  });
+
+  it("honours XDG_CONFIG_HOME for the credentials file", async () => {
+    const configDir = join(homeDir, "xdg", "glm-acp-agent");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "credentials.json"),
+      JSON.stringify({ z_ai_api_key: "zai_xdg_token" }),
+    );
+    process.env["XDG_CONFIG_HOME"] = join(homeDir, "xdg");
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_xdg_token");
+    expect(zai).toMatchObject({ status: "available" });
   });
 });
 
