@@ -774,6 +774,54 @@ describe("image prompts", () => {
   });
 });
 
+describe("uploaded file prompts", () => {
+  it("references uploaded text, images and large files without changing their bytes", async () => {
+    const h = await harness();
+    await h.open();
+    const txtFile = path.join(h.cwd, "notes.txt");
+    await writeFile(txtFile, "export const meaning = 42;");
+    const imgFile = path.join(h.cwd, "photo.png");
+    await writeFile(imgFile, "png bytes");
+
+    await h.completed(
+      await h.message([
+        { type: "text", text: "Please review these attachments:" },
+        {
+          type: "uploaded_file",
+          id: "upload-txt-1",
+          fileName: "notes.txt",
+          mimeType: "text/plain",
+          size: 26,
+          path: txtFile,
+        },
+        {
+          type: "uploaded_file",
+          id: "upload-img-1",
+          fileName: "photo.png",
+          mimeType: "image/png",
+          size: 9,
+          path: imgFile,
+        },
+        {
+          type: "uploaded_file",
+          id: "upload-big-1",
+          fileName: "dataset.bin",
+          mimeType: "application/octet-stream",
+          size: 3 * 1024 * 1024,
+          path: "/tmp/dataset.bin",
+        },
+      ]),
+    );
+
+    const sent = (await h.records()).find((entry) => entry.input).input.message.content;
+    expect(sent).toBe(
+      `SYSTEM PREFIX\n\nPlease review these attachments:\nUploaded file: notes.txt\nPath: ${txtFile}\nMIME: text/plain\nSize: 26 bytes\nAttached image: ${imgFile}\nUploaded file: dataset.bin\nPath: /tmp/dataset.bin\nMIME: application/octet-stream\nSize: 3145728 bytes`,
+    );
+    expect(await readFile(txtFile, "utf8")).toBe("export const meaning = 42;");
+    expect(await readFile(imgFile, "utf8")).toBe("png bytes");
+  });
+});
+
 it.runIf(process.platform === "win32")(
   "launches an Antigravity command shim for probes and conversation startup",
   async () => {
@@ -789,3 +837,29 @@ it.runIf(process.platform === "win32")(
     });
   },
 );
+
+it("preserves a usable reference for an uploaded binary file", async () => {
+  const h = await harness();
+  await h.open();
+  const file = path.join(h.cwd, "document.pdf");
+  const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0xfe]);
+  await writeFile(file, bytes);
+  await h.completed(
+    await h.message([
+      { type: "text", text: "Read the attachment" },
+      {
+        type: "uploaded_file",
+        id: "pdf-upload",
+        fileName: "document.pdf",
+        mimeType: "application/pdf",
+        size: 7,
+        path: file,
+      },
+    ]),
+  );
+  const sent = (await h.records()).find((entry) => entry.input).input.message.content;
+  expect(sent).toContain(file);
+  expect(sent).not.toContain("\u0000");
+  expect(sent).not.toContain("\ufffd");
+  expect(await readFile(file)).toEqual(bytes);
+});

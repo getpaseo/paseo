@@ -21,9 +21,9 @@ export class PromptFiles {
     )
       throw new AntigravityError("Antigravity supports messages only");
     const parts = prompt.input.content.map((part) => {
-      if (part.type === "text") return part;
+      if (part.type === "text" || part.type === "uploaded_file") return part;
       if (part.type === "image") return { ...part, extension: imageExtension(part.mimeType) };
-      throw new AntigravityError("Antigravity supports text and image content only");
+      throw new AntigravityError("Antigravity supports text, image and uploaded file content only");
     });
     const text: string[] = [];
     const native: string[] = [];
@@ -41,6 +41,19 @@ export class PromptFiles {
         await writeFile(file, Buffer.from(part.data, "base64"), { flag: "wx", mode: 0o600 });
         await chmod(file, 0o600);
         native.push(`Attached image: ${file}`);
+      } else if (part.type === "uploaded_file") {
+        if (part.mimeType.startsWith("image/")) {
+          native.push(`Attached image: ${part.path}`);
+        } else {
+          const reference = [
+            `Uploaded file: ${part.fileName}`,
+            `Path: ${part.path}`,
+            `MIME: ${part.mimeType}`,
+            `Size: ${part.size} bytes`,
+          ].join("\n");
+          text.push(reference);
+          native.push(reference);
+        }
       }
     }
     return { text: text.join("\n"), nativeText: native.join("\n") };
