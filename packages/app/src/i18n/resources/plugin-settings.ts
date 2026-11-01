@@ -287,6 +287,14 @@ export const pluginSettings = {
   },
   "pt-BR": {
     ...shared,
+    logs: {
+      ...shared.logs,
+      loading: "Carregando logs…",
+      refresh: "Atualizar",
+      refreshing: "Atualizando…",
+      errorTitle: "Não foi possível carregar os logs do plugin",
+      empty: "Nenhuma saída do plugin ainda",
+    },
     screens: {
       open: "Abrir",
       offline: "Conecte-se a este host para abrir as configurações do plugin.",
