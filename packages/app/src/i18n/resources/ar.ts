@@ -1156,6 +1156,10 @@ export const ar: TranslationResources = {
       title: "تعذّر تحميل سجل التغييرات",
       description: "تحقق من اتصالك وحاول مرة أخرى.",
     },
+    empty: {
+      title: "لا توجد ملاحظات إصدار لهذا الإصدار",
+      description: "افتح سجل التغييرات الكامل لعرض كل الإصدارات.",
+    },
   },
   sidebar: {
     statusGroupAccessibility: "مجموعة {{label}}",
