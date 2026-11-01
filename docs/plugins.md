@@ -475,7 +475,8 @@ export default function contribute(server: PluginServerContext) {
 
 Declare `command: ["agent", "serve"]` when your provider launches an executable. The daemon applies
 `agents.providers.<id>.command` and `env`, resolves the executable against the effective PATH, and
-removes parent-session and daemon-control environment variables. `connect({ launch })` receives
+removes parent-session variables and inherited/session daemon-control values; explicitly configured
+provider env survives. `connect({ launch })` receives
 `{ command, args, env }`: an executable path, effective arguments, and the complete sanitized
 environment. Spawn with those values; do not merge the plugin process's environment back in.
 The launch travels as data through the same provider protocol for built-in and subprocess plugins.
