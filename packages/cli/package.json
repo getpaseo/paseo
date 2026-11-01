@@ -2,6 +2,7 @@
   "name": "@getpaseo/cli",
   "version": "0.15.0-beta.1",
   "description": "Paseo CLI - control your AI coding agents from the command line",
+  "license": "Apache-2.0",
   "bin": {
     "paseo": "bin/paseo"
   },
