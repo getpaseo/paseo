@@ -1317,10 +1317,17 @@ export class AgentManager {
     options?: AgentTimelineFetchOptions,
   ): Promise<AgentTimelineFetchResult> {
     this.requireAgent(id);
+    // Wire pages must remain bounded even when a single imported turn spans
+    // thousands of items. Internal fetchTimeline retains its all-rows contract.
+    const boundedOptions = {
+      ...options,
+      limit: Math.min(40, Math.max(1, options?.limit || 40)),
+      wholeTurns: false,
+    };
     if (this.durableTimelineStore) {
-      return this.durableTimelineStore.fetchCommitted(id, options);
+      return this.durableTimelineStore.fetchCommitted(id, boundedOptions);
     }
-    return this.timelineStore.fetch(id, options);
+    return this.timelineStore.fetch(id, boundedOptions);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
