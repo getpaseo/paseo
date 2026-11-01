@@ -753,6 +753,20 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("a replacement runtime starts with the Fast the session has now, not the one it opened with", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await session.applyOptions?.({ fast_mode: false });
+
+    await omp.setMode("ask");
+
+    // The approval-mode restart starts a second runtime; it must not turn Fast back on.
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
   test("restores Fast from the initial OMP state on create and resume", async () => {
     const created = new OmpHarness();
     await created.start({ providerOptions: { fast_mode: true } });

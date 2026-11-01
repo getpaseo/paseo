@@ -847,7 +847,15 @@ export class OmpAgentSession implements AgentSession {
         fastModeActive: result.active,
       };
     }
+    if (typeof this.state.fastModeEnabled === "boolean") {
+      this.rememberFastMode(this.state.fastModeEnabled);
+    }
     return this.fastModeDifference(requested);
+  }
+
+  /** A replacement runtime starts from the Fast the session has now, not the one it opened with. */
+  private rememberFastMode(enabled: boolean): void {
+    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: enabled };
   }
 
   /** The option patch when the runtime's fast mode is not what `given` stands for; unset is off. */
@@ -2257,6 +2265,7 @@ export class OmpAgentSession implements AgentSession {
     const before = this.state.fastModeEnabled;
     this.state = await this.runtimeSession.getState();
     if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
+      this.rememberFastMode(this.state.fastModeEnabled);
       this.emit({
         type: "options_changed",
         provider: this.provider,
