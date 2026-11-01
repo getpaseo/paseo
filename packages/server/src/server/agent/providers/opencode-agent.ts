@@ -1,6 +1,6 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../option-controls.js";
-import { validateProviderOptions } from "../provider-options.js";
+import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -4965,6 +4965,12 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<void> {
+    assertChangesAreLive({
+      provider: "opencode",
+      patch: options,
+      current: this.config.providerOptions,
+      live: [OPENCODE_AUTO_ACCEPT_FEATURE_ID],
+    });
     const next = validateProviderOptions(
       "opencode",
       OpenCodeProviderOptionsSchema,

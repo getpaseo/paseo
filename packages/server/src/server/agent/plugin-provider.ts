@@ -1231,9 +1231,8 @@ class PluginAgentSession implements AgentSession {
     givenSettings: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
-    this.openOptionsPatch = Object.fromEntries(
-      Object.entries(this.settingDifferences(givenSettings)).filter(([id]) => id in givenSettings),
-    );
+    // Every setting the session opened with that was not given, including ones nobody set.
+    this.openOptionsPatch = this.settingDifferences(givenSettings);
     this.knownSettings = this.currentSettings();
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.

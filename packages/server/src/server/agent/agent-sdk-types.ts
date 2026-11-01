@@ -732,7 +732,9 @@ export interface AgentSession {
    * Apply an options patch. `options` holds only the keys the patch touches, resolved against
    * the `config.json` defaults; `null` means nothing is set for the key, so return it to the
    * session's own default if that can be done. Leave every other setting alone. Throw to reject a
-   * value; the daemon stores the patch only when this resolves, so the call is all-or-nothing.
+   * value, or a key the running session cannot apply (one the provider reads only when it
+   * opens): the daemon stores the patch only when this resolves, so a stored option always
+   * describes what runs, and the call is all-or-nothing.
    * Emit nothing from here. Return the options the session ended up with when they differ from
    * the request (a patch, `null` removes a key), for example a value it kept because it could not
    * be reverted; the daemon stores it together with the patch. When a throw leaves the session's

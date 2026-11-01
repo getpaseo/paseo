@@ -311,6 +311,27 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("rejects a live permission change the running session cannot apply", async () => {
+    const { runtime } = mockOpenCodeClient({ events: [idleEvent()] });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { permission: "allow" },
+    });
+
+    await expect(session.applyOptions?.({ permission: "deny" })).rejects.toThrow(
+      /permission.*cannot change on a running session/,
+    );
+    await expect(
+      session.applyOptions?.({ permission: "allow", auto_accept: true }),
+    ).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("stops auto-approving once auto_accept is removed", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],

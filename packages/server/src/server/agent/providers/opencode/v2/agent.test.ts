@@ -50,6 +50,27 @@ describe("OpenCode v2 session lifecycle", () => {
     await session.close();
   });
 
+  test("rejects a live permission change the running session cannot apply", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { permission: "allow" },
+    });
+
+    await expect(session.applyOptions?.({ permission: "deny" })).rejects.toThrow(
+      /permission.*cannot change on a running session/,
+    );
+    await expect(
+      session.applyOptions?.({ permission: "allow", auto_accept: true }),
+    ).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();
     harness.prompt = async (input) => {

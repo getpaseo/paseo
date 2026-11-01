@@ -1,6 +1,6 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../../option-controls.js";
-import { validateProviderOptions } from "../../../provider-options.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../../provider-options.js";
 import { OpenCodeProviderOptionsSchema } from "../options.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
@@ -371,6 +371,12 @@ export class OpenCodeV2Session implements AgentSession {
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
   async applyOptions(options: ProviderOptions) {
+    assertChangesAreLive({
+      provider: "opencode",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["auto_accept"],
+    });
     const next = validateProviderOptions(
       "opencode",
       OpenCodeProviderOptionsSchema,
