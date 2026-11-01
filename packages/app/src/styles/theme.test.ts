@@ -5,6 +5,7 @@ import {
   FONT_SIZE,
   getNextThemePreference,
   lightTheme,
+  SYSTEM_THEME_NAMES,
   THEME_OPTIONS,
 } from "./theme";
 
@@ -38,6 +39,20 @@ describe("Theme catalog", () => {
     ]);
     expect(getNextThemePreference("dark")).toBe("auto");
     expect(getNextThemePreference("pureBlack")).toBe("light");
+  });
+});
+
+describe("System theme pair", () => {
+  it("offers each theme only for the OS color scheme it is drawn for", () => {
+    expect(SYSTEM_THEME_NAMES.light).toEqual(["light"]);
+    expect(SYSTEM_THEME_NAMES.dark).toEqual([
+      "dark",
+      "zinc",
+      "midnight",
+      "claude",
+      "ghostty",
+      "pureBlack",
+    ]);
   });
 });
 

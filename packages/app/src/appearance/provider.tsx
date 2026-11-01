@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useColorScheme } from "react-native";
 import { UnistylesRuntime } from "react-native-unistyles";
 import {
   DEFAULT_THEME_PREFERENCE,
@@ -32,11 +33,13 @@ interface ContributedThemes {
 interface ApplyThemeInput {
   preference: AppSettings["theme"];
   contributedTheme: PluginThemeOption | null;
+  /** The theme System resolves to for the OS color scheme right now. */
+  systemTheme: AppSettings["systemLightTheme"] | AppSettings["systemDarkTheme"];
 }
 
 const ContributedThemesContext = createContext<ContributedThemes | null>(null);
 
-function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
+function applyTheme({ preference, contributedTheme, systemTheme }: ApplyThemeInput): void {
   if (contributedTheme) {
     const themeName = PLUGIN_THEME_NAMES[contributedTheme.theme.colorScheme];
     UnistylesRuntime.updateTheme(themeName, () => contributedTheme.theme);
@@ -47,19 +50,19 @@ function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
 
   const builtInPreference =
     preference === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : preference;
-  if (builtInPreference === "auto") {
-    UnistylesRuntime.setAdaptiveThemes(true);
-    return;
-  }
-
+  // System follows the OS here instead of Unistyles' adaptive mode, which can only swap the
+  // themes registered as `light` and `dark`.
+  const themeName = builtInPreference === "auto" ? systemTheme : builtInPreference;
   UnistylesRuntime.setAdaptiveThemes(false);
-  UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[builtInPreference]);
+  UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[themeName]);
 }
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, updateSettings, isLoading } = useAppSettings();
   const [hasAppliedAppearance, setHasAppliedAppearance] = useState(false);
   const options = usePluginThemeCatalog();
+  const systemTheme =
+    useColorScheme() === "dark" ? settings.systemDarkTheme : settings.systemLightTheme;
   const selected = useMemo(() => {
     if (settings.theme !== PLUGIN_THEME_PREFERENCE) return null;
     return options.find((option) => option.id === settings.pluginThemeId) ?? null;
@@ -67,7 +70,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-    applyTheme({ preference: settings.theme, contributedTheme: selected });
+    applyTheme({ preference: settings.theme, contributedTheme: selected, systemTheme });
     applyAppearance({
       uiFontFamily: settings.uiFontFamily,
       monoFontFamily: settings.monoFontFamily,
@@ -81,6 +84,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }, [
     isLoading,
     selected,
+    systemTheme,
     settings.theme,
     settings.uiFontFamily,
     settings.monoFontFamily,

@@ -2489,6 +2489,18 @@ export const ja: TranslationResources = {
           pureBlack: "ピュアブラック",
           auto: "システム",
         },
+        system: {
+          light: {
+            title: "ライトモード時",
+            hint: "デバイスがライトモードのときにシステムが使うテーマ",
+            accessibilityLabel: "ライトモード時: {{value}}",
+          },
+          dark: {
+            title: "ダークモード時",
+            hint: "デバイスがダークモードのときにシステムが使うテーマ",
+            accessibilityLabel: "ダークモード時: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "詳細レベル",

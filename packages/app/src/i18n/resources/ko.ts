@@ -2482,6 +2482,18 @@ export const ko: TranslationResources = {
           pureBlack: "순수 검정",
           auto: "시스템",
         },
+        system: {
+          light: {
+            title: "라이트 모드일 때",
+            hint: "기기가 라이트 모드일 때 시스템이 사용하는 테마",
+            accessibilityLabel: "라이트 모드일 때: {{value}}",
+          },
+          dark: {
+            title: "다크 모드일 때",
+            hint: "기기가 다크 모드일 때 시스템이 사용하는 테마",
+            accessibilityLabel: "다크 모드일 때: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "세부 수준",

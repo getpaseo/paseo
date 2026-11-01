@@ -23,7 +23,9 @@ import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
   PLUGIN_THEME_PREFERENCE,
+  SYSTEM_THEME_NAMES,
   THEME_OPTIONS,
+  type SystemThemeName,
   type ThemePreference,
 } from "@/styles/theme";
 import { z } from "zod";
@@ -80,6 +82,10 @@ export interface AppSettings {
   theme: ThemePreference;
   /** Which contributed theme `theme: "plugin"` selects. */
   pluginThemeId: string | null;
+  /** The theme System applies while the OS is light. */
+  systemLightTheme: SystemThemeName<"light">;
+  /** The theme System applies while the OS is dark. */
+  systemDarkTheme: SystemThemeName<"dark">;
   language: AppLanguage;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
@@ -141,6 +147,8 @@ export interface Settings extends AppSettings {
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
   pluginThemeId: null,
+  systemLightTheme: "light",
+  systemDarkTheme: "dark",
   language: "system",
   sendBehavior: "steer",
   serviceUrlBehavior: "ask",
@@ -219,6 +227,8 @@ const StoredAppSettingsSchema = z
   .looseObject({
     theme: ThemePreferenceSchema.catch(DEFAULT_THEME_PREFERENCE),
     pluginThemeId: z.string().nullable().catch(null),
+    systemLightTheme: z.enum(SYSTEM_THEME_NAMES.light).catch("light"),
+    systemDarkTheme: z.enum(SYSTEM_THEME_NAMES.dark).catch("dark"),
     language: z
       .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
       .catch("system"),
