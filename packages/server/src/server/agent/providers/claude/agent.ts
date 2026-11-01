@@ -4998,6 +4998,7 @@ class ClaudeAgentSession implements AgentSession {
         .map((item) => (item.type === "assistant_message" ? item.text : ""))
         .join("\n")
         .trim();
+      if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
       events.push(...this.sidechainTracker.finishAll("failed"));
       events.push(this.buildTurnFailedEvent(resultText || withheldText || "Claude run failed"));
       return;

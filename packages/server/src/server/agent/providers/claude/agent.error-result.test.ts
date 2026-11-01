@@ -13,6 +13,12 @@ interface ScriptedTurn {
   before?: string;
   after?: string;
   isError: boolean;
+  usage?: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    totalCostUsd: number;
+  };
 }
 
 // A query dependency that speaks Claude Code's stream interface, one scripted turn per prompt.
@@ -59,11 +65,11 @@ function scriptedQuery(turns: ScriptedTurn[]): ClaudeQueryFactory {
           num_turns: 1,
           result: turn.isError ? (turn.errorReply ?? "") : (turn.after ?? turn.errorReply ?? ""),
           stop_reason: "stop_sequence",
-          total_cost_usd: 0,
+          total_cost_usd: turn.usage?.totalCostUsd ?? 0,
           usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_input_tokens: 0,
+            input_tokens: turn.usage?.inputTokens ?? 0,
+            output_tokens: turn.usage?.outputTokens ?? 0,
+            cache_read_input_tokens: turn.usage?.cachedInputTokens ?? 0,
           },
           modelUsage: {},
           permission_denials: [],
@@ -146,6 +152,24 @@ test("a turn Claude Code ends on an API error fails with the error, shown once",
   // The session keeps working after a failed turn.
   expect(terminal(next)).toMatchObject({ type: "turn_completed" });
   expect(assistantTexts(next)).toEqual(["Done."]);
+});
+
+test("a failed turn retains its final token counts and cost", async () => {
+  const usage = {
+    inputTokens: 120,
+    cachedInputTokens: 80,
+    outputTokens: 30,
+    totalCostUsd: 0.012,
+  };
+  const [failed] = await runTurns([
+    { before: "Checking the deploy doc.", errorReply: LIMIT, isError: true, usage },
+  ]);
+
+  expect(failed).toContainEqual(
+    expect.objectContaining({ type: "usage_updated", usage: expect.objectContaining(usage) }),
+  );
+  expect(terminal(failed)).toMatchObject({ type: "turn_failed", error: LIMIT });
+  expect(assistantTexts(failed)).toEqual(["Checking the deploy doc."]);
 });
 
 test("an error reply the turn moves past is still shown", async () => {
