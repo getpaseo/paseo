@@ -12,11 +12,12 @@ import type {
  */
 export type ProviderOptionsPatch = Record<string, unknown>;
 
-export function applyProviderOptionsPatch(
-  own: ProviderOptions | undefined,
-  patch: ProviderOptionsPatch,
-): ProviderOptions {
-  const next: ProviderOptions = { ...own };
+export function applyProviderOptionsPatch(input: {
+  options: ProviderOptions | undefined;
+  patch: ProviderOptionsPatch;
+}): ProviderOptions {
+  const { options, patch } = input;
+  const next: ProviderOptions = { ...options };
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) {
       delete next[key];
@@ -83,7 +84,10 @@ export function foldHookFeatureValues<
   }
   return {
     ...rest,
-    providerOptions: applyProviderOptionsPatch(rest.providerOptions ?? undefined, patch),
+    providerOptions: applyProviderOptionsPatch({
+      options: rest.providerOptions ?? undefined,
+      patch,
+    }),
   };
 }
 
@@ -119,7 +123,10 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   // The form sends no `featureValues` when no control is set, which is still an edit of a
   // profile that may hold other options.
   if (!featureValues && !base) return rest;
-  return { ...rest, options: applyProviderOptionsPatch(base, featureValues ?? {}) };
+  return {
+    ...rest,
+    options: applyProviderOptionsPatch({ options: base, patch: featureValues ?? {} }),
+  };
 }
 
 /**
@@ -183,10 +190,11 @@ function featureFromControl(control: AgentOptionControl, effective: ProviderOpti
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
  * Apps that predate controls render `features`; build them from controls + effective options.
  */
-export function featuresFromControls(
-  controls: readonly AgentOptionControl[] | undefined,
-  options: ProviderOptions | undefined,
-): AgentFeature[] {
+export function featuresFromControls(input: {
+  controls: readonly AgentOptionControl[] | undefined;
+  options: ProviderOptions | undefined;
+}): AgentFeature[] {
+  const { controls, options } = input;
   const effective = options ?? {};
   return (controls ?? []).map((control) => featureFromControl(control, effective));
 }

@@ -2832,7 +2832,7 @@ class ClaudeAgentSession implements AgentSession {
       validateProviderOptions(
         "claude",
         ClaudeProviderOptionsSchema,
-        applyProviderOptionsPatch(this.config.providerOptions, options),
+        applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
       ) ?? {};
     if (providerOptions.fast_mode === true && !claudeModelSupportsFastMode(this.config.model)) {
       throw new Error(
@@ -2848,7 +2848,10 @@ class ClaudeAgentSession implements AgentSession {
     // Held until the runtime accepts, so a rejected change is retried instead of skipped. Only
     // this call's keys are applied, over the options as they are now: another patch may have
     // landed while the runtime was answering.
-    this.config.providerOptions = applyProviderOptionsPatch(this.config.providerOptions, options);
+    this.config.providerOptions = applyProviderOptionsPatch({
+      options: this.config.providerOptions,
+      patch: options,
+    });
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {

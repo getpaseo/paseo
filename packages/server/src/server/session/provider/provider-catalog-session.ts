@@ -396,7 +396,7 @@ export class ProviderCatalogSession {
         type: "list_provider_features_response",
         payload: {
           provider: msg.draftConfig.provider,
-          features: featuresFromControls(controls, options),
+          features: featuresFromControls({ controls, options }),
           error: null,
           fetchedAt,
           requestId: msg.requestId,

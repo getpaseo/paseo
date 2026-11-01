@@ -4974,7 +4974,7 @@ class OpenCodeAgentSession implements AgentSession {
     const next = validateProviderOptions(
       "opencode",
       OpenCodeProviderOptionsSchema,
-      applyProviderOptionsPatch(this.config.providerOptions, options),
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
     );
     if (OPENCODE_AUTO_ACCEPT_FEATURE_ID in options) {
       this.setAutoAccept(next?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true);
