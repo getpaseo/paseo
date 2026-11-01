@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderPrompt } from "@getpaseo/plugin/server/provider";
@@ -9,8 +9,6 @@ interface EncodedPrompt {
   text: string;
   nativeText: string;
 }
-
-const MAX_INLINE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export class PromptFiles {
   private directory: string | null = null;
@@ -22,16 +20,19 @@ export class PromptFiles {
       prompt.outputSchema !== undefined
     )
       throw new AntigravityError("Antigravity supports messages only");
-
+    const parts = prompt.input.content.map((part) => {
+      if (part.type === "text" || part.type === "uploaded_file") return part;
+      if (part.type === "image") return { ...part, extension: imageExtension(part.mimeType) };
+      throw new AntigravityError("Antigravity supports text, image and uploaded file content only");
+    });
     const text: string[] = [];
     const native: string[] = [];
-
-    for (const part of prompt.input.content) {
+    for (const part of parts) {
       if (part.type === "text") {
         text.push(part.text);
         native.push(part.text);
       } else if (part.type === "image") {
-        const extension = imageExtension(part.mimeType);
+        const extension = part.extension;
         if (this.directory === null) {
           this.directory = await mkdtemp(path.join(os.tmpdir(), "paseo-antigravity-images-"));
           await chmod(this.directory, 0o700);
@@ -41,31 +42,20 @@ export class PromptFiles {
         await chmod(file, 0o600);
         native.push(`Attached image: ${file}`);
       } else if (part.type === "uploaded_file") {
-        if (part.mimeType && part.mimeType.startsWith("image/")) {
+        if (part.mimeType.startsWith("image/")) {
           native.push(`Attached image: ${part.path}`);
-        } else if (part.size > MAX_INLINE_FILE_BYTES) {
-          const notice = `[Attached large file: ${part.fileName} at ${part.path} (${part.size} bytes)]`;
-          text.push(notice);
-          native.push(notice);
         } else {
-          try {
-            const content = await readFile(part.path, "utf8");
-            const fileBlock = `[File: ${part.fileName}]\n${content}`;
-            text.push(fileBlock);
-            native.push(fileBlock);
-          } catch {
-            const notice = `[Attached file: ${part.fileName} at ${part.path}]`;
-            text.push(notice);
-            native.push(notice);
-          }
+          const reference = [
+            `Uploaded file: ${part.fileName}`,
+            `Path: ${part.path}`,
+            `MIME: ${part.mimeType}`,
+            `Size: ${part.size} bytes`,
+          ].join("\n");
+          text.push(reference);
+          native.push(reference);
         }
-      } else {
-        throw new AntigravityError(
-          `Antigravity does not support content type: ${(part as { type?: string }).type ?? "unknown"}`,
-        );
       }
     }
-
     return { text: text.join("\n"), nativeText: native.join("\n") };
   }
 
