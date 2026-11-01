@@ -39,7 +39,7 @@ import type {
   AgentStreamEvent,
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
-import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
@@ -1525,6 +1525,64 @@ describe("terminal MCP tools", () => {
     });
   });
 });
+
+const CLAUDE_CATALOG_MODES: AgentMode[] = [
+  { id: "default", label: "Default" },
+  { id: "bypassPermissions", label: "Bypass", isUnattended: true },
+];
+const CODEX_CATALOG_MODES: AgentMode[] = [
+  { id: "auto", label: "Auto" },
+  { id: "full-access", label: "Full Access", isUnattended: true },
+];
+
+class ModeCatalogAgentClient implements AgentClient {
+  readonly capabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: false,
+    supportsSessionListing: false,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: false,
+  } as const;
+
+  constructor(
+    readonly provider: AgentProvider,
+    private readonly modes: AgentMode[],
+  ) {}
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async fetchCatalog() {
+    return { models: [], modes: this.modes };
+  }
+
+  async createSession(): Promise<AgentSession> {
+    throw new Error("ModeCatalogAgentClient only serves catalogs");
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    throw new Error("ModeCatalogAgentClient only serves catalogs");
+  }
+}
+
+// A real snapshot manager, so create_agent runs the provider's shared mode resolver.
+function createModeCatalogManager(): ProviderSnapshotManager {
+  return new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    providerOverrides: {
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+    },
+    extraClients: {
+      claude: new ModeCatalogAgentClient("claude", CLAUDE_CATALOG_MODES),
+      codex: new ModeCatalogAgentClient("codex", CODEX_CATALOG_MODES),
+    },
+  });
+}
 
 describe("create_agent MCP tool", () => {
   const logger = createTestLogger();
@@ -3431,6 +3489,113 @@ describe("create_agent MCP tool", () => {
       undefined,
       expect.any(Object),
     );
+  });
+
+  it("advertises the cross-provider mode rule in the create_agent description", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const { tools } = await client.listTools();
+      const createAgent = tools.find((tool) => tool.name === "create_agent")!;
+
+      expect(createAgent.description).toContain(
+        "A different provider does not inherit your mode: set settings.modeId from list_providers, or omit it if you run unattended so the child does too.",
+      );
+      expect(tools.map((tool) => tool.name)).toContain("list_providers");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  function claudeCaller(currentModeId: string): ManagedAgent {
+    return {
+      id: "parent-agent",
+      config: {},
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "claude",
+      currentModeId,
+      availableModes: CLAUDE_CATALOG_MODES,
+    } as ManagedAgent;
+  }
+
+  it("refuses to carry an attended caller's mode to a different provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(claudeCaller("default"));
+    const providerSnapshotManager = createModeCatalogManager();
+
+    try {
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+
+      await expect(
+        tool.handler({
+          ...subagentCurrentWorkspace(),
+          title: "Child",
+          provider: "codex/gpt-5.4",
+          initialPrompt: "Do work",
+        }),
+      ).rejects.toThrow(
+        "cannot inherit mode 'default' from caller (provider 'claude') for new agent (provider 'codex'). Pass an explicit mode in settings.modeId. Available modes for 'codex': auto, full-access",
+      );
+      expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+    } finally {
+      providerSnapshotManager.destroy();
+    }
+  });
+
+  it("gives an unattended caller's child the target provider's unattended mode", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(claudeCaller("bypassPermissions"));
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "full-access",
+      availableModes: CODEX_CATALOG_MODES,
+      config: { title: "Child" },
+    } as ManagedAgent);
+    const providerSnapshotManager = createModeCatalogManager();
+
+    try {
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      await tool.handler({
+        ...subagentCurrentWorkspace(),
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+      });
+
+      expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ modeId: "full-access" }),
+        undefined,
+        expect.any(Object),
+      );
+    } finally {
+      providerSnapshotManager.destroy();
+    }
   });
 });
 
