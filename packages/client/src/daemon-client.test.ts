@@ -9163,19 +9163,36 @@ describe("provider options across daemon versions", () => {
     });
   });
 
-  test("a cold legacy workspace create routes its agent's options the same way", async () => {
+  test("a legacy workspace create routes its agent's options from its own model's controls", async () => {
     const { client, sentMessages, mock } = await connect({ creationLifecycle: true });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: { ...agentSnapshot, provider: "codex", model: "mini", features: [] },
+        },
+      }),
+    );
     void client
       .createWorkspace({
         source: { kind: "directory", path: "/repo" },
         agent: {
-          config: { provider: "codex", cwd: "/repo", providerOptions: { service_tier: "fast" } },
+          config: {
+            provider: "codex",
+            cwd: "/repo",
+            model: "gpt-5.5",
+            providerOptions: { service_tier: "fast" },
+          },
         },
       } as never)
       .catch(() => {});
     await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
     const [listing] = sentMessages();
-    expect(listing).toMatchObject({ type: "list_provider_features_request" });
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "codex", cwd: "/repo", model: "gpt-5.5" },
+    });
     mock.triggerMessage(
       wrapSessionMessage({
         type: "list_provider_features_response",
@@ -9196,27 +9213,58 @@ describe("provider options across daemon versions", () => {
     });
   });
 
-  test("a legacy daemon creates an agent with control keys as feature values", async () => {
+  test("a legacy create lists the controls of its own model, whatever a snapshot showed", async () => {
     const { client, sentMessages, mock } = await connect({});
+    // A Haiku agent has no Fast control; that says nothing about Opus.
     mock.triggerMessage(
       wrapSessionMessage({
         type: "agent_update",
-        payload: { kind: "upsert", agent: { ...agentSnapshot, features: [speedFeature] } },
+        payload: {
+          kind: "upsert",
+          agent: { ...agentSnapshot, provider: "claude", model: "haiku", features: [] },
+        },
       }),
     );
     void client
       .createAgent({
         config: {
-          provider: "codex",
+          provider: "claude",
           cwd: "/repo",
-          providerOptions: { service_tier: "priority", sandbox_mode: "read-only" },
+          model: "opus",
+          modeId: "plan",
+          thinkingOptionId: "high",
+          providerOptions: { fast_mode: true, sandbox_mode: "read-only" },
         },
       })
       .catch(() => {});
     await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
-    const [request] = sentMessages();
-    expect(request.config).toMatchObject({
-      featureValues: { service_tier: "priority" },
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: {
+        provider: "claude",
+        cwd: "/repo",
+        model: "opus",
+        modeId: "plan",
+        thinkingOptionId: "high",
+      },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "claude",
+          features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: false }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    expect(sentMessages()[1].config).toMatchObject({
+      model: "opus",
+      featureValues: { fast_mode: true },
       providerOptions: { sandbox_mode: "read-only" },
     });
   });

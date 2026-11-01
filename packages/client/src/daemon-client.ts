@@ -3270,36 +3270,41 @@ export class DaemonClient {
     }
     if (options.background !== undefined) this.requireBackgroundWorkspaces();
     const config = resolveAgentConfig(options);
-    // Awaited only when there is something to learn, so other creates still send synchronously.
-    const learning = this.learnLegacyControlKeys(config);
-    if (learning) await learning;
-    const result = await this.creations.createAgent({ ...options, config });
+    const result = await this.creations.createAgent({
+      ...options,
+      config: this.carriesLegacyOptions(config)
+        ? await this.routeLegacyCreateConfig(config)
+        : config,
+    });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
   }
 
   /**
-   * A legacy daemon reads control options as `featureValues`, so routing a create's options needs
-   * the provider's feature ids. Callers never prime that: the first create for a provider lists
-   * them, and the answer is remembered with the snapshots and listings that also teach it.
+   * A legacy daemon reads control options as `featureValues`, and which options are controls
+   * depends on the config (Claude's differ by model), so a create that carries options first lists
+   * the controls for its own config. Callers never prime anything.
    */
-  private learnLegacyControlKeys(config: {
-    provider?: string;
-    cwd?: string;
-    providerOptions?: Record<string, unknown>;
-  }): Promise<void> | undefined {
-    const legacy = this.legacyProviderOptions();
-    const { provider, providerOptions } = config;
-    if (!legacy || !provider || !providerOptions || Object.keys(providerOptions).length === 0) {
-      return undefined;
-    }
-    if (legacy.knowsControlKeys(provider)) return undefined;
-    return this.listFeaturesOrThrow(provider, config.cwd || "~");
+  private carriesLegacyOptions(config: AgentSessionConfig): boolean {
+    return (
+      this.legacyProviderOptions() !== null && Object.keys(config.providerOptions ?? {}).length > 0
+    );
   }
 
-  private async listFeaturesOrThrow(provider: string, cwd: string): Promise<void> {
-    const payload = await this.listProviderFeatures({ provider, cwd });
+  private async routeLegacyCreateConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+    const payload = await this.listProviderFeatures({
+      provider: config.provider,
+      cwd: config.cwd || "~",
+      ...(config.modeId ? { modeId: config.modeId } : {}),
+      ...(config.model ? { model: config.model } : {}),
+      ...(config.thinkingOptionId ? { thinkingOptionId: config.thinkingOptionId } : {}),
+      featureValues: config.providerOptions,
+    });
     if (payload.error) throw new Error(payload.error);
+    return this.legacyOptions.routeCreateConfig(
+      config,
+      new Set((payload.features ?? []).map((feature) => feature.id)),
+    );
   }
 
   private async createLegacyAgent(
@@ -5053,9 +5058,10 @@ export class DaemonClient {
     if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
-    const agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
-    const learning = agentConfig ? this.learnLegacyControlKeys(agentConfig) : undefined;
-    if (learning) await learning;
+    let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+    if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
+      agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+    }
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,

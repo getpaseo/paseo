@@ -24,14 +24,6 @@ export function usesLegacyProviderOptions(info: ServerInfoStatusPayload): boolea
 }
 
 export class LegacyProviderOptions {
-  /** Option keys a legacy daemon exposes as features, per provider, as last seen. */
-  private readonly controlKeys = new Map<string, Set<string>>();
-
-  /** Whether the keys a provider exposes as features are known, so options can be routed. */
-  knowsControlKeys(provider: string): boolean {
-    return this.controlKeys.has(provider);
-  }
-
   /** Gives agent snapshots `controls` and `options`, built from their `features`. */
   normalize(message: SessionOutboundMessage): SessionOutboundMessage {
     switch (message.type) {
@@ -98,27 +90,42 @@ export class LegacyProviderOptions {
             config: this.daemonConfig(message.payload.config as MutableDaemonConfig),
           },
         } as SessionOutboundMessage;
-      case "list_provider_features_response":
-        // Remember the keys even when the caller used the legacy listing directly.
-        this.remember(message.payload.provider, message.payload.features);
-        return message;
       default:
         return message;
     }
   }
 
-  /** Sends control keys as `featureValues`, which is where a legacy daemon reads them. */
+  /**
+   * Splits a create's options for a legacy daemon: the ids it lists as features for that very
+   * config go out as `featureValues`, which is where it reads them, and the rest stay
+   * `providerOptions`. Which options are features depends on the model, mode and thinking level
+   * as well as the provider, so the ids come from a listing for this config, never from memory.
+   */
+  routeCreateConfig<
+    T extends {
+      providerOptions?: Record<string, unknown>;
+      featureValues?: Record<string, unknown>;
+    },
+  >(config: T, featureIds: ReadonlySet<string>): T {
+    if (!config.providerOptions) return config;
+    const featureValues: Record<string, unknown> = {};
+    const providerOptions: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(config.providerOptions)) {
+      (featureIds.has(key) ? featureValues : providerOptions)[key] = value;
+    }
+    const { providerOptions: _options, ...rest } = config;
+    return {
+      ...(rest as T),
+      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+      ...(Object.keys(featureValues).length > 0
+        ? { featureValues: { ...config.featureValues, ...featureValues } }
+        : {}),
+    };
+  }
+
+  /** Sends options as `featureValues`, which is where a legacy daemon reads them. */
   prepare(message: SessionInboundMessage): SessionInboundMessage {
     switch (message.type) {
-      case "create_agent_request":
-      case "agent.create.request":
-        return { ...message, config: this.config(message.config) };
-      case "workspace.create.request":
-        if (!message.agent) return message;
-        return {
-          ...message,
-          agent: { ...message.agent, config: this.config(message.agent.config) },
-        };
       case "agent.config.apply.request": {
         const { options, ...config } = message.config;
         if (!options) return message;
@@ -127,9 +134,17 @@ export class LegacyProviderOptions {
           config: { ...config, featureValues: { ...config.featureValues, ...options } },
         };
       }
-      case "list_commands_request":
-        if (!message.draftConfig) return message;
-        return { ...message, draftConfig: this.config(message.draftConfig) };
+      case "list_commands_request": {
+        if (!message.draftConfig?.providerOptions) return message;
+        const { providerOptions, ...draftConfig } = message.draftConfig;
+        return {
+          ...message,
+          draftConfig: {
+            ...draftConfig,
+            featureValues: { ...draftConfig.featureValues, ...providerOptions },
+          },
+        };
+      }
       case "set_daemon_config_request":
         if (!message.config.agentProfiles) return message;
         return {
@@ -149,7 +164,6 @@ export class LegacyProviderOptions {
     legacy: ListProviderFeaturesResponseMessage["payload"],
   ): ProviderControlsListResponseMessage["payload"] {
     const { features, ...rest } = legacy;
-    this.remember(legacy.provider, features);
     return {
       ...rest,
       ...(features
@@ -165,49 +179,12 @@ export class LegacyProviderOptions {
 
   private readonly snapshot = (agent: AgentSnapshotPayload): AgentSnapshotPayload => {
     if (agent.controls || !agent.features) return agent;
-    this.remember(agent.provider, agent.features);
     return {
       ...agent,
       controls: controlsFromFeatures(agent.features),
       options: optionsFromFeatures(agent.features),
     };
   };
-
-  private remember(provider: string, features: Parameters<typeof controlsFromFeatures>[0]): void {
-    if (features) this.controlKeys.set(provider, new Set(features.map((feature) => feature.id)));
-  }
-
-  private config<
-    T extends {
-      provider?: string;
-      providerOptions?: Record<string, unknown>;
-      featureValues?: Record<string, unknown>;
-    },
-  >(config: T): T {
-    if (!config.provider || !config.providerOptions) return config;
-    const { featureValues, providerOptions } = this.split(config.provider, config.providerOptions);
-    const { providerOptions: _options, ...rest } = config;
-    return {
-      ...(rest as T),
-      ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
-      ...(Object.keys(featureValues).length > 0
-        ? { featureValues: { ...config.featureValues, ...featureValues } }
-        : {}),
-    };
-  }
-
-  private split(
-    provider: string,
-    options: Record<string, unknown>,
-  ): { featureValues: Record<string, unknown>; providerOptions: Record<string, unknown> } {
-    const keys = this.controlKeys.get(provider);
-    const featureValues: Record<string, unknown> = {};
-    const providerOptions: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(options)) {
-      (keys?.has(key) ? featureValues : providerOptions)[key] = value;
-    }
-    return { featureValues, providerOptions };
-  }
 }
 
 /** A legacy daemon stores a profile's options under `featureValues`. */

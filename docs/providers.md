@@ -82,8 +82,9 @@ or without a control.
   profile saves its stored options plus the form's edits, so options no control draws survive an
   edit. A daemon without `server_info.features.providerOptionControls` sends `features` and
   `featureValues`; `packages/client/src/compat/legacy-provider-options.ts` is the one place that
-  turns those into `controls` and `options` and back, so nothing in the app branches on it. Its
-  first create for a provider lists that provider's features to learn which options go out as
+  turns those into `controls` and `options` and back, so nothing in the app branches on it. A
+  create that carries options first lists the controls for its own provider, model, mode and
+  thinking level, since which options are controls differs by model, and sends those as
   `featureValues`; callers do not prime anything.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
   `options_changed` event. The daemon stores and forwards it and does not push the old value back.
