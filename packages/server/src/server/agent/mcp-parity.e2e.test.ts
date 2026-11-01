@@ -946,6 +946,35 @@ describe("Suite C: Schedule Tools", () => {
     }
   });
 
+  test("create_schedule and update_schedule set archive on finish", async () => {
+    let scheduleId: string | null = null;
+    try {
+      const created = await callToolStructured(topLevelClient, "create_schedule", {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        name: "Parity archive on finish schedule",
+        provider: "claude",
+        archiveOnFinish: false,
+      });
+      scheduleId = str(created.id);
+      expect(created.target).toMatchObject({
+        type: "new-agent",
+        config: { archiveOnFinish: false },
+      });
+
+      const updated = await callToolStructured(topLevelClient, "update_schedule", {
+        id: scheduleId,
+        archiveOnFinish: true,
+      });
+      expect(updated.target).toMatchObject({
+        type: "new-agent",
+        config: { archiveOnFinish: true },
+      });
+    } finally {
+      await deleteScheduleIfPresent(scheduleId);
+    }
+  });
+
   test("inspect_schedule returns details", async () => {
     let scheduleId: string | null = null;
     try {

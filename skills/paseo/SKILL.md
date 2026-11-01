@@ -117,7 +117,7 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 
 ## Schedules and heartbeats
 
-**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.
+**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `archiveOnFinish`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents. Runs archive their workspace when they end; pass `archiveOnFinish: false` when someone reads or answers the run afterward.
 
 **`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `maxRuns`, `expiresIn`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation.
 

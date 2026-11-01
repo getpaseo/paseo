@@ -40,7 +40,7 @@ worktree 默认存放在 `$PASEO_HOME/worktrees/` 下，按源检出路径的哈
 3. 对照基础分支审查 diff
 4. 合并或归档该工作区；使用该 worktree 的最后一个工作区被归档后，Paseo 会运行 teardown 并删除 worktree
 
-定时任务的运行默认会在结束时归档其工作区。在定时任务的应用表单中关闭 **Archive on finish**，即可[保留运行工作区](/docs/schedules#keep-run-workspaces)及其 worktree，直到你手动归档。
+定时任务的运行默认会在结束时归档其工作区。关闭 **Archive on finish**，即可[保留运行工作区](/docs/schedules#keep-run-workspaces)及其 worktree，直到你手动归档。
 
 ## 创建由 worktree 支撑的工作区 {#create-a-worktree-backed-workspace}
 
