@@ -89,14 +89,14 @@ describe("Codex custom provider archive", () => {
     for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
   });
 
-  test("archiving hides the session from Import session and unarchiving lists it again", async () => {
+  test("imports an archived Codex session as the original agent", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "codex-custom-archive-"));
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const codexHome = path.join(root, "codex-home");
     mkdirSync(codexHome);
     const cwd = path.join(root, "project");
     mkdirSync(cwd);
-    const { baseUrl, server } = await startResponsesEndpoint();
+    const { baseUrl, server, requestCount } = await startResponsesEndpoint();
     cleanups.push(() => closeServer(server));
 
     const daemon = await createTestPaseoDaemon({
@@ -121,15 +121,29 @@ describe("Codex custom provider archive", () => {
       config: { provider: "my-codex", cwd, model: "mock-model", modeId: "full-access" },
     });
     await manager.runAgent(agent.id, "hello from the custom provider");
-    const importable = async () =>
-      (await manager.listImportableSessions({ cwd, providerFilter: new Set(["my-codex"]) }))
-        .sessions;
-    expect(await importable()).toHaveLength(1);
+    const importable = () => client.fetchRecentProviderSessions({ cwd, providers: ["my-codex"] });
+    expect((await importable()).entries).toEqual([]);
 
     await client.archiveAgent(agent.id);
-    expect(await importable()).toEqual([]);
+    const archived = await importable();
+    expect(archived.providerErrors ?? []).toEqual([]);
+    expect(archived.entries).toHaveLength(1);
+    expect(archived.entries[0]).toMatchObject({
+      providerId: "my-codex",
+      cwd,
+      firstPromptPreview: "hello from the custom provider",
+    });
 
-    await client.refreshAgent(agent.id);
-    expect(await importable()).toHaveLength(1);
+    const restored = await client.importAgent({
+      providerId: "my-codex",
+      providerHandleId: archived.entries[0].providerHandleId,
+      cwd,
+    });
+    expect(restored.id).toBe(agent.id);
+    expect((await importable()).entries).toEqual([]);
+
+    const requestsBeforeFollowUp = requestCount();
+    await manager.runAgent(restored.id, "hello again after import");
+    expect(requestCount()).toBeGreaterThan(requestsBeforeFollowUp);
   }, 120_000);
 });
