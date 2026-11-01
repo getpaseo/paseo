@@ -71,7 +71,8 @@ import { useRevealActiveItem } from "@/components/ui/scroll-reveal";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
-import { pickDirectory } from "@/desktop/pick-directory";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { browseForProjectDirectory } from "@/add-project-flow/browse-directory";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
@@ -379,6 +380,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const host = hostId ? state.hosts.find((candidate) => candidate.serverId === hostId) : null;
   const client = useHostRuntimeClient(hostId ?? "");
   const isLocalDaemon = useIsLocalDaemon(hostId ?? "");
+  const { settings: desktopSettings, updateSettings: updateDesktopSettings } = useDesktopSettings();
   const recommendedPaths = useRecommendedProjectPaths(hostId);
   const openProject = useOpenProject(hostId);
   const cloneGithubProject = useCloneGithubProject(hostId);
@@ -519,7 +521,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     if (!hostId || !isLocalDaemon || browseInFlightRef.current) return;
     browseInFlightRef.current = true;
     try {
-      const path = await pickDirectory();
+      const path = await browseForProjectDirectory({
+        projects: desktopSettings.projects,
+        updateSettings: updateDesktopSettings,
+      });
       if (path) await openAddedProject(path, "method");
     } catch {
       setState((current) =>
@@ -528,7 +533,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     } finally {
       browseInFlightRef.current = false;
     }
-  }, [hostId, isLocalDaemon, openAddedProject]);
+  }, [desktopSettings.projects, hostId, isLocalDaemon, openAddedProject, updateDesktopSettings]);
 
   const selectMethod = useCallback(
     (method: AddProjectMethodId) => {

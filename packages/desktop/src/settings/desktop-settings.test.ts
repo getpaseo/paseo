@@ -86,6 +86,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
     });
   });
 
@@ -108,6 +109,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
     });
     expect(files).toEqual(["desktop-settings.json"]);
   });
@@ -275,6 +277,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,
       },
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
     });
     expect(ignoredSecondMigration).toEqual(migrated);
   });
@@ -317,6 +320,7 @@ describe("desktop-settings", () => {
       releaseChannel: "beta",
       notifications: { playSound: false },
       daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: false },
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
     });
   });
 
@@ -362,5 +366,94 @@ describe("desktop-settings", () => {
 
     expect(persisted.settings.releaseChannel).toBe("stable");
     expect(persisted.settings.tray).toEqual({ enabled: true });
+  });
+
+  it("loads a settings file written before browse directories existed", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: {
+          releaseChannel: "beta",
+          notifications: { playSound: false },
+          daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+        },
+        migrations: { legacyRendererSettingsImported: true, daemonStopOnQuitDefaultApplied: true },
+      }),
+    );
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    const loaded = await store.get();
+    const patched = await store.patch({ projects: { lastBrowseDirectory: "/Users/me/Developer" } });
+
+    expect(loaded).toEqual({
+      releaseChannel: "beta",
+      notifications: { playSound: false },
+      daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
+    });
+    expect(patched).toEqual({
+      ...loaded,
+      projects: { defaultBrowseDirectory: null, lastBrowseDirectory: "/Users/me/Developer" },
+    });
+  });
+
+  it("sets and clears the Add Project browse directories", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    await store.patch({
+      projects: {
+        defaultBrowseDirectory: "/Users/me/Developer",
+        lastBrowseDirectory: "/Users/me/src",
+      },
+    });
+    const cleared = await store.patch({ projects: { defaultBrowseDirectory: null } });
+    const reloaded = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(cleared.projects).toEqual({
+      defaultBrowseDirectory: null,
+      lastBrowseDirectory: "/Users/me/src",
+    });
+    expect(reloaded.projects).toEqual(cleared.projects);
+  });
+
+  it("ignores unusable browse directory patches", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    await store.patch({ projects: { lastBrowseDirectory: "/Users/me/Developer" } });
+    const next = await store.patch({
+      projects: { defaultBrowseDirectory: "  ", lastBrowseDirectory: 42 },
+    });
+
+    expect(next.projects).toEqual({
+      defaultBrowseDirectory: null,
+      lastBrowseDirectory: "/Users/me/Developer",
+    });
+  });
+
+  it("coerces invalid persisted browse directories to null", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: { projects: { defaultBrowseDirectory: 7, lastBrowseDirectory: "/Users/me/src" } },
+        migrations: { legacyRendererSettingsImported: true, daemonStopOnQuitDefaultApplied: true },
+      }),
+    );
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.projects).toEqual({
+      defaultBrowseDirectory: null,
+      lastBrowseDirectory: "/Users/me/src",
+    });
   });
 });
