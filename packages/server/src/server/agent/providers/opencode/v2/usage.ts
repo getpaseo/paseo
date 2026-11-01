@@ -21,7 +21,10 @@ export class SessionUsage {
   private reports: Promise<void> = Promise.resolve();
   constructor(private readonly options: UsageOptions) {}
   observe(event: OpenCodeEvent) {
-    if (event.type !== "session.step.ended") return;
+    // OpenCode 2.1 and later report per-step usage through session.usage.updated;
+    // older servers attach the same token shape to session.step.ended. Accept
+    // both so the context meter keeps resolving on either server generation.
+    if (event.type !== "session.step.ended" && event.type !== "session.usage.updated") return;
     const { tokens } = event.data;
     // Reports stay in step order while a model's context limit is still being looked up.
     this.reports = this.reports
