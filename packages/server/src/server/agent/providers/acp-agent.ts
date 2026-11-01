@@ -334,6 +334,20 @@ const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 const COMMAND_INVENTORY_QUIET_MS = 600;
 const COMMAND_INVENTORY_POLL_MS = 25;
 
+/**
+ * The stop reasons that mean the provider ran out of room rather than finished.
+ *
+ * `end_turn` is the ordinary finish; the rest are budgets or a refusal, and the turn is
+ * incomplete when the provider reports one of them.
+ */
+function isBudgetStopReason(
+  stopReason: string | undefined,
+): stopReason is "max_turn_requests" | "max_tokens" | "refusal" {
+  return (
+    stopReason === "max_turn_requests" || stopReason === "max_tokens" || stopReason === "refusal"
+  );
+}
+
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
     type: error instanceof Error ? error.name : typeof error,
@@ -3342,6 +3356,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           provider: this.provider,
           usage: this.currentTurnUsage,
           turnId,
+          // A budget stop means the provider ran out of room, not that it finished. The UI
+          // shows it as a truncated turn so the user knows the task is unfinished.
+          ...(isBudgetStopReason(response.stopReason) ? { stopReason: response.stopReason } : {}),
         });
         break;
     }

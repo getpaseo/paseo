@@ -784,6 +784,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
     usage: AgentUsageSchema.optional(),
+    stopReason: z.enum(["end_turn", "max_turn_requests", "max_tokens", "refusal"]).optional(),
   }),
   z.object({
     type: z.literal("turn_failed"),

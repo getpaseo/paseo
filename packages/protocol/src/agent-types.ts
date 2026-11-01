@@ -3,6 +3,21 @@ import type { AgentAttachment } from "./messages.js";
 
 export type AgentProvider = string;
 
+/**
+ * Why a provider ended a turn.
+ *
+ * `end_turn` is the ordinary case. The budget reasons mean the provider stopped
+ * because it ran out of room rather than because it finished:
+ *
+ * - `max_turn_requests` — the provider's own per-prompt turn cap was reached
+ * - `max_tokens` — the provider's output token cap was reached
+ * - `refusal` — the provider declined to continue
+ *
+ * A provider that reports a budget reason stopped mid-task, so the UI shows it
+ * as a truncated turn rather than a finished one.
+ */
+export type AgentTurnStopReason = "end_turn" | "max_turn_requests" | "max_tokens" | "refusal";
+
 export interface AgentMetadata {
   [key: string]: unknown;
 }
@@ -390,7 +405,20 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      /**
+       * Why the provider ended the turn, when it says.
+       *
+       * A provider that stops because it hit a budget (a turn cap, a token cap) reports the
+       * same event as a finished turn, so without this the UI cannot tell a truncated turn
+       * from a completed one.
+       */
+      stopReason?: AgentTurnStopReason;
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "mode_changed";
