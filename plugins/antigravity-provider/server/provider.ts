@@ -119,9 +119,13 @@ function createConnection(
         await session(input.sessionId).interrupt();
         break;
       case "session.close": {
-        await session(input.sessionId).close();
-        sessions.delete(input.sessionId);
-        emit({ type: "session.closed", sessionId: input.sessionId });
+        const opened = session(input.sessionId);
+        try {
+          await opened.close();
+        } finally {
+          sessions.delete(input.sessionId);
+          emit({ type: "session.closed", sessionId: input.sessionId });
+        }
         break;
       }
       default:
@@ -163,7 +167,12 @@ function createConnection(
       if (closed) return;
       closed = true;
       await pending;
-      await Promise.all([...sessions.values()].map((opened) => opened.close()));
+      const results = await Promise.allSettled(
+        [...sessions.values()].map((opened) => opened.close()),
+      );
+      for (const result of results)
+        if (result.status === "rejected")
+          console.error("Antigravity session cleanup failed", result.reason);
       sessions.clear();
       listeners.clear();
     },
