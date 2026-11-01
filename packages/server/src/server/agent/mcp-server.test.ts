@@ -5098,6 +5098,40 @@ describe("create_schedule MCP tool", () => {
     });
   });
 
+  it.each([false, true])(
+    "passes archiveOnFinish=%s to the new-agent target",
+    async (archiveOnFinish) => {
+      const { agentManager, agentStorage } = createTestDeps();
+      const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+        createStoredSchedule(input),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        scheduleService: { createOrReplace } as unknown as ScheduleService,
+        logger,
+      });
+      const tool = registeredTool(server, "create_schedule");
+
+      await invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        provider: "codex",
+        archiveOnFinish,
+      });
+
+      expect(createOrReplace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: {
+            type: "new-agent",
+            config: { provider: "codex", cwd: process.cwd(), archiveOnFinish },
+          },
+        }),
+      );
+    },
+  );
+
   it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
@@ -5384,6 +5418,27 @@ describe("update_schedule MCP tool", () => {
       id: "schedule-1",
       name: "updated name",
       prompt: "new prompt",
+    });
+  });
+
+  it.each([false, true])("patches archiveOnFinish to %s", async (archiveOnFinish) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = makeStoredSchedule();
+    const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: scheduleServiceWithUpdate(update, stored),
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await invokeToolWithParsedInput(tool, { id: "schedule-1", archiveOnFinish });
+
+    expect(update).toHaveBeenCalledWith({
+      id: "schedule-1",
+      newAgentConfig: { archiveOnFinish },
     });
   });
 
