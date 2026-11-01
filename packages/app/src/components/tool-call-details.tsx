@@ -25,6 +25,7 @@ import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
@@ -157,6 +158,17 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
   const normalizedCommand = command.replace(/\n+$/, "");
   const commandOutput = (output ?? "").replace(/^\n+/, "");
   const hasOutput = commandOutput.length > 0;
+  // Compact screens wrap long commands and output instead of hiding them behind a sideways scroll.
+  const wrapLines = useIsCompactFormFactor();
+  const content = (
+    <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
+      <Text selectable style={wrapLines ? styles.wrappedScrollText : styles.scrollText}>
+        <Text style={styles.shellPrompt}>$ </Text>
+        {normalizedCommand}
+        {hasOutput ? `\n\n${commandOutput}` : ""}
+      </Text>
+    </View>
+  );
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
@@ -166,20 +178,18 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
           nestedScrollEnabled
           showsVerticalScrollIndicator
         >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            contentContainerStyle={styles.codeHorizontalContent}
-          >
-            <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
-              <Text selectable style={styles.scrollText}>
-                <Text style={styles.shellPrompt}>$ </Text>
-                {normalizedCommand}
-                {hasOutput ? `\n\n${commandOutput}` : ""}
-              </Text>
-            </View>
-          </ScrollView>
+          {wrapLines ? (
+            content
+          ) : (
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              contentContainerStyle={styles.codeHorizontalContent}
+            >
+              {content}
+            </ScrollView>
+          )}
         </ScrollView>
       </View>
     </View>
@@ -704,6 +714,18 @@ const styles = StyleSheet.create((theme) => {
         ? {
             whiteSpace: "pre",
             overflowWrap: "normal",
+          }
+        : null),
+    },
+    wrappedScrollText: {
+      fontFamily: theme.fontFamily.mono,
+      fontSize: theme.fontSize.code,
+      color: theme.colors.foreground,
+      lineHeight: 18,
+      ...(isWeb
+        ? {
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
           }
         : null),
     },
