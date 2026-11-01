@@ -6879,39 +6879,6 @@ function readClaudeCustomTitleFromRecord(record: Buffer): string | null {
 }
 
 /**
- * Reads the records of one window back to front, reporting where the first of
- * them starts: what precedes that is a record the window cut in half, which the
- * read before it completes.
- */
-function scanClaudeCustomTitleBackwards(window: Buffer): {
-  title: string | null;
-  recordStart: number;
-} {
-  if (!window.includes(CLAUDE_CUSTOM_TITLE_NEEDLE)) {
-    // Nothing here to parse. A record the window cut in half is carried over
-    // whole rather than split, so a needle inside it is still seen once the read
-    // before it completes that record.
-    const firstNewline = window.indexOf(10);
-    return { title: null, recordStart: firstNewline === -1 ? window.length : firstNewline };
-  }
-  // A newline never falls inside a UTF-8 sequence, so splitting the bytes on it
-  // leaves every complete record decodable on its own.
-  let recordEnd = window.length;
-  for (
-    let at = window.lastIndexOf(10);
-    at >= 0;
-    at = at === 0 ? -1 : window.lastIndexOf(10, at - 1)
-  ) {
-    const title = readClaudeCustomTitleFromRecord(window.subarray(at + 1, recordEnd));
-    if (title) {
-      return { title, recordStart: recordEnd };
-    }
-    recordEnd = at;
-  }
-  return { title: null, recordStart: recordEnd };
-}
-
-/**
  * The `custom-title` record is re-emitted every time the session is saved, so
  * the current name is the last usable one in the file. Reading backwards a chunk
  * at a time finds it without walking the transcript, which matters because
@@ -6931,23 +6898,31 @@ async function readLastClaudeCustomTitle(filePath: string): Promise<string | nul
       );
     }
     let end = stats.size;
-    // What precedes the window's first newline is the tail of a record that the
-    // next read backwards completes.
-    let pending = Buffer.alloc(0);
+    // Retain unfinished record pieces in reverse file order. Assemble each
+    // complete record once, so a large tool/image record costs linear work.
+    let pieces: Buffer[] = [];
     while (end > 0) {
       const length = Math.min(CLAUDE_TITLE_SCAN_CHUNK_BYTES, end);
       const chunk = Buffer.alloc(length);
       await handle.read(chunk, 0, length, end - length);
-      const window = pending.length > 0 ? Buffer.concat([chunk, pending]) : chunk;
-      const scan = scanClaudeCustomTitleBackwards(window);
-      if (scan.title) {
-        return scan.title;
+      let recordEnd = chunk.length;
+      for (
+        let at = chunk.lastIndexOf(10);
+        at >= 0;
+        at = at === 0 ? -1 : chunk.lastIndexOf(10, at - 1)
+      ) {
+        pieces.push(chunk.subarray(at + 1, recordEnd));
+        const record = Buffer.concat(pieces.toReversed());
+        const title = readClaudeCustomTitleFromRecord(record);
+        if (title) return title;
+        pieces = [];
+        recordEnd = at;
       }
-      pending = Buffer.from(window.subarray(0, scan.recordStart));
+      if (recordEnd > 0) pieces.push(chunk.subarray(0, recordEnd));
       end -= length;
     }
     // The first record in the file has no newline in front of it.
-    return readClaudeCustomTitleFromRecord(pending);
+    return readClaudeCustomTitleFromRecord(Buffer.concat(pieces.toReversed()));
   } finally {
     await handle.close();
   }

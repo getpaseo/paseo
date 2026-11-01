@@ -282,4 +282,19 @@ describe("importing a renamed Claude session", () => {
 
     expect(imported.config.title).toBe("Scrollback review");
   });
+
+  test("imports a large record after the last rename without repeatedly copying it", async () => {
+    const sessionId = "large-record-after-rename";
+    await writeSession({
+      sessionId,
+      records: [
+        { type: "custom-title", customTitle: "Large attachment review", sessionId },
+        userRecord({ sessionId, content: "x".repeat(96 * 1024 * 1024) }),
+      ],
+    });
+
+    const imported = await importSession(sessionId);
+
+    expect(imported.config.title).toBe("Large attachment review");
+  });
 });
