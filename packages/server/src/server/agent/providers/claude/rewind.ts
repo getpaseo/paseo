@@ -1,13 +1,10 @@
 import { createReadStream } from "node:fs";
-import { appendFile, readFile } from "node:fs/promises";
-import path from "node:path";
 import { createInterface } from "node:readline";
-import {
-  forkSession as claudeForkSession,
-  type Query,
-  type SessionStore,
-  type SessionStoreEntry,
-} from "@anthropic-ai/claude-agent-sdk";
+import { Worker } from "node:worker_threads";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
+import pLimit from "p-limit";
+import { resolveWorkerEntrypoint } from "../../../../utils/worker-entrypoint.js";
+import type { ClaudeForkReply, ClaudeForkRequest } from "./rewind-worker.js";
 
 export interface ClaudeRewindSdk {
   forkSession(
@@ -16,60 +13,42 @@ export interface ClaudeRewindSdk {
   ): Promise<{ sessionId: string }>;
 }
 
-// On its own, the SDK looks for the session under the daemon's CLAUDE_CONFIG_DIR, while a
-// provider can point Claude Code at another one. Forking through a store rooted at the
-// transcript's folder reads the session where Claude Code wrote it and writes the fork beside it.
+const source = import.meta.url.endsWith(".ts");
+const workerUrl = new URL(source ? "./rewind-worker.ts" : "./rewind-worker.js", import.meta.url);
+const rewindWorker = resolveWorkerEntrypoint(workerUrl);
+const forks = pLimit(1);
+
 export const realClaudeRewindSdk: ClaudeRewindSdk = {
   forkSession: (sessionId, options) =>
-    claudeForkSession(sessionId, {
-      upToMessageId: options.upToMessageId,
-      sessionStore: projectFolderSessionStore(path.dirname(options.transcriptPath)),
-    }),
+    forks(() =>
+      forkInWorker({
+        sessionId,
+        upToMessageId: options.upToMessageId,
+        transcriptPath: options.transcriptPath,
+      }),
+    ),
 };
 
-function projectFolderSessionStore(projectFolder: string): SessionStore {
-  const transcriptPath = (sessionId: string) => path.join(projectFolder, `${sessionId}.jsonl`);
-  return {
-    async load({ sessionId }) {
-      let text: string;
-      try {
-        text = await readFile(transcriptPath(sessionId), "utf8");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-        throw error;
+function forkInWorker(request: ClaudeForkRequest): Promise<{ sessionId: string }> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(rewindWorker.entrypoint, {
+      eval: rewindWorker.eval,
+      execArgv: [],
+      workerData: request,
+    });
+    worker.once("message", (reply: ClaudeForkReply) => {
+      void worker.terminate();
+      if (reply.kind === "forked") {
+        resolve({ sessionId: reply.sessionId });
+        return;
       }
-      return parseTranscriptEntries(text);
-    },
-    async append({ sessionId }, entries) {
-      const lines = entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
-      await appendFile(transcriptPath(sessionId), lines, "utf8");
-    },
-  };
-}
-
-function parseTranscriptEntries(text: string): SessionStoreEntry[] {
-  const entries: SessionStoreEntry[] = [];
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      // Skip a line that is not JSON, as the SDK's own transcript reader does.
-      continue;
-    }
-    if (isSessionStoreEntry(parsed)) entries.push(parsed);
-  }
-  return entries;
-}
-
-function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as { type?: unknown }).type === "string"
-  );
+      const error = new Error(reply.message);
+      error.stack = reply.stack;
+      reject(Object.assign(error, reply.properties));
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) => reject(new Error(`Claude rewind worker exited (code ${code})`)));
+  });
 }
 
 /**
