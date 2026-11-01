@@ -12895,6 +12895,15 @@ describe("agent options", () => {
     expect(published.every((options) => options?.service_tier === "slow")).toBe(true);
   });
 
+  test("an option the session dropped when opening does not come back from a configured default", async () => {
+    const { manager, agentId } = await createOptionsAgent(undefined, { service_tier: null });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.effectiveOptions).toEqual({});
+    await manager.markAgentUnread(agentId);
+    expect(toAgentPayload(manager.getAgent(agentId)!).options).toEqual({});
+  });
+
   test("an option without a control is settable through the patch and readable in the snapshot", async () => {
     const { manager, client, storage, agentId } = await createOptionsAgent();
 

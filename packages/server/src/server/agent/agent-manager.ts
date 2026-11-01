@@ -3910,6 +3910,12 @@ export class AgentManager {
         resolvedAgentId,
         session,
         config,
+        // Defaults merge into what the session was given; what it reports it ended up with comes
+        // after, so an option it dropped does not come back from a default.
+        effectiveOptions: applyProviderOptionsPatch({
+          options: this.effectiveOptionsFor(openedConfig.provider, openedConfig.providerOptions),
+          patch: session.openOptionsPatch ?? {},
+        }),
         now,
         durableTimelineHasRows,
         options,
@@ -4054,6 +4060,7 @@ export class AgentManager {
     resolvedAgentId: string;
     session: AgentSession;
     config: AgentSessionConfig;
+    effectiveOptions: ProviderOptions;
     now: Date;
     durableTimelineHasRows: boolean;
     options:
@@ -4073,7 +4080,15 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const {
+      resolvedAgentId,
+      session,
+      config,
+      effectiveOptions,
+      now,
+      durableTimelineHasRows,
+      options,
+    } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -4085,7 +4100,7 @@ export class AgentManager {
       capabilities: session.capabilities,
       config,
       // What the session opened with. Provider defaults edited later reach it when it next opens.
-      effectiveOptions: this.effectiveOptionsFor(config.provider, config.providerOptions),
+      effectiveOptions,
       runtimeInfo: undefined,
       lifecycle: "initializing",
       createdAt: options?.createdAt ?? now,
