@@ -9,6 +9,9 @@ import {
   expectBothConsecutiveTools,
   trackPluginChatRecovery,
   reconnectPluginChat,
+  withRepeatedOutputTimeline,
+  readOldestPluginReplacement,
+  expectOldestPluginReplacementReadable,
 } from "../support/helpers/plugin-timeline";
 
 for (const width of [1100, 390]) {
@@ -53,4 +56,16 @@ test("inline-thinking example renders a streamed thought through host UI", async
   page,
 }, info) => {
   await viewInlineThinkingExample(page, info);
+});
+
+test("keeps older plugin replacements readable when source messages reuse local output IDs", async ({
+  page,
+}, info) => {
+  await withRepeatedOutputTimeline(page, info, async () => {
+    await readOldestPluginReplacement(page);
+    await expectOldestPluginReplacementReadable(page);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await readOldestPluginReplacement(page);
+    await expectOldestPluginReplacementReadable(page);
+  });
 });

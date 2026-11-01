@@ -103,7 +103,9 @@ function transformSourceItem(
   return transformed.map((pluginItem) => {
     const projected: PluginTimelineStreamItem = {
       kind: "plugin",
-      id: `${pluginItem.pluginId}/${pluginItem.id}`,
+      // Output IDs are local to a source item. Encode each part so separators in
+      // source or output IDs cannot alias another replacement.
+      id: JSON.stringify([pluginItem.pluginId, item.id, pluginItem.id]),
       sourceId: item.id,
       timestamp: item.timestamp,
       pluginId: pluginItem.pluginId,

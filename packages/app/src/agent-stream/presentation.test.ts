@@ -200,7 +200,9 @@ describe("stream presentation through installed plugins", () => {
     const source = rows(harness.source());
 
     expect(source).toMatchObject([{ kind: "user_message", id: "prompt-1" }]);
-    expect(rendered).toMatchObject([{ kind: "plugin", id: "probe-plugin/prompt-1/0" }]);
+    expect(rendered).toMatchObject([
+      { kind: "plugin", sourceId: "prompt-1", pluginItemId: "prompt-1/0" },
+    ]);
     // The chat outline jumps to the source id; the row it lands on is the plugin's.
     expect(rendered.map(getStreamItemMessageId)).toEqual(["prompt-1"]);
   });

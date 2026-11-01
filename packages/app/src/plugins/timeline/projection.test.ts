@@ -14,6 +14,65 @@ function thought(text: string, status: "loading" | "ready" = "loading"): StreamI
 }
 
 describe("plugin timeline projection", () => {
+  it("keeps repeated plugin output IDs distinct across source messages", () => {
+    const transform: TimelineItemTransform = ({ item }) => [
+      {
+        type: "plugin",
+        id: "part-0",
+        pluginId: "split",
+        kind: "part",
+        version: 1,
+        data: { text: item.type === "assistant_message" ? item.text : "" },
+      },
+    ];
+    const first: StreamItem = {
+      kind: "assistant_message",
+      id: "message-1",
+      text: "Short",
+      timestamp: new Date("2026-01-01T00:00:00.000Z"),
+    };
+    const second: StreamItem = { ...first, id: "message-2", text: "A much longer reply" };
+    const rows = projectPluginTimelineItems([first, second], transform);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2);
+    expect(rows).toMatchObject([
+      { sourceId: "message-1", pluginItemId: "part-0", data: { text: "Short" } },
+      { sourceId: "message-2", pluginItemId: "part-0", data: { text: "A much longer reply" } },
+    ]);
+    const updated = projectPluginTimelineItems(
+      [{ ...second, text: "Updated reply" }],
+      transform,
+      "streaming",
+    );
+    expect(updated[0].id).toBe(rows[1].id);
+    const completed = projectPluginTimelineItems([{ ...second, text: "Final reply" }], transform);
+    expect(completed[0].id).toBe(rows[1].id);
+    const prepended = projectPluginTimelineItems(
+      [{ ...first, id: "older-message" }, first, second],
+      transform,
+    );
+    expect(prepended.slice(1).map((row) => row.id)).toEqual(rows.map((row) => row.id));
+  });
+
+  it("keeps source and output ID separators unambiguous", () => {
+    const rows = projectPluginTimelineItems(
+      [
+        { ...thought("First"), id: "message/a" },
+        { ...thought("Second"), id: "message" },
+      ],
+      ({ sourceId }) => [
+        {
+          type: "plugin",
+          id: sourceId === "message/a" ? "b" : "a/b",
+          pluginId: "split",
+          kind: "part",
+          version: 1,
+          data: null,
+        },
+      ],
+    );
+    expect(rows[0].id).not.toBe(rows[1].id);
+  });
+
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
     const source: StreamItem = {
@@ -58,7 +117,8 @@ describe("plugin timeline projection", () => {
     expect(projectPluginTimelineItems([thought("First")], transform)).toMatchObject([
       {
         kind: "plugin",
-        id: "inline-thinking/thought-1/0",
+        sourceId: "thought-1",
+        pluginItemId: "thought-1/0",
         data: { text: "First", phase: "streaming" },
       },
     ]);
@@ -145,10 +205,11 @@ describe("plugin timeline projection", () => {
     ]);
     const filtered = projectPluginTimelineItems([source], () => []);
 
-    expect(exploded.map((item) => item.id)).toEqual([
-      "split/thought-1/left",
-      "split/thought-1/right",
+    expect(exploded).toMatchObject([
+      { sourceId: "thought-1", pluginItemId: "thought-1/left" },
+      { sourceId: "thought-1", pluginItemId: "thought-1/right" },
     ]);
+    expect(new Set(exploded.map((item) => item.id)).size).toBe(2);
     expect(filtered).toEqual([]);
   });
 });
