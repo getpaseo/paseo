@@ -1530,6 +1530,33 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: {
+        disallowedTools: ["Bash"],
+        sandbox: { enabled: true, failIfUnavailable: true },
+      },
+    });
+
+    await session.applyOptions?.({ fast_mode: true });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      disallowedTools: ["Bash"],
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
+    await session.close();
+  });
+
   test("switching to a model without Fast turns it off, reports that, and later patches still apply", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
