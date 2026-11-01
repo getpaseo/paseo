@@ -4752,7 +4752,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private requestedTierFrom(options: ProviderOptions): string | null {
     if ("service_tier" in options) return readCodexServiceTier(options);
-    if (options.fast_mode === null) return null;
+    // Opening moved a legacy Fast into `service_tier`, so removing the alias changes no speed.
+    if (options.fast_mode === null) return this.requestedServiceTier;
     return options.fast_mode ? "fast" : "default";
   }
 

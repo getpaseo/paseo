@@ -521,6 +521,19 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
+  test("removing the legacy Fast key after opening leaves the speed the session opened with", async () => {
+    const { session, appServer } = await createConnectedSession({
+      providerOptions: { fast_mode: true },
+    });
+    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
+
+    // The stored options now hold `service_tier`; `fast_mode` is an alias no longer in them.
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toEqual({});
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
+  });
+
   test("a patch that sets another option keeps the running sandbox and an explicit speed", async () => {
     const { session, appServer } = await createConnectedSession({
       providerOptions: { sandbox_mode: "read-only", service_tier: "default", fast_mode: true },
