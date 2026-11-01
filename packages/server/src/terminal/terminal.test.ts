@@ -410,7 +410,12 @@ describe("createTerminal", () => {
           cwd: realpathSync(tmpdir()),
           cols: 500,
           command: process.execPath,
-          args: ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", nastyPrompt],
+          // Keep the PTY alive until the screen assertion; exit disposes its parser.
+          args: [
+            "-e",
+            "process.stdout.write(JSON.stringify(process.argv.slice(1))); setInterval(() => {}, 100000)",
+            nastyPrompt,
+          ],
         }),
       );
 
