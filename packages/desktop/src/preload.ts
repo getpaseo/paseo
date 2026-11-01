@@ -78,6 +78,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       },
       setBadgeCount: (count?: number) => ipcRenderer.invoke("paseo:window:setBadgeCount", count),
     }),
+    reportView: (report: { visibleAgentIds: string[]; visibleWorkspaceKeys: string[] }) =>
+      ipcRenderer.invoke("paseo:window:reportView", report),
   },
   dialog: {
     ask: (message: string, options?: Record<string, unknown>) =>
