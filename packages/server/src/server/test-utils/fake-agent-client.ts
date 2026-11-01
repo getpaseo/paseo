@@ -765,6 +765,18 @@ class FakeAgentSession implements AgentSession {
         this.notifySubscribers(child);
       }
 
+      if (textPrompt.toLowerCase().includes("wait until interrupted")) {
+        await this.interruptSignal.promise;
+        const canceled: AgentStreamEvent = {
+          type: "turn_canceled",
+          provider: this.providerName,
+          reason: "interrupted",
+        };
+        await this.appendHistoryEvent(canceled);
+        this.notifySubscribers(canceled);
+        return;
+      }
+
       if (textPrompt.toLowerCase().includes("emit a turn failure")) {
         const failed: AgentStreamEvent = {
           type: "turn_failed",
