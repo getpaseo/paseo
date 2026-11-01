@@ -4567,6 +4567,46 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
   });
 });
 
+test("importProviderSession reports the defaults the session launched with, not defaults edited during the import", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-options-"));
+  let tier = "default";
+  class ImportClient extends TestAgentClient {
+    effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
+      return { service_tier: tier, ...own };
+    }
+
+    async importSession(input: ImportProviderSessionInput) {
+      // The user edits the default in config.json after the provider has launched.
+      tier = "fast";
+      return {
+        session: new TestAgentSession({ provider: "codex", cwd: workdir }),
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+      };
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-selected",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+  });
+
+  expect(imported.effectiveOptions).toEqual({ service_tier: "default" });
+});
+
 test("importProviderSession imports the selected session without listing and publishes ready state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-session-"));
   const storagePath = join(workdir, "agents");

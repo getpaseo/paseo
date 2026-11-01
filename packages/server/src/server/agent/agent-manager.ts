@@ -1411,7 +1411,7 @@ export class AgentManager {
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
-    const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
+    const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
@@ -1538,7 +1538,7 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
+    const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.resumeSession(
       handle,
       providerLaunchConfig,
@@ -1603,6 +1603,7 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const imported = await client.importSession(
       {
         providerHandleId: input.providerHandleId,
@@ -1621,6 +1622,7 @@ export class AgentManager {
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
+        launchedOptions,
         labels: input.labels,
         workspaceId: input.workspaceId,
         timelineRows,
@@ -1726,7 +1728,7 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
-      const launchedOptions = this.launchOptionsFor(client, storedConfig.providerOptions);
+      const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
@@ -2309,22 +2311,30 @@ export class AgentManager {
       // Changes the provider made on its own while applying are older than its final answer.
       await this.drainSessionEvents(agentId);
     }
-    this.storeOptionsPatch(agent, { ...patch, ...ended });
+    this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
     this.updateEffectiveOptions({ agent, sent, reported: ended });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */
-  private withOpenedOptions(config: AgentSessionConfig, session: AgentSession): AgentSessionConfig {
-    const opened = session.openOptionsPatch;
+  private withOpenedOptions(input: {
+    config: AgentSessionConfig;
+    session: AgentSession;
+  }): AgentSessionConfig {
+    const { config } = input;
+    const opened = input.session.openOptionsPatch;
     if (!opened || Object.keys(opened).length === 0) return config;
     const own = applyProviderOptionsPatch({ options: config.providerOptions, patch: opened });
     return { ...config, providerOptions: Object.keys(own).length > 0 ? own : undefined };
   }
 
-  private storeOptionsPatch(agent: ManagedAgent, patch: ProviderOptionsPatch): void {
-    const own = applyProviderOptionsPatch({ options: agent.config.providerOptions, patch });
+  private storeOptionsPatch(input: { agent: ManagedAgent; patch: ProviderOptionsPatch }): void {
+    const { agent } = input;
+    const own = applyProviderOptionsPatch({
+      options: agent.config.providerOptions,
+      patch: input.patch,
+    });
     agent.config.providerOptions = Object.keys(own).length > 0 ? own : undefined;
   }
 
@@ -2350,21 +2360,20 @@ export class AgentManager {
    */
   private openedEffectiveOptions(input: {
     session: AgentSession;
-    openedConfig: AgentSessionConfig;
-    launchedOptions: ProviderOptions | undefined;
+    launchedOptions: ProviderOptions;
   }): ProviderOptions {
-    const { session, openedConfig, launchedOptions } = input;
     return applyProviderOptionsPatch({
-      options:
-        launchedOptions ??
-        this.effectiveOptionsFor(openedConfig.provider, openedConfig.providerOptions),
-      patch: session.openOptionsPatch ?? {},
+      options: input.launchedOptions,
+      patch: input.session.openOptionsPatch ?? {},
     });
   }
 
   /** The options a client opens with: its own defaults merged under the agent's. */
-  private launchOptionsFor(client: AgentClient, own: ProviderOptions | undefined): ProviderOptions {
-    return client.effectiveOptions?.(own) ?? own ?? {};
+  private launchOptionsFor(input: {
+    client: AgentClient;
+    own: ProviderOptions | undefined;
+  }): ProviderOptions {
+    return input.client.effectiveOptions?.(input.own) ?? input.own ?? {};
   }
 
   private effectiveOptionsFor(
@@ -2372,7 +2381,7 @@ export class AgentManager {
     own: ProviderOptions | undefined,
   ): ProviderOptions {
     const client = this.clients.get(provider);
-    return client ? this.launchOptionsFor(client, own) : (own ?? {});
+    return client ? this.launchOptionsFor({ client, own }) : (own ?? {});
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -3889,7 +3898,7 @@ export class AgentManager {
     session: AgentSession,
     openedConfig: AgentSessionConfig,
     agentId: string,
-    options?: {
+    options: {
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
@@ -3912,7 +3921,7 @@ export class AgentManager {
        * starts from these rather than reading the defaults again, which may have been edited
        * while the provider was opening.
        */
-      launchedOptions?: ProviderOptions;
+      launchedOptions: ProviderOptions;
       restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -3924,7 +3933,7 @@ export class AgentManager {
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
-      const config = this.withOpenedOptions(openedConfig, session);
+      const config = this.withOpenedOptions({ config: openedConfig, session });
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
@@ -3948,8 +3957,7 @@ export class AgentManager {
         config,
         effectiveOptions: this.openedEffectiveOptions({
           session,
-          openedConfig,
-          launchedOptions: options?.launchedOptions,
+          launchedOptions: options.launchedOptions,
         }),
         now,
         durableTimelineHasRows,
@@ -4793,7 +4801,7 @@ export class AgentManager {
     flags: StreamEventFlags;
   }): void {
     const { agent, patch, flags } = params;
-    this.storeOptionsPatch(agent, patch);
+    this.storeOptionsPatch({ agent, patch });
     this.updateEffectiveOptions({ agent, sent: {}, reported: patch });
     flags.shouldDispatchEvent = false;
     this.emitState(agent);
