@@ -244,11 +244,11 @@ emit({
 
 `icon` 是 Lucide 图标名称。`defaultValue` 是控件在键没有值时显示的值。会话打开或应用修改时，你报告的每个值（包括处于默认值的值和无人设置过的值）Paseo 都会保存。相同的控件会出现在“新建工作区”界面、草稿标签页和运行中的 Agent 上。只为你能在运行中的会话里修改的键提供控件。Provider 可以在运行时改变控件，包括在模型变化之后。
 
-用户的修改会以 `session.configure` 的形式到达，`changes.providerOptions` 只包含发生变化的键。应用它，并在 `request.completed` 之前发布已确定的 `session.config`；或者用 `request.failed` 使请求失败，并让每个键保持原样。值为 `null` 表示把该键恢复为 Provider 的默认值。请发布会话最终实际使用的值，而不是请求的副本：Paseo 会保存你发布的值，使保存的选项与实际运行的一致。
+修改会以 `session.configure` 的形式到达，`changes.providerOptions` 只包含发生变化的键，无论这些键是否有控件。应用每一个键，并在 `request.completed` 之前发布已确定的 `session.config`。如果无法应用其中某个键（例如只在会话打开时读取的键），用 `request.failed` 使请求失败，并让每个键保持原样。值为 `null` 表示把该键恢复为 Provider 的默认值。请发布会话最终实际使用的值，而不是请求的副本：Paseo 会保存你发布的值，使保存的选项与实际运行的一致。
 
 如果 Provider 自行改变了某个选项（例如切换模型后关闭了 Fast），请发布带有新值的 `session.config`。Paseo 会保存它们，不会把旧值设置回去。
 
-没有控件的键仍会在 `session.open` 中交付并被保存。例如 Provider 专属的 token 预算应放在 `providerOptions` 中，它不是一个专门的提示词字段。
+并非每个选项都需要控件。例如 Provider 专属的 token 预算应放在 `providerOptions` 中，它不是一个专门的提示词字段。它会在 `session.open` 中交付，调用方可以在运行中的 Agent 上修改它，由你的 `session.configure` 处理程序决定能否实时应用。请在 `providerOptions` 中报告它，使 Paseo 保存实际运行的值。
 
 ## 添加持久化与重放 {#add-persistence-and-replay}
 

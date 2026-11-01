@@ -129,9 +129,9 @@ export interface ProviderConfigChanges {
   mode?: string | null;
   thinkingOption?: string | null;
   /**
-   * The option keys to change on the running session. A key it cannot apply live is not in
-   * `controls`, and Paseo does not send it. `null` returns the key to the provider's own default.
-   * Apply the change or fail the request; the committed values come back in `session.config`.
+   * The option keys to change on the running session, with or without a control. Apply every key
+   * or fail the whole request, for a key you only read when a session opens. `null` returns the
+   * key to the provider's own default. The committed values come back in `session.config`.
    */
   providerOptions?: Readonly<Record<string, JsonValue>>;
   /** @deprecated Sent next to `providerOptions` to a provider that reports `settings`. */
