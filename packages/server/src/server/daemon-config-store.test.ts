@@ -250,6 +250,79 @@ describe("DaemonConfigStore", () => {
     ]);
   });
 
+  describe("a profile edited by the unchanged app", () => {
+    function storeWithProfile(): DaemonConfigStore {
+      const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+      tempDirs.push(paseoHome);
+      return new DaemonConfigStore(paseoHome, {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentProfiles: [
+          {
+            id: "p",
+            name: "P",
+            provider: "codex",
+            options: { sandbox_mode: "read-only", fast_mode: false },
+          },
+        ],
+      });
+    }
+
+    test("keeps the options its form never shows when it changes a control", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "Renamed", provider: "codex", featureValues: { fast_mode: true } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "Renamed",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", fast_mode: true },
+        },
+      ]);
+    });
+
+    test("keeps every option when it sends no featureValues at all", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({ agentProfiles: [{ id: "p", name: "Renamed", provider: "codex" }] });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "Renamed",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", fast_mode: false },
+        },
+      ]);
+    });
+
+    test("removes an option whose featureValues entry is null", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "P", provider: "codex", featureValues: { fast_mode: null } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "codex", options: { sandbox_mode: "read-only" } },
+      ]);
+    });
+  });
+
   test("a profile stored with featureValues loads as options", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
