@@ -56,7 +56,11 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   };
 }
 
-function collectInlineCodePaths(source: string, workspaceRoot?: string): ReadonlySet<string> {
+function collectInlineCodePaths(
+  source: string,
+  workspaceRoot?: string,
+  commandNames?: ReadonlySet<string>,
+): ReadonlySet<string> {
   const paths = new Set<string>();
   const previousEnds = new Map<number, number>();
   // Collect candidates between consecutive runs of equal length. The engine owns
@@ -74,7 +78,11 @@ function collectInlineCodePaths(source: string, workspaceRoot?: string): Readonl
       value = value.slice(1, -1);
     }
     const classification = classifyAssistantFileLink(value, { workspaceRoot });
-    if (classification && classification.kind !== "external") paths.add(value);
+    if (
+      (classification && classification.kind !== "external") ||
+      (value.startsWith("/") && commandNames?.has(value.slice(1)))
+    )
+      paths.add(value);
   }
   return paths;
 }
@@ -112,7 +120,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean } = {},
+  options: { supportsSvg?: boolean; commandNames?: ReadonlySet<string> } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -122,7 +130,9 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
-  const metadata = linkMetadata(collectInlineCodePaths(source, workspaceRoot));
+  const metadata = linkMetadata(
+    collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+  );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&

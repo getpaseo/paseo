@@ -25,7 +25,13 @@ import {
   findExecutable,
   findExecutableWithoutProbing,
 } from "../executable-resolution/executable-resolution.js";
-import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import { createTerminalSerializer } from "./terminal-serializer.js";
+import {
+  captureTerminalLines,
+  type CaptureTerminalLinesOptions,
+  type CaptureTerminalLinesResult,
+} from "./terminal-capture.js";
+import type { TerminalReplayOptions, TerminalReplayMetadata } from "./terminal-replay.js";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
@@ -66,26 +72,6 @@ export interface TerminalCommandFinishedInfo {
   exitCode: number | null;
 }
 
-export interface TerminalStateSnapshot {
-  state: TerminalState;
-  revision: number;
-  // Input-mode replay preamble at snapshot time. Populated by the terminal
-  // worker so the daemon main loop doesn't have to re-derive it from output.
-  replayPreamble?: string;
-}
-
-export interface TerminalStateSnapshotOptions {
-  scrollbackLines?: number;
-  // Include per-row soft-wrap flags (gridWrapped/scrollbackWrapped) so the client
-  // can reflow restored content on resize. Gated on a client capability, so old
-  // clients never receive the extra fields.
-  includeWrapFlags?: boolean;
-}
-
-export interface TerminalSubscribeOptions {
-  initialSnapshot?: "state" | "ready";
-}
-
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -93,7 +79,6 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
-  | { type: "snapshot"; state: TerminalState; revision?: number }
   | { type: "snapshotReady"; revision?: number; replayPreamble?: string }
   | { type: "titleChange"; title?: string };
 
@@ -108,14 +93,13 @@ export interface TerminalSession {
   cwd: string;
   workspaceId: string;
   send(msg: ClientMessage): void;
-  subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
+  subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
-  getState(): TerminalState;
-  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
+  hasOutput(): boolean;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
@@ -130,6 +114,11 @@ export interface TerminalSession {
 /** A session that owns its PTY in this process, so it knows the program's pid. */
 export interface LocalTerminalSession extends TerminalSession {
   readonly pid: number;
+  serializeReplay(options?: TerminalReplayOptions): {
+    metadata: TerminalReplayMetadata;
+    data: Uint8Array;
+  };
+  captureLines(options?: CaptureTerminalLinesOptions): CaptureTerminalLinesResult;
 }
 
 function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
@@ -545,179 +534,6 @@ function prependPathEntry(currentPath: string, entry: string): string {
   return [entry, ...entries].join(delimiter);
 }
 
-function extractCell(terminal: TerminalType, row: number, col: number): TerminalCell {
-  const buffer = terminal.buffer.active;
-  const line = buffer.getLine(row);
-  if (!line) {
-    return { char: " ", fg: undefined, bg: undefined };
-  }
-
-  const cell = line.getCell(col);
-  if (!cell) {
-    return { char: " ", fg: undefined, bg: undefined };
-  }
-
-  // Color modes from xterm.js: 0=DEFAULT, 1=16 colors (ANSI), 2=256 colors, 3=RGB
-  // getFgColorMode() returns packed value with mode in upper byte (e.g. 0x01000000 for mode 1)
-  const fgModeRaw = cell.getFgColorMode();
-  const bgModeRaw = cell.getBgColorMode();
-  const fgMode = fgModeRaw >> 24;
-  const bgMode = bgModeRaw >> 24;
-
-  // Only return color if not default (mode 0)
-  const fg = fgMode !== 0 ? cell.getFgColor() : undefined;
-  const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
-
-  return {
-    // Wide chars (CJK) span two cells; xterm returns "" for the zero-width
-    // continuation. Collapsing it to " " injects a real space on restore.
-    char: cell.getWidth() === 0 ? "" : cell.getChars() || " ",
-    fg,
-    bg,
-    fgMode: fgMode !== 0 ? fgMode : undefined,
-    bgMode: bgMode !== 0 ? bgMode : undefined,
-    bold: cell.isBold() !== 0,
-    italic: cell.isItalic() !== 0,
-    underline: cell.isUnderline() !== 0,
-    dim: cell.isDim() !== 0,
-    inverse: cell.isInverse() !== 0,
-    strikethrough: cell.isStrikethrough() !== 0,
-  };
-}
-
-function extractGrid(terminal: TerminalType): TerminalCell[][] {
-  const grid: TerminalCell[][] = [];
-  const buffer = terminal.buffer.active;
-  // Visible viewport starts at baseY
-  const baseY = buffer.baseY;
-
-  for (let row = 0; row < terminal.rows; row++) {
-    const rowCells: TerminalCell[] = [];
-    for (let col = 0; col < terminal.cols; col++) {
-      rowCells.push(extractCell(terminal, baseY + row, col));
-    }
-    grid.push(rowCells);
-  }
-
-  return grid;
-}
-
-function extractScrollback(
-  terminal: TerminalType,
-  options?: { scrollbackLines?: number },
-): TerminalCell[][] {
-  const scrollback: TerminalCell[][] = [];
-  const buffer = terminal.buffer.active;
-  // baseY is the first row of the visible viewport (0-indexed)
-  // Lines 0 to baseY-1 are in scrollback, lines baseY onwards are visible
-  const scrollbackLines = buffer.baseY;
-  const startRow =
-    typeof options?.scrollbackLines === "number"
-      ? Math.max(0, scrollbackLines - options.scrollbackLines)
-      : 0;
-
-  for (let row = startRow; row < scrollbackLines; row++) {
-    const rowCells: TerminalCell[] = [];
-    const line = buffer.getLine(row);
-    for (let col = 0; col < terminal.cols; col++) {
-      if (line) {
-        const cell = line.getCell(col);
-        if (cell) {
-          const fgModeRaw = cell.getFgColorMode();
-          const bgModeRaw = cell.getBgColorMode();
-          const fgMode = fgModeRaw >> 24;
-          const bgMode = bgModeRaw >> 24;
-          const fg = fgMode !== 0 ? cell.getFgColor() : undefined;
-          const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
-          rowCells.push({
-            // Wide chars (CJK) span two cells; xterm returns "" for the zero-width
-            // continuation. Collapsing it to " " injects a real space on restore.
-            char: cell.getWidth() === 0 ? "" : cell.getChars() || " ",
-            fg,
-            bg,
-            fgMode: fgMode !== 0 ? fgMode : undefined,
-            bgMode: bgMode !== 0 ? bgMode : undefined,
-            bold: cell.isBold() !== 0,
-            italic: cell.isItalic() !== 0,
-            underline: cell.isUnderline() !== 0,
-            dim: cell.isDim() !== 0,
-            inverse: cell.isInverse() !== 0,
-            strikethrough: cell.isStrikethrough() !== 0,
-          });
-        } else {
-          rowCells.push({ char: " ", fg: undefined, bg: undefined });
-        }
-      } else {
-        rowCells.push({ char: " ", fg: undefined, bg: undefined });
-      }
-    }
-    scrollback.push(rowCells);
-  }
-
-  return scrollback;
-}
-
-// xterm marks a line `isWrapped` when it is a continuation of the PREVIOUS line.
-// The snapshot carries the inverse, tmux-style flag — "this row continues onto the
-// next row" — so the client can rejoin and reflow logical lines. So row y's flag is
-// whether line y+1 is a wrapped continuation.
-function lineContinuesToNext(terminal: TerminalType, absoluteRow: number): boolean {
-  return terminal.buffer.active.getLine(absoluteRow + 1)?.isWrapped === true;
-}
-
-function extractGridWrapped(terminal: TerminalType): boolean[] {
-  const baseY = terminal.buffer.active.baseY;
-  const wrapped: boolean[] = [];
-  for (let row = 0; row < terminal.rows; row++) {
-    wrapped.push(lineContinuesToNext(terminal, baseY + row));
-  }
-  return wrapped;
-}
-
-function extractScrollbackWrapped(
-  terminal: TerminalType,
-  options?: { scrollbackLines?: number },
-): boolean[] {
-  const scrollbackLines = terminal.buffer.active.baseY;
-  const startRow =
-    typeof options?.scrollbackLines === "number"
-      ? Math.max(0, scrollbackLines - options.scrollbackLines)
-      : 0;
-  const wrapped: boolean[] = [];
-  for (let row = startRow; row < scrollbackLines; row++) {
-    wrapped.push(lineContinuesToNext(terminal, row));
-  }
-  return wrapped;
-}
-
-function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
-  const coreService = (terminal as unknown as { _core?: { coreService?: Record<string, unknown> } })
-    ._core?.coreService as
-    | {
-        decPrivateModes?: { cursorStyle?: unknown; cursorBlink?: unknown };
-        isCursorHidden?: unknown;
-      }
-    | undefined;
-  const cursorStyle = coreService?.decPrivateModes?.cursorStyle;
-  const normalizedCursorStyle =
-    cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"
-      ? cursorStyle
-      : undefined;
-  const cursorBlink =
-    typeof coreService?.decPrivateModes?.cursorBlink === "boolean"
-      ? coreService.decPrivateModes.cursorBlink
-      : undefined;
-  const hidden = Boolean(coreService?.isCursorHidden);
-
-  return {
-    row: terminal.buffer.active.cursorY,
-    col: terminal.buffer.active.cursorX,
-    ...(hidden ? { hidden: true } : {}),
-    ...(normalizedCursorStyle ? { style: normalizedCursorStyle } : {}),
-    ...(typeof cursorBlink === "boolean" ? { blink: cursorBlink } : {}),
-  };
-}
-
 function normalizeProcessToken(token: string): string {
   if (token.length === 0) {
     return token;
@@ -984,9 +800,11 @@ export async function createTerminal(
   const terminal = new Terminal({
     rows,
     cols,
-    scrollback: 1000,
+    scrollback: 10000,
     allowProposedApi: true,
   });
+
+  const serialize = createTerminalSerializer(terminal);
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
@@ -1224,6 +1042,10 @@ export async function createTerminal(
       if (disposed || killed) {
         return;
       }
+      // Commit protocol modes with the parsed bytes, so a replay cut cannot
+      // combine an older xterm buffer with modes from queued future output.
+      const inputModeUpdate = inputModeTracker.feed(data);
+      for (const response of inputModeUpdate.responses) ptyProcess.write(response);
       stateRevision += 1;
       for (const listener of listeners) {
         listener({ type: "output", data, revision: stateRevision });
@@ -1234,10 +1056,6 @@ export async function createTerminal(
   // Pipe PTY output to terminal emulator
   ptyProcess.onData((data) => {
     if (killed) return;
-    const inputModeUpdate = inputModeTracker.feed(data);
-    for (const response of inputModeUpdate.responses) {
-      ptyProcess.write(response);
-    }
     recentOutputChunks.push(data);
     recentOutputLength += data.length;
     // Drop whole leading chunks while the rest still covers the char limit, so
@@ -1295,32 +1113,15 @@ export async function createTerminal(
     }
   }
 
-  function getState(snapshotOptions?: TerminalStateSnapshotOptions): TerminalState {
-    return {
+  function serializeReplay(replayOptions?: TerminalReplayOptions) {
+    const metadata = {
       rows: terminal.rows,
       cols: terminal.cols,
-      grid: extractGrid(terminal),
-      scrollback: extractScrollback(terminal, {
-        scrollbackLines: snapshotOptions?.scrollbackLines,
-      }),
-      cursor: extractCursorState(terminal),
-      ...(title ? { title } : {}),
-      ...(snapshotOptions?.includeWrapFlags
-        ? {
-            gridWrapped: extractGridWrapped(terminal),
-            scrollbackWrapped: extractScrollbackWrapped(terminal, {
-              scrollbackLines: snapshotOptions?.scrollbackLines,
-            }),
-          }
-        : {}),
-    };
-  }
-
-  function getStateSnapshot(snapshotOptions?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
-    return {
-      state: getState(snapshotOptions),
+      retainedHistoryLines: terminal.buffer.normal.baseY,
       revision: stateRevision,
+      replayPreamble: getReplayPreamble(),
     };
+    return { metadata, data: serialize(replayOptions) };
   }
 
   function getSize(): { rows: number; cols: number } {
@@ -1386,14 +1187,10 @@ export async function createTerminal(
     }
   }
 
-  function subscribe(
-    listener: (msg: ServerMessage) => void,
-    subscribeOptions?: TerminalSubscribeOptions,
-  ): () => void {
+  function subscribe(listener: (msg: ServerMessage) => void): () => void {
     let active = true;
     let snapshotDelivered = false;
     const queuedMessages: ServerMessage[] = [];
-    const initialSnapshot = subscribeOptions?.initialSnapshot ?? "state";
     const subscriptionListener = (msg: ServerMessage): void => {
       if (!active) {
         return;
@@ -1410,17 +1207,11 @@ export async function createTerminal(
     terminal.write("", () => {
       if (!disposed && active && listeners.has(subscriptionListener)) {
         snapshotDelivered = true;
-        if (initialSnapshot === "ready") {
-          // Carry the input-mode preamble so the snapshot-less "ready" path
-          // (live restore) can replay it without a separate state fetch.
-          listener({
-            type: "snapshotReady",
-            revision: stateRevision,
-            replayPreamble: getReplayPreamble(),
-          });
-        } else {
-          listener({ type: "snapshot", ...getStateSnapshot() });
-        }
+        listener({
+          type: "snapshotReady",
+          revision: stateRevision,
+          replayPreamble: getReplayPreamble(),
+        });
         for (const message of queuedMessages.splice(0)) {
           listener(message);
         }
@@ -1604,8 +1395,15 @@ export async function createTerminal(
     onTitleChange,
     onActivityChange,
     getSize,
-    getState,
-    getStateSnapshot,
+    serializeReplay,
+    captureLines: (captureOptions) => captureTerminalLines(terminal.buffer.active, captureOptions),
+    hasOutput: () => {
+      const buffer = terminal.buffer.active;
+      for (let row = 0; row < buffer.length; row++) {
+        if (buffer.getLine(row)?.translateToString(true).trim()) return true;
+      }
+      return false;
+    },
     getReplayPreamble,
     getTitle,
     getActivity,

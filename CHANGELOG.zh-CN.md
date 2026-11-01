@@ -1,6 +1,6 @@
 # 更新日志
 
-尚未发布。以下变更已合入 `main`，但不包含在 0.14.0-beta.2 中；下一个版本的条目会包含它们。
+尚未发布。以下变更已合入 `main`，但不包含在 0.14.0 中；下一个版本的条目会包含它们。
 
 新增：
 
@@ -11,7 +11,7 @@
 
 - 新增采用 `subject.operation.position` 命名的 `server.addHook` 和在 setup 及 Agent 之前等待的 `worktree.create.after` 钩子，弃用原有的插件钩子注册方法并保留原有行为 ([#8081](https://github.com/getpaseo/paseo/pull/8081))
 
-## 0.14.0-beta.2 - 2026-10-28
+## 0.14.0 - 2026-10-29
 
 插件现在可以为单个 Agent 添加工具，并在会话打开时配置其 MCP 服务器。
 
@@ -43,7 +43,6 @@
 - 减少打开和分页加载大型 Claude 和 OMP 历史时的 daemon 卡顿 ([#7789](https://github.com/getpaseo/paseo/pull/7789), [#7940](https://github.com/getpaseo/paseo/pull/7940), [#7948](https://github.com/getpaseo/paseo/pull/7948), [#7958](https://github.com/getpaseo/paseo/pull/7958) by [@ragokan](https://github.com/ragokan))
 - 减少插件构建、图片处理和重新加载配置时的 daemon 卡顿 ([#7967](https://github.com/getpaseo/paseo/pull/7967), [#7954](https://github.com/getpaseo/paseo/pull/7954), [#7959](https://github.com/getpaseo/paseo/pull/7959))
 - 减少刷新工作区和项目时由文件系统操作造成的阻塞 ([#7941](https://github.com/getpaseo/paseo/pull/7941), [#7943](https://github.com/getpaseo/paseo/pull/7943), [#7944](https://github.com/getpaseo/paseo/pull/7944))
-- 为 Claude Code 会话在 Paseo 中更快消耗订阅额度的问题添加了变通方案 ([#7976](https://github.com/getpaseo/paseo/pull/7976) by [@david828019-oss](https://github.com/david828019-oss))
 
 ### 修复
 
@@ -72,7 +71,8 @@
 
 - 语音模式默认关闭，可在语音设置中启用
 - 如果通过环境变量选择 OpenAI 语音，请将仅保存在旧版 `providers.openai` 中的密钥和服务地址移至语音设置
-- 降级至 0.13.2 前，请恢复备份的 `config.json` 或转换 beta 保存的语音凭据和空闲清理设置
+- 降级至 0.13.2 前，请恢复备份的 `config.json` 或转换 0.14.0 保存的语音凭据和空闲清理设置
+- 安装可选的 [Claude Code entrypoint 插件](https://paseo.sh/plugins/getpaseo/claude-code-entrypoint-env)，即可使用 `CLAUDE_CODE_ENTRYPOINT=Paseo` 启动 Claude 会话；这是针对订阅额度消耗过快问题的社区变通方案 ([#7976](https://github.com/getpaseo/paseo/pull/7976), [#8164](https://github.com/getpaseo/paseo/pull/8164) by [@david828019-oss](https://github.com/david828019-oss))
 
 ## 0.13.2 - 2026-10-26
 

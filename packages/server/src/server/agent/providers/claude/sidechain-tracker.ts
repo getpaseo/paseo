@@ -5,7 +5,6 @@ import {
   mapClaudeFailedToolCall,
   mapClaudeRunningToolCall,
 } from "./tool-call-mapper.js";
-import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import {
   isClaudeSubagentHandbackToolName,
   readClaudeSubagentHandback,
@@ -20,21 +19,17 @@ interface ClaudeContentChunk {
 
 type ClaudeToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
-interface SubAgentActionEntry {
-  index: number;
+interface SubAgentChildCall {
   toolName: string;
   input: unknown;
-  summary?: string;
 }
 
 interface SubAgentActivityState {
   name?: string;
   subAgentType?: string;
   description?: string;
-  actions: SubAgentActionEntry[];
-  actionKeys: string[];
-  nextActionIndex: number;
-  actionIndexByKey: Map<string, number>;
+  /** The child's tool calls awaiting results, which carry no input of their own. */
+  runningCalls: Map<string, SubAgentChildCall>;
   completedActionKeys: Set<string>;
 }
 
@@ -44,7 +39,6 @@ interface SubAgentActionCandidate {
   input: unknown;
 }
 
-const MAX_SUB_AGENT_LOG_ENTRIES = 200;
 const MAX_SUB_AGENT_SUMMARY_CHARS = 160;
 
 function readTrimmedString(value: unknown): string | undefined {
@@ -79,8 +73,7 @@ export class ClaudeSidechainTracker {
     needsSyntheticParentToolCard?: (toolUseId: string) => boolean;
     /**
      * The parent's tool call once Claude has answered it. A background child streams its frames
-     * after that answer, so its card keeps the settled status and output and gains the child's
-     * action log.
+     * after that answer, so its card keeps the settled status and output.
      */
     getSettledParentToolCall?: (toolUseId: string) => ClaudeToolCallItem | undefined;
   }) {
@@ -91,28 +84,27 @@ export class ClaudeSidechainTracker {
   }
 
   handleMessage(message: SDKMessage, parentToolUseId: string): AgentStreamEvent[] {
+    const existingState = this.activeSidechains.get(parentToolUseId);
     const state =
-      this.activeSidechains.get(parentToolUseId) ??
+      existingState ??
       ({
-        actions: [],
-        actionKeys: [],
-        nextActionIndex: 1,
-        actionIndexByKey: new Map<string, number>(),
+        runningCalls: new Map<string, SubAgentChildCall>(),
         completedActionKeys: new Set<string>(),
       } satisfies SubAgentActivityState);
     this.activeSidechains.set(parentToolUseId, state);
 
-    const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
+    // The parent card is a launch marker: it changes only when the child is first seen or the
+    // task input names it differently, never with the child's activity.
+    const cardUpdated =
+      this.updateSubAgentContextFromTaskInput(state, parentToolUseId) || !existingState;
     const actionCandidates = this.extractSubAgentActionCandidates(message);
     const childTimelineItems = [
       ...this.extractSubAgentTimelineItems(message, state),
       ...this.extractSubAgentToolResults(message, state),
     ];
-    let actionUpdated = false;
     for (const action of actionCandidates) {
       if (state.completedActionKeys.has(action.key)) continue;
-      if (this.appendSubAgentAction(state, action)) {
-        actionUpdated = true;
+      if (this.trackChildCall(state, action)) {
         const toolCall = mapClaudeRunningToolCall({
           name: action.toolName,
           callId: action.key,
@@ -125,7 +117,7 @@ export class ClaudeSidechainTracker {
       }
     }
 
-    if (!contextUpdated && !actionUpdated && childTimelineItems.length === 0) {
+    if (!cardUpdated && childTimelineItems.length === 0) {
       return [];
     }
 
@@ -145,11 +137,8 @@ export class ClaudeSidechainTracker {
       type: "sub_agent",
       ...(state.subAgentType ? { subAgentType: state.subAgentType } : {}),
       ...(state.description ? { description: state.description } : {}),
-      log: state.actions
-        .map((action) =>
-          action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
-        )
-        .join("\n"),
+      // COMPAT(subagent-log): remove after 2027-04-30.
+      log: "",
       actions: [],
     };
 
@@ -170,18 +159,19 @@ export class ClaudeSidechainTracker {
           },
         ];
 
-    const parentCard: AgentStreamEvent[] = this.needsSyntheticParentToolCard(parentToolUseId)
-      ? [
-          {
-            type: "timeline",
-            item: {
-              ...toolCall,
-              detail,
+    const parentCard: AgentStreamEvent[] =
+      cardUpdated && this.needsSyntheticParentToolCard(parentToolUseId)
+        ? [
+            {
+              type: "timeline",
+              item: {
+                ...toolCall,
+                detail,
+              },
+              provider: "claude",
             },
-            provider: "claude",
-          },
-        ]
-      : [];
+          ]
+        : [];
 
     return [
       ...descriptorEvents,
@@ -303,8 +293,7 @@ export class ClaudeSidechainTracker {
       if (!isClaudeContentChunk(block) || !block.type.endsWith("tool_result")) continue;
       const callId = readTrimmedString(block.tool_use_id);
       if (!callId || state.completedActionKeys.has(callId)) continue;
-      const actionIndex = state.actionIndexByKey.get(callId);
-      const action = actionIndex === undefined ? undefined : state.actions[actionIndex];
+      const action = state.runningCalls.get(callId);
       const toolName = action?.toolName ?? readTrimmedString(block.tool_name);
       if (!toolName) continue;
       const params = {
@@ -317,6 +306,7 @@ export class ClaudeSidechainTracker {
         ? mapClaudeFailedToolCall({ ...params, error: block })
         : mapClaudeCompletedToolCall(params);
       if (toolCall) {
+        state.runningCalls.delete(callId);
         state.completedActionKeys.add(callId);
         items.push(toolCall);
       }
@@ -412,13 +402,12 @@ export class ClaudeSidechainTracker {
     const key =
       readTrimmedString(block.id) ??
       `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
-    return [
-      {
-        key,
-        toolName: block.name,
-        input: block.input ?? null,
-      },
-    ];
+    // A streamed call starts with `{}` until its input arrives, so an empty input is not final.
+    const input =
+      block.input && typeof block.input === "object" && Object.keys(block.input).length > 0
+        ? block.input
+        : null;
+    return [{ key, toolName: block.name, input }];
   }
 
   private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
@@ -448,84 +437,20 @@ export class ClaudeSidechainTracker {
     return [];
   }
 
-  private appendSubAgentAction(
+  /** Returns whether the call is new or has gained its input, so its running card changes. */
+  private trackChildCall(
     state: SubAgentActivityState,
     candidate: SubAgentActionCandidate,
   ): boolean {
-    const normalizedToolName = readTrimmedString(candidate.toolName);
-    if (!normalizedToolName) {
+    const toolName = readTrimmedString(candidate.toolName);
+    if (!toolName) {
       return false;
     }
-
-    const summary = this.deriveSubAgentActionSummary(normalizedToolName, candidate.input);
-    const existingIndex = state.actionIndexByKey.get(candidate.key);
-
-    if (existingIndex !== undefined) {
-      const existing = state.actions[existingIndex];
-      if (!existing) {
-        return false;
-      }
-      const nextSummary = existing.summary ?? summary;
-      if (existing.toolName === normalizedToolName && existing.summary === nextSummary) {
-        return false;
-      }
-      state.actions[existingIndex] = {
-        ...existing,
-        toolName: normalizedToolName,
-        input: existing.input ?? candidate.input,
-        ...(nextSummary ? { summary: nextSummary } : {}),
-      };
-      return true;
+    const existing = state.runningCalls.get(candidate.key);
+    if (existing && (existing.input !== null || candidate.input === null)) {
+      return false;
     }
-
-    state.actions.push({
-      index: state.nextActionIndex,
-      toolName: normalizedToolName,
-      input: candidate.input,
-      ...(summary ? { summary } : {}),
-    });
-    state.nextActionIndex += 1;
-    state.actionKeys.push(candidate.key);
-    this.trimSubAgentTail(state);
-    this.rebuildSubAgentActionIndex(state);
+    state.runningCalls.set(candidate.key, { toolName, input: candidate.input });
     return true;
-  }
-
-  private trimSubAgentTail(state: SubAgentActivityState): void {
-    while (state.actions.length > MAX_SUB_AGENT_LOG_ENTRIES) {
-      state.actions.shift();
-      const removedKey = state.actionKeys.shift();
-      if (removedKey) state.completedActionKeys.delete(removedKey);
-    }
-  }
-
-  private rebuildSubAgentActionIndex(state: SubAgentActivityState): void {
-    state.actionIndexByKey.clear();
-    for (let index = 0; index < state.actionKeys.length; index += 1) {
-      const key = state.actionKeys[index];
-      if (key) {
-        state.actionIndexByKey.set(key, index);
-      }
-    }
-  }
-
-  private deriveSubAgentActionSummary(toolName: string, input: unknown): string | undefined {
-    const runningToolCall = mapClaudeRunningToolCall({
-      name: toolName,
-      callId: `sub-agent-summary-${toolName}`,
-      input,
-      output: null,
-    });
-    if (!runningToolCall) {
-      return undefined;
-    }
-    const display = buildToolCallDisplayModel({
-      name: runningToolCall.name,
-      status: runningToolCall.status,
-      error: runningToolCall.error,
-      detail: runningToolCall.detail,
-      metadata: runningToolCall.metadata,
-    });
-    return this.normalizeSubAgentText(display.summary);
   }
 }
