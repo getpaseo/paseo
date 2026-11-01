@@ -34,6 +34,26 @@ export function stripVoiceModeSystemPrompt(existing?: string): string | undefine
   return stripped.length > 0 ? stripped : undefined;
 }
 
+// COMPAT(voiceModeOffBlock): added in v0.14.1, remove after 2027-05-01
+const LEGACY_VOICE_MODE_OFF_INSTRUCTION =
+  "Paseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.";
+
+export function stripLegacyVoiceModeOffBlock(existing?: string): string | undefined {
+  const trimmed = existing?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const stripped = trimmed
+    .replace(makeVoicePromptBlockRegex(), (block) =>
+      block.slice(VOICE_PROMPT_BLOCK_START.length, -VOICE_PROMPT_BLOCK_END.length).trim() ===
+      LEGACY_VOICE_MODE_OFF_INSTRUCTION
+        ? ""
+        : block,
+    )
+    .trim();
+  return stripped.length > 0 ? stripped : undefined;
+}
+
 export function buildVoiceModeSystemPrompt(existing: string | undefined): string {
   const basePrompt = stripVoiceModeSystemPrompt(existing);
   const voiceBlock = [

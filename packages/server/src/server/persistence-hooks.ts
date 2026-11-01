@@ -7,7 +7,7 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AttentionState } from "./agent/agent-manager.js";
-import { stripVoiceModeSystemPrompt } from "./voice-config.js";
+import { stripLegacyVoiceModeOffBlock } from "./voice-config.js";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -77,7 +77,7 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     featureValues: record.config?.featureValues ?? undefined,
     providerOptions: record.config?.providerOptions ?? undefined,
     toolPolicy: record.config?.toolPolicy ?? undefined,
-    systemPrompt: stripVoiceModeSystemPrompt(record.config?.systemPrompt ?? undefined),
+    systemPrompt: stripLegacyVoiceModeOffBlock(record.config?.systemPrompt ?? undefined),
     mcpServers: record.config?.mcpServers ?? undefined,
   });
 }
