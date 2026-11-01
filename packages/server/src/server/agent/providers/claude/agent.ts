@@ -1,9 +1,8 @@
 import { setImmediate } from "node:timers/promises";
-import { isDeepStrictEqual } from "node:util";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
-import { ProviderOptionsValidationError, validateProviderOptions } from "../../provider-options.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -2810,6 +2809,16 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<void> {
+    // Every option but Fast is read when the query is built, and replacing a started query would
+    // end its background work, so once it exists only Fast can change.
+    if (this.query) {
+      assertChangesAreLive({
+        provider: "claude",
+        patch: options,
+        current: this.config.providerOptions,
+        live: ["fast_mode"],
+      });
+    }
     const providerOptions =
       validateProviderOptions(
         "claude",
@@ -2821,28 +2830,12 @@ class ClaudeAgentSession implements AgentSession {
         `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,
       );
     }
-    const current: ProviderOptions = this.config.providerOptions;
-    const next: ProviderOptions = providerOptions;
-    const changedLaunchKeys = Object.keys(options).filter(
-      (key) => key !== "fast_mode" && !isDeepStrictEqual(current[key] ?? null, next[key] ?? null),
-    );
-    if (changedLaunchKeys.length > 0 && (this.activeForegroundTurnId || this.autonomousTurn)) {
-      throw new ProviderOptionsValidationError(
-        "claude",
-        changedLaunchKeys.map((key) => ({
-          path: [key],
-          message: "cannot change while a turn is running; Claude reads it when a turn starts",
-        })),
-      );
-    }
     const fastModeChanged =
       (providerOptions.fast_mode === true) !== (this.config.providerOptions.fast_mode === true);
     if (fastModeChanged) {
       await this.query?.applyFlagSettings({ fastMode: providerOptions.fast_mode === true });
       this.cachedRuntimeInfo = null;
     }
-    // Every other option is read when the query is built, so it applies from the next turn.
-    if (changedLaunchKeys.length > 0) this.queryRestartNeeded = true;
     // Held until the runtime accepts, so a rejected change is retried instead of skipped. Only
     // this call's keys are applied, over the options as they are now: another patch may have
     // landed while the runtime was answering.

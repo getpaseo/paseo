@@ -1507,61 +1507,6 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("a patch that does not set fast_mode leaves Fast on", async () => {
-    const { queryFactory, queryMock } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-    });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    await session.applyOptions?.({ fast_mode: true });
-    queryMock.applyFlagSettings.mockClear();
-
-    // Setting another option sends only the keys set: Fast stays on.
-    await session.applyOptions?.({ allowedTools: ["Read"] });
-
-    expect(queryMock.applyFlagSettings).not.toHaveBeenCalled();
-    await session.close();
-  });
-
-  test("a patch that lands while Fast is being applied is not overwritten by it", async () => {
-    const { queryFactory, queryMock } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-    });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    let finishFast!: () => void;
-    queryMock.applyFlagSettings.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishFast = resolve;
-        }),
-    );
-
-    const fast = session.applyOptions?.({ fast_mode: true });
-    await session.applyOptions?.({ allowedTools: ["Read"] });
-    finishFast();
-    await fast;
-
-    expect(
-      (session as unknown as { config: { providerOptions: unknown } }).config.providerOptions,
-    ).toEqual({ fast_mode: true, allowedTools: ["Read"] });
-    await session.close();
-  });
-
   test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1589,7 +1534,7 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("an option Claude reads when it starts applies from the next query", async () => {
+  test("an option Claude reads when it starts changes before the query exists and is rejected after", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger,
@@ -1602,40 +1547,22 @@ describe("ClaudeAgentSession features", () => {
       model: "claude-opus-4-8",
       providerOptions: { disallowedTools: ["Bash"] },
     });
-    const ensureQuery = () =>
-      (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    await ensureQuery();
 
     await session.applyOptions?.({ disallowedTools: ["Bash", "Write"] });
-    await ensureQuery();
-
-    expect(queryFactory).toHaveBeenCalledTimes(2);
-    expect(queryFactory.mock.calls[1]?.[0].options).toMatchObject({
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
       disallowedTools: ["Bash", "Write"],
     });
-    await session.close();
-  });
 
-  test("rejects a change to an option Claude reads at start while a turn is running", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-      providerOptions: { disallowedTools: ["Bash"] },
-    });
-    await session.startTurn("hello");
-
+    // The query now runs with these; replacing it would end its background work.
     await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
-      /disallowedTools.*cannot change while a turn is running/,
+      /disallowedTools.*cannot change on a running session/,
     );
-    // The same value is not a change.
-    await expect(session.applyOptions?.({ disallowedTools: ["Bash"] })).resolves.toBeUndefined();
+    // The same value is not a change, and Fast still applies.
+    await expect(
+      session.applyOptions?.({ disallowedTools: ["Bash", "Write"], fast_mode: true }),
+    ).resolves.toBeUndefined();
+    expect(queryFactory).toHaveBeenCalledTimes(1);
     await session.close();
   });
 
@@ -1666,7 +1593,7 @@ describe("ClaudeAgentSession features", () => {
     // still read Fast as off: a removed key would let the default fill `true` back in.
     const stored = applyProviderOptionsPatch({ fast_mode: true }, reported[0].patch);
     expect(mergeProviderOptions({ fast_mode: true }, stored)).toEqual({ fast_mode: false });
-    await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toBeUndefined();
     await session.close();
   });
 
