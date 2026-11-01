@@ -27,6 +27,11 @@ export class LegacyProviderOptions {
   /** Option keys a legacy daemon exposes as features, per provider, as last seen. */
   private readonly controlKeys = new Map<string, Set<string>>();
 
+  /** Whether the keys a provider exposes as features are known, so options can be routed. */
+  knowsControlKeys(provider: string): boolean {
+    return this.controlKeys.has(provider);
+  }
+
   /** Gives agent snapshots `controls` and `options`, built from their `features`. */
   normalize(message: SessionOutboundMessage): SessionOutboundMessage {
     switch (message.type) {

@@ -276,7 +276,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const {
     optionControls: draftOptionControls,
     options: draftOptions,
-    applyProfileOptions,
+    applyProfile: applyProfileOptions,
   } = useDraftProviderOptions({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
@@ -290,7 +290,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const applyDraftAgentProfile = useCallback(
     (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
       formState.applyProfileFromUser(profile);
-      applyProfileOptions(profile.options);
+      applyProfileOptions({ provider: profile.provider, options: profile.options });
     },
     [applyProfileOptions, formState],
   );
