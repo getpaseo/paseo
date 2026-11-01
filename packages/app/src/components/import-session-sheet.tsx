@@ -503,7 +503,6 @@ export function ImportSessionSheet({
   // an imported agent lands.
   const [isShowingAllDirectories, setIsShowingAllDirectories] = useState(false);
   const [searchInput, setSearchInput] = useState("");
-  const [pageLimit, setPageLimit] = useState(PER_PROVIDER_LIMIT);
   const [selectedProvider, setSelectedProvider] = useState<string>(ALL_FILTER_VALUE);
 
   const scopeCwd = isShowingAllDirectories ? null : (cwd ?? null);
@@ -516,11 +515,15 @@ export function ImportSessionSheet({
     setSearchInput("");
   }, [visible]);
 
-  // A narrower or wider list starts at page one; keeping a grown limit would
-  // fetch 200 rows for a query that matches three.
-  useEffect(() => {
-    setPageLimit(PER_PROVIDER_LIMIT);
-  }, [query, scopeCwd]);
+  const [page, setPage] = useState({ cwd: scopeCwd, query, limit: PER_PROVIDER_LIMIT });
+  let pageLimit = page.limit;
+  const pageScopeChanged = page.cwd !== scopeCwd || page.query !== query;
+  // Reset before React Query observes the new scope. An effect starts a request
+  // at the previous scope's larger limit before resetting it to page one.
+  if (pageScopeChanged) {
+    pageLimit = PER_PROVIDER_LIMIT;
+    setPage({ cwd: scopeCwd, query, limit: PER_PROVIDER_LIMIT });
+  }
 
   const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
     cwd: scopeCwd,
@@ -745,7 +748,9 @@ export function ImportSessionSheet({
   );
 
   const handleShowAll = useCallback(() => setIsShowingAllDirectories(true), []);
-  const handleLoadMore = useCallback(() => setPageLimit(nextPageLimit), []);
+  const handleLoadMore = useCallback(() => {
+    setPage((current) => ({ ...current, limit: nextPageLimit(current.limit) }));
+  }, []);
 
   const hosts = useHosts();
   const hostLabel = useMemo(
