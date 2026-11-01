@@ -1,8 +1,12 @@
-import { fileURLToPath } from "node:url";
-import { fork } from "node:child_process";
+import type { TerminalReplaySink, TerminalReplayMetadata } from "./terminal-replay.js";
 import { randomBytes, randomUUID } from "node:crypto";
+import { access } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import type { Logger } from "pino";
+import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
-import type { TerminalState } from "@getpaseo/protocol/messages";
+import { writtenDuringThisBoot } from "../server/pid-lock.js";
+import type { WorkerTerminalState } from "./terminal-worker-protocol.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 import type {
@@ -12,9 +16,29 @@ import type {
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
   TerminalSession,
-  TerminalStateSnapshot,
 } from "./terminal.js";
+import { resolvePaseoCliExecutablePath } from "./paseo-cli-path.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
+import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
+import { launchTerminalWorker } from "./terminal-worker-launch.js";
+import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
+import {
+  createTerminalWorkerProcessInspector,
+  type TerminalWorkerProcessInspector,
+} from "./terminal-worker-processes.js";
+import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
+import {
+  listTerminalWorkerRecords,
+  terminalWorkerRecordPath,
+  type TerminalWorkerRecord,
+} from "./terminal-worker-record.js";
+import {
+  createTerminalWorkerPool,
+  NoTerminalWorkerAvailableError,
+  TerminalWorkerIncompatibleError,
+  type TerminalWorkerPoolMember,
+} from "./terminal-worker-pool.js";
+import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import type {
   TerminalActivityListener,
   TerminalActivityTransitionEvent,
@@ -25,12 +49,16 @@ import type {
   TerminalsChangedEvent,
   TerminalsChangedListener,
 } from "./terminal-manager.js";
+import {
+  classifyTerminalWorkerProtocol,
+  type TerminalWorkerProtocolFit,
+} from "./terminal-worker-protocol.js";
 import type {
+  TerminalWorkerListResult,
   TerminalWorkerRequest,
   TerminalWorkerResponse,
   TerminalWorkerToParentMessage,
   WorkerCreateTerminalOptions,
-  TerminalWorkerStateResult,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
@@ -64,7 +92,7 @@ interface PendingRequest {
 
 interface WorkerTerminalRecord {
   info: RequiredWorkerTerminalInfo;
-  state: TerminalState;
+  state: WorkerTerminalState;
   activity: TerminalActivity | null;
   // Cached input-mode preamble from the worker (the authoritative tracker lives
   // in the worker process). Updated with streamed output and snapshot responses.
@@ -78,49 +106,45 @@ interface WorkerTerminalRecord {
   session: TerminalSession;
 }
 
-interface TerminalWorkerProcess {
-  connected: boolean;
-  killed: boolean;
-  send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
-  disconnect(): void;
-  kill(): boolean;
-  on(event: "message", listener: (message: TerminalWorkerToParentMessage) => void): this;
-  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+export interface TerminalCreateEnvironment {
+  baseEnv: Record<string, string>;
+  paseoCliPath: string | null;
 }
 
 interface WorkerTerminalManagerOptions {
+  worker: TerminalWorkerConnection;
+  /** Reconnects a surviving worker; null means it is confirmed gone or the owner stopped. */
+  reconnect?: () => Promise<TerminalWorkerConnection | null>;
   requestTimeoutMs?: number;
-  forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  resolveCreateEnvironment?: () => TerminalCreateEnvironment;
+  // The kill path. The daemon passes the reaper, which verifies every program is gone; the
+  // default asks the connected worker to shut down.
+  closeTerminals?: () => Promise<void>;
+}
+
+/** The daemon's terminal manager: its terminals live in a worker that can outlive it. */
+export interface DaemonTerminalManager extends TerminalManager {
+  /** Registers every terminal the connected worker already runs. Resolves with their count. */
+  adoptTerminals(): Promise<number>;
+  /** Kills every terminal and verifies their programs ended. */
+  closeTerminals(): Promise<void>;
+  /**
+   * Lets go of the worker; its terminals keep running for the next daemon. With
+   * `afterPendingRequests`, requests already sent get their answers first.
+   */
+  detach(options?: { afterPendingRequests?: boolean }): Promise<void>;
 }
 
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function resolveWorkerUrl(): URL {
-  const currentUrl = import.meta.url;
-  if (currentUrl.endsWith(".ts")) {
-    return new URL("./terminal-worker-process.ts", currentUrl);
-  }
-  return new URL("./terminal-worker-process.js", currentUrl);
-}
-
-function resolveWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith(".ts")) {
-    return [];
-  }
-  const loaderUrl = new URL("./terminal-ts-loader.mjs", import.meta.url).href;
-  const importSource = [
-    'import { register } from "node:module";',
-    'import { pathToFileURL } from "node:url";',
-    `register(${JSON.stringify(loaderUrl)}, pathToFileURL("./"));`,
-  ].join(" ");
-  return [
-    "--experimental-strip-types",
-    "--import",
-    `data:text/javascript,${encodeURIComponent(importSource)}`,
-  ];
+function resolveDaemonTerminalCreateEnvironment(): TerminalCreateEnvironment {
+  return {
+    baseEnv: createExternalProcessEnv(process.env),
+    paseoCliPath: resolvePaseoCliExecutablePath(),
+  };
 }
 
 function isResponse(message: TerminalWorkerToParentMessage): message is TerminalWorkerResponse {
@@ -138,20 +162,18 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
   };
 }
 
-function forkTerminalWorker(): TerminalWorkerProcess {
-  return fork(fileURLToPath(resolveWorkerUrl()), [], {
-    execArgv: resolveWorkerExecArgv(),
-    serialization: "advanced",
-    stdio: ["ignore", "ignore", "inherit", "ipc"],
-  }) as TerminalWorkerProcess;
-}
-
 export function createWorkerTerminalManager(
-  managerOptions: WorkerTerminalManagerOptions = {},
-): TerminalManager {
-  const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
+  managerOptions: WorkerTerminalManagerOptions,
+): DaemonTerminalManager {
+  let worker = managerOptions.worker;
+  let detached = false;
+  let reconnecting: Promise<void> | null = null;
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const resolveCreateEnvironment =
+    managerOptions.resolveCreateEnvironment ?? resolveDaemonTerminalCreateEnvironment;
+  const replaySinks = new Map<string, TerminalReplaySink>();
   const pendingRequests = new Map<string, PendingRequest>();
+  const inFlight = new Set<Promise<void>>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -162,8 +184,8 @@ export function createWorkerTerminalManager(
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const terminalWorkspaceContributionChangedListeners =
     new Set<TerminalWorkspaceContributionChangedListener>();
-  let workerExited = false;
-  let workerShutdownTimer: ReturnType<typeof setTimeout> | null = null;
+  let workerDisconnected = false;
+  let closePromise: Promise<void> | null = null;
 
   function emitTerminalsChanged(event: TerminalsChangedEvent): void {
     for (const listener of Array.from(terminalsChangedListeners)) {
@@ -222,7 +244,7 @@ export function createWorkerTerminalManager(
 
   function registerRecord(input: {
     info: RequiredWorkerTerminalInfo;
-    state: TerminalState;
+    state: WorkerTerminalState;
   }): TerminalSession {
     const existing = recordsById.get(input.info.id);
     if (existing) {
@@ -268,18 +290,11 @@ export function createWorkerTerminalManager(
         }
         sendBestEffortRequest({ type: "send", terminalId: record.info.id, message });
       },
-      subscribe(
-        listener: (msg: ServerMessage) => void,
-        options?: { initialSnapshot?: "state" | "ready" },
-      ): () => void {
+      subscribe(listener: (msg: ServerMessage) => void): () => void {
         record.messageListeners.add(listener);
-        if (options?.initialSnapshot === "ready") {
-          queueMicrotask(() => {
-            if (record.messageListeners.has(listener)) {
-              listener({ type: "snapshotReady", revision: 0 });
-            }
-          });
-        }
+        queueMicrotask(() => {
+          if (record.messageListeners.has(listener)) listener({ type: "snapshotReady" });
+        });
         return () => {
           record.messageListeners.delete(listener);
         };
@@ -340,19 +355,8 @@ export function createWorkerTerminalManager(
           cols: record.state.cols,
         };
       },
-      getState(): TerminalState {
-        return record.state;
-      },
-      getStateSnapshot(options?: { scrollbackLines?: number }): TerminalStateSnapshot {
-        const scrollbackLines = options?.scrollbackLines;
-        const scrollback =
-          typeof scrollbackLines === "number"
-            ? record.state.scrollback.slice(-scrollbackLines)
-            : record.state.scrollback;
-        return {
-          state: { ...record.state, scrollback },
-          revision: 0,
-        };
+      hasOutput(): boolean {
+        return record.state.hasOutput;
       },
       getReplayPreamble(): string {
         return record.replayPreamble;
@@ -420,9 +424,7 @@ export function createWorkerTerminalManager(
     if (!record) {
       return;
     }
-    if (message.message.type === "snapshot") {
-      record.state = message.message.state;
-    }
+    if (message.message.type === "output") record.state.hasOutput = true;
     record.replayPreamble = message.replayPreamble;
     for (const listener of Array.from(record.messageListeners)) {
       listener(message.message);
@@ -587,46 +589,106 @@ export function createWorkerTerminalManager(
     }
   }
 
-  worker.on("message", (message: TerminalWorkerToParentMessage) => {
-    if (isResponse(message)) {
-      const pending = pendingRequests.get(message.requestId);
-      if (!pending) {
+  function attachWorker(): void {
+    const connection = worker;
+    connection.on("message", (message: TerminalWorkerToParentMessage) => {
+      if (message.type === "terminalReplay") {
+        // Consumption queues into the application's bounded transport synchronously.
+        // Never wait for app network delivery or accumulate a second replay queue here.
+        if (worker !== connection || !pendingRequests.has(message.requestId)) return;
+        try {
+          replaySinks.get(message.requestId)?.(message.event);
+        } catch (error) {
+          const pending = pendingRequests.get(message.requestId)!;
+          clearTimeout(pending.timeout);
+          pendingRequests.delete(message.requestId);
+          replaySinks.delete(message.requestId);
+          pending.reject(error instanceof Error ? error : new Error(String(error)));
+        }
         return;
       }
-      clearTimeout(pending.timeout);
-      pendingRequests.delete(message.requestId);
-      if (message.ok) {
-        pending.resolve(message.result);
-      } else {
-        pending.reject(new Error(message.error));
+      if (isResponse(message)) {
+        const pending = pendingRequests.get(message.requestId);
+        if (!pending) {
+          return;
+        }
+        clearTimeout(pending.timeout);
+        pendingRequests.delete(message.requestId);
+        if (message.ok) {
+          pending.resolve(message.result);
+        } else {
+          pending.reject(new Error(message.error));
+        }
+        return;
       }
-      return;
-    }
-    handleWorkerEvent(message);
-  });
+      handleWorkerEvent(message);
+    });
 
-  worker.on("exit", (code, signal) => {
-    workerExited = true;
-    if (workerShutdownTimer) {
-      clearTimeout(workerShutdownTimer);
-      workerShutdownTimer = null;
-    }
-    rejectPendingRequests(new Error(`Terminal worker exited (${signal ?? code ?? "unknown"})`));
-  });
+    connection.on("close", () => {
+      if (worker !== connection) return;
+      workerDisconnected = true;
+      rejectPendingRequests(new Error("Terminal worker connection closed"));
+      const reconnect = managerOptions.reconnect;
+      if (!detached && reconnect) {
+        reconnecting = (async () => {
+          const recovered = await reconnect();
+          if (!recovered) {
+            for (const terminalId of Array.from(recordsById.keys())) {
+              handleTerminalExitEvent({
+                type: "terminalExit",
+                terminalId,
+                info: { exitCode: null, signal: null, lastOutputLines: [] },
+              });
+            }
+            return;
+          }
+          if (detached) {
+            recovered.disconnect();
+            return;
+          }
+          worker = recovered;
+          workerDisconnected = false;
+          attachWorker();
+          await adoptTerminals();
+          // Output emitted without a controller is retained in the worker's screen. Existing
+          // streams must fetch that screen before applying further live output.
+          for (const record of recordsById.values()) {
+            handleTerminalMessageEvent({
+              type: "terminalMessage",
+              terminalId: record.info.id,
+              message: { type: "snapshotReady" },
+              replayPreamble: record.replayPreamble,
+            });
+          }
+        })().finally(() => {
+          reconnecting = null;
+        });
+        void reconnecting.catch(() => {});
+      }
+    });
+  }
+  attachWorker();
 
-  function sendRequest(input: TerminalWorkerRequestInput): Promise<unknown> {
-    if (workerExited || !worker.connected) {
+  function sendRequest(
+    input: TerminalWorkerRequestInput,
+    sink?: TerminalReplaySink,
+  ): Promise<unknown> {
+    if (reconnecting && workerDisconnected)
+      return reconnecting.then(() => sendRequest(input, sink));
+    if (workerDisconnected || !worker.connected) {
       return Promise.reject(new Error("Terminal worker is not running"));
     }
+    const connection = worker;
     const requestId = randomUUID();
+    if (sink) replaySinks.set(requestId, sink);
     const message = { ...input, requestId } as TerminalWorkerRequest;
-    return new Promise((resolve, reject) => {
+    const request = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
         reject(new Error(`Terminal worker request timed out: ${input.type}`));
       }, requestTimeoutMs);
       pendingRequests.set(requestId, { resolve, reject, timeout });
-      worker.send(message, (error) => {
+      connection.send(message, (error) => {
         if (!error) {
           return;
         }
@@ -635,6 +697,17 @@ export function createWorkerTerminalManager(
         reject(error);
       });
     });
+    // Tracks settlement only; the caller handles the rejection.
+    const settled = request.then(
+      () => undefined,
+      () => undefined,
+    );
+    inFlight.add(settled);
+    void settled.finally(() => {
+      inFlight.delete(settled);
+      replaySinks.delete(requestId);
+    });
+    return request;
   }
 
   function sendBestEffortRequest(input: TerminalWorkerRequestInput): void {
@@ -643,6 +716,71 @@ export function createWorkerTerminalManager(
       // Worker failures are surfaced through awaitable manager methods and worker
       // lifecycle state; do not let fire-and-forget sends crash the daemon.
     });
+  }
+
+  function clearRecords(): void {
+    for (const terminalId of Array.from(recordsById.keys())) {
+      removeRecord(terminalId);
+    }
+  }
+
+  function disconnectWorker(): Promise<void> {
+    if (workerDisconnected || !worker.connected) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      worker.on("close", () => resolve());
+      worker.disconnect();
+    });
+  }
+
+  function closeTerminals(): Promise<void> {
+    detached = true;
+    closePromise ??= (async () => {
+      await reconnecting;
+      if (managerOptions.closeTerminals) {
+        await disconnectWorker();
+        clearRecords();
+        await managerOptions.closeTerminals();
+        return;
+      }
+      // Unverified: production passes the reaper, which confirms every program ended.
+      sendBestEffortRequest({ type: "shutdown" });
+      await disconnectWorker();
+      clearRecords();
+    })();
+    return closePromise;
+  }
+
+  async function adoptTerminals(): Promise<number> {
+    const listed = (await sendRequest({ type: "listTerminals" })) as TerminalWorkerListResult;
+    const cwds = new Set<string>();
+    const liveIds = new Set(listed.map((item) => item.terminal.id));
+    for (const terminalId of Array.from(recordsById.keys())) {
+      if (!liveIds.has(terminalId))
+        handleTerminalExitEvent({
+          type: "terminalExit",
+          terminalId,
+          info: { exitCode: null, signal: null, lastOutputLines: [] },
+        });
+    }
+    for (const item of listed) {
+      const info = asRequiredWorkerTerminalInfo(item.terminal);
+      registerRecord({ info, state: item.state });
+      const record = recordsById.get(info.id);
+      if (record) {
+        record.replayPreamble = item.replayPreamble;
+      }
+      // The agent hooks inside each shell keep the token they were started with.
+      if (item.activityToken) {
+        terminalActivityTokenById.set(info.id, item.activityToken);
+      }
+      cwds.add(info.cwd);
+    }
+    for (const cwd of cwds) {
+      emitTerminalsChanged({ cwd, terminals: listTerminalItemsForCwd(cwd) });
+    }
+    return listed.length;
   }
 
   return {
@@ -688,6 +826,7 @@ export function createWorkerTerminalManager(
       const creation = { session: null as TerminalSession | null };
       pendingCreationsById.set(terminalId, creation);
       try {
+        const environment = resolveCreateEnvironment();
         await sendRequest({
           type: "createTerminal",
           options: {
@@ -695,6 +834,8 @@ export function createWorkerTerminalManager(
             id: terminalId,
             activityToken,
             activityUrl: terminalActivityUrl,
+            baseEnv: environment.baseEnv,
+            paseoCliPath: environment.paseoCliPath,
           },
         });
         if (!creation.session) {
@@ -732,22 +873,12 @@ export function createWorkerTerminalManager(
       return recordsById.get(id)?.session;
     },
 
-    async getTerminalState(
-      id: string,
-      options?: { scrollbackLines?: number },
-    ): Promise<TerminalStateSnapshot | null> {
-      const snapshot = (await sendRequest({
-        type: "getTerminalState",
-        terminalId: id,
-        ...(options ? { options } : {}),
-      })) as TerminalWorkerStateResult;
-      if (snapshot && snapshot.replayPreamble !== undefined) {
-        const record = recordsById.get(id);
-        if (record) {
-          record.replayPreamble = snapshot.replayPreamble;
-        }
-      }
-      return snapshot;
+    async replayTerminal(id, options, sink): Promise<TerminalReplayMetadata | null> {
+      const metadata = (await sendRequest(
+        { type: "replayTerminal", terminalId: id, options },
+        sink,
+      )) as TerminalReplayMetadata | null;
+      return metadata;
     },
 
     setTerminalTitle(id: string, title: string): boolean {
@@ -812,24 +943,24 @@ export function createWorkerTerminalManager(
     },
 
     killAll(): void {
-      void sendRequest({ type: "killAll" })
-        .catch(() => {
-          // no-op
-        })
-        .finally(() => {
-          if (worker.connected) {
-            worker.disconnect();
-          }
-          if (!worker.killed && !workerShutdownTimer) {
-            workerShutdownTimer = setTimeout(() => {
-              worker.kill();
-            }, 1000);
-          }
-        });
-      for (const terminalId of Array.from(recordsById.keys())) {
-        removeRecord(terminalId);
-      }
+      void closeTerminals().catch(() => {
+        // The synchronous interface cannot report it; closeTerminals() callers see the error.
+      });
     },
+
+    closeTerminals,
+
+    async detach(options?: { afterPendingRequests?: boolean }): Promise<void> {
+      detached = true;
+      await reconnecting;
+      if (options?.afterPendingRequests) {
+        await Promise.allSettled(Array.from(inFlight));
+      }
+      await disconnectWorker();
+      clearRecords();
+    },
+
+    adoptTerminals,
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {
       terminalsChangedListeners.add(listener);
@@ -856,6 +987,342 @@ export function createWorkerTerminalManager(
   };
 }
 
-export function terminateWorkerTerminalManager(manager: TerminalManager): void {
-  manager.killAll();
+export interface StartWorkerTerminalManagerOptions {
+  paseoHome: string;
+  paseoVersion: string;
+  logger: Logger;
+  getTerminalActivityUrl?: () => string | null;
+  requestTimeoutMs?: number;
+}
+
+// The current worker plus one draining a previous protocol. Every live worker counts,
+// incompatible, unreachable, unidentified and closing ones included: the daemon never starts a
+// third.
+const MAX_TERMINAL_WORKERS = 2;
+const DRAINED_WORKER_EXIT_TIMEOUT_MS = 10_000;
+
+interface LiveWorkerRecord {
+  path: string;
+  record: TerminalWorkerRecord;
+  fit: TerminalWorkerProtocolFit;
+}
+
+/**
+ * Connects the daemon to its terminal workers. A worker of this daemon's protocol is adopted
+ * (restart, crash, `stop --keep-terminals`); one a protocol older is adopted to drain; anything
+ * older is shut down, its terminals closed; one from a newer Paseo is left running and the
+ * terminal service reports it as incompatible. A worker is launched only when none is current,
+ * none is incompatible and fewer than two run; when two run, the first terminal created after one
+ * of them exits launches it. Records that cannot be adopted (a cleanup that
+ * never finished, a dead worker whose programs survived it) go through the reaper first, so a
+ * daemon never adopts terminals someone asked to close.
+ */
+export async function startWorkerTerminalManager(
+  options: StartWorkerTerminalManagerOptions,
+): Promise<DaemonTerminalManager> {
+  const logger = options.logger.child({ module: "terminal-worker" });
+  const inspector = createTerminalWorkerProcessInspector();
+  const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
+  const live: LiveWorkerRecord[] = [];
+  const toReap: string[] = [];
+  for (const file of await listTerminalWorkerRecords(options.paseoHome)) {
+    if ("error" in file) {
+      logger.warn({ recordPath: file.path, err: file.error }, "Unreadable terminal worker record");
+      continue;
+    }
+    const { record } = file;
+    if (
+      record.closing ||
+      !writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })
+    ) {
+      toReap.push(file.path);
+      continue;
+    }
+    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    if (worker.status === "owned") {
+      live.push({
+        path: file.path,
+        record,
+        fit: classifyTerminalWorkerProtocol(record.protocolVersion),
+      });
+    } else if (worker.status === "unknown") {
+      logger.warn(
+        { recordPath: file.path, pid: record.pid, reason: worker.reason },
+        "Cannot identify terminal worker; leaving its record",
+      );
+    } else {
+      // Its programs lost their PTY with the worker and cannot be adopted.
+      toReap.push(file.path);
+    }
+  }
+
+  if (toReap.length > 0) {
+    await reapTerminalWorkers({
+      paseoHome: options.paseoHome,
+      gracefulMs: 0,
+      recordPaths: toReap,
+      inspector,
+      log,
+    }).catch((error: unknown) => {
+      logger.warn({ err: error }, "Terminal cleanup of an unadoptable worker was not confirmed");
+    });
+  }
+
+  const obsolete = live.filter((entry) => entry.fit === "obsolete");
+  if (obsolete.length > 0) {
+    for (const entry of obsolete) {
+      logger.warn(
+        {
+          pid: entry.record.pid,
+          protocolVersion: entry.record.protocolVersion,
+          paseoVersion: entry.record.paseoVersion,
+          terminals: entry.record.terminals.length,
+        },
+        "Closing a terminal worker two or more protocol versions old; its terminals close",
+      );
+    }
+    await reapTerminalWorkers({
+      paseoHome: options.paseoHome,
+      recordPaths: obsolete.map((entry) => entry.path),
+      inspector,
+      log,
+    }).catch((error: unknown) => {
+      logger.warn({ err: error }, "Closing an obsolete terminal worker was not confirmed");
+    });
+  }
+
+  const closeAll = async () => {
+    const result = await reapTerminalWorkers({ paseoHome: options.paseoHome, inspector, log });
+    logger.info(result, "Terminals closed");
+  };
+  const prune = async () => {
+    const result = await pruneTerminalWorkerRuntimes(options.paseoHome);
+    if (result.removed.length > 0)
+      log("Removed terminal worker copies", { removed: result.removed });
+    for (const failure of result.failed) {
+      logger.warn(failure, "Cannot remove a terminal worker copy; the next start retries");
+    }
+  };
+
+  const pruneAfterExit = async (workerPid: number) => {
+    if (await waitForWorkerRecordRemoval(options.paseoHome, workerPid)) {
+      await prune();
+      return;
+    }
+    logger.warn({ pid: workerPid }, "Drained terminal worker has not exited yet");
+  };
+
+  const newer = live.find((entry) => entry.fit === "newer");
+  if (newer) {
+    const incompatible = new TerminalWorkerIncompatibleError({
+      paseoVersion: newer.record.paseoVersion,
+      protocolVersion: newer.record.protocolVersion,
+    });
+    logger.error({ pid: newer.record.pid }, incompatible.message);
+    await prune();
+    return createTerminalWorkerPool({
+      current: null,
+      draining: [],
+      incompatible,
+      closeAll,
+    });
+  }
+
+  const createMember = async (
+    record: TerminalWorkerRecord,
+    connection: TerminalWorkerConnection,
+  ): Promise<TerminalWorkerPoolMember> => {
+    let alive = true;
+    let resolveExit!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    let recovery: Promise<TerminalWorkerConnection | null> | null = null;
+    const recoveryState = { stopped: false };
+    const reconnect = () => {
+      recovery ??= (async () => {
+        while (!recoveryState.stopped) {
+          const ownership = classifyTerminalWorkerProcess(
+            record,
+            await inspector.inspect(record.pid),
+          );
+          if (ownership.status === "gone" || ownership.status === "unrelated") {
+            await reapTerminalWorkers({
+              paseoHome: options.paseoHome,
+              recordPaths: [terminalWorkerRecordPath(options.paseoHome, record.pid)],
+              inspector,
+              log,
+              gracefulMs: 0,
+            }).catch((error) =>
+              logger.warn({ err: error }, "Dead terminal worker cleanup was not confirmed"),
+            );
+            alive = false;
+            resolveExit();
+            return null;
+          }
+          try {
+            return await connectTerminalWorker({
+              socketPath: record.socketPath,
+              secret: record.secret,
+              timeoutMs: 500,
+            });
+          } catch {
+            await delay(100);
+          }
+        }
+        return null;
+      })().finally(() => {
+        recovery = null;
+      });
+      return recovery;
+    };
+    const manager = createWorkerTerminalManager({
+      worker: connection,
+      reconnect,
+      ...(options.requestTimeoutMs === undefined
+        ? {}
+        : { requestTimeoutMs: options.requestTimeoutMs }),
+      ...(options.getTerminalActivityUrl
+        ? { getTerminalActivityUrl: options.getTerminalActivityUrl }
+        : {}),
+      closeTerminals: closeAll,
+    });
+    const count = await manager.adoptTerminals();
+    if (count > 0) {
+      logger.info({ pid: record.pid, terminals: count }, "Adopted terminals from a running worker");
+    }
+    return {
+      manager,
+      workerPid: record.pid,
+      exited,
+      ready: async () => {
+        await recovery;
+        return alive && !recoveryState.stopped;
+      },
+      stopRecovery: () => {
+        recoveryState.stopped = true;
+      },
+    };
+  };
+
+  let current: TerminalWorkerPoolMember | null = null;
+  const draining: TerminalWorkerPoolMember[] = [];
+  const adoptable = [
+    ...live.filter((entry) => entry.fit === "current"),
+    ...live.filter((entry) => entry.fit === "previous"),
+  ];
+  for (const entry of adoptable) {
+    let connection: TerminalWorkerConnection;
+    try {
+      connection = await connectTerminalWorker({
+        socketPath: entry.record.socketPath,
+        secret: entry.record.secret,
+      });
+    } catch (error) {
+      logger.warn(
+        { pid: entry.record.pid, err: error },
+        "Cannot reach terminal worker; leaving it running",
+      );
+      continue;
+    }
+    const member = await createMember(entry.record, connection);
+    if (entry.fit === "current" && !current) {
+      logger.info({ pid: entry.record.pid }, "Adopting running terminal worker");
+      current = member;
+    } else {
+      // A previous protocol, or a second worker of this one: it keeps its terminals and takes
+      // no new ones.
+      logger.info(
+        { pid: entry.record.pid, protocolVersion: entry.record.protocolVersion },
+        "Draining terminal worker; it exits after its last terminal",
+      );
+      draining.push(member);
+    }
+  }
+
+  // Counted from the records rather than from what startup drove: a worker a cleanup could not
+  // confirm gone keeps running, and a draining one exits on its own.
+  const startCurrent = async (): Promise<TerminalWorkerPoolMember> => {
+    const running = await countRunningTerminalWorkers(options.paseoHome, inspector);
+    if (running >= MAX_TERMINAL_WORKERS) {
+      throw new NoTerminalWorkerAvailableError(
+        `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them exits`,
+      );
+    }
+    const launched = await launchTerminalWorker({
+      paseoHome: options.paseoHome,
+      paseoVersion: options.paseoVersion,
+    });
+    const connection = await connectTerminalWorker({
+      socketPath: launched.record.socketPath,
+      secret: launched.record.secret,
+    });
+    logger.info(
+      { pid: launched.record.pid, runtime: launched.record.runtime ?? null },
+      "Launched terminal worker",
+    );
+    return createMember(launched.record, connection);
+  };
+
+  await prune();
+  if (!current) {
+    try {
+      current = await startCurrent();
+    } catch (error) {
+      if (!(error instanceof NoTerminalWorkerAvailableError)) throw error;
+      logger.warn(error.message);
+    }
+  }
+
+  return createTerminalWorkerPool({
+    current,
+    draining,
+    incompatible: null,
+    startCurrent,
+    closeAll,
+    onDrained: (member) => {
+      log("Released drained terminal worker", { pid: member.workerPid });
+      void pruneAfterExit(member.workerPid);
+    },
+  });
+}
+
+// Every worker that may still run in this home, one per record: a worker and its cleanup record
+// are listed as one. Unreadable records and workers that cannot be identified count; a worker
+// confirmed gone, or a pid reused by another process, does not.
+async function countRunningTerminalWorkers(
+  paseoHome: string,
+  inspector: TerminalWorkerProcessInspector,
+): Promise<number> {
+  let running = 0;
+  for (const file of await listTerminalWorkerRecords(paseoHome)) {
+    if ("error" in file) {
+      running += 1;
+      continue;
+    }
+    const { record } = file;
+    if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) continue;
+    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    if (worker.status === "owned" || worker.status === "unknown") running += 1;
+  }
+  return running;
+}
+
+// A worker deletes its own record as it exits.
+async function waitForWorkerRecordRemoval(paseoHome: string, workerPid: number): Promise<boolean> {
+  const recordPath = terminalWorkerRecordPath(paseoHome, workerPid);
+  const deadline = Date.now() + DRAINED_WORKER_EXIT_TIMEOUT_MS;
+  while (
+    await access(recordPath).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      },
+    )
+  ) {
+    if (Date.now() >= deadline) return false;
+    await delay(100);
+  }
+  return true;
 }

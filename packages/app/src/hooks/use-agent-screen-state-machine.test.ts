@@ -422,6 +422,23 @@ describe("deriveAgentScreenViewState", () => {
     expect(result.memory.lastReadyAgent).toBeNull();
   });
 
+  it.each(["error", "retrying"] as const)("shows archived history sync %s", (status) => {
+    const result = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: createAgent("agent-1"),
+        isArchived: true,
+        hasHydratedHistoryBefore: true,
+        visibilityCatchUpStatus: status,
+      },
+      memory: createBaseMemory(),
+    });
+    expect(expectReadyState(result.state).sync).toEqual({
+      status: "sync_error",
+      isRetrying: status === "retrying",
+    });
+  });
+
   it("renders an archived agent before provider history is initialized", () => {
     const result = deriveAgentScreenViewState({
       input: {

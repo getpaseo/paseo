@@ -66,6 +66,7 @@ test("retries a rejected version probe after the configured binary changes", asy
   const script = join(root, "version.cjs");
   const client = new OpenCodeRuntimeClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
   });
   try {
     await writeFile(script, 'console.log("opencode v2.0.3")');
@@ -95,6 +96,7 @@ test.each([
   const script = join(root, "version.cjs");
   const client = new OpenCodeRuntimeClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
   });
   try {
     await writeFile(script, initialSource);
@@ -193,6 +195,7 @@ test.each([
       logger,
       {
         command: { mode: "replace", argv: [process.execPath, script] },
+        env: { XDG_STATE_HOME: root },
       },
       { serverManager: new TrackedServerManager({ logger }) },
     );
@@ -209,3 +212,38 @@ test.each([
   },
   10000,
 );
+
+test("selects v2 without probing the binary when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, "-e", "process.exit(1)"] },
+    env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
+  });
+  try {
+    const features = await client.listFeatures({ provider: "opencode", cwd: "/tmp/project" });
+    expect(features.map((feature) => feature.label)).toEqual(["Auto-accept"]);
+  } finally {
+    await client.shutdown();
+  }
+});
+
+test("keeps native Paseo tools available when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const { OpenCodeBridge } = await import("./bridge.js");
+  const bridge = new OpenCodeBridge({ paseoHome: "/tmp", logger: createTestLogger() });
+  const external = new OpenCodeRuntimeClient(
+    createTestLogger(),
+    { env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" } },
+    { bridge },
+  );
+  const local = new OpenCodeRuntimeClient(createTestLogger(), undefined, { bridge });
+  try {
+    expect(external.capabilities.supportsNativePaseoTools).toBe(true);
+    expect(local.capabilities.supportsNativePaseoTools).toBe(true);
+  } finally {
+    await external.shutdown();
+    await local.shutdown();
+  }
+});

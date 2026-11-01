@@ -28,6 +28,23 @@ function failure(message: string) {
 }
 
 describe("direct connection failure copy", () => {
+  it.each([
+    "paseo-qa-nonexistent.invalid",
+    "ssl-paseo-qa.invalid",
+    "tls-paseo-qa.invalid",
+    "certificate-paseo-qa.invalid",
+  ])(
+    "identifies Android DNS failures for %s without treating the hostname as TLS evidence",
+    (host) => {
+      const message = `Unable to resolve host "${host}": No address associated with hostname`;
+      expect(failure(message)).toEqual({
+        title: "Failed: tcp://example.test:443?ssl=true",
+        detail: labels.hostNotFound,
+        raw: `transport error — ${message}`,
+      });
+    },
+  );
+
   it("identifies Android certificate validation errors without calling them DNS failures", () => {
     const message =
       "java.security.cert.CertPathValidatorException: Trust anchor for certification path not found.";
@@ -43,6 +60,7 @@ describe("direct connection failure copy", () => {
     ["SSL handshake failed", labels.tlsError],
     ["TLS handshake failed", labels.tlsError],
     ["getaddrinfo ENOTFOUND example.test", labels.hostNotFound],
+    ["getaddrinfo ENOTFOUND ssl.example.test", labels.hostNotFound],
     ["Host not found", labels.hostNotFound],
     ["connect ECONNREFUSED", labels.refused],
     ["connection timed out", labels.timedOut],

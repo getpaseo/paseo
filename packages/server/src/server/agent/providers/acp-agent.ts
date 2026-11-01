@@ -120,6 +120,7 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
+import { resolveResumeProcessCwd } from "./resume-process-cwd.js";
 import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnvOverlay,
@@ -142,27 +143,27 @@ function assertChildWithPipes(
   }
 }
 
-// Node reports a failed spawn (missing binary or missing cwd) as a child
-// `error` event; without a listener it becomes an uncaught exception.
-function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promise<never> {
+// Watch process failures as well as spawn errors: the SDK leaves initialize
+// pending when the child exits without replying. `close` waits for stderr to
+// drain, so the failure includes the launcher's diagnostic.
+function rejectOnProcessFailure(child: ChildProcess, stderrChunks: string[]): Promise<never> {
   return new Promise<never>((_, reject) => {
     child.once("error", (error) => {
       const stderr = stderrChunks.join("").trim();
       reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
     });
+    child.once("close", (code, signal) => {
+      const stderr = stderrChunks.join("").trim();
+      const status = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+      reject(
+        new Error(
+          `ACP agent process exited before initialization completed (${status})${
+            stderr ? `\n${stderr}` : ""
+          }`,
+        ),
+      );
+    });
   });
-}
-
-async function isDirectory(target: string): Promise<boolean> {
-  try {
-    return (await fs.stat(target)).isDirectory();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") {
-      return false;
-    }
-    throw error;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -324,6 +325,14 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
+
+/**
+ * An ACP agent publishes its slash-command inventory incrementally. Wait this
+ * long without another batch before treating the inventory as complete. MiniMax
+ * publishes its skills about 350ms after its built-in commands.
+ */
+const COMMAND_INVENTORY_QUIET_MS = 600;
+const COMMAND_INVENTORY_POLL_MS = 25;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -542,7 +551,7 @@ interface ACPProcessTransport {
   connection: ClientSideConnection;
   stderrChunks: string[];
   spawnReady: Promise<void>;
-  spawnError: Promise<never>;
+  processError: Promise<never>;
 }
 
 interface ACPImportPromptPreviews {
@@ -649,6 +658,7 @@ interface TerminalExit {
 }
 
 interface TerminalEntry {
+  running: boolean;
   id: string;
   child: ChildProcess;
   output: string;
@@ -1379,6 +1389,7 @@ export class ACPAgentClient implements AgentClient {
       client?: ACPClient;
     },
   ): Promise<SpawnedACPProcess> {
+    const configuredOptions = ACPProviderOptionsSchema.parse(options?.providerOptions ?? {});
     const transport = await this.spawnTransport(launchEnv, options?.client);
     const probe: UninitializedACPProcess = {
       child: transport.child,
@@ -1390,7 +1401,7 @@ export class ACPAgentClient implements AgentClient {
       const initialize = await this.initializeTransport(
         transport,
         options?.initializeTimeoutMs,
-        options?.providerOptions,
+        configuredOptions.clientCapabilities,
       );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
@@ -1424,7 +1435,7 @@ export class ACPAgentClient implements AgentClient {
       stderrChunks.push(chunk.toString());
     });
 
-    const spawnErrorPromise = rejectOnSpawnError(child, stderrChunks);
+    const processErrorPromise = rejectOnProcessFailure(child, stderrChunks);
     const spawnReadyPromise = new Promise<void>((resolve) => {
       child.once("spawn", () => {
         resolve();
@@ -1443,16 +1454,15 @@ export class ACPAgentClient implements AgentClient {
       connection,
       stderrChunks,
       spawnReady: spawnReadyPromise,
-      spawnError: spawnErrorPromise,
+      processError: processErrorPromise,
     };
   }
 
   protected async initializeTransport(
     transport: ACPProcessTransport,
     initializeTimeoutMs?: number,
-    providerOptions?: Record<string, unknown>,
+    clientCapabilities?: ACPClientCapabilities,
   ): Promise<InitializeResponse> {
-    const configuredOptions = ACPProviderOptionsSchema.parse(providerOptions ?? {});
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const initializeTimeoutPromise = initializeTimeoutMs
       ? new Promise<never>((_, reject) => {
@@ -1469,11 +1479,11 @@ export class ACPAgentClient implements AgentClient {
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: buildACPClientCapabilities(
               this.clientCapabilityMeta,
-              configuredOptions.clientCapabilities ?? this.clientCapabilities,
+              clientCapabilities ?? this.clientCapabilities,
             ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
-          transport.spawnError,
+          transport.processError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
         ]),
       );
@@ -1554,7 +1564,7 @@ export class ACPAgentClient implements AgentClient {
       try {
         transport = await this.spawnTransport(PROBE_ENV);
         await withTimeout(
-          Promise.race([transport.spawnReady, transport.spawnError]),
+          Promise.race([transport.spawnReady, transport.processError]),
           phaseTimeoutMs,
           `ACP spawn timed out after ${phaseTimeoutMs}ms`,
         );
@@ -1752,7 +1762,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private lastActivityAt: string | null = null;
   private configOptions: SessionConfigOption[] = [];
   private cachedCommands: AgentSlashCommand[] = [];
-  private commandsReadyDeferred: { promise: Promise<void>; resolve: () => void } | null = null;
+  /** When the last command batch arrived; null while nothing has been published. */
+  private commandsUpdatedAt: number | null = null;
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
@@ -2050,58 +2061,39 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     ];
   }
 
-  private ensureCommandsReadyDeferred(): void {
-    if (this.commandsReadyDeferred || this.commandsReadySettled || this.cachedCommands.length > 0) {
-      return;
-    }
-
-    let resolve!: () => void;
-    const promise = new Promise<void>((r) => {
-      resolve = r;
-    });
-    this.commandsReadyDeferred = { promise, resolve };
-  }
-
   private settleCommandsReady(): void {
-    if (this.commandsReadySettled) {
-      return;
-    }
     this.commandsReadySettled = true;
-    this.commandsReadyDeferred?.resolve();
-    this.commandsReadyDeferred = null;
   }
 
-  private async waitForCommandsReady(): Promise<void> {
-    const deferred = this.commandsReadyDeferred;
-    if (!deferred) {
-      return;
-    }
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-      await Promise.race([
-        deferred.promise,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, this.initialCommandsWaitTimeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
+  /**
+   * Providers publish their command inventory incrementally. MiniMax sends its
+   * built-in commands twice, then a third batch about 350ms later that merges in
+   * every discovered skill. Returning after the first batch loses the skills.
+   *
+   * Wait for the inventory to go quiet rather than for the first batch. The
+   * quiet window must exceed the gap between a provider's own batches; 600ms
+   * covers MiniMax with margin. `initialCommandsWaitTimeoutMs` still bounds the
+   * whole wait for providers that publish once or never publish at all.
+   */
+  private async waitForCommandsToSettle(): Promise<void> {
+    const deadline = Date.now() + this.initialCommandsWaitTimeoutMs;
+    while (!this.commandsReadySettled && !this.closed) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      const quietFor = this.commandsUpdatedAt === null ? 0 : Date.now() - this.commandsUpdatedAt;
+      if (quietFor >= COMMAND_INVENTORY_QUIET_MS) return;
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(remaining, COMMAND_INVENTORY_POLL_MS)),
+      );
     }
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    if (this.cachedCommands.length > 0) {
-      return this.cachedCommands;
-    }
-    if (!this.waitForInitialCommands || this.closed) {
+    if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
       return this.cachedCommands;
     }
 
-    this.ensureCommandsReadyDeferred();
-    await this.waitForCommandsReady();
+    await this.waitForCommandsToSettle();
     this.settleCommandsReady();
     return this.cachedCommands;
   }
@@ -2554,6 +2546,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  async canStopRuntime(): Promise<boolean> {
+    return (
+      this.activeForegroundTurnId === null &&
+      this.pendingPermissions.size === 0 &&
+      this.pendingUserMessage === null &&
+      !Array.from(this.terminalEntries.values()).some((terminal) => terminal.running)
+    );
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -2589,12 +2590,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
-      this.terminateProcess(terminal.child, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      }),
-    );
+    const terminalTerminations = Array.from(this.terminalEntries.values())
+      .filter((terminal) => terminal.running)
+      .map((terminal) =>
+        this.terminateProcess(terminal.child, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        }),
+      );
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
 
@@ -2721,14 +2724,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  // Cache an asynchronously-delivered slash-command batch and unblock any
-  // listCommands() call that is waiting on the initial batch. Used when a
-  // provider supplies an extensionCommandsParser whose result arrives after
-  // session/new (e.g. via a vendor extension notification). The ready gate is
-  // always settled — even for an empty batch — so a provider that legitimately
-  // reports no commands does not leave listCommands() blocked for the full
-  // initial-commands timeout. An optional sessionId scopes the batch to this
-  // session; notifications addressed to a different session are ignored.
+  // Cache an asynchronously-delivered slash-command batch from a provider that
+  // supplies an extensionCommandsParser (e.g. a vendor extension notification).
+  // An empty batch is the provider saying it has no commands, so it settles the
+  // waiter immediately instead of letting it wait out the quiet window. An
+  // optional sessionId scopes the batch to this session; notifications
+  // addressed to a different session are ignored.
   private applyResolvedCommands(
     commands: AgentSlashCommand[],
     options?: { sessionId?: string },
@@ -2742,7 +2743,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (commands.length > 0) {
+      this.commandsUpdatedAt = Date.now();
       this.cachedCommands = commands;
+      // A non-empty batch may be followed by more. Let the quiet window decide
+      // when the inventory is complete rather than settling here; an empty
+      // batch is the provider saying it has nothing, which must still unblock
+      // the waiter immediately.
+      return;
     }
     this.settleCommandsReady();
   }
@@ -2796,6 +2803,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     waitForExit.catch(() => undefined);
 
     const entry: TerminalEntry = {
+      running: true,
       id: terminalId,
       child,
       output: "",
@@ -2816,10 +2824,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.once("error", (error) => {
       const spawnError = error instanceof Error ? error : new Error(String(error));
       appendTerminalOutput(entry, `${spawnError.message}\n`);
+      // A failed spawn has no exit event. Other process errors do not prove exit.
+      if (child.pid === undefined) entry.running = false;
       rejectExit(spawnError);
     });
     child.once("exit", (code, signal) => {
       const exit = { exitCode: code, signal };
+      entry.running = false;
       entry.exit = exit;
       resolveExit(exit);
     });
@@ -2844,7 +2855,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
     const entry = this.getTerminalEntry(params.terminalId);
-    if (!entry.exit) {
+    if (entry.running) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     this.terminalEntries.delete(params.terminalId);
@@ -2852,7 +2863,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
     const entry = this.getTerminalEntry(params.terminalId);
-    if (!entry.exit) {
+    if (entry.running) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     return {};
@@ -2861,11 +2872,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // Loading an archived agent's history runs nothing in its working directory, which
   // may have been removed with its worktree. session/load still names the original
   // directory; only the process starts from the home directory.
-  private async resolveProcessCwd(): Promise<string> {
-    if (this.resumePurpose !== "history" || (await isDirectory(this.config.cwd))) {
-      return this.config.cwd;
-    }
-    return homedir();
+  private resolveProcessCwd(): Promise<string> {
+    return resolveResumeProcessCwd(this.config.cwd, this.resumePurpose);
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
@@ -2894,7 +2902,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
-    const spawnError = rejectOnSpawnError(child, stderrChunks);
+    const processError = rejectOnProcessFailure(child, stderrChunks);
     child.once("exit", (code, signal) => {
       if (this.closed || this.historyRuntimeReleased) {
         return;
@@ -2931,7 +2939,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           ),
           clientInfo: { name: "Paseo", version: "dev" },
         }),
-        spawnError,
+        processError,
       ]),
     );
 
@@ -3122,13 +3130,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleUsageUpdate(update);
         return pendingUserEvents;
       case "available_commands_update":
+        this.commandsUpdatedAt = Date.now();
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
           description: command.description,
           argumentHint: command.input?.hint ?? "",
           kind: "command",
         }));
-        this.settleCommandsReady();
+        // An empty batch means the agent has no commands and would otherwise
+        // wait out the whole quiet window. A non-empty batch may be one of
+        // several, so completion belongs to the quiet window.
+        if (update.availableCommands.length === 0) {
+          this.settleCommandsReady();
+        }
         return pendingUserEvents;
       default:
         return pendingUserEvents;
@@ -4077,10 +4091,16 @@ function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
   if (!limit) {
     return;
   }
-  while (Buffer.byteLength(entry.output, "utf8") > limit && entry.output.length > 0) {
-    entry.output = entry.output.slice(1);
-    entry.truncated = true;
+  const output = Buffer.from(entry.output, "utf8");
+  if (output.length <= limit) {
+    return;
   }
+  let start = output.length - limit;
+  while (start < output.length && (output[start] & 0xc0) === 0x80) {
+    start += 1;
+  }
+  entry.output = output.subarray(start).toString("utf8");
+  entry.truncated = true;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

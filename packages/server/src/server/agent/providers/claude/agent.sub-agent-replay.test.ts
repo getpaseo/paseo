@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 
@@ -75,6 +76,29 @@ function sidechainEntry(options: { agentId?: string; stopReason?: string | null 
       stop_reason: options.stopReason ?? null,
     },
   });
+}
+
+function buildQueryMock(events: unknown[]) {
+  let index = 0;
+  return {
+    next: vi.fn(async () => {
+      if (index >= events.length) return { done: true, value: undefined };
+      const value = events[index];
+      index += 1;
+      return { done: false, value };
+    }),
+    interrupt: vi.fn(async () => undefined),
+    return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
+    setPermissionMode: vi.fn(async () => undefined),
+    setModel: vi.fn(async () => undefined),
+    supportedModels: vi.fn(async () => []),
+    supportedCommands: vi.fn(async () => []),
+    rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
 }
 
 describe("ClaudeAgentSession persisted subagent replay", () => {
@@ -422,6 +446,237 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     });
   });
 
+  describe("a background subagent", () => {
+    // Shapes recorded from Claude Code 2.1.x: the launch returns at once with an async result,
+    // and a child stopped by an interrupt ends on the interrupt placeholder, not an end_turn.
+    function backgroundLaunch(): string[] {
+      return [
+        parentEntry([
+          {
+            type: "tool_use",
+            id: TOOL_USE_ID,
+            name: "Agent",
+            input: {
+              subagent_type: "general-purpose",
+              description: "probe sleeper",
+              run_in_background: true,
+            },
+          },
+        ]),
+        JSON.stringify({
+          type: "user",
+          sessionId: "replay-session",
+          timestamp: "2026-07-26T06:27:48.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: TOOL_USE_ID,
+                content: [
+                  {
+                    type: "text",
+                    text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                  },
+                ],
+              },
+            ],
+          },
+          toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+        }),
+      ];
+    }
+
+    function readStatus(event: { status?: string }): string | undefined {
+      return event.status;
+    }
+
+    function interruptedChild(): string[] {
+      return [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          timestamp: "2026-07-26T06:27:50.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "toolu_child_bash", name: "Bash", input: {} }],
+            stop_reason: "tool_use",
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          timestamp: "2026-07-26T06:28:05.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_child_bash",
+                content: "The user doesn't want to proceed with this tool use.",
+                is_error: true,
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          timestamp: "2026-07-26T06:28:05.001Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+          },
+        }),
+      ];
+    }
+
+    test.each([
+      ["the meta sidecar", JSON.stringify({ toolUseId: TOOL_USE_ID })],
+      ["the legacy scrape", null],
+    ])("is canceled when an interrupt stopped it, linked through %s", async (_link, meta) => {
+      writeSession({ parentLines: backgroundLaunch(), meta, sidechainLines: interruptedChild() });
+
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "canceled",
+      });
+    });
+
+    test("stays running when the child was given a new prompt after the interrupt", async () => {
+      writeSession({
+        parentLines: backgroundLaunch(),
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [
+          ...interruptedChild(),
+          JSON.stringify({
+            type: "user",
+            isSidechain: true,
+            agentId: AGENT_ID,
+            timestamp: "2026-07-26T06:29:00.000Z",
+            message: { role: "user", content: [{ type: "text", text: "Carry on with the task." }] },
+          }),
+        ],
+      });
+
+      const statuses = upserts(await replayDescriptors()).map(readStatus);
+      expect(statuses).not.toContain("canceled");
+      expect(statuses).toContain("running");
+    });
+
+    test.each(["interrupted", "running"])(
+      "ignores an API request copy of a %s child's launch result",
+      async (state) => {
+        const launch = backgroundLaunch();
+        const result = JSON.parse(launch[1]!);
+        writeSession({
+          parentLines: [
+            ...launch,
+            JSON.stringify({
+              type: "api-request-blob",
+              sessionId: "replay-session",
+              hash: "request-copy",
+              message: result.message,
+            }),
+          ],
+          meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+          sidechainLines:
+            state === "interrupted"
+              ? interruptedChild()
+              : [sidechainEntry({ stopReason: "tool_use" })],
+        });
+        expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+          id: TOOL_USE_ID,
+          status: state === "interrupted" ? "canceled" : "running",
+        });
+      },
+    );
+
+    test("stays running while the child has not finished", async () => {
+      writeSession({
+        parentLines: backgroundLaunch(),
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+
+      const statuses = upserts(await replayDescriptors()).map(readStatus);
+      expect(statuses).not.toContain("completed");
+      expect(statuses).toContain("running");
+    });
+
+    function taskNotification(status: string, form = "user"): string {
+      const text = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>${TOOL_USE_ID}</tool-use-id>\n<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      const records = {
+        user: { message: { role: "user", content: [{ type: "text", text }] } },
+        system: {
+          subtype: "task_notification",
+          task_id: AGENT_ID,
+          tool_use_id: TOOL_USE_ID,
+          status,
+        },
+        "queue-operation": { operation: "enqueue", content: text },
+      };
+      return JSON.stringify({
+        type: form,
+        timestamp: "2026-07-26T06:29:00.000Z",
+        ...records[form as keyof typeof records],
+      });
+    }
+
+    for (const form of ["user", "system", "queue-operation"]) {
+      test.each([
+        ["completed", "completed"],
+        ["failed", "failed"],
+        ["killed", "canceled"],
+        ["stopped", "canceled"],
+      ])(
+        `restores a %s task notification from ${form} when the child stop_reason is null`,
+        async (status, expected) => {
+          writeSession({
+            parentLines: [...backgroundLaunch(), taskNotification(status, form)],
+            meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+            sidechainLines: [sidechainEntry({ stopReason: null })],
+          });
+          expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+            id: TOOL_USE_ID,
+            status: expected,
+          });
+        },
+      );
+    }
+
+    test("prefers a stopped notification over the child's end_turn", async () => {
+      writeSession({
+        parentLines: [...backgroundLaunch(), taskNotification("stopped")],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "canceled" });
+    });
+
+    test("does not invent an outcome for an unknown notification status", async () => {
+      writeSession({
+        parentLines: [...backgroundLaunch(), taskNotification("unknown")],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: null })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "running" });
+    });
+
+    test("completes from the child's own end_turn", async () => {
+      writeSession({
+        parentLines: backgroundLaunch(),
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+      });
+
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+    });
+  });
+
   test("does not replay a skill-spawned subagent the parent never named", async () => {
     // The reported bug. A /code-review subagent has no Task tool_use, so its sidecar carries only
     // agentType and its id appears nowhere in the parent — it used to replay as running forever,
@@ -506,7 +761,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     );
   }, 120_000);
 
-  test("limits retained child shell output to the timeline's existing content limit", async () => {
+  test("limits retained child shell output to the timeline item budget", async () => {
     const output = "x".repeat(128 * 1024);
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
@@ -551,7 +806,10 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         type: "timeline",
         id: TOOL_USE_ID,
         item: expect.objectContaining({
-          detail: expect.objectContaining({ type: "shell", output: output.slice(0, 64 * 1024) }),
+          detail: expect.objectContaining({
+            type: "shell",
+            output: expect.stringMatching(/^x+…\[truncated \d+\.\d KB\]$/),
+          }),
         }),
       }),
     ]);
@@ -834,7 +1092,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         .filter((item) => item.type === "tool_call" && item.name === "task_notification"),
     ).toEqual([
       expect.objectContaining({
-        callId: "task_notification_workflow-notification",
+        callId: expect.stringMatching(/^task_notification_[a-f0-9]+_1$/),
         status: "completed",
       }),
     ]);
@@ -1027,5 +1285,107 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       event.event.type === "timeline" ? [event.event.item] : [],
     );
     expect(items).toEqual([{ type: "assistant_message", text: report }]);
+  });
+
+  test("keeps a subagent resumed after the session reopens on the row its transcript restored", async () => {
+    // Verified on the wire (Claude Code 2.1.309): SendMessage resumes a finished subagent under its
+    // original task_id but a new tool_use_id, and the child's frames still name the original Task
+    // call as their parent. A reopened session only knows that child from its transcript.
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ agentType: "general-purpose", toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          sessionId: "replay-session",
+          timestamp: "2026-07-26T06:27:50.000Z",
+          effort: "high",
+          message: {
+            role: "assistant",
+            model: "claude-sonnet-5",
+            content: [{ type: "text", text: "summary of the docs" }],
+            stop_reason: "end_turn",
+          },
+        }),
+      ],
+    });
+    const liveQuery = vi.fn(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "replay-session",
+          permissionMode: "default",
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: AGENT_ID,
+          tool_use_id: "toolu_send_message",
+          description: "Summarize the docs",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          is_backgrounded: true,
+          prompt: "Summarize them again",
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: TOOL_USE_ID,
+          session_id: "replay-session",
+          message: {
+            id: "msg_resumed_child",
+            role: "assistant",
+            model: "claude-opus-5",
+            content: [{ type: "text", text: "summary again" }],
+          },
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: AGENT_ID,
+          patch: { status: "completed" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory: liveQuery,
+      resolveVersion: async () => "2.1.309",
+      resolveBinary: async () => "/test/claude/bin",
+    }).resumeSession({ provider: "claude", sessionId: "replay-session" }, { cwd });
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamSession(session, "Ask it to summarize again")) {
+      events.push(event);
+      if (event.type === "turn_completed" || event.type === "turn_failed") break;
+    }
+    await session.close();
+
+    const live = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(new Set(live.map((event) => event.id))).toEqual(new Set([TOOL_USE_ID]));
+    expect(live).toContainEqual(
+      expect.objectContaining({
+        type: "upsert",
+        id: TOOL_USE_ID,
+        subtitle: "general-purpose · Opus 5 · High",
+      }),
+    );
+    expect(live).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        id: TOOL_USE_ID,
+        item: expect.objectContaining({ type: "assistant_message", text: "summary again" }),
+      }),
+    );
+    expect(live.at(-1)).toMatchObject({ type: "upsert", id: TOOL_USE_ID, status: "completed" });
   });
 });

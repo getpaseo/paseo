@@ -3,7 +3,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Keyboard, Pressable, Text, View } from "react-native";
-import type { DimensionValue, StyleProp, ViewStyle } from "react-native";
+import type { DimensionValue, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -12,7 +12,12 @@ import {
   useGlobalWebOverlayLayer,
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
-import { BottomSheetHandle, type BottomSheetBackgroundProps } from "@gorhom/bottom-sheet";
+import {
+  BottomSheetHandle,
+  useBottomSheetGestureHandlers,
+  type BottomSheetBackgroundProps,
+} from "@gorhom/bottom-sheet";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X, type LucideIcon } from "lucide-react-native";
 import {
@@ -25,7 +30,7 @@ import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-shee
 import { ScrollView } from "@/components/ui/scroll-view";
 import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
 
@@ -39,6 +44,9 @@ export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 // trailing rail is the content inset plus this padding. Rows whose trailing
 // glyph should line up with the X must reach the same rail.
 export const SHEET_HEADER_CLOSE_PADDING_SCALE = 2;
+
+/** The one height a sheet takes when it shows a whole pane rather than sizing to its content. */
+export const FULL_SHEET_SNAP_POINTS = ["92%"];
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
@@ -244,32 +252,55 @@ const ThemedBottomSheetHandle = withUnistyles(BottomSheetHandle, (theme) => ({
   indicatorStyle: { backgroundColor: theme.colors.palette.zinc[600] },
 }));
 
-const HANDLE_WITH_CONTENT_STYLE = { paddingHorizontal: 0, paddingBottom: 0 };
-
-/**
- * The compact sheet's drag handle: Gorhom's `handleComponent` for every bottom sheet. Children
- * join the handle, so a header passed here drags the sheet like the indicator does. That is how a
- * sheet whose content scrolls on its own keeps its header draggable without content panning.
- */
+/** The compact sheet's drag handle: Gorhom's `handleComponent` for every bottom sheet. */
 export function SheetHandle({
-  children,
   // Gorhom passes `indicatorStyle={undefined}`, which would override the themed indicator.
   indicatorStyle: _indicatorStyle,
   ...props
 }: ComponentProps<typeof BottomSheetHandle>) {
-  if (!children) return <ThemedBottomSheetHandle {...props} />;
-  // The children carry their own semantics; the handle's slider role would swallow them on web.
+  return <ThemedBottomSheetHandle {...props} />;
+}
+
+/**
+ * Content that drags the sheet the way its handle does. A sheet whose body scrolls on its own
+ * turns content panning off and wraps its header in this, so the header still pulls it down.
+ * Render it inside the sheet's content.
+ */
+export function SheetDragArea({ children }: { children: ReactNode }) {
+  const { handlePanGestureHandler } = useBottomSheetGestureHandlers();
+  const gesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .shouldCancelWhenOutside(false)
+        .runOnJS(false)
+        .onStart(handlePanGestureHandler.handleOnStart)
+        .onChange(handlePanGestureHandler.handleOnChange)
+        .onEnd(handlePanGestureHandler.handleOnEnd)
+        .onFinalize(handlePanGestureHandler.handleOnFinalize),
+    [handlePanGestureHandler],
+  );
   return (
-    <ThemedBottomSheetHandle
-      {...props}
-      style={HANDLE_WITH_CONTENT_STYLE}
-      accessible={false}
-      accessibilityRole={null}
-      accessibilityLabel={null}
-      accessibilityHint={null}
-    >
-      {children}
-    </ThemedBottomSheetHandle>
+    <GestureDetector gesture={gesture}>
+      <View>{children}</View>
+    </GestureDetector>
+  );
+}
+
+/**
+ * A compact sheet's content area that reaches the bottom of the screen. It owns the system
+ * navigation inset: it pads it once and tells its content none is left, so content that pads the
+ * inset itself, like the composer dock, sits the same in a sheet as in a tab.
+ */
+export function SheetBottomInset({ style, children, ...props }: ViewProps) {
+  const insets = useSafeAreaInsets();
+  const contentInsets = useMemo(() => ({ ...insets, bottom: 0 }), [insets]);
+  const insetStyle = useMemo(() => [style, { paddingBottom: insets.bottom }], [style, insets]);
+  return (
+    <View {...props} style={insetStyle}>
+      <SafeAreaInsetsContext.Provider value={contentInsets}>
+        {children}
+      </SafeAreaInsetsContext.Provider>
+    </View>
   );
 }
 
@@ -488,6 +519,76 @@ export interface AdaptiveModalSheetProps {
   contextBridge?: ContextBridge | null;
 }
 
+/**
+ * The compact sheet's body. It renders on the far side of the sheet's portal so it reads the
+ * screen's bottom inset, not the one left where the sheet was opened: inside a sheet tab, none is.
+ */
+function CompactSheetBody({
+  header,
+  onClose,
+  testID,
+  footer,
+  isKeyboardVisible,
+  scrollable,
+  bodyStyle,
+  contentStyle,
+  children,
+}: {
+  header: SheetHeader;
+  onClose: () => void;
+  testID?: string;
+  footer: ReactNode;
+  isKeyboardVisible: boolean;
+  scrollable: boolean;
+  bodyStyle?: StyleProp<ViewStyle>;
+  contentStyle?: StyleProp<ViewStyle>;
+  children: ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  const { contentPaddingBottom = 0, footerPaddingBottom = 0 } = getCompactSheetSafeAreaPadding({
+    isCompact: true,
+    isKeyboardVisible,
+    hasFooter: Boolean(footer),
+    safeAreaBottom: insets.bottom,
+  });
+  // Safe-area clearance is a separate layer: it must not replace the caller's
+  // padding (including an explicit zero), and the footer owns it when present.
+  const bodyClearanceStyle = { paddingBottom: contentPaddingBottom };
+  const footerClearanceStyle = useMemo(
+    () => ({ paddingBottom: footerPaddingBottom }),
+    [footerPaddingBottom],
+  );
+  const footerView = useMemo(
+    () => (footer ? <View style={footerClearanceStyle}>{footer}</View> : null),
+    [footer, footerClearanceStyle],
+  );
+  return (
+    <SheetVisibleFrame footer={footerView}>
+      <SheetHeaderView header={header} onClose={onClose} testID={testID} />
+      <View style={[styles.compactStaticContent, bodyStyle]}>
+        {scrollable ? (
+          <ScrollView
+            style={styles.bottomSheetVisibleScroll}
+            contentContainerStyle={SCROLL_CONTENT_GROW}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={[styles.contentGrow, bodyClearanceStyle]}>
+              <SheetContent style={[styles.contentGrow, contentStyle]}>{children}</SheetContent>
+            </View>
+          </ScrollView>
+        ) : (
+          <View style={[styles.compactStaticContent, bodyClearanceStyle]}>
+            <SheetContent style={[styles.compactStaticContent, contentStyle]}>
+              {children}
+            </SheetContent>
+          </View>
+        )}
+      </View>
+    </SheetVisibleFrame>
+  );
+}
+
 export function AdaptiveModalSheet({
   header,
   visible,
@@ -508,34 +609,11 @@ export function AdaptiveModalSheet({
 }: AdaptiveModalSheetProps) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
-  const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
-  const compactSafeAreaPadding = useMemo(
-    () =>
-      getCompactSheetSafeAreaPadding({
-        isCompact: isMobile,
-        isKeyboardVisible,
-        hasFooter: Boolean(footer),
-        safeAreaBottom: insets.bottom,
-      }),
-    [footer, insets.bottom, isKeyboardVisible, isMobile],
-  );
-  // Safe-area clearance is a separate layer: it must not replace the caller's
-  // padding (including an explicit zero), and the footer owns it when present.
-  const bodyClearanceStyle = { paddingBottom: compactSafeAreaPadding.contentPaddingBottom ?? 0 };
-  const footerClearanceStyle = useMemo(
-    () => ({ paddingBottom: compactSafeAreaPadding.footerPaddingBottom ?? 0 }),
-    [compactSafeAreaPadding.footerPaddingBottom],
-  );
   const footerView = useMemo(
-    () =>
-      footer ? (
-        <View style={footerClearanceStyle}>
-          <View style={[styles.footer, footerContainerStyle]}>{footer}</View>
-        </View>
-      ) : null,
-    [footer, footerClearanceStyle, footerContainerStyle],
+    () => (footer ? <View style={[styles.footer, footerContainerStyle]}>{footer}</View> : null),
+    [footer, footerContainerStyle],
   );
   useEffect(() => {
     if (!isWeb && visible) {
@@ -614,32 +692,6 @@ export function AdaptiveModalSheet({
   }, [visible, isMobile, onDismiss, shouldRenderWeb]);
 
   if (isMobile) {
-    const sheetContent = (
-      <>
-        <SheetHeaderView header={header} onClose={onClose} testID={testID} />
-        <View style={[styles.compactStaticContent, bodyStyle]}>
-          {scrollable ? (
-            <ScrollView
-              style={styles.bottomSheetVisibleScroll}
-              contentContainerStyle={SCROLL_CONTENT_GROW}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={[styles.contentGrow, bodyClearanceStyle]}>
-                <SheetContent style={[styles.contentGrow, contentStyle]}>{children}</SheetContent>
-              </View>
-            </ScrollView>
-          ) : (
-            <View style={[styles.compactStaticContent, bodyClearanceStyle]}>
-              <SheetContent style={[styles.compactStaticContent, contentStyle]}>
-                {children}
-              </SheetContent>
-            </View>
-          )}
-        </View>
-      </>
-    );
-
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
@@ -658,7 +710,18 @@ export function AdaptiveModalSheet({
         accessible={false}
         presentation={presentation}
       >
-        <SheetVisibleFrame footer={footerView}>{sheetContent}</SheetVisibleFrame>
+        <CompactSheetBody
+          header={header}
+          onClose={onClose}
+          testID={testID}
+          footer={footerView}
+          isKeyboardVisible={isKeyboardVisible}
+          scrollable={scrollable}
+          bodyStyle={bodyStyle}
+          contentStyle={contentStyle}
+        >
+          {children}
+        </CompactSheetBody>
       </IsolatedBottomSheetModal>
     );
   }

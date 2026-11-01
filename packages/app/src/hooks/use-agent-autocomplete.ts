@@ -4,11 +4,11 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import {
-  useAgentCommandsQuery,
+  useAutocompleteCommands,
   type AgentSlashCommand,
   type DraftCommandConfig,
   type DraftCommandTarget,
-} from "./use-agent-commands-query";
+} from "@/agent-commands";
 import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
 import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
@@ -432,7 +432,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     autocompleteCwd,
   });
 
-  const commandsQuery = useAgentCommandsQuery({
+  const commandsQuery = useAutocompleteCommands({
     serverId,
     agentId,
     enabled: mode === "command" && canLoadCommands && canListCommands,

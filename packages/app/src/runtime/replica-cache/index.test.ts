@@ -306,6 +306,21 @@ async function expectLegacyWorkspaceRefresh({
 }
 
 describe("ReplicaCache", () => {
+  it("persists the complete newest turn beyond the cache item target", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const items = Array.from({ length: 60 }, (_, index) => ({
+      ...timelineItem(`item-${index}`),
+      id: `item-${index}`,
+      turnId: "long-run",
+    }));
+    writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items });
+    await writer.flush();
+    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+    expect(restored?.items.map((item) => item.id)).toEqual(items.map((item) => item.id));
+    expect(restored?.range).toBeNull();
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

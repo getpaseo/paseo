@@ -617,7 +617,7 @@ describe("computeSidebarOrderUpdates", () => {
       persistedProjectOrder: ["stale-project"],
     });
 
-    expect(updates).toEqual({ projectOrder: null });
+    expect(updates).toEqual({ projectOrder: null, workspaceOrders: [] });
   });
 
   it("appends unseen projects without changing saved project order", () => {
@@ -978,4 +978,21 @@ it("retains unrelated projects and keyed row placements when one project reorder
   expect(after.projects[1]).toBe(before.projects[1]);
   expect(after.projects[0].workspaces[0]).toBe(before.projects[0].workspaces[1]);
   expect(after.projects[0].workspaces[1]).toBe(before.projects[0].workspaces[0]);
+});
+
+it("prepends newly discovered manual workspaces without dropping filtered saved keys", () => {
+  const projects = [sidebarProject({ projectKey: "p", workspaceKeys: ["new", "b", "a"] })];
+  expect(
+    computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["p"],
+      getWorkspaceOrder: () => ["srv:hidden", "srv:a", "srv:b"],
+    }),
+  ).toEqual({
+    projectOrder: null,
+    workspaceOrders: [{ projectViewKey: "p", order: ["srv:new", "srv:hidden", "srv:a", "srv:b"] }],
+  });
+  expect(
+    computeSidebarOrderUpdates({ projects, persistedProjectOrder: ["p"] }).workspaceOrders,
+  ).toEqual([]);
 });

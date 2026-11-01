@@ -27,10 +27,16 @@ const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PAT
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
+
+// Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
+// Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
+const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
 function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
@@ -50,7 +56,11 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   };
 }
 
-function collectInlineCodePaths(source: string, workspaceRoot?: string): ReadonlySet<string> {
+function collectInlineCodePaths(
+  source: string,
+  workspaceRoot?: string,
+  commandNames?: ReadonlySet<string>,
+): ReadonlySet<string> {
   const paths = new Set<string>();
   const previousEnds = new Map<number, number>();
   // Collect candidates between consecutive runs of equal length. The engine owns
@@ -68,7 +78,11 @@ function collectInlineCodePaths(source: string, workspaceRoot?: string): Readonl
       value = value.slice(1, -1);
     }
     const classification = classifyAssistantFileLink(value, { workspaceRoot });
-    if (classification && classification.kind !== "external") paths.add(value);
+    if (
+      (classification && classification.kind !== "external") ||
+      (value.startsWith("/") && commandNames?.has(value.slice(1)))
+    )
+      paths.add(value);
   }
   return paths;
 }
@@ -106,7 +120,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean } = {},
+  options: { supportsSvg?: boolean; commandNames?: ReadonlySet<string> } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -116,7 +130,9 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
-  const metadata = linkMetadata(collectInlineCodePaths(source, workspaceRoot));
+  const metadata = linkMetadata(
+    collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+  );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
