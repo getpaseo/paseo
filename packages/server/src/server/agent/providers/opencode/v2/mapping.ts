@@ -1,4 +1,4 @@
-import type { AgentInfo, ModelInfo, ModelRef, SessionInfo } from "@opencode/client";
+import type { AgentInfo, ModelInfo, ModelRef, ProviderInfo, SessionInfo } from "@opencode/client";
 import type { AgentMode, AgentModelDefinition, AgentUsage } from "../../../agent-sdk-types.js";
 
 export function modelRef(id: string, variant?: string | null): ModelRef {
@@ -12,13 +12,18 @@ export function modelRef(id: string, variant?: string | null): ModelRef {
   };
 }
 
-export function modelsFromV2(models: ModelInfo[]): AgentModelDefinition[] {
+export function modelsFromV2(
+  models: ModelInfo[],
+  providers: ProviderInfo[] = [],
+): AgentModelDefinition[] {
+  const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
   return models
     .filter((model) => model.enabled)
     .map((model) => ({
       provider: "opencode",
       id: `${model.providerID}/${model.id}`,
       label: model.name,
+      description: providerNames.get(model.providerID) ?? model.providerID,
       contextWindowMaxTokens: model.limit.context,
       metadata: {
         providerId: model.providerID,
