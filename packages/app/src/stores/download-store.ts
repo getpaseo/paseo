@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { Platform } from "react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -56,7 +57,10 @@ interface DownloadState {
       size: number | null;
       error: string | null;
     }>;
-    /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
+    /**
+     * Reads the whole file over the session socket. Used when the active connection has no HTTP
+     * endpoint, and on iOS when that endpoint is cleartext ATS would reject.
+     */
     readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
     saveFile?: typeof saveDownloadedBytes;
   }) => Promise<void>;
@@ -110,34 +114,20 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
 
       const resolvedFileName = tokenResponse.fileName ?? fileName;
       const downloadTarget = resolveDaemonDownloadTarget(daemonProfile, activeConnectionId);
-      if (!downloadTarget) {
-        // Relay, SSH, socket and pipe hosts have no HTTP endpoint: read the file over the
-        // session socket that is already connected (#543).
-        if (
-          typeof tokenResponse.size === "number" &&
-          tokenResponse.size > MAX_SESSION_DOWNLOAD_BYTES
-        ) {
-          throw new Error(
-            i18n.t("composer.errors.fileTooLarge", { fileName: resolvedFileName, size: "64 MB" }),
-          );
-        }
-        const { bytes, size } = await readFile(path, MAX_SESSION_DOWNLOAD_BYTES);
-        // A daemon without a binary channel answers `encoding: "none"` for a binary file: no
-        // content, real size. Never save that as a complete download.
-        if (bytes.byteLength !== size) {
-          throw new Error(
-            `File transfer incomplete: expected ${size} bytes, received ${bytes.byteLength}.`,
-          );
-        }
-        const savedUri = await saveFile({
-          bytes,
+      if (!downloadTarget || iosCleartextDownloadNeedsSession(downloadTarget)) {
+        // Relay, SSH, socket and pipe hosts have no HTTP endpoint (#543). iOS also cannot
+        // URLSession a cleartext direct host: ATS rejects it with NSURLError -1022 before the
+        // request is sent, including Tailscale's 100.64.0.0/10 range (#3521). The session
+        // socket is already authenticated, so read the file there.
+        await downloadOverSession({
           fileName: resolvedFileName,
           mimeType: tokenResponse.mimeType,
+          size: tokenResponse.size,
+          path,
+          readFile,
+          saveFile,
+          onComplete: () => get().completeDownload(id),
         });
-        get().completeDownload(id);
-        if (savedUri !== null) {
-          await shareSavedFile(savedUri, tokenResponse.mimeType, resolvedFileName);
-        }
         return;
       }
       if (!downloadTarget.baseUrl) {
@@ -284,6 +274,63 @@ interface DownloadTarget {
   baseUrl: string | null;
   authHeader: string | null;
   authCredentials: { username: string; password: string } | null;
+}
+
+async function downloadOverSession(input: {
+  fileName: string;
+  mimeType: string | null;
+  size: number | null;
+  path: string;
+  readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
+  saveFile: typeof saveDownloadedBytes;
+  onComplete: () => void;
+}): Promise<void> {
+  if (typeof input.size === "number" && input.size > MAX_SESSION_DOWNLOAD_BYTES) {
+    throw new Error(
+      i18n.t("composer.errors.fileTooLarge", { fileName: input.fileName, size: "64 MB" }),
+    );
+  }
+  const { bytes, size } = await input.readFile(input.path, MAX_SESSION_DOWNLOAD_BYTES);
+  // A daemon without a binary channel answers `encoding: "none"` for a binary file: no
+  // content, real size. Never save that as a complete download.
+  if (bytes.byteLength !== size) {
+    throw new Error(
+      `File transfer incomplete: expected ${size} bytes, received ${bytes.byteLength}.`,
+    );
+  }
+  const savedUri = await input.saveFile({
+    bytes,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+  });
+  input.onComplete();
+  if (savedUri !== null) {
+    await shareSavedFile(savedUri, input.mimeType, input.fileName);
+  }
+}
+
+/**
+ * iOS App Transport Security allows cleartext only to loopback. A direct connection with TLS
+ * off is `http://<host>:6767`, and URLSession fails with NSURLErrorDomain -1022 before the
+ * request leaves the app. Tailscale CGNAT (`100.64.0.0/10`) and other non-loopback hosts are
+ * in that set (#3521). Read those files over the session instead. Loopback and HTTPS stay on
+ * the HTTP download so they are not capped at {@link MAX_SESSION_DOWNLOAD_BYTES}.
+ */
+function iosCleartextDownloadNeedsSession(target: DownloadTarget): boolean {
+  if (Platform.OS !== "ios" || !target.baseUrl) {
+    return false;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(target.baseUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:") {
+    return false;
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host !== "localhost" && host !== "::1" && !host.startsWith("127.");
 }
 
 /**
