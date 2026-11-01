@@ -7,11 +7,6 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent-manager.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { AgentStorage } from "../agent-storage.js";
-import {
-  toWireDaemonConfig,
-  type ConvertProfileOptions,
-  type MutableDaemonConfig,
-} from "../../daemon-config-store.js";
 import { convertLegacyOptions } from "../option-controls.js";
 import type {
   AgentClient,
@@ -892,28 +887,6 @@ describe("Codex app-server provider controls", () => {
 
         expect(draft.options).toEqual({ service_tier: "fast" });
         expect(draft.controls).toContainEqual(expect.objectContaining({ key: "service_tier" }));
-      },
-    );
-
-    test.each(["codex", "my-codex"])(
-      "the config API shows a %s profile's legacy fast_mode as service_tier",
-      (providerId) => {
-        const { manager } = createLegacyFastHarness({}, providerId);
-        const stored: MutableDaemonConfig = {
-          agentProfiles: [
-            { id: "p", name: "P", provider: providerId, options: { fast_mode: true } },
-          ],
-        } as MutableDaemonConfig;
-
-        const convert: ConvertProfileOptions = (provider, options) =>
-          manager.convertLegacyOptions(provider, options);
-
-        const wire = toWireDaemonConfig(stored, convert);
-
-        expect(wire.agentProfiles?.[0]).toMatchObject({
-          options: { service_tier: "fast" },
-          featureValues: { service_tier: "fast" },
-        });
       },
     );
 

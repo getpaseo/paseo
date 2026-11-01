@@ -6,7 +6,9 @@ import {
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
+  convertLegacyOptions,
   foldProfileFeatureValues,
+  resolveAdapter,
   withLegacyProfileFeatureValues,
 } from "./agent/option-controls.js";
 import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
@@ -173,49 +175,52 @@ function omitProvidersFromOverrides(
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
 }
 
-/** Profiles are held and persisted with `options` only. */
-function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(
-  config: T,
-  source: "stored" | "client write",
-  held: AgentProfile[] = [],
-): T {
+/**
+ * Profiles are held and persisted with `options` only, in the current keys: a profile is old
+ * data entering, so it is converted for the adapter its provider runs on, which `config.json`'s
+ * `providers` section names through `extends`.
+ */
+function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input: {
+  config: T;
+  providers: Record<string, ProviderOverride> | undefined;
+  source: "stored" | "client write";
+  held?: AgentProfile[];
+}): T {
+  const { config, providers, source, held = [] } = input;
   if (!config.agentProfiles) return config;
+  const convert = (provider: string, options: Record<string, unknown> | undefined) =>
+    convertLegacyOptions({
+      provider: resolveAdapter({ provider, extendsOf: (id) => providers?.[id]?.extends }),
+      options,
+    });
+  const identity = (_provider: string, options: Record<string, unknown> | undefined) => options;
+  const foldWith = (profile: AgentProfile, convertWith: typeof convert) =>
+    foldProfileFeatureValues({
+      profile,
+      stored: held.find((candidate) => candidate.id === profile.id),
+      source,
+      convert: convertWith,
+    });
   return {
     ...config,
-    agentProfiles: config.agentProfiles.map((profile) =>
-      foldProfileFeatureValues({
-        profile,
-        stored: held.find((candidate) => candidate.id === profile.id),
-        source,
-      }),
-    ),
+    agentProfiles: config.agentProfiles.map((profile) => {
+      // A malformed value rejects a client write before anything is committed.
+      if (source === "client write") return foldWith(profile, convert);
+      try {
+        return foldWith(profile, convert);
+      } catch {
+        // A hand-edited `config.json` value that cannot convert must not stop the daemon from
+        // starting; it keeps its keys and is rejected when an agent is created from it.
+        return foldWith(profile, identity);
+      }
+    }),
   };
 }
 
-/** Renames old option keys for the adapter a provider runs on (the agent manager's conversion). */
-export type ConvertProfileOptions = (
-  provider: string,
-  options: Record<string, unknown> | undefined,
-) => Record<string, unknown> | undefined;
-
-/**
- * The config API boundary: clients see each profile's options in their current keys, and the
- * unchanged app reads them from `featureValues`.
- */
-export function toWireDaemonConfig(
-  config: MutableDaemonConfig,
-  convertOptions: ConvertProfileOptions,
-): MutableDaemonConfig {
+/** The config API boundary: the unchanged app reads profile options from `featureValues`. */
+export function toWireDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
   if (!config.agentProfiles) return config;
-  return {
-    ...config,
-    agentProfiles: config.agentProfiles.map((profile) =>
-      withLegacyProfileFeatureValues({
-        ...profile,
-        options: convertOptions(profile.provider, profile.options),
-      }),
-    ),
-  };
+  return { ...config, agentProfiles: config.agentProfiles.map(withLegacyProfileFeatureValues) };
 }
 
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
@@ -430,7 +435,7 @@ export class DaemonConfigStore {
     this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
     this.lastKnownPersisted = this.startupPersisted;
     this.current = MutableDaemonConfigSchema.parse({
-      ...foldConfigProfiles(initial, "stored"),
+      ...foldConfigProfiles({ config: initial, providers: initial.providers, source: "stored" }),
       relay: initial.relay ?? { enabled: true },
       ...this.readSpeech(this.startupPersisted),
     });
@@ -469,7 +474,12 @@ export class DaemonConfigStore {
       );
     }
     const { removeProviders = [], ...submittedPatch } = parsedPatch;
-    const patch = foldConfigProfiles(submittedPatch, "client write", this.current.agentProfiles);
+    const patch = foldConfigProfiles({
+      config: submittedPatch,
+      providers: { ...this.current.providers, ...submittedPatch.providers },
+      source: "client write",
+      held: this.current.agentProfiles,
+    });
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
@@ -555,7 +565,11 @@ export class DaemonConfigStore {
     // Plugin source changes require the plugin lifecycle operation or a daemon
     // restart. The global switch is independently reloadable.
     const desired = MutableDaemonConfigSchema.parse({
-      ...foldConfigProfiles(resolved.mutable, "stored"),
+      ...foldConfigProfiles({
+        config: resolved.mutable,
+        providers: resolved.mutable.providers,
+        source: "stored",
+      }),
       plugins: this.current.plugins,
       ...this.readSpeech(persisted),
     });

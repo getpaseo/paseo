@@ -80,11 +80,7 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
-import {
-  toWireDaemonConfig,
-  type DaemonConfigStore,
-  type MutableDaemonConfig,
-} from "./daemon-config-store.js";
+import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
@@ -2955,7 +2951,7 @@ export class Session {
           type: "get_daemon_config_response",
           payload: {
             requestId: msg.requestId,
-            config: this.toWireDaemonConfig(this.daemonConfigStore.get()),
+            config: toWireDaemonConfig(this.daemonConfigStore.get()),
           },
         });
         return undefined;
@@ -2980,7 +2976,7 @@ export class Session {
             type: "set_daemon_config_response",
             payload: {
               requestId: msg.requestId,
-              config: this.toWireDaemonConfig(config),
+              config: toWireDaemonConfig(config),
             },
           });
         });
@@ -8625,12 +8621,6 @@ export class Session {
       }
     } else if (delivered.size === 0 && this.wantsEvent(event)) this.onMessage(message);
     return true;
-  }
-
-  private toWireDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
-    return toWireDaemonConfig(config, (provider, options) =>
-      this.agentManager.convertLegacyOptions(provider, options),
-    );
   }
 
   private emit(msg: SessionOutboundMessage): void {

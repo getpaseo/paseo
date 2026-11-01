@@ -66,6 +66,25 @@ export function convertLegacyOptions(
 }
 
 /**
+ * The built-in adapter a provider id runs on: a custom provider is named by the one it
+ * `extends`, followed until a provider that extends nothing. `extendsOf` is where the caller
+ * reads that link (the registry's definitions, or `config.json`'s `providers` section).
+ */
+export function resolveAdapter(input: {
+  provider: string;
+  extendsOf: (provider: string) => string | null | undefined;
+}): string {
+  const seen = new Set<string>();
+  let current = input.provider;
+  for (;;) {
+    seen.add(current);
+    const base = input.extendsOf(current);
+    if (!base || seen.has(base)) return current;
+    current = base;
+  }
+}
+
+/**
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
  * Older clients, stored records, profiles, and plugin hooks carry composer values in
  * `featureValues`. This is the one place they become `providerOptions`; an explicit
@@ -131,6 +150,8 @@ export function foldHookFeatureValues<
   };
 }
 
+type ConvertedOptions = Record<string, unknown> | undefined;
+
 interface ProfileOptionFields {
   provider?: string;
   options?: Record<string, unknown>;
@@ -153,16 +174,22 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   profile: T;
   stored: ProfileOptionFields | undefined;
   source: "stored" | "client write";
+  /** Renames old option keys for the adapter the profile's provider runs on. */
+  convert: (provider: string, options: Record<string, unknown> | undefined) => ConvertedOptions;
 }): Omit<T, "featureValues"> {
-  const { profile, stored, source } = input;
+  const { profile, stored, source, convert } = input;
   const { featureValues: legacyValues, ...rest } = profile;
-  // Keys pass through unchanged: renaming an old key needs the adapter the provider runs on, which
-  // only the agent manager knows.
-  const featureValues = legacyValues;
+  // A profile is stored in the current keys, so removal and merging below see one vocabulary.
+  const provider = rest.provider ?? "";
+  const featureValues = convert(provider, legacyValues);
+  const ownOptions = convert(provider, rest.options);
   if (source === "stored") {
-    return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
+    if (featureValues) return { ...rest, options: { ...featureValues, ...ownOptions } };
+    return ownOptions ? { ...rest, options: ownOptions } : rest;
   }
-  const base = rest.options ?? (stored?.provider === rest.provider ? stored?.options : undefined);
+  const base =
+    ownOptions ??
+    (stored?.provider === rest.provider ? convert(provider, stored?.options) : undefined);
   // The form sends no `featureValues` when no control is set, which is still an edit of a
   // profile that may hold other options.
   if (!featureValues && !base) return rest;

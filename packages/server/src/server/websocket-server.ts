@@ -2201,9 +2201,7 @@ export class VoiceAssistantWebSocketServer {
       type: "status",
       payload: {
         status: "daemon_config_changed",
-        config: toWireDaemonConfig(config, (provider, options) =>
-          this.agentManager.convertLegacyOptions(provider, options),
-        ),
+        config: toWireDaemonConfig(config),
       },
     });
   }

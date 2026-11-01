@@ -66,6 +66,7 @@ import {
   applyProviderOptionsPatch,
   exposeFeatureValuesToHook,
   convertLegacyOptions,
+  resolveAdapter,
   foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
@@ -5691,21 +5692,17 @@ export class AgentManager {
 
   /** The adapter a provider id runs on: a custom provider is named by the one it extends. */
   private adapterOf(provider: AgentProvider): AgentProvider {
-    const seen = new Set<AgentProvider>();
-    let current = provider;
-    for (;;) {
-      seen.add(current);
-      const base = this.providerDefinitions.get(current)?.derivedFromProviderId;
-      if (!base || seen.has(base)) return current;
-      current = base;
-    }
+    return resolveAdapter({
+      provider,
+      extendsOf: (id) => this.providerDefinitions.get(id)?.derivedFromProviderId,
+    });
   }
 
   /**
    * Options older data carries are converted for the adapter the provider runs on, before
    * defaults merge and before anything is stored; nothing past the manager sees the old keys.
    */
-  convertLegacyOptions<T extends ProviderOptions | undefined>(
+  private convertLegacyOptions<T extends ProviderOptions | undefined>(
     provider: AgentProvider,
     options: T,
   ): T {
