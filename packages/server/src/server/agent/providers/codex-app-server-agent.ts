@@ -4729,8 +4729,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         );
       }
     }
-    this.providerOptions = { ...valid, ...(requestedTier ? { service_tier: requestedTier } : {}) };
-    this.requestedServiceTier = requestedTier;
+    // The session keeps the catalog's id for the tier, so a later model switch sees what runs.
+    const accepted = requestedTier && (this.resolveServiceTier(requestedTier) ?? requestedTier);
+    const { fast_mode: _folded, ...kept } = valid;
+    this.providerOptions = { ...kept, ...(accepted ? { service_tier: accepted } : {}) };
+    this.requestedServiceTier = accepted || null;
     if ("plan_mode" in options) this.setPlanMode(options.plan_mode === true);
     this.cachedRuntimeInfo = null;
     // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
