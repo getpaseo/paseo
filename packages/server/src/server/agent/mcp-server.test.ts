@@ -5867,7 +5867,7 @@ describe("agent profile listing MCP tool", () => {
         model: "claude-test-model",
         modeId: "bypassPermissions",
         thinkingOptionId: "high",
-        featureValues: { fast_mode: true },
+        options: { fast_mode: true },
         notes: "Use for UI work: components, layout, design tokens. Not for backend.",
       },
     ];
@@ -5882,7 +5882,7 @@ describe("agent profile listing MCP tool", () => {
 
     const response = await tool.handler({});
 
-    // Profiles saved before options carry `featureValues`; the tool reports them as `options`.
+    // The config store holds profiles with `options` only; the tool reports them as stored.
     expect(response.structuredContent).toEqual({
       profiles: [
         {

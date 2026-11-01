@@ -505,6 +505,12 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
+  test("applyOptions accepts an option that has no control", async () => {
+    const { session } = await createConnectedSession();
+
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).resolves.toBeUndefined();
+  });
+
   test("startTurn includes serviceTier when fast mode is enabled", async () => {
     const { session, appServer } = await createConnectedSession();
 
@@ -514,6 +520,28 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
       serviceTier: "priority",
     });
+  });
+
+  test("shows a saved Fast preference as the tier the model resolves it to", async () => {
+    const { session, appServer } = await createConnectedSession({
+      providerOptions: { service_tier: "fast" },
+    });
+
+    // Stored intent stays "fast"; the model's Fast tier is "priority", which is what runs and what is shown.
+    expect(session.displayOptions?.({ service_tier: "fast" })).toEqual({
+      service_tier: "priority",
+    });
+    expect(session.displayOptions?.({ fast_mode: true })).toMatchObject({
+      service_tier: "priority",
+    });
+    expect(session.displayOptions?.({ plan_mode: true })).toEqual({ plan_mode: true });
+    expect(session.displayOptions?.({ service_tier: "default" })).toEqual({
+      service_tier: "default",
+    });
+    expect(session.displayOptions?.({ service_tier: "gone" })).toEqual({});
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
   });
 
   test("startTurn logs a sanitized turn/start summary for fast mode observability", async () => {

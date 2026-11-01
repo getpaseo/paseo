@@ -6,6 +6,11 @@ import {
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
+  foldProfileFeatureValues,
+  withLegacyProfileFeatureValues,
+} from "./agent/option-controls.js";
+import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
+import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
@@ -166,6 +171,24 @@ function omitProvidersFromOverrides(
   }
 
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
+/** Profiles are held and persisted with `options` only. */
+function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(
+  config: T,
+  source: "stored" | "client write",
+): T {
+  if (!config.agentProfiles) return config;
+  return {
+    ...config,
+    agentProfiles: config.agentProfiles.map((profile) => foldProfileFeatureValues(profile, source)),
+  };
+}
+
+/** The config API boundary: the unchanged app reads profile options from `featureValues`. */
+export function toWireDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
+  if (!config.agentProfiles) return config;
+  return { ...config, agentProfiles: config.agentProfiles.map(withLegacyProfileFeatureValues) };
 }
 
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
@@ -380,7 +403,7 @@ export class DaemonConfigStore {
     this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
     this.lastKnownPersisted = this.startupPersisted;
     this.current = MutableDaemonConfigSchema.parse({
-      ...initial,
+      ...foldConfigProfiles(initial, "stored"),
       relay: initial.relay ?? { enabled: true },
       ...this.readSpeech(this.startupPersisted),
     });
@@ -418,7 +441,8 @@ export class DaemonConfigStore {
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
       );
     }
-    const { removeProviders = [], ...patch } = parsedPatch;
+    const { removeProviders = [], ...submittedPatch } = parsedPatch;
+    const patch = foldConfigProfiles(submittedPatch, "client write");
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
@@ -495,7 +519,7 @@ export class DaemonConfigStore {
     // Plugin source changes require the plugin lifecycle operation or a daemon
     // restart. The global switch is independently reloadable.
     const desired = MutableDaemonConfigSchema.parse({
-      ...resolved.mutable,
+      ...foldConfigProfiles(resolved.mutable, "stored"),
       plugins: this.current.plugins,
       ...this.readSpeech(persisted),
     });

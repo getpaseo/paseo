@@ -18,7 +18,7 @@ import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
-import { featuresFromControls, foldProfileFeatureValues } from "../option-controls.js";
+import { featuresFromControls } from "../option-controls.js";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -3074,9 +3074,7 @@ function createToolCatalog(
       },
     },
     async () => {
-      // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Stored profiles may
-      // still carry `featureValues`.
-      const profiles = (daemonConfigStore?.get().agentProfiles ?? []).map(foldProfileFeatureValues);
+      const profiles = daemonConfigStore?.get().agentProfiles ?? [];
       return {
         content: [],
         structuredContent: ensureValidJson({ profiles }),

@@ -2807,11 +2807,12 @@ class ClaudeAgentSession implements AgentSession {
     }
     const fastModeChanged =
       (providerOptions.fast_mode === true) !== (this.config.providerOptions.fast_mode === true);
-    this.config.providerOptions = providerOptions;
     if (fastModeChanged) {
       await this.query?.applyFlagSettings({ fastMode: providerOptions.fast_mode === true });
       this.cachedRuntimeInfo = null;
     }
+    // Held until the runtime accepts, so a rejected change is retried instead of skipped.
+    this.config.providerOptions = providerOptions;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {

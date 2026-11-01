@@ -2429,6 +2429,18 @@ test("listDraftControls uses client feature listing without a model", async () =
       providerOptions: { auto_accept: true },
     },
   ]);
+
+  // Options without a control come back too.
+  await expect(
+    manager.listDraftControls({
+      provider: "codex",
+      cwd: workdir,
+      providerOptions: { auto_accept: true, sandbox_mode: "workspace-write" },
+    }),
+  ).resolves.toEqual({
+    controls: [draftControl],
+    options: { auto_accept: true, sandbox_mode: "workspace-write" },
+  });
 });
 
 test("listDraftControls uses explicit model config without default model fetching", async () => {
@@ -12741,8 +12753,8 @@ describe("agent options", () => {
 
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toEqual({ fast_mode: true });
-    const payload = toAgentPayload(agent!);
-    expect(payload.options).toEqual({ service_tier: "default", fast_mode: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", fast_mode: true });
   });
 
   test("setAgentOptions on a running agent replaces top-level keys and applies the effective options", async () => {
@@ -12770,6 +12782,54 @@ describe("agent options", () => {
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toBeUndefined();
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
+  test("shows the option as the session resolved it while the stored intent stays", async () => {
+    class ResolvingSession extends OptionsSession {
+      displayOptions(options: ProviderOptions): ProviderOptions {
+        return options.service_tier === "fast" ? { ...options, service_tier: "priority" } : options;
+      }
+    }
+    class ResolvingClient extends OptionsClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new ResolvingSession(config);
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const manager = new AgentManager({
+      clients: { codex: new ResolvingClient() },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { service_tier: "fast" } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const agent = manager.getAgent(created.id);
+    expect(agent?.config.providerOptions).toEqual({ service_tier: "fast" });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "priority" });
+  });
+
+  test("an option without a control is settable through the patch and readable in the snapshot", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent();
+
+    await manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
+
+    expect(client.session?.applied).toEqual([
+      { service_tier: "default", sandbox_mode: "read-only" },
+    ]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ sandbox_mode: "read-only" });
+    expect(toAgentPayload(agent!).options).toEqual({
+      service_tier: "default",
+      sandbox_mode: "read-only",
+    });
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
+      sandbox_mode: "read-only",
+    });
   });
 
   test("a provider that rejects an option leaves the stored options unchanged", async () => {
@@ -12806,5 +12866,76 @@ describe("agent options", () => {
 
     expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({ fast_mode: true });
     expect(manager.getAgent(created.id)?.config).not.toHaveProperty("featureValues");
+  });
+
+  test("agent.create.before hook featureValues edit overrides an option the create already set", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        // A plugin written against the previous SDK: flips one value, leaves the rest.
+        before: async (name, request) =>
+          name === "agent.create.before"
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  featureValues: { ...request.config.featureValues, fast_mode: true },
+                },
+              }
+            : request,
+      },
+    });
+
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false, plan_mode: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
+      fast_mode: true,
+      plan_mode: true,
+    });
+  });
+
+  test("agent.create.before hook leaving featureValues untouched keeps providerOptions edits", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.create.before"
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  providerOptions: { ...request.config.providerOptions, plan_mode: false },
+                },
+              }
+            : request,
+      },
+    });
+
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false, plan_mode: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
+      fast_mode: false,
+      plan_mode: false,
+    });
   });
 });

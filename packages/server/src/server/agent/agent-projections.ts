@@ -148,7 +148,7 @@ export function toAgentPayload(
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
     features: featuresFromControls(agent.controls, agent.effectiveOptions),
     ...(agent.effectiveOptions
-      ? { options: controlledOptions(agent.effectiveOptions, agent.controls) }
+      ? { options: sanitizeEffectiveOptions(agent.effectiveOptions) }
       : {}),
     controls: normalizeControls(agent.controls),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
@@ -463,20 +463,9 @@ function normalizeControls(
   return Array.isArray(controls) ? controls.map((control) => ({ ...control })) : [];
 }
 
-// Snapshots expose only the options a control describes. Other provider options (sandbox paths,
-// allowed tools, hub-supplied settings) stay daemon-side.
-function controlledOptions(
-  options: ProviderOptions,
-  controls: AgentOptionControl[] | null | undefined,
-): ProviderOptions {
-  const exposed: ProviderOptions = {};
-  for (const control of controls ?? []) {
-    const value = sanitizeOptionalJson(options[control.key]);
-    if (value !== undefined) {
-      exposed[control.key] = value;
-    }
-  }
-  return exposed;
+function sanitizeEffectiveOptions(options: ProviderOptions): ProviderOptions {
+  const sanitized = sanitizeOptionalJson(options);
+  return sanitized && isJsonObject(sanitized) ? sanitized : {};
 }
 
 function sanitizeOptionalJson(value: unknown): JsonValue | undefined {

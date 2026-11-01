@@ -18,6 +18,9 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { AgentManager } from "../../agent-manager.js";
+import { ensureAgentLoaded } from "../../agent-loading.js";
+import { AgentStorage } from "../../agent-storage.js";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
@@ -1500,6 +1503,90 @@ describe("ClaudeAgentSession features", () => {
     expect(queryMock.return).not.toHaveBeenCalled();
 
     await session.close();
+  });
+
+  test("retries a fast mode change the runtime rejected", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    queryMock.applyFlagSettings.mockClear();
+    queryMock.applyFlagSettings.mockRejectedValueOnce(new Error("runtime unavailable"));
+
+    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(
+      "runtime unavailable",
+    );
+    await session.applyOptions?.({ fast_mode: true });
+
+    expect(queryMock.applyFlagSettings).toHaveBeenCalledTimes(2);
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
+
+    await session.close();
+  });
+
+  test("fast mode survives a daemon restart through the stored providerOptions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-fast-restart-"));
+    const storagePath = path.join(root, "agents");
+    const makeClient = () => {
+      const mock = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory: mock.queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      return { ...mock, client };
+    };
+    const agentId = "00000000-0000-4000-8000-0000000000f1";
+    const before = makeClient();
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { claude: before.client },
+      registry: storage,
+      logger,
+    });
+    try {
+      await manager.createAgent(
+        { provider: "claude", cwd: root, model: "claude-opus-4-8" },
+        agentId,
+        { workspaceId: undefined },
+      );
+      await manager.setAgentOptions(agentId, { fast_mode: true });
+      await manager.closeAgent(agentId);
+      await manager.flush();
+      await storage.flush();
+
+      const after = makeClient();
+      const restartedStorage = new AgentStorage(storagePath, logger);
+      const restarted = new AgentManager({
+        clients: { claude: after.client },
+        registry: restartedStorage,
+        logger,
+      });
+      const agent = await ensureAgentLoaded(agentId, {
+        agentManager: restarted,
+        agentStorage: restartedStorage,
+        logger,
+      });
+      const session = (agent as unknown as { session: { ensureQuery(): Promise<unknown> } | null })
+        .session;
+      await session?.ensureQuery();
+
+      expect(restarted.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: true });
+      expect(after.queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
+        fastMode: true,
+      });
+      await restarted.closeAgent(agentId);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

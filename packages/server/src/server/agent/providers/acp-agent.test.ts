@@ -1601,6 +1601,29 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("stops auto-accepting permissions once auto_accept is removed from the options", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = {};
+
+    await session.applyOptions({ auto_accept: true });
+    await session.applyOptions({});
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+    } satisfies RequestPermissionRequest);
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+    void permission;
+  });
+
   test("surfaces an ACP permission when auto-accept has no allow option", async () => {
     const session = createSessionWithConfig({ providerOptions: { auto_accept: true } });
     const events: Array<{ type: string; request?: { id: string } }> = [];
@@ -1801,6 +1824,27 @@ describe("ACPAgentSession Zed parity", () => {
       expect.objectContaining({ key: "auto_accept" }),
       expect.objectContaining({ key: "agent", defaultValue: "Probe Agent" }),
     ]);
+  });
+
+  test("returns a select to its session default once its option is removed", async () => {
+    const setSessionConfigOption = vi.fn(async (request: { value: string }) => ({
+      configOptions: [copilotAgentConfigOption(request.value)],
+    }));
+    const session = createCopilotSessionWithConfig();
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("")],
+      connection: { setSessionConfigOption },
+    });
+    asInternals<{ recordConfigFeatureDefaults(): void }>(internals).recordConfigFeatureDefaults();
+
+    await session.applyOptions({ agent: "Probe Agent" });
+    await session.applyOptions({});
+
+    expect(setSessionConfigOption).toHaveBeenLastCalledWith({
+      sessionId: "session-1",
+      configId: "agent",
+      value: "",
+    });
   });
 
   test("sets Copilot custom agent through ACP config options", async () => {

@@ -63,7 +63,8 @@ import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import {
   applyProviderOptionsPatch,
-  foldFeatureValues,
+  exposeFeatureValuesToHook,
+  foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -1270,7 +1271,10 @@ export class AgentManager {
 
     const session = await client.createSession(normalizedConfig);
     try {
-      return { controls: session.controls ?? [], options };
+      return {
+        controls: session.controls ?? [],
+        options: session.displayOptions?.(options) ?? options,
+      };
     } finally {
       try {
         await session.close();
@@ -1369,13 +1373,14 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     if (this.pluginLifecycle && !config.internal) {
+      const sent = exposeFeatureValuesToHook(config);
       const request = await this.pluginLifecycle.before("agent.create.before", {
-        config,
+        config: sent,
         env: options.env,
       });
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
       // against the previous SDK edits `config.featureValues`.
-      config = { ...foldFeatureValues(request.config), internal: config.internal };
+      config = { ...foldHookFeatureValues(request.config, sent), internal: config.internal };
       options = { ...options, env: request.env };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -5245,7 +5250,11 @@ export class AgentManager {
     if ("session" in agent && agent.session?.controls) {
       agent.controls = agent.session.controls;
     }
-    agent.effectiveOptions = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
+    const effective = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
+    agent.effectiveOptions =
+      "session" in agent && agent.session?.displayOptions
+        ? agent.session.displayOptions(effective)
+        : effective;
   }
 
   private checkAndSetAttention(agent: ManagedAgent): void {

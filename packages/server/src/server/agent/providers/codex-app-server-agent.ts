@@ -3861,7 +3861,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private get serviceTier(): string | null {
-    const requested = this.requestedServiceTier;
+    return this.resolveServiceTier(this.requestedServiceTier);
+  }
+
+  private resolveServiceTier(requested: string | null): string | null {
     // Until the model list arrives there is nothing to check the request against.
     if (this.speedModels.length === 0 || requested === "default") return requested;
     const tiers = this.currentServiceTiers();
@@ -4668,6 +4671,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.requestedServiceTier = requestedTier;
     this.setPlanMode(next.plan_mode === true);
     this.cachedRuntimeInfo = null;
+  }
+
+  displayOptions(options: ProviderOptions): ProviderOptions {
+    if (readCodexServiceTier(options) === null) return options;
+    const { service_tier: _stored, ...rest } = options;
+    const resolved = this.resolveServiceTier(readCodexServiceTier(options));
+    return resolved === null ? rest : { ...rest, service_tier: resolved };
   }
 
   private isServiceTierAvailable(tier: string | null): boolean {

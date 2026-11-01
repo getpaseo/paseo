@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   AgentFeature,
   AgentOptionControl,
@@ -52,14 +53,64 @@ export function foldFeatureValues<
 
 /**
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
- * Profiles saved before options carry `featureValues`; readers see `options`.
+ * A plugin written against the previous SDK reads and edits `config.featureValues`, so a
+ * hook sees the config's options there. Keys the hook changed come back as options and
+ * override what the config already held; keys it left alone do not.
  */
-export function foldProfileFeatureValues<
-  T extends { options?: Record<string, unknown>; featureValues?: Record<string, unknown> },
->(profile: T): Omit<T, "featureValues"> {
+export function exposeFeatureValuesToHook<
+  T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
+>(config: T): T {
+  if (!config.providerOptions || Object.keys(config.providerOptions).length === 0) return config;
+  return { ...config, featureValues: { ...config.providerOptions } };
+}
+
+export function foldHookFeatureValues<
+  T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
+>(returned: T, sent: T): Omit<T, "featureValues"> {
+  const { featureValues, ...rest } = returned;
+  if (!featureValues) return rest;
+  const before = sent.featureValues ?? {};
+  const edits: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(featureValues)) {
+    if (!isDeepStrictEqual(value, before[key])) edits[key] = value;
+  }
+  return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions, ...edits } };
+}
+
+interface ProfileOptionFields {
+  options?: Record<string, unknown>;
+  featureValues?: Record<string, unknown>;
+}
+
+/**
+ * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+ * Profiles saved before options carry `featureValues`. When the profile comes from storage,
+ * `options` wins over a stale `featureValues` key. When it comes from a client write, the
+ * client that sent `featureValues` is the unchanged app, which only knows that field, so its
+ * `featureValues` win over the `options` it received from the previous read.
+ */
+export function foldProfileFeatureValues<T extends ProfileOptionFields>(
+  profile: T,
+  source: "stored" | "client write" = "stored",
+): Omit<T, "featureValues"> {
   const { featureValues, ...rest } = profile;
   if (!featureValues) return rest;
-  return { ...rest, options: { ...featureValues, ...rest.options } };
+  return {
+    ...rest,
+    options:
+      source === "stored"
+        ? { ...featureValues, ...rest.options }
+        : { ...rest.options, ...featureValues },
+  };
+}
+
+/**
+ * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+ * The unchanged app reads a profile's options from `featureValues`; the config API answers with
+ * both fields.
+ */
+export function withLegacyProfileFeatureValues<T extends ProfileOptionFields>(profile: T): T {
+  return profile.options ? { ...profile, featureValues: { ...profile.options } } : profile;
 }
 
 function selectedChoice(control: AgentOptionSelectControl, options: ProviderOptions) {
