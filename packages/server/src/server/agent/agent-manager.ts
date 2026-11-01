@@ -5223,32 +5223,27 @@ export class AgentManager {
       return;
     }
 
-    // Skip if already requires attention
-    if (agent.attention.requiresAttention) {
-      return;
-    }
-
-    // Check if agent transitioned from running to idle (finished)
+    let reason: "finished" | "error";
     if (previousStatus === "running" && currentStatus === "idle") {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "finished",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "finished");
+      reason = "finished";
+    } else if (previousStatus !== "error" && currentStatus === "error") {
+      reason = "error";
+    } else {
       return;
     }
 
-    // Check if agent entered error state
-    if (previousStatus !== "error" && currentStatus === "error") {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "error",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "error");
+    // A newer edge replaces an unread finish or error: agents driving a child over MCP
+    // never clear attention, and would otherwise miss every later outcome.
+    if (agent.attention.requiresAttention && agent.attention.attentionReason === "permission") {
       return;
     }
+
+    agent.attention = {
+      requiresAttention: true,
+      attentionReason: reason,
+      attentionTimestamp: new Date(),
+    };
+    this.broadcastAgentAttention(agent, reason);
   }
 
   private enqueueBackgroundPersist(agent: ManagedAgent): void {
