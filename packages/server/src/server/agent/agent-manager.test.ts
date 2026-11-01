@@ -12895,6 +12895,31 @@ describe("agent options", () => {
     expect(published.every((options) => options?.service_tier === "slow")).toBe(true);
   });
 
+  test("a default edited while the session is opening does not change the opening snapshot", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    let tier = "default";
+    client.effectiveOptions = (own) => ({ service_tier: tier, ...own });
+    const open = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await open(config);
+      // The user edits the default in config.json after the provider has launched.
+      tier = "fast";
+      return session;
+    };
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect(agent.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
   test("an option the session dropped when opening does not come back from a configured default", async () => {
     const { manager, agentId } = await createOptionsAgent(undefined, { service_tier: null });
 
