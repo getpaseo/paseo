@@ -84,6 +84,8 @@ import {
   resolveVoiceTooltipText,
 } from "./labels";
 import {
+  extractErrorMessage,
+  toggleRealtimeVoice,
   applyDictationTranscript,
   computeCanStartDictation,
   resolveAlternateSendAction,
@@ -878,49 +880,6 @@ function PrimaryAction({
   if (kind === "send") return <SendButtonTooltip {...sendButtonProps} />;
   return null;
 }
-interface ToggleRealtimeVoiceContext {
-  voice:
-    | {
-        isVoiceSwitching: boolean;
-        isVoiceModeForAgent: (serverId: string, agentId: string) => boolean;
-        startVoice: (serverId: string, agentId: string) => Promise<unknown>;
-      }
-    | null
-    | undefined;
-  voiceServerId: string | undefined;
-  voiceAgentId: string | undefined;
-  isConnected: boolean;
-  disabled: boolean;
-  isAgentRunning: boolean;
-  handleStopRealtimeVoice: () => Promise<unknown> | void;
-  toast: { error: (msg: string) => void };
-  interruptBeforeVoiceMessage: string;
-  exitFullscreen: () => void;
-}
-
-function toggleRealtimeVoiceImpl(ctx: ToggleRealtimeVoiceContext): void {
-  if (!ctx.voice || !ctx.voiceServerId || !ctx.voiceAgentId || !ctx.isConnected || ctx.disabled) {
-    return;
-  }
-  if (ctx.voice.isVoiceSwitching) return;
-  if (ctx.voice.isVoiceModeForAgent(ctx.voiceServerId, ctx.voiceAgentId)) {
-    void ctx.handleStopRealtimeVoice();
-    return;
-  }
-  if (ctx.isAgentRunning) {
-    ctx.toast.error(ctx.interruptBeforeVoiceMessage);
-    return;
-  }
-  ctx.exitFullscreen();
-  void ctx.voice.startVoice(ctx.voiceServerId, ctx.voiceAgentId).catch((error) => {
-    console.error("[MessageInput] Failed to start realtime voice", error);
-    const message = extractErrorMessage(error);
-    if (message && message.trim().length > 0) {
-      ctx.toast.error(message);
-    }
-  });
-}
-
 interface StartDictationContext {
   dictationUnavailableMessage: string | null | undefined;
   canStartDictation: () => boolean;
@@ -1194,12 +1153,6 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     textReplacement: props.textReplacement,
     submitLabel: props.submitLabel,
   };
-}
-
-function extractErrorMessage(error: unknown): string | null {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return null;
 }
 
 function resolvePresentationSendDisabled(input: {
@@ -1649,7 +1602,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [client, isAgentRunning, isRealtimeVoiceForCurrentAgent, toast, voice, voiceAgentId]);
 
     const handleToggleRealtimeVoiceShortcut = useCallback(() => {
-      toggleRealtimeVoiceImpl({
+      toggleRealtimeVoice({
         voice,
         voiceServerId,
         voiceAgentId,
