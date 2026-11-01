@@ -505,6 +505,67 @@ test("combined plugin rewind replays the retained native branch", async () => {
   });
 });
 
+test("a rewind reopens with the options as they stand, a reset included", async () => {
+  const options: Record<string, boolean> = {};
+  const report = (emit: (event: ProviderEvent) => void, sessionId: string) =>
+    emit({
+      type: "session.config",
+      sessionId,
+      config: {
+        model: "plugin-model",
+        mode: "build",
+        models: [{ id: "plugin-model", label: "Plugin model" }],
+        modes: [{ id: "build", label: "Build" }],
+        thinkingOptions: [],
+        controls: [{ type: "toggle", key: "concise", label: "Concise" }],
+        providerOptions: { ...options },
+      },
+    });
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        options.concise = true;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        report(emit, input.sessionId);
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        // A plugin that represents the default by leaving the key out.
+        delete options.concise;
+        report(emit, input.sessionId);
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { concise: true },
+  });
+  await session.run("A");
+  await session.applyOptions?.({ concise: null });
+
+  await session.revertConversation!({ messageId: "user-A" });
+
+  const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+  expect(reopened?.config.providerOptions).toEqual({});
+  await session.close();
+  await registry.shutdown();
+});
+
 test("plugin rewind resumes the latest persistence rather than the original handle", async () => {
   await withPluginRewindSession(
     {
@@ -1096,7 +1157,9 @@ describe("PluginAgentClientRegistry", () => {
             return true;
           }
           if (input.type === "session.configure") {
-            const { loud, token_budget: tokenBudget } = input.changes.providerOptions ?? {};
+            const patch =
+              shape === "settings" ? input.changes.settings : input.changes.providerOptions;
+            const { loud, token_budget: tokenBudget } = patch ?? {};
             // A plugin that takes `token_budget` live refuses the whole request on a bad value.
             if (tokenBudget !== undefined && typeof tokenBudget !== "number") {
               emit({
@@ -1201,11 +1264,18 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
-    test("draws a control from what the plugin reports, with its icon and default", async () => {
+    test("draws a control from what the plugin reports", async () => {
       const { session } = await openStubbornVoiceSession({});
 
       expect((session.controls ?? []).map(controlKey)).toEqual(["voice", "loud"]);
-      if (shape === "controls") {
+      await session.close();
+    });
+
+    test.runIf(shape === "controls")(
+      "keeps a control's icon, default and choices as the plugin declared them",
+      async () => {
+        const { session } = await openStubbornVoiceSession({});
+
         expect(session.controls?.[0]).toMatchObject({
           icon: "Mic",
           defaultValue: "direct",
@@ -1214,9 +1284,9 @@ describe("PluginAgentClientRegistry", () => {
             { label: "Other", value: "other" },
           ],
         });
-      }
-      await session.close();
-    });
+        await session.close();
+      },
+    );
 
     test.runIf(shape === "controls")(
       "sends a live option that has no control, and the plugin's answer decides",

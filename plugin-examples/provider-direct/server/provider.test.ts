@@ -98,11 +98,21 @@ describe("direct provider example", () => {
       type: "session.configure",
       requestId: "configure-refused",
       sessionId: "session-complete",
-      changes: { providerOptions: { voice: "loud" } },
+      changes: { model: "other-model", providerOptions: { voice: "loud" } },
     });
     expect(events).toContainEqual(
       expect.objectContaining({ type: "request.failed", requestId: "configure-refused" }),
     );
+    // A refused request changes nothing, the model it named included.
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure-after-refused",
+      sessionId: "session-complete",
+      changes: {},
+    });
+    expect(events.findLast((event) => event.type === "session.config")).not.toMatchObject({
+      config: { model: "other-model" },
+    });
     await connection.send({
       type: "session.prompt",
       sessionId: "session-complete",

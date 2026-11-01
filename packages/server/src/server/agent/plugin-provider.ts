@@ -1118,9 +1118,8 @@ class PluginAgentClient implements AgentClient {
       this.provider,
       bridge,
       forget,
-      async (persistence, state) => {
+      async (persistence, state, options) => {
         forget();
-        const { options } = readPluginOptionState(state);
         return await this.runtime.openSession({
           sessionId: randomUUID(),
           config: {
@@ -1128,8 +1127,8 @@ class PluginAgentClient implements AgentClient {
             model: state.model,
             mode: state.mode,
             thinkingOption: state.thinkingOption,
-            settings: { ...config.settings, ...options },
-            providerOptions: { ...config.providerOptions, ...options },
+            settings: options,
+            providerOptions: options,
           },
           persistence,
           history: "replay",
@@ -1208,6 +1207,9 @@ class PluginAgentSession implements AgentSession {
   /** How the opened session differs from the options it was given. */
   readonly openOptionsPatch: Record<string, JsonValue>;
   private knownOptions: Record<string, JsonValue> = {};
+  // The options a reopened session starts with: what it launched with, then every value the
+  // plugin reported or was given, minus every key that was reset.
+  private readonly committedOptions: Record<string, JsonValue>;
   /** While `applyOptions` waits on the plugin, its `session.config` answers that call. */
   private applyingOptions = false;
   private currentTurnId: string | null = null;
@@ -1228,14 +1230,16 @@ class PluginAgentSession implements AgentSession {
     private readonly reopen: (
       persistence: ProviderPersistence,
       state: ProviderConfigState,
+      options: Readonly<Record<string, JsonValue>>,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     private readonly givenOptions: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
+    this.committedOptions = { ...givenOptions };
     this.openOptionsPatch = this.optionDifferences(givenOptions);
-    this.knownOptions = this.currentOptions();
+    this.commitOptions();
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.
     // Commit them on registration and replay the same timestamps from history.
@@ -1459,7 +1463,10 @@ class PluginAgentSession implements AgentSession {
       this.applyingOptions = false;
     }
     const ended = this.optionDifferences({ ...before, ...settings });
-    this.knownOptions = this.currentOptions();
+    for (const [id, value] of Object.entries(settings)) {
+      if (value === null) delete this.committedOptions[id];
+    }
+    this.commitOptions();
     return ended;
   }
 
@@ -1655,11 +1662,21 @@ class PluginAgentSession implements AgentSession {
     return patch;
   }
 
+  /** Take the plugin's reported options as known; a key it stopped reporting was reset. */
+  private commitOptions(): void {
+    const current = this.currentOptions();
+    for (const id of Object.keys(this.knownOptions)) {
+      if (!(id in current)) delete this.committedOptions[id];
+    }
+    Object.assign(this.committedOptions, current);
+    this.knownOptions = current;
+  }
+
   private reportOptionChanges(): AgentStreamEvent[] {
     if (this.applyingOptions) return [];
     const patch = this.optionDifferences(this.knownOptions);
     if (Object.keys(patch).length === 0) return [];
-    this.knownOptions = this.currentOptions();
+    this.commitOptions();
     return [{ type: "options_changed", provider: this.provider, patch }];
   }
 
@@ -1818,7 +1835,7 @@ class PluginAgentSession implements AgentSession {
       await this.bridge.close();
       replay.closed = true;
     }
-    const bridge = await this.reopen(replay.persistence, replay.config);
+    const bridge = await this.reopen(replay.persistence, replay.config, this.committedOptions);
     this.bridge = bridge;
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
