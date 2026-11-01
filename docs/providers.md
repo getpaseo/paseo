@@ -37,12 +37,18 @@ option and read `options`; they hold no value of their own. Any option can be re
 or without a control.
 
 - **Create and resume.** The provider opens with the options it is given and emits nothing about
-  them while opening. If the session ended up different, it sets `openOptionsPatch` before
-  `createSession`/`resumeSession` resolves. The daemon stores it before the agent is published.
+  them while opening. `openOptionsPatch` carries every option the session ended up with that
+  differs from what it was given, including a setting nobody asked for (a native default such as
+  Cursor opening with Fast on). It is set before `createSession`/`resumeSession` resolves and the
+  daemon stores it before the agent is published. A reopened agent resumes that state, so a
+  native default the provider later changes does not follow.
 - **Live apply.** `applyOptions` receives the keys the patch touches, resolved against the
   `config.json` defaults. A removal arrives as the default the key falls back to, or `null` when
   there is none; the provider returns the setting to its own default if it can, or throws to
-  reject. It returns the options it ended up with when they differ from the request. The daemon
+  reject. A key the running session cannot apply (one the provider reads only when it opens) is
+  rejected too, so a stored option always describes what runs. Claude reads most options when it
+  starts a query: it applies them from the next turn and rejects them while a turn is running. It
+  returns the options it ended up with when they differ from the request. The daemon
   stores the patch and that result in one step after the call resolves, onto the agent's options
   as they are at that moment, so the last write wins. Throwing rejects the whole patch and
   none of it is stored. Emit nothing from inside the call. If the provider's own state moved

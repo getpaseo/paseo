@@ -1,6 +1,7 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
+import { assertChangesAreLive } from "../provider-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -2406,6 +2407,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * rejected, what the provider moved is reported as an event, since nothing is stored.
    */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    assertChangesAreLive({
+      provider: this.config.provider,
+      patch: options,
+      current: this.config.providerOptions,
+      live: [ACP_AUTO_ACCEPT_FEATURE_ID, ...this.configFeatureOptions.map(({ id }) => id)],
+    });
     ACPProviderOptionsSchema.parse(applyProviderOptionsPatch(this.config.providerOptions, options));
     const before = this.featureValues();
     const requested: Record<string, unknown> = {};
@@ -3119,7 +3126,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
       }
     }
-    this.openOptionsPatch = this.featureDifferences(configuredFeatureValues);
+    // The options are the state, so every select the session opened with is reported, including
+    // ones nobody set (a native default is stored like any other value).
+    this.openOptionsPatch = Object.fromEntries(
+      Object.entries(this.featureValues()).filter(
+        ([id, value]) => configuredFeatureValues[id] !== value,
+      ),
+    );
   }
 
   /**

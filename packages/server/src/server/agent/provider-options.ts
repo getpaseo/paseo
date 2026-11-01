@@ -1,4 +1,5 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { isDeepStrictEqual } from "node:util";
 import type { z } from "zod";
 
 export interface ProviderOptionIssue {
@@ -102,4 +103,27 @@ function isPlainObject(value: unknown): value is ProviderOptions {
   if (value === null || typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Rejects a live patch that changes a key the running session cannot apply (one the provider
+ * reads only when it opens). A key whose value already matches the session's is not a change.
+ */
+export function assertChangesAreLive(input: {
+  provider: string;
+  patch: ProviderOptions;
+  current: ProviderOptions | undefined;
+  live: readonly string[];
+}): void {
+  const issues = Object.entries(input.patch)
+    .filter(
+      ([key, value]) =>
+        !input.live.includes(key) &&
+        !isDeepStrictEqual(input.current?.[key] ?? null, value ?? null),
+    )
+    .map(([key]) => ({
+      path: [key],
+      message: "cannot change on a running session; it applies when the agent is opened",
+    }));
+  if (issues.length > 0) throw new ProviderOptionsValidationError(input.provider, issues);
 }

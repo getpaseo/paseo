@@ -1589,6 +1589,56 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("an option Claude reads when it starts applies from the next query", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { disallowedTools: ["Bash"] },
+    });
+    const ensureQuery = () =>
+      (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    await ensureQuery();
+
+    await session.applyOptions?.({ disallowedTools: ["Bash", "Write"] });
+    await ensureQuery();
+
+    expect(queryFactory).toHaveBeenCalledTimes(2);
+    expect(queryFactory.mock.calls[1]?.[0].options).toMatchObject({
+      disallowedTools: ["Bash", "Write"],
+    });
+    await session.close();
+  });
+
+  test("rejects a change to an option Claude reads at start while a turn is running", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { disallowedTools: ["Bash"] },
+    });
+    await session.startTurn("hello");
+
+    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
+      /disallowedTools.*cannot change while a turn is running/,
+    );
+    // The same value is not a change.
+    await expect(session.applyOptions?.({ disallowedTools: ["Bash"] })).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("switching to a model without Fast turns it off, reports that, and later patches still apply", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({

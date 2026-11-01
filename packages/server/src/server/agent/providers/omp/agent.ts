@@ -72,7 +72,7 @@ import {
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
-import { validateProviderOptions } from "../../provider-options.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
@@ -825,6 +825,12 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    assertChangesAreLive({
+      provider: "omp",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["fast_mode"],
+    });
     const next = validateProviderOptions(
       "omp",
       OmpProviderOptionsSchema,

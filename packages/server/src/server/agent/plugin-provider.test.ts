@@ -974,7 +974,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("stores only agent options while the plugin receives merged defaults", async () => {
+  test("stores the agent options and the settings the plugin opened with, not the merged config defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
     const plugins = new PluginAgentClientRegistry(logger);
@@ -996,7 +996,8 @@ describe("PluginAgentClientRegistry", () => {
       undefined,
       { workspaceId: undefined },
     );
-    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual(own);
+    // `nested.base` comes from `config.json` and is not stored; `voice` is the plugin's own opening state.
+    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual({ ...own, voice: "direct" });
     expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
       config: { providerOptions: { nested: { base: true, replace: "agent" } } },
     });
@@ -1110,6 +1111,14 @@ describe("PluginAgentClientRegistry", () => {
       const { session, events } = await openStubbornVoiceSession({ voice: "other", loud: false });
 
       expect(session.openOptionsPatch).toEqual({ voice: "direct" });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
+
+    test("settings the plugin opened with that nobody set are in the open patch", async () => {
+      const { session, events } = await openStubbornVoiceSession({});
+
+      expect(session.openOptionsPatch).toEqual({ voice: "direct", loud: false });
       expect(eventsOfType(events, "options_changed")).toEqual([]);
       await session.close();
     });

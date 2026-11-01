@@ -1883,6 +1883,13 @@ describe("ACPAgentSession options against an ACP agent", () => {
     expect(optionEvents).toEqual([]);
   });
 
+  test("a select the agent opened with that nobody set is in the open patch", async () => {
+    const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
+
+    expect(session.openOptionsPatch).toEqual({ agent: "Probe Agent" });
+    expect(optionEvents).toEqual([]);
+  });
+
   test("a notification that arrives before the open write is answered is not an event", async () => {
     const { session, optionEvents } = await openSession({
       providerOptions: { agent: "Probe Agent" },
