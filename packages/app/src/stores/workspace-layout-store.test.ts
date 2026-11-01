@@ -4551,7 +4551,6 @@ describe("compact workspace sheet", () => {
             title: agent.id,
             cwd: "/repo",
             model: null,
-            features: undefined,
             thinkingOptionId: undefined,
             requiresAttention: false,
             attentionReason: null,

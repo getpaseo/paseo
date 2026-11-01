@@ -20,7 +20,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import type { ManagedAgent } from "./agent-manager.js";
-import { featuresFromControls } from "./option-controls.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import type { JsonValue } from "../json-utils.js";
 import {
   isStoredAgentProviderAvailable,

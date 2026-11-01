@@ -1633,8 +1633,8 @@ test("agent config maps provider/model and provider-native options to the daemon
       model: "gpt-5.4",
       modeId: "full-access",
       thinkingOptionId: "high",
-      featureValues: { webSearch: true },
       providerOptions: {
+        webSearch: true,
         approval_policy: "never",
         sandbox_mode: "workspace-write",
         sandbox_workspace_write: {

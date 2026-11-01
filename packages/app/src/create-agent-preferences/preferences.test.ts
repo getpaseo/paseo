@@ -80,7 +80,7 @@ describe("create agent preferences", () => {
         modelId: "gpt-5.5",
         modeId: "full-access",
         thinkingOptionId: "high",
-        featureValues: { fast_mode: true },
+        options: { fast_mode: true },
       }),
     );
 
@@ -95,7 +95,7 @@ describe("create agent preferences", () => {
           model: "gpt-5.5",
           mode: "full-access",
           thinkingByModel: { "gpt-5.5": "high" },
-          featureValues: { fast_mode: true },
+          options: { fast_mode: true },
         },
       },
     });
@@ -119,7 +119,7 @@ describe("create agent preferences", () => {
           model: "gpt-5.6",
           mode: undefined,
           thinkingByModel: undefined,
-          featureValues: undefined,
+          options: undefined,
         },
       }),
     ).toEqual({
@@ -167,13 +167,13 @@ describe("create agent preferences", () => {
         modelId: "one-minute-stream",
         modeId: "approval-test",
         thinkingOptionId: "",
-        featureValues: {},
+        options: {},
       }),
     ).toEqual({
       provider: "mock",
       providerPreferences: {
         pi: { model: "anthropic/sonnet" },
-        mock: { model: "one-minute-stream", mode: "approval-test", featureValues: {} },
+        mock: { model: "one-minute-stream", mode: "approval-test", options: {} },
       },
     });
   });
@@ -205,6 +205,18 @@ describe("create agent preferences", () => {
           thinkingByModel: { "gpt-5.4-mini": "high" },
         },
       },
+    });
+  });
+
+  it("reads preferences saved as featureValues as options", () => {
+    expect(
+      parseFormPreferences({
+        provider: "codex",
+        providerPreferences: { codex: { featureValues: { service_tier: "priority" } } },
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: { codex: { options: { service_tier: "priority" } } },
     });
   });
 

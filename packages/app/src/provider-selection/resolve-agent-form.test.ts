@@ -284,7 +284,7 @@ describe("mergeSelectedComposerPreferences", () => {
             codex: {
               mode: "full-access",
               thinkingByModel: { "gpt-5.4-mini": "medium" },
-              featureValues: { fast_mode: true },
+              options: { fast_mode: true },
             },
             claude: { model: "claude-sonnet-4-6" },
           },
@@ -299,7 +299,7 @@ describe("mergeSelectedComposerPreferences", () => {
           model: "gpt-5.4",
           mode: "full-access",
           thinkingByModel: { "gpt-5.4-mini": "medium" },
-          featureValues: { fast_mode: true },
+          options: { fast_mode: true },
         },
         claude: { model: "claude-sonnet-4-6" },
       },

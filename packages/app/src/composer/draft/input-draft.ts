@@ -8,7 +8,7 @@ import {
   type CreateAgentInitialValues,
   type UseAgentFormStateResult,
 } from "@/hooks/use-agent-form-state";
-import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
+import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
 import {
   buildDraftAgentControls,
   hasDraftContent,
@@ -35,7 +35,7 @@ type AttachmentUpdater =
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
-  initialFeatureValues?: Record<string, unknown>;
+  initialProviderOptions?: Record<string, unknown>;
   isVisible?: boolean;
   lockedWorkingDir?: string;
 }
@@ -50,7 +50,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModeId: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: Record<string, unknown> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -274,26 +274,25 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
 
   const {
-    features: draftFeatures,
-    featureValues: draftFeatureValues,
-    setFeatureValue: setDraftFeatureValue,
-    applyProfileFeatureValues,
-  } = useDraftAgentFeatures({
+    optionControls: draftOptionControls,
+    options: draftOptions,
+    applyProfileOptions,
+  } = useDraftProviderOptions({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
     cwd: workingDir,
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
-    initialFeatureValues: composerOptions?.initialFeatureValues,
+    initialOptions: composerOptions?.initialProviderOptions,
   });
 
   const applyDraftAgentProfile = useCallback(
     (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
       formState.applyProfileFromUser(profile);
-      applyProfileFeatureValues(profile.featureValues);
+      applyProfileOptions(profile.options);
     },
-    [applyProfileFeatureValues, formState],
+    [applyProfileOptions, formState],
   );
 
   const commandDraft = useMemo(
@@ -303,15 +302,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         cwd: workingDir,
         effectiveModelId,
         effectiveThinkingOptionId,
-        featureValues: draftFeatureValues,
+        providerOptions: draftOptions,
       }),
-    [
-      effectiveModelId,
-      effectiveThinkingOptionId,
-      draftFeatureValues,
-      providerSelection,
-      workingDir,
-    ],
+    [effectiveModelId, effectiveThinkingOptionId, draftOptions, providerSelection, workingDir],
   );
 
   const composerState = useMemo<DraftComposerState | null>(() => {
@@ -325,11 +318,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModeId,
       effectiveModelId,
       effectiveThinkingOptionId,
-      featureValues: draftFeatureValues,
+      providerOptions: draftOptions,
       agentControls: buildDraftAgentControls({
         formState,
-        features: draftFeatures,
-        onSetFeature: setDraftFeatureValue,
+        optionControls: draftOptionControls,
         onApplyAgentProfile: applyDraftAgentProfile,
       }),
       commandDraft,
@@ -340,11 +332,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveModeId,
     effectiveModelId,
     effectiveThinkingOptionId,
-    draftFeatures,
-    draftFeatureValues,
+    draftOptionControls,
+    draftOptions,
     applyDraftAgentProfile,
     formState,
-    setDraftFeatureValue,
     workingDir,
   ]);
 

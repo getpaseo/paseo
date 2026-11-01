@@ -1,14 +1,25 @@
 import { z } from "zod";
 import type { SplitNode, WorkspaceLayout } from "./workspace-layout-actions";
 
-const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
-  provider: z.string(),
-  cwd: z.string(),
-  modeId: z.string().nullable(),
-  model: z.string().nullable(),
-  thinkingOptionId: z.string().nullable(),
-  featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
-});
+// COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01. Layouts saved before
+// the rename stored the same record as `featureValues`.
+function renameLegacyFeatureValues(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !("featureValues" in value)) return value;
+  const { featureValues, ...rest } = value as { featureValues: unknown } & Record<string, unknown>;
+  return "providerOptions" in rest ? rest : { ...rest, providerOptions: featureValues };
+}
+
+const WorkspaceDraftTabSetupStorageSchema = z.preprocess(
+  renameLegacyFeatureValues,
+  z.strictObject({
+    provider: z.string(),
+    cwd: z.string(),
+    modeId: z.string().nullable(),
+    model: z.string().nullable(),
+    thinkingOptionId: z.string().nullable(),
+    providerOptions: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
+  }),
+);
 const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("new_tab") }),
   z.strictObject({

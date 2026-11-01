@@ -19,7 +19,8 @@ import {
   type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
-import { featuresFromControls, foldFeatureValues } from "../../agent/option-controls.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
+import { foldFeatureValues } from "../../agent/option-controls.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { expandTilde } from "../../../utils/path.js";
 

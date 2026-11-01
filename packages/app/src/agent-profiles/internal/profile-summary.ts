@@ -47,7 +47,7 @@ export function buildAgentProfileTags(input: {
     tags.push({ id: "thinking", label: formatThinkingOptionLabel({ id: thinkingOptionId }) });
   }
 
-  const featureCount = Object.keys(input.profile.featureValues ?? {}).length;
+  const featureCount = Object.keys(input.profile.options ?? {}).length;
   if (featureCount > 0) {
     tags.push({ id: "features", label: input.formatFeatureCount(featureCount) });
   }

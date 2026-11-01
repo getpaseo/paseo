@@ -8924,3 +8924,230 @@ test("routed channels inherit an origin without drain support", async () => {
   expect(route.supportsDrain).toBe(false);
   route.close();
 });
+
+describe("provider options across daemon versions", () => {
+  const agentSnapshot = {
+    id: "agent-1",
+    provider: "codex",
+    cwd: "/repo",
+    model: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: null,
+    createdAt: "2026-04-30T00:00:00.000Z",
+    updatedAt: "2026-04-30T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: false,
+      supportsSessionPersistence: false,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+    requiresAttention: false,
+    attentionReason: null,
+  };
+  const speedFeature = {
+    type: "select",
+    id: "service_tier",
+    label: "Speed",
+    value: "priority",
+    options: [
+      { id: "default", label: "Normal", isDefault: true },
+      { id: "priority", label: "Fast" },
+    ],
+  };
+
+  async function connect(features: Record<string, boolean>) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "provider_options",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features });
+    await connecting;
+    const sentMessages = () =>
+      mock.sent.map(
+        (frame) => (JSON.parse(frame as string) as { message: Record<string, unknown> }).message,
+      );
+    return { mock, client, sentMessages };
+  }
+
+  test("a legacy daemon's features arrive as controls over options", async () => {
+    const { mock, client } = await connect({});
+    const received: Array<{ controls?: unknown; options?: unknown }> = [];
+    client.on("agent_update", (message) => {
+      if (message.payload.kind === "upsert") received.push(message.payload.agent);
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: { kind: "upsert", agent: { ...agentSnapshot, features: [speedFeature] } },
+      }),
+    );
+    expect(received).toEqual([
+      expect.objectContaining({
+        options: { service_tier: "priority" },
+        controls: [
+          expect.objectContaining({
+            type: "select",
+            key: "service_tier",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Normal" },
+              { value: "priority", label: "Fast" },
+            ],
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  test("a legacy daemon takes option writes as feature writes", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const write = client.setAgentOptions("agent-1", { service_tier: "default" });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "service_tier",
+      value: "default",
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "set_agent_feature_response",
+        payload: { requestId: request.requestId, agentId: "agent-1", accepted: true, error: null },
+      }),
+    );
+    await write;
+  });
+
+  test("a current daemon takes option writes as one options patch", async () => {
+    const { client, sentMessages, mock } = await connect({ providerOptionControls: true });
+    const write = client.setAgentOptions("agent-1", { service_tier: null, sandbox_mode: "x" });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { options: { service_tier: null, sandbox_mode: "x" } },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent.config.apply.response",
+        payload: { requestId: request.requestId, agentId: "agent-1", accepted: true, error: null },
+      }),
+    );
+    await write;
+  });
+
+  test("a legacy draft listing answers with controls and options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const listing = client.listProviderControls({
+      provider: "codex",
+      cwd: "/repo",
+      providerOptions: { service_tier: "default" },
+    });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "codex", featureValues: { service_tier: "default" } },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "codex",
+          features: [{ ...speedFeature, value: "default" }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: request.requestId,
+        },
+      }),
+    );
+    await expect(listing).resolves.toMatchObject({
+      provider: "codex",
+      options: { service_tier: "default" },
+      controls: [expect.objectContaining({ key: "service_tier" })],
+    });
+  });
+
+  test("a legacy daemon's profiles are read and saved by their options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const reading = client.getDaemonConfig();
+    const [read] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "get_daemon_config_response",
+        payload: {
+          requestId: read.requestId,
+          config: {
+            mcp: { injectIntoAgents: true },
+            agentProfiles: [
+              {
+                id: "p1",
+                name: "Fast",
+                provider: "codex",
+                featureValues: { service_tier: "fast" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const { config } = await reading;
+    expect(config.agentProfiles?.[0]).toMatchObject({ options: { service_tier: "fast" } });
+    expect(config.agentProfiles?.[0]).not.toHaveProperty("featureValues");
+
+    void client.patchDaemonConfig({ agentProfiles: config.agentProfiles }).catch(() => {});
+    const written = sentMessages().find((message) => message.type === "set_daemon_config_request");
+    expect(written).toMatchObject({
+      config: { agentProfiles: [{ featureValues: { service_tier: "fast" } }] },
+    });
+    expect(written).not.toMatchObject({ config: { agentProfiles: [{ options: {} }] } });
+  });
+
+  test("a legacy daemon applies a profile's options as feature values", async () => {
+    const { client, sentMessages } = await connect({});
+    void client.applyAgentConfig("agent-1", { options: { service_tier: "fast" } }).catch(() => {});
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "agent.config.apply.request",
+      config: { featureValues: { service_tier: "fast" } },
+    });
+  });
+
+  test("a legacy daemon creates an agent with control keys as feature values", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: { kind: "upsert", agent: { ...agentSnapshot, features: [speedFeature] } },
+      }),
+    );
+    void client
+      .createAgent({
+        config: {
+          provider: "codex",
+          cwd: "/repo",
+          providerOptions: { service_tier: "priority", sandbox_mode: "read-only" },
+        },
+      })
+      .catch(() => {});
+    const [request] = sentMessages();
+    expect(request.config).toMatchObject({
+      featureValues: { service_tier: "priority" },
+      providerOptions: { sandbox_mode: "read-only" },
+    });
+  });
+});

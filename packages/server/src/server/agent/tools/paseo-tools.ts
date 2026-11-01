@@ -18,7 +18,7 @@ import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
-import { featuresFromControls } from "../option-controls.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
