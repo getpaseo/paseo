@@ -1671,6 +1671,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.folderMissing = true;
+    if (target.refreshState.status === "in-flight") {
+      target.refreshState.queued = null;
+    }
     this.detachWorkspaceFromRepoTarget(target);
     target.repoGitRoot = null;
     this.stopWorkspaceObservation(target);
@@ -1718,6 +1721,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     await target.observationSetupPromise;
+    if (target.refreshState.status === "in-flight") {
+      await target.refreshState.promise.catch(() => undefined);
+    }
     if (!this.isSuspendedWorkspaceTarget(target)) {
       return;
     }
@@ -3328,11 +3334,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       try {
         const runRefreshGitCommand = createRunGitCommand(`workspace-refresh:${request.reason}`);
         const admittedSnapshot = await this.workspaceRefreshLimit(() => {
-          if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+          if (
+            target.closed ||
+            target.folderMissing ||
+            this.workspaceTargets.get(target.cwd) !== target
+          ) {
             return null;
           }
           return this.refreshSnapshot(target, request, runRefreshGitCommand);
         });
+        if (target.folderMissing) {
+          failure = null;
+          break;
+        }
         if (!admittedSnapshot) {
           break;
         }
@@ -3346,6 +3360,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         failure = { error };
       }
 
+      if (target.folderMissing) {
+        failure = null;
+        break;
+      }
       if (this.disposed || target.closed || this.workspaceTargets.get(target.cwd) !== target) {
         break;
       }
@@ -3641,7 +3659,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     snapshot: WorkspaceGitRuntimeSnapshot,
     options?: { forceEmit?: boolean },
   ): void {
-    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+    if (target.closed || target.folderMissing || this.workspaceTargets.get(target.cwd) !== target) {
       return;
     }
     target.latestSnapshot = snapshot;

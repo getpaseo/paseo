@@ -257,7 +257,7 @@ function createGitHubServiceStub(): ForgeService {
 interface CreateServiceTestOptions {
   subscribe?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
-  getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
+  getCheckoutSnapshotFacts?: (cwd: string) => Promise<CheckoutSnapshotFacts>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -2042,6 +2042,108 @@ describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", 
 
     diffWatch.unsubscribe();
     workspaceSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a refresh crossing suspension preserves the cached snapshot and drops queued work", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let holdNextRead = false;
+    let factsReads = 0;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        factsReads++;
+        if (holdNextRead) {
+          holdNextRead = false;
+          started.resolve();
+          await release.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const updates: WorkspaceGitRuntimeSnapshot[] = [];
+    const subscription = service.registerWorkspace({ cwd: workspace }, (snapshot) =>
+      updates.push(snapshot),
+    );
+    await waitForObservationToSettle(service, 1);
+    const cached = await service.getSnapshot(workspace);
+    holdNextRead = true;
+    const active = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "overlapping-refresh",
+    });
+    await started.promise;
+    const queued = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: true,
+      reason: "queued-refresh",
+    });
+    await rm(workspace, { recursive: true, force: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(() => expect(service.getMetrics().repositoryWorkspaceLinkCount).toBe(0));
+    const readsAtSuspension = factsReads;
+    const updatesAtSuspension = updates.length;
+    release.resolve();
+    expect(await active).toEqual(cached);
+    expect(await queued).toEqual(cached);
+    expect(await service.getSnapshot(workspace)).toEqual(cached);
+    expect(updates).toHaveLength(updatesAtSuspension);
+    expect(factsReads).toBe(readsAtSuspension);
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("restoration settles a suspended refresh before reloading facts", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const staleFacts = createDeferred<CheckoutSnapshotFacts>();
+    const started = createDeferred<void>();
+    let holdNextRead = false;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        if (holdNextRead) {
+          holdNextRead = false;
+          started.resolve();
+          return staleFacts.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const updates: WorkspaceGitRuntimeSnapshot[] = [];
+    const subscription = service.registerWorkspace({ cwd: workspace }, (snapshot) =>
+      updates.push(snapshot),
+    );
+    await waitForObservationToSettle(service, 1);
+    const cached = await service.getSnapshot(workspace);
+    holdNextRead = true;
+    const active = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "overlapping-refresh",
+    });
+    await started.promise;
+    await rm(workspace, { recursive: true, force: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(() => expect(service.getMetrics().repositoryWorkspaceLinkCount).toBe(0));
+    const updatesAtSuspension = updates.length;
+    await mkdir(workspace);
+    const restored = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "folder-returned",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    staleFacts.resolve({ isGit: false });
+    expect(await active).toEqual(cached);
+    expect((await restored).git.isGit).toBe(true);
+    expect(updates.slice(updatesAtSuspension).every((snapshot) => snapshot.git.isGit)).toBe(true);
+    await waitForObservationToSettle(service, 1);
+    subscription.unsubscribe();
     await service.dispose();
   });
 
