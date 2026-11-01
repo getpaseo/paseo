@@ -34,13 +34,16 @@ import { keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
-import { hasActiveWebOverlay } from "@/lib/overlay-root";
+import { hasActiveWebOverlay, hasOpenDomPopover } from "@/lib/overlay-root";
+import { resolveStrayPasteText } from "@/keyboard/stray-paste";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown, keyBelongsToDomPopover } from "@/lib/overlay-root";
+
+const MIDDLE_CLICK_PASTE_WINDOW_MS = 1000;
 
 export function useKeyboardShortcuts({
   enabled,
@@ -373,6 +376,35 @@ export function useKeyboardShortcuts({
     }
   });
 
+  const lastMiddleButtonAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const handleMiddleButton = useStableEvent((event: MouseEvent) => {
+    if (event.button === 1) lastMiddleButtonAtRef.current = event.timeStamp;
+  });
+
+  const handlePaste = useStableEvent((event: ClipboardEvent) => {
+    if (event.defaultPrevented || hasActiveWebOverlay() || hasOpenDomPopover()) return;
+    // Linux pastes the primary selection on a middle click, even over links.
+    if (event.timeStamp - lastMiddleButtonAtRef.current < MIDDLE_CLICK_PASTE_WINDOW_MS) return;
+    const text = resolveStrayPasteText({
+      target: event.target,
+      focusScope: resolveKeyboardFocusScope({
+        target: event.target,
+        commandCenterOpen: useKeyboardShortcutsStore.getState().commandCenterOpen,
+      }),
+      clipboardData: event.clipboardData,
+    });
+    if (text === null) return;
+    if (
+      keyboardActionDispatcher.dispatch({
+        id: "message-input.paste-text",
+        scope: "message-input",
+        text,
+      })
+    ) {
+      event.preventDefault();
+    }
+  });
+
   const handleBrowserShortcutInput = useStableEvent((payload: unknown) => {
     const input = parseBrowserShortcutInput(payload);
     if (!input) {
@@ -398,6 +430,9 @@ export function useKeyboardShortcuts({
     window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("blur", handleBlurOrHide);
     document.addEventListener("visibilitychange", handleBlurOrHide);
+    document.addEventListener("paste", handlePaste);
+    window.addEventListener("mousedown", handleMiddleButton, true);
+    window.addEventListener("mouseup", handleMiddleButton, true);
 
     const browserShortcutSubscription = isElectronRuntime()
       ? getDesktopHost()?.events?.on?.("browser-shortcut-input", handleBrowserShortcutInput)
@@ -415,6 +450,9 @@ export function useKeyboardShortcuts({
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("blur", handleBlurOrHide);
       document.removeEventListener("visibilitychange", handleBlurOrHide);
+      document.removeEventListener("paste", handlePaste);
+      window.removeEventListener("mousedown", handleMiddleButton, true);
+      window.removeEventListener("mouseup", handleMiddleButton, true);
       if (typeof browserShortcutSubscription === "function") {
         browserShortcutSubscription();
       } else {
@@ -426,6 +464,8 @@ export function useKeyboardShortcuts({
     handleBrowserShortcutInput,
     handleKeyDown,
     handleKeyUp,
+    handleMiddleButton,
+    handlePaste,
     resetModifiers,
     shortcutsAvailable,
   ]);
