@@ -4665,6 +4665,26 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.config.model = modelId ?? undefined;
     this.refreshResolvedCollaborationMode();
     this.cachedRuntimeInfo = null;
+    this.dropUnavailableServiceTier();
+  }
+
+  /**
+   * A speed the new model does not offer turns into Normal and is reported, so choosing a model
+   * that does offer it again does not bring the paid tier back. It is reported as Normal rather
+   * than removed so a configured default cannot fill the old speed back in.
+   */
+  private dropUnavailableServiceTier(): void {
+    const requested = this.requestedServiceTier;
+    if (requested === null || this.speedModels.length === 0) return;
+    if (this.isServiceTierAvailable(requested)) return;
+    this.requestedServiceTier = "default";
+    const { fast_mode: legacyFast, ...running } = this.providerOptions;
+    this.providerOptions = { ...running, service_tier: "default" };
+    this.emitEvent({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { service_tier: "default", ...(legacyFast === undefined ? {} : { fast_mode: null }) },
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void | AgentProviderNotice> {
@@ -4706,6 +4726,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     const tier = this.serviceTier;
     if ("fast_mode" in options && !("service_tier" in options) && options.fast_mode !== null) {
       return tier === null ? {} : { service_tier: tier, fast_mode: null };
+    }
+    // The catalog may name the tier differently from the request (`fast` is the Fast tier's id).
+    if (
+      "service_tier" in options &&
+      tier !== null &&
+      requestedTier !== null &&
+      tier !== requestedTier
+    ) {
+      return { service_tier: tier };
     }
     return {};
   }
