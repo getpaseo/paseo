@@ -221,6 +221,12 @@ export interface CreateWorktreeOptions {
   paseoHome?: string;
   worktreesRoot?: string;
   worktreePath?: string;
+  /**
+   * `"plugin"` when a `worktree.create.before` handler already created the
+   * worktree at `worktreePath`. Paseo adopts that checkout instead of running
+   * `git worktree add` and keeps only the postconditions.
+   */
+  checkout?: "paseo" | "plugin";
 }
 
 export class BranchAlreadyCheckedOutError extends Error {
@@ -1368,7 +1374,14 @@ export const createWorktree = async ({
   paseoHome,
   worktreesRoot,
   worktreePath: explicitWorktreePath,
+  checkout = "paseo",
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+  if (checkout === "plugin") {
+    const worktreePath =
+      explicitWorktreePath ??
+      (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
+    return adoptPluginWorktree({ cwd, source, worktreePath });
+  }
   const branchesBefore =
     source.kind === "checkout-branch" ||
     source.kind === "checkout-change-request" ||
@@ -1435,6 +1448,67 @@ export const createWorktree = async ({
     throw error;
   }
 };
+
+/**
+ * Adopt a worktree the plugin created. Paseo stops placing and checking out the
+ * worktree here, so the plugin owns branch naming, remotes, and tracking. Paseo
+ * keeps the postconditions: the path must be a worktree root with a branch, and
+ * Paseo still writes the comparison-base metadata it reads later.
+ */
+async function adoptPluginWorktree(options: {
+  cwd: string;
+  source: WorktreeSource;
+  worktreePath: string;
+}): Promise<CreatedWorktree> {
+  const { cwd, source, worktreePath } = options;
+  const { stdout: rootStdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd: worktreePath,
+  }).catch(() => {
+    throw new Error(`Plugin did not create a Git worktree at: ${worktreePath}`);
+  });
+  const normalizedPath = await normalizePathForOwnership(worktreePath);
+  if ((await normalizePathForOwnership(rootStdout.trim())) !== normalizedPath) {
+    throw new Error(
+      `Plugin created a worktree whose root is not the returned path: ${worktreePath}`,
+    );
+  }
+  const [worktreeCommonDir, repoCommonDir] = await Promise.all([
+    getGitCommonDir(normalizedPath),
+    getGitCommonDir(cwd),
+  ]);
+  if (worktreeCommonDir !== repoCommonDir) {
+    throw new Error(`Plugin created a worktree outside the repository: ${normalizedPath}`);
+  }
+  const { stdout: branchStdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: normalizedPath,
+  });
+  const branchName = branchStdout.trim();
+  if (!branchName || branchName === "HEAD") {
+    throw new Error(`Plugin created a worktree with a detached HEAD: ${normalizedPath}`);
+  }
+
+  const metadataBaseRefName = await adoptedWorktreeBaseRefName(cwd, source, branchName);
+  await writePaseoWorktreeMetadata(normalizedPath, { baseRefName: metadataBaseRefName });
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: normalizedPath });
+
+  return {
+    branchName,
+    worktreePath: normalizedPath,
+    comparisonBaseRef: metadataBaseRefName,
+  };
+}
+
+async function adoptedWorktreeBaseRefName(
+  cwd: string,
+  source: WorktreeSource,
+  branchName: string,
+): Promise<string> {
+  if (source.kind === "branch-off") return normalizeRequiredBaseBranch(source.baseBranch);
+  if (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") {
+    return normalizeRequiredBaseBranch(source.baseRefName);
+  }
+  return resolveCheckoutBranchBaseRef(cwd, branchName);
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;

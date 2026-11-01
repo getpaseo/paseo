@@ -47,8 +47,10 @@ async function pathExists(path: string): Promise<boolean> {
 export async function validateWorktreePath(options: {
   candidate: string;
   repoPath: string;
+  /** The hook already created the destination, so it is expected to exist. */
+  allowExistingPath?: boolean;
 }): Promise<string> {
-  const { candidate, repoPath } = options;
+  const { candidate, repoPath, allowExistingPath = false } = options;
   if (!isAbsolute(candidate)) {
     throw new Error(
       `Worktree hook returned a relative path '${candidate}'; it must be an absolute path`,
@@ -79,7 +81,7 @@ export async function validateWorktreePath(options: {
   if (relativeToCandidate !== null && relativeToCandidate !== "") {
     throw new Error(`Worktree hook returned an ancestor of the repository: ${normalized}`);
   }
-  if ((await pathExists(normalized)) || (await pathExists(candidate))) {
+  if (!allowExistingPath && ((await pathExists(normalized)) || (await pathExists(candidate)))) {
     throw new Error(
       `Worktree hook returned a path that already exists: ${normalized}. Paseo creates the returned path.`,
     );

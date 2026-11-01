@@ -589,6 +589,7 @@ export class PluginRuntime {
           worktree.path = await validateWorktreePath({
             candidate: worktree.path,
             repoPath: worktree.repoRoot,
+            allowExistingPath: worktree.checkout === "plugin",
           });
         }
         if (name === "agent.open.before") {

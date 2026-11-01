@@ -34,6 +34,11 @@ export type PluginWorktreeCreateRequest = {
   branch: string;
   slug: string;
   path: string;
+  /**
+   * Who runs the checkout. `"plugin"` means the handler already created the
+   * worktree at `path`; Paseo verifies it and skips `git worktree add`.
+   */
+  checkout?: "paseo" | "plugin";
 } & (
   | { kind: "branch-off"; baseRef: string }
   | { kind: "checkout-branch" }
