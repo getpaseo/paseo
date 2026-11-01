@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
+import { PluginRegistryIndexSchema } from "@getpaseo/protocol/plugin-registry";
 import { getTranslator } from "~/i18n";
 import {
   addedAgo,
@@ -12,6 +13,7 @@ import {
   type Plugin,
   pluginListing,
   pluginOverview,
+  pluginVersion,
   readmeBody,
   recentlyUpdated,
   reportBugUrl,
@@ -42,6 +44,30 @@ const plugin: Plugin = {
   installs: 42,
 };
 describe("plugin registry", () => {
+  it("displays a reviewed Git tag as the version while preserving the commit pin", () => {
+    const gitPlugin = {
+      ...plugin,
+      artifact: {
+        kind: "git" as const,
+        remote: "https://github.com/acme/example",
+        commit: "a".repeat(40),
+        tag: "v1.0.0",
+      },
+    };
+    const index = PluginRegistryIndexSchema.parse({
+      schemaVersion: 1,
+      registry: { name: "Test", url: "https://example.test" },
+      categories: [],
+      plugins: [gitPlugin],
+      featured: [],
+      generatedAt: "2026-10-03",
+    });
+    expect(pluginVersion(index.plugins[0])).toBe("v1.0.0");
+    expect(
+      pluginVersion({ ...gitPlugin, artifact: { ...gitPlugin.artifact, tag: undefined } }),
+    ).toBe("aaaaaaaaaaaa");
+    expect(pluginVersion(plugin)).toBe("1.2.3");
+  });
   it("loads a directory and a detail from a static HTTP registry", async () => {
     const index = {
       schemaVersion: 1,
