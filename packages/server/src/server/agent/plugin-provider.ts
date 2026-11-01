@@ -1448,6 +1448,12 @@ class PluginAgentSession implements AgentSession {
     this.applyingOptions = true;
     try {
       await this.bridge.configure({ settings });
+    } catch (error) {
+      // Nothing is stored for a refused patch, so what the plugin moved is reported once the
+      // call has ended.
+      this.applyingOptions = false;
+      for (const event of this.reportSettingChanges()) this.publish(event);
+      throw error;
     } finally {
       this.applyingOptions = false;
     }
