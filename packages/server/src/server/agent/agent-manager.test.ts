@@ -12009,6 +12009,65 @@ test("concurrent native restores run once before resuming the same agent", async
   }
 });
 
+test("unarchive waits for a history load to finish replaying before closing its runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-hydration-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  const historyItem: AgentTimelineItem = { type: "assistant_message", text: "Earlier reply" };
+  class ReplayingSession extends TestAgentSession {
+    private closed = false;
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyStarted.resolve();
+      await historyAllowed.promise;
+      if (this.closed) throw new Error("session is closed");
+      yield { type: "timeline", provider: "codex", item: historyItem };
+    }
+    override async close(): Promise<void> {
+      this.closed = true;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ReplayingSession({ provider: this.provider, cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const creator = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await creator.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await creator.archiveAgent(created.id);
+  await storage.flush();
+  // A fresh manager has no timeline for the agent, as after a daemon restart.
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const loaderDeps = { agentManager: manager, agentStorage: storage, logger };
+  try {
+    const historyLoad = ensureAgentLoaded(created.id, loaderDeps);
+    await historyStarted.promise;
+    const unarchive = manager.unarchiveSnapshot(created.id);
+    // Storage is loaded, so one macrotask turn lets an unblocked unarchive reach close.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    historyAllowed.resolve();
+
+    await expect(historyLoad).resolves.toBeDefined();
+    await expect(unarchive).resolves.toBe(true);
+    await ensureAgentLoaded(created.id, loaderDeps);
+    expect(manager.getTimeline(created.id)).toEqual([historyItem]);
+  } finally {
+    historyAllowed.resolve();
+    if (manager.getAgent(created.id)) await manager.closeAgent(created.id);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("commits startup notices once on create and after restored history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-startup-notice-"));
   const notice: AgentTimelineItem = { type: "notification", level: "info", message: "Runtime v2" };

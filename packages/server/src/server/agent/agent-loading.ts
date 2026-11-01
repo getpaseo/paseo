@@ -71,6 +71,11 @@ export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
+  // An in-flight load replays history inside the lifecycle lane, so it can finish
+  // while this caller waits at the barrier. Upgrade its broadcast before waiting.
+  const earlierLoad = pendingAgentInitializations.get(agentId);
+  if (earlierLoad) earlierLoad.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+
   await deps.agentManager.waitForAgentClose?.(agentId);
 
   const inflight = pendingAgentInitializations.get(agentId);
@@ -110,14 +115,16 @@ export async function ensureAgentLoaded(
     }
 
     const handle = toAgentPersistenceHandle(validProviders, record.persistence);
+    const hydrateTimeline = { broadcast: () => pendingOptions.broadcastTimeline };
 
     let snapshot: ManagedAgent;
     if (handle) {
+      // Resume replays history in the same lifecycle step, ahead of a queued unarchive.
       snapshot = await deps.agentManager.resumeAgentFromPersistence(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
+        { ...extractTimestamps(record), attention: extractAttention(record), hydrateTimeline },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -138,11 +145,9 @@ export async function ensureAgentLoaded(
         env: record.launchEnv,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
+      await deps.agentManager.hydrateTimelineFromProvider(agentId, hydrateTimeline);
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
