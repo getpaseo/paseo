@@ -1,4 +1,5 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../option-controls.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
   getAgentStreamEventTurnId,
@@ -4678,12 +4679,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   /** Applies only the options the patch sets; the rest of the running options stay as they are. */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
     const { fast_mode: _legacyFast, ...running } = this.providerOptions;
-    const next: Record<string, unknown> = { ...running };
-    for (const [key, value] of Object.entries(options)) {
-      if (value === null) delete next[key];
-      else next[key] = value;
-    }
-    const valid = validateProviderOptions("codex", CodexProviderOptionsSchema, next) ?? {};
+    const valid =
+      validateProviderOptions(
+        "codex",
+        CodexProviderOptionsSchema,
+        applyProviderOptionsPatch(running, options),
+      ) ?? {};
     let requestedTier = this.requestedServiceTier;
     if ("service_tier" in options || "fast_mode" in options) {
       // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.

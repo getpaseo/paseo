@@ -37,6 +37,19 @@ describe("OpenCode v2 session lifecycle", () => {
     expect(refreshed).toEqual(["/tmp/project"]);
     await client.shutdown();
   });
+  test("rejects a live auto_accept the creation schema would reject", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+
+    await expect(session.applyOptions?.({ auto_accept: "yes" })).rejects.toThrow(/auto_accept/);
+    await expect(session.applyOptions?.({ auto_accept: true })).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();
     harness.prompt = async (input) => {

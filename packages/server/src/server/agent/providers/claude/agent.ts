@@ -1,6 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
 import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -2743,8 +2744,14 @@ class ClaudeAgentSession implements AgentSession {
     this.config.model = normalizedModelId ?? undefined;
     this.reconcileThinkingOptionForModel(normalizedModelId);
     if (this.config.providerOptions.fast_mode) {
-      // The option is the user's intent; the runtime follows it only on models that support it.
-      await activeQuery.applyFlagSettings({ fastMode: this.resolveFastModeSetting() === true });
+      const supported = claudeModelSupportsFastMode(this.config.model);
+      await activeQuery.applyFlagSettings({ fastMode: supported });
+      if (!supported) {
+        // Fast cannot run on this model, so the session drops the option and says so.
+        const { fast_mode: _fastMode, ...rest } = this.config.providerOptions;
+        this.config.providerOptions = rest;
+        this.pushEvent({ type: "options_changed", provider: "claude", patch: { fast_mode: null } });
+      }
       this.cachedRuntimeInfo = null;
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
@@ -2798,13 +2805,12 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<void> {
-    const merged: Record<string, unknown> = { ...this.config.providerOptions };
-    for (const [key, value] of Object.entries(options)) {
-      if (value === null) delete merged[key];
-      else merged[key] = value;
-    }
     const providerOptions =
-      validateProviderOptions("claude", ClaudeProviderOptionsSchema, merged) ?? {};
+      validateProviderOptions(
+        "claude",
+        ClaudeProviderOptionsSchema,
+        applyProviderOptionsPatch(this.config.providerOptions, options),
+      ) ?? {};
     if (providerOptions.fast_mode === true && !claudeModelSupportsFastMode(this.config.model)) {
       throw new Error(
         `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,

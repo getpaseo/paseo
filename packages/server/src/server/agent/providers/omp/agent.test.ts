@@ -651,6 +651,16 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
   });
 
+  test("rejects a live option the creation schema would reject, and sends nothing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).rejects.toThrow(/omp/i);
+    await expect(session.applyOptions?.({ fast_mode: "yes" })).rejects.toThrow(/omp/i);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
   test("a removal turns Fast off, and a Fast the runtime keeps is returned", async () => {
     const omp = new OmpHarness();
     await omp.start();

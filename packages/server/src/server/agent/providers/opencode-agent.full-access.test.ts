@@ -290,6 +290,27 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("rejects a live auto_accept the creation schema would reject, and keeps approving", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient({
+      events: [toolPermissionEvent(), idleEvent()],
+    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { auto_accept: true },
+    });
+
+    await expect(session.applyOptions?.({ auto_accept: "yes" })).rejects.toThrow(/auto_accept/);
+    await session.run("Run verification");
+
+    expect(openCodeClient.calls.permissionReply).toHaveLength(1);
+    await session.close();
+  });
+
   test("stops auto-approving once auto_accept is removed", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],

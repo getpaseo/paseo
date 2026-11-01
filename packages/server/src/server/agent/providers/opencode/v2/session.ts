@@ -1,4 +1,7 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../../option-controls.js";
+import { validateProviderOptions } from "../../../provider-options.js";
+import { OpenCodeProviderOptionsSchema } from "../options.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -360,9 +363,13 @@ export class OpenCodeV2Session implements AgentSession {
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
   async applyOptions(options: ProviderOptions) {
+    const next = validateProviderOptions(
+      "opencode",
+      OpenCodeProviderOptionsSchema,
+      applyProviderOptionsPatch(this.config.providerOptions, options),
+    );
     if (!("auto_accept" in options)) return;
-    const value = options["auto_accept"] ?? false;
-    if (typeof value !== "boolean") throw new Error("OpenCode auto_accept requires a boolean");
+    const value = next?.auto_accept === true;
     this.config.providerOptions = { ...this.config.providerOptions, auto_accept: value };
     if (value && !this.config.toolPolicy)
       for (const request of this.permissions.list())

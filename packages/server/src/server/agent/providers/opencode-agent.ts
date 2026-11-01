@@ -1,4 +1,5 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../option-controls.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
@@ -4964,8 +4965,13 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<void> {
+    const next = validateProviderOptions(
+      "opencode",
+      OpenCodeProviderOptionsSchema,
+      applyProviderOptionsPatch(this.config.providerOptions, options),
+    );
     if (OPENCODE_AUTO_ACCEPT_FEATURE_ID in options) {
-      this.setAutoAccept(options[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true);
+      this.setAutoAccept(next?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true);
     }
   }
 

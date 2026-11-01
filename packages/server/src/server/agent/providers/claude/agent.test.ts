@@ -1528,6 +1528,32 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("switching to a model without Fast turns it off, reports that, and later patches still apply", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.setModel?.("claude-fable-5");
+
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
+    expect(events.filter((event) => event.type === "options_changed")).toEqual([
+      { type: "options_changed", provider: "claude", patch: { fast_mode: null } },
+    ]);
+    await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("removing fast_mode turns Fast off", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
