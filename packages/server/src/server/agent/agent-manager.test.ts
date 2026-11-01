@@ -699,6 +699,78 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("fetchTimelinePage includes live rows before durable writes finish", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-page-"));
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    durableTimelineStore: store,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "stored" });
+
+    await expect(
+      manager.fetchTimelinePage(agent.id, { direction: "tail", limit: 1 }),
+    ).resolves.toMatchObject({
+      rows: [expect.objectContaining({ item: { type: "assistant_message", text: "stored" } })],
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("fetchTimelinePage bounds a large whole turn and preserves backward pagination", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-large-turn-"));
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+  try {
+    for (let index = 0; index < 500; index++) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: `entry ${index}`,
+        messageId: `message-${index}`,
+      });
+    }
+    const tail = await manager.fetchTimelinePage(agent.id, { limit: 40, wholeTurns: true });
+    expect(tail.rows.length).toBeLessThanOrEqual(200);
+    expect(tail.hasOlder).toBe(true);
+    const before = await manager.fetchTimelinePage(agent.id, {
+      direction: "before",
+      limit: 40,
+      wholeTurns: true,
+      cursor: { epoch: tail.epoch, seq: tail.startSeq! },
+    });
+    expect(before.rows.length).toBeLessThanOrEqual(200);
+    expect(before.endSeq).toBe(tail.startSeq! - 1);
+    const unlimited = await manager.fetchTimelinePage(agent.id, { limit: 0 });
+    expect(unlimited.rows.length).toBeLessThanOrEqual(200);
+    expect(unlimited.hasOlder).toBe(true);
+    for (let index = 0; index < 40; index++) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "😀".repeat(130_000),
+        messageId: `large-${index}`,
+      });
+    }
+    const byteLimited = await manager.fetchTimelinePage(agent.id, { limit: 40 });
+    expect(Buffer.byteLength(JSON.stringify(byteLimited), "utf8")).toBeLessThanOrEqual(
+      8 * 1024 * 1024,
+    );
+    expect(byteLimited.rows.length).toBeLessThan(40);
+    expect(byteLimited.hasOlder).toBe(true);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
   const store = new RecordingTimelineStore();

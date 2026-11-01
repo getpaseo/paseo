@@ -19,7 +19,26 @@ export async function fetchProjectedTimelineItems(
     projection: "projected",
     timeout: input.timeoutMs,
   });
-  let entries = timeline.entries;
+  const pages = [timeline.entries];
+  let page = timeline;
+  while (page.hasOlder && page.startCursor) {
+    const older = await input.client.fetchAgentTimeline(input.agentId, {
+      direction: "before",
+      cursor: page.startCursor,
+      limit: 40,
+      projection: "projected",
+      timeout: input.timeoutMs,
+    });
+    if (older.reset || older.epoch !== timeline.epoch) {
+      throw new Error("Timeline changed while reading history; retry the request");
+    }
+    if (!older.startCursor || older.startCursor.seq >= page.startCursor.seq) {
+      throw new Error("Timeline pagination did not advance");
+    }
+    pages.push(older.entries);
+    page = older;
+  }
+  let entries = pages.toReversed().flat();
   const sinceTimestampMs = input.sinceTimestampMs;
   if (sinceTimestampMs !== undefined) {
     entries = entries.filter((entry) => Date.parse(entry.timestamp) >= sinceTimestampMs);

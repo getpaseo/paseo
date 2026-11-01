@@ -1312,6 +1312,37 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
+  async fetchTimelinePage(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    this.requireAgent(id);
+    // Wire pages must remain bounded even when a single imported turn spans
+    // thousands of items. Internal fetchTimeline retains its all-rows contract.
+    const boundedOptions = {
+      ...options,
+      limit: Math.min(40, Math.max(1, options?.limit || 40)),
+      wholeTurns: false,
+    };
+    for (;;) {
+      const page = this.timelineStore.fetch(id, boundedOptions);
+      // Projection may expand a page to preserve overlapping source coverage.
+      // Bound actual serialized bytes too, before the socket sees the response.
+      if (
+        page.rows.length <= 200 &&
+        Buffer.byteLength(JSON.stringify(page), "utf8") <= 8 * 1024 * 1024
+      ) {
+        return page;
+      }
+      if (boundedOptions.limit === 1) {
+        throw new Error(
+          "A timeline coverage span exceeds the 8 MiB page budget; history is preserved on disk.",
+        );
+      }
+      boundedOptions.limit = Math.max(1, Math.floor(boundedOptions.limit / 2));
+    }
+  }
+
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.list(parentAgentId);
