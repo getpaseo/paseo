@@ -12332,6 +12332,50 @@ test.each([false, true])(
   },
 );
 
+test("reload with rehydrateFromDisk resumes the provider session, preserving history (#7212)", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-resume-"));
+  const testLogger = createTestLogger();
+  const storage = new AgentStorage(join(workdir, "agents"), testLogger);
+  class ResumeCountingClient extends TestAgentClient {
+    created = 0;
+    resumed = 0;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.created += 1;
+      return super.createSession(config);
+    }
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.resumed += 1;
+      return super.resumeSession(handle, config, launchContext);
+    }
+  }
+  const client = new ResumeCountingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger: testLogger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(client.created).toBe(1);
+    await manager.reloadAgentSession(agent.id, undefined, {
+      rehydrateFromDisk: true,
+    });
+    expect(client.created).toBe(1);
+    expect(client.resumed).toBe(1);
+    await manager.reloadAgentSession(agent.id);
+    expect(client.resumed).toBe(2);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test.each([
   {
     event: {

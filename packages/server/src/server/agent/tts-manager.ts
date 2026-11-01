@@ -2,6 +2,7 @@ import type pino from "pino";
 import type { Readable } from "node:stream";
 import { v4 as uuidv4 } from "uuid";
 import type { TextToSpeechProvider } from "../speech/speech-provider.js";
+import { parsePcmRateFromFormat } from "../speech/audio.js";
 import { toResolver, type Resolvable } from "../speech/provider-resolver.js";
 import type { SessionOutboundMessage } from "../messages.js";
 
@@ -10,6 +11,27 @@ interface PendingPlayback {
   reject: (error: Error) => void;
   pendingChunks: number;
   streamEnded: boolean;
+  /** True once the client confirmed playback of at least one chunk. */
+  confirmed: boolean;
+}
+
+/**
+ * Outcome of a speak request. The speak tool must never report success when
+ * nothing was heard: callers treat {@link TtsPlaybackResult.segmentsEmitted}
+ * === 0 as failure (generateAndWaitForPlayback throws in that case).
+ */
+export interface TtsPlaybackResult {
+  segmentsEmitted: number;
+  segmentsConfirmed: number;
+  aborted: boolean;
+}
+
+export interface TtsManagerOptions {
+  /**
+   * Override for the per-segment playback-confirmation timeout.
+   * Production uses a duration-derived value; tests set a small one.
+   */
+  playbackConfirmTimeoutMs?: number;
 }
 
 interface TtsSegment {
@@ -133,26 +155,33 @@ export class TTSManager {
   private readonly recentlyClosedAudioIds: Map<string, number> = new Map();
   private readonly logger: pino.Logger;
   private readonly resolveTts: () => TextToSpeechProvider | null;
+  private readonly options: TtsManagerOptions;
 
   constructor(
     sessionId: string,
     logger: pino.Logger,
     tts: Resolvable<TextToSpeechProvider | null>,
+    options?: TtsManagerOptions,
   ) {
     this.logger = logger.child({ module: "agent", component: "tts-manager", sessionId });
     this.resolveTts = toResolver(tts);
+    this.options = options ?? {};
   }
 
   /**
-   * Generate TTS audio, emit to client, and wait for playback confirmation
-   * Returns a Promise that resolves when the client confirms playback completed
+   * Generate TTS audio, emit to client, and wait for playback confirmation.
+   * Resolves with playback counts once every segment was emitted and
+   * confirmed (or the request was aborted mid-playback after emitting).
+   * Rejects when zero audio was emitted or a segment was emitted but the
+   * client never confirmed playback — the caller must surface that as a
+   * speak failure, never as playback success.
    */
   public async generateAndWaitForPlayback(
     text: string,
     emitMessage: (msg: SessionOutboundMessage) => void,
     abortSignal: AbortSignal,
     isVoiceMode: boolean,
-  ): Promise<void> {
+  ): Promise<TtsPlaybackResult> {
     const ttsStartMs = Date.now();
     this.logger.info(
       {
@@ -189,25 +218,40 @@ export class TTSManager {
 
     scheduleNextSegments();
 
+    const result: TtsPlaybackResult = {
+      segmentsEmitted: 0,
+      segmentsConfirmed: 0,
+      aborted: false,
+    };
+
     try {
       for (const segment of segments) {
         if (abortSignal.aborted) {
-          this.logger.debug("Aborted before emitting segmented audio");
-          return;
+          result.aborted = true;
+          this.logger.warn(
+            {
+              segmentIndex: segment.index,
+              segmentCount: segments.length,
+              segmentsEmitted: result.segmentsEmitted,
+            },
+            "TTS aborted before emitting: speak produced no further audio",
+          );
+          break;
         }
 
         const synthWaitStart = Date.now();
-        const result = await inflight.get(segment.index)!;
+        const synthResult = await inflight.get(segment.index)!;
         const synthWaitMs = Date.now() - synthWaitStart;
         inflight.delete(segment.index);
         scheduleNextSegments();
 
-        if (result.kind === "aborted") {
-          return;
+        if (synthResult.kind === "aborted") {
+          result.aborted = true;
+          break;
         }
 
-        if (result.kind === "error") {
-          throw result.error;
+        if (synthResult.kind === "error") {
+          throw synthResult.error;
         }
 
         this.logger.info(
@@ -221,17 +265,28 @@ export class TTSManager {
         );
 
         const emitStart = Date.now();
-        await this.emitPreparedSegment({
-          prepared: result.prepared,
+        const segmentOutcome = await this.emitPreparedSegment({
+          prepared: synthResult.prepared,
           emitMessage,
           abortSignal,
           isVoiceMode,
         });
+        if (segmentOutcome.emitted) {
+          result.segmentsEmitted += 1;
+          if (segmentOutcome.confirmed) {
+            result.segmentsConfirmed += 1;
+          }
+        } else if (abortSignal.aborted) {
+          result.aborted = true;
+          break;
+        }
         this.logger.info(
           {
             segmentIndex: segment.index,
             emitAndPlayMs: Date.now() - emitStart,
             totalElapsedMs: Date.now() - ttsStartMs,
+            emitted: segmentOutcome.emitted,
+            confirmed: segmentOutcome.confirmed,
           },
           `TTS segment ${segment.index} playback confirmed (emit+play ${Date.now() - emitStart}ms, total ${Date.now() - ttsStartMs}ms)`,
         );
@@ -241,10 +296,30 @@ export class TTSManager {
     } finally {
       this.cleanupPrefetchedSegments(inflight);
       this.logger.info(
-        { totalMs: Date.now() - ttsStartMs },
+        {
+          totalMs: Date.now() - ttsStartMs,
+          segmentsEmitted: result.segmentsEmitted,
+          segmentsConfirmed: result.segmentsConfirmed,
+          segmentCount: segments.length,
+          aborted: result.aborted,
+        },
         `TTS generateAndWaitForPlayback done (${Date.now() - ttsStartMs}ms)`,
       );
     }
+
+    if (abortSignal.aborted) {
+      result.aborted = true;
+    }
+
+    if (result.segmentsEmitted === 0) {
+      throw new Error(
+        result.aborted
+          ? `TTS speak produced no audio: aborted before any of the ${segments.length} segment(s) could be emitted (0 confirmed). Report this speak call as failed — nothing was heard.`
+          : `TTS speak produced no audio: all ${segments.length} segment(s) synthesized to 0 bytes (0 emitted, 0 confirmed). Report this speak call as failed — nothing was heard.`,
+      );
+    }
+
+    return result;
   }
 
   private async synthesizeSegment(
@@ -347,7 +422,7 @@ export class TTSManager {
     emitMessage: (msg: SessionOutboundMessage) => void;
     abortSignal: AbortSignal;
     isVoiceMode: boolean;
-  }): Promise<void> {
+  }): Promise<{ emitted: boolean; confirmed: boolean }> {
     const { prepared, emitMessage, abortSignal, isVoiceMode } = params;
     const { stream, format, text } = prepared;
 
@@ -365,11 +440,13 @@ export class TTSManager {
       reject: playbackReject,
       pendingChunks: 0,
       streamEnded: false,
+      confirmed: false,
     };
 
     this.pendingPlaybacks.set(audioId, pendingPlayback);
 
     let onAbort: (() => void) | undefined;
+    let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
     onAbort = () => {
       this.logger.debug("Aborted while waiting for playback");
@@ -393,54 +470,104 @@ export class TTSManager {
         buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
 
-      if (!abortSignal.aborted && buffers.length > 0) {
-        const fullBuffer = Buffer.concat(buffers);
-        const chunkId = `${audioId}:0`;
-        pendingPlayback.pendingChunks = 1;
-
-        emitMessage({
-          type: "audio_output",
-          payload: {
-            id: chunkId,
-            groupId: audioId,
-            chunkIndex: 0,
-            isLastChunk: true,
-            audio: fullBuffer.toString("base64"),
-            format,
-            isVoiceMode,
-          },
-        });
+      const totalBytes = buffers.reduce((sum, buffer) => sum + buffer.length, 0);
+      if (abortSignal.aborted || totalBytes === 0) {
+        if (!abortSignal.aborted) {
+          this.logger.warn(
+            {
+              audioId,
+              segmentIndex: prepared.index,
+              chars: text.length,
+            },
+            "TTS synthesis produced 0 bytes of audio: skipping segment (no audio to play)",
+          );
+        }
+        pendingPlayback.streamEnded = true;
+        pendingPlayback.pendingChunks = 0;
+        this.pendingPlaybacks.delete(audioId);
+        this.rememberClosedAudioId(audioId);
+        playbackResolve();
+        return { emitted: false, confirmed: false };
       }
+
+      const fullBuffer = Buffer.concat(buffers);
+      const chunkId = `${audioId}:0`;
+      pendingPlayback.pendingChunks = 1;
+
+      emitMessage({
+        type: "audio_output",
+        payload: {
+          id: chunkId,
+          groupId: audioId,
+          chunkIndex: 0,
+          isLastChunk: true,
+          audio: fullBuffer.toString("base64"),
+          format,
+          isVoiceMode,
+        },
+      });
 
       pendingPlayback.streamEnded = true;
 
       if (pendingPlayback.pendingChunks === 0) {
+        // The client confirmed synchronously inside emitMessage.
         this.pendingPlaybacks.delete(audioId);
         this.rememberClosedAudioId(audioId);
         playbackResolve();
       }
 
-      await playbackPromise;
+      const confirmTimeoutMs = this.playbackConfirmTimeoutMs(fullBuffer.length, format);
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        confirmTimer = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          this.pendingPlaybacks.delete(audioId);
+          this.rememberClosedAudioId(audioId);
+          reject(
+            new Error(
+              `TTS segment ${prepared.index} playback not confirmed by the client within ${confirmTimeoutMs}ms ` +
+                `(${fullBuffer.length} bytes emitted, 0 confirmed). No audible output verified — ` +
+                `the client may have no audio sink. Report this speak call as failed.`,
+            ),
+          );
+        }, confirmTimeoutMs);
+        void playbackPromise.then(
+          () => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          },
+          (error) => {
+            if (!settled) {
+              settled = true;
+              reject(error);
+            }
+          },
+        );
+      });
+
+      return { emitted: true, confirmed: pendingPlayback.confirmed };
     } catch (error) {
       if (abortSignal.aborted) {
         this.logger.debug("Audio stream closed after abort");
-      } else {
-        this.logger.error({ err: error }, "Error streaming audio");
-        this.pendingPlaybacks.delete(audioId);
-        throw error;
+        return { emitted: false, confirmed: pendingPlayback.confirmed };
       }
+      this.logger.error({ err: error }, "Error streaming audio");
+      this.pendingPlaybacks.delete(audioId);
+      throw error;
     } finally {
+      if (confirmTimer) {
+        clearTimeout(confirmTimer);
+      }
       if (onAbort) {
         abortSignal.removeEventListener("abort", onAbort);
       }
       this.destroySpeechStream(stream);
     }
-
-    if (abortSignal.aborted) {
-      return;
-    }
-
-    this.logger.debug({ audioId, textLength: text.length }, "Audio playback confirmed");
   }
 
   /**
@@ -463,6 +590,7 @@ export class TTSManager {
       return;
     }
 
+    pending.confirmed = true;
     pending.pendingChunks = Math.max(0, pending.pendingChunks - 1);
 
     if (pending.pendingChunks === 0 && pending.streamEnded) {
@@ -470,6 +598,25 @@ export class TTSManager {
       this.pendingPlaybacks.delete(audioId);
       this.rememberClosedAudioId(audioId);
     }
+  }
+
+  /**
+   * How long to wait for the client to confirm it actually played an
+   * emitted segment before treating the speak as failed. Derived from the
+   * audio duration (PCM16 mono assumed when the rate is parseable) with a
+   * generous floor; unknown formats fall back to a fixed bound so a client
+   * with no audio sink can never wedge a speak call forever.
+   */
+  private playbackConfirmTimeoutMs(byteLength: number, format: string): number {
+    if (this.options.playbackConfirmTimeoutMs !== undefined) {
+      return this.options.playbackConfirmTimeoutMs;
+    }
+    const rate = parsePcmRateFromFormat(format, null);
+    if (rate === null) {
+      return 60_000;
+    }
+    const estimatedAudioMs = Math.round((byteLength / 2 / rate) * 1000);
+    return Math.max(30_000, estimatedAudioMs * 2 + 15_000);
   }
 
   /**
