@@ -7,7 +7,7 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent-manager.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { AgentStorage } from "../agent-storage.js";
-import { convertLegacyOptions } from "../option-controls.js";
+import { convertLegacyOptions, featuresFromControls } from "../option-controls.js";
 import type {
   AgentClient,
   AgentSession,
@@ -873,20 +873,33 @@ describe("Codex app-server provider controls", () => {
       await runTurn(agentId, "default");
     });
 
-    test.each([CODEX_PROVIDER, "my-codex"])(
-      "draft controls for %s accept a legacy fast_mode",
-      async (providerId) => {
-        const { manager } = createLegacyFastHarness({}, providerId);
+    test.each([
+      [CODEX_PROVIDER, "a requested legacy fast_mode", {}, { fast_mode: true }],
+      ["my-codex", "a requested legacy fast_mode", {}, { fast_mode: true }],
+      [CODEX_PROVIDER, "a configured legacy fast_mode", { fast_mode: true }, undefined],
+      [CODEX_PROVIDER, "a configured Fast alias", { service_tier: "fast" }, undefined],
+    ])(
+      "draft speed for %s with %s is the one the first turn runs with",
+      async (providerId, _name, configured, requested) => {
+        const drafting = createLegacyFastHarness(configured, providerId);
 
-        const draft = await manager.listDraftControls({
+        const draft = await drafting.manager.listDraftControls({
           provider: providerId,
           cwd: tmpdir(),
           model: "gpt-5.4",
-          providerOptions: { fast_mode: true },
+          ...(requested ? { providerOptions: requested } : {}),
         });
+        const features = featuresFromControls({ controls: draft.controls, options: draft.options });
 
-        expect(draft.options).toEqual({ service_tier: "fast" });
+        expect(draft.options).toEqual({ service_tier: "priority" });
         expect(draft.controls).toContainEqual(expect.objectContaining({ key: "service_tier" }));
+        expect(features).toContainEqual(
+          expect.objectContaining({ id: "service_tier", value: "priority" }),
+        );
+        // A draft session ends with its app-server; creating runs on a fresh one.
+        const creating = createLegacyFastHarness(configured, providerId);
+        const agentId = await creating.create(requested);
+        await creating.runTurn(agentId, "priority");
       },
     );
 

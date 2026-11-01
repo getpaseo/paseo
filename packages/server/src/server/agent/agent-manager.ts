@@ -1277,7 +1277,12 @@ export class AgentManager {
 
     const session = await client.createSession(normalizedConfig);
     try {
-      return { controls: session.controls ?? [], options };
+      // The options a session opens with, as create would report them, so the controls'
+      // selection matches what the first turn runs with.
+      return {
+        controls: session.controls ?? [],
+        options: this.openedEffectiveOptions({ session, launchedOptions: options }),
+      };
     } finally {
       try {
         await session.close();
