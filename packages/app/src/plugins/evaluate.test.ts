@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { useRevealedText } from "@/hooks/use-revealed-text";
+import { ProjectIconImage } from "@/components/project-icon-image";
+// @ts-expect-error The explicit extension bypasses the web resolver to test the native entry.
+import { ProjectIconImage as NativeProjectIconImage } from "@/components/project-icon-image.tsx";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+
+vi.mock("react-native-svg/css", () => ({
+  SvgCss: ({ xml }: { xml: string }) => createElement("svg", { "data-xml": xml }),
+}));
 
 const runtime = {
   paseo: {},
@@ -684,6 +693,44 @@ describe("evaluatePluginClientBundle", () => {
     expect(Component).toBeTypeOf("function");
     const element = (Component as (props: never) => { props: unknown })({} as never);
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
+  });
+
+  it("provides the host project icon renderer to plugins", () => {
+    const plugin = evaluatePluginClientBundle(
+      "project-icon",
+      bundle(`
+        const { ProjectIconImage } = require("@getpaseo/plugin/client/ui");
+        if (typeof ProjectIconImage !== "function") throw new Error("Missing project icon renderer");
+        plugin.addScreen({ id: "icon", title: "Icon", Component: ProjectIconImage });
+      `),
+    );
+    expect(plugin.surfaces[0]?.Component).toBe(ProjectIconImage);
+  });
+
+  it("passes project SVG and PNG data URIs to the web image renderer", () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>.fill { fill: red; }</style><rect class="fill" width="10" height="10" /></svg>';
+    const fallback = createElement("span", null, "project initial");
+    const style = { width: 16, height: 16 };
+    const renderIcon = (dataUri: string) =>
+      renderToStaticMarkup(createElement(ProjectIconImage, { dataUri, fallback, style }));
+    const uri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    expect(renderIcon(uri)).toContain(uri);
+    expect(renderIcon("data:image/png;base64,AAAA")).toContain("data:image/png;base64,AAAA");
+  });
+
+  it("passes native project SVG CSS to SvgCss and preserves the ICO fallback", () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>.fill { fill: red; }</style><rect class="fill" width="10" height="10" /></svg>';
+    const fallback = createElement("span", null, "project initial");
+    const style = { width: 16, height: 16 };
+    const renderIcon = (dataUri: string) =>
+      renderToStaticMarkup(createElement(NativeProjectIconImage, { dataUri, fallback, style }));
+    expect(
+      renderIcon(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`),
+    ).toContain("&lt;style&gt;");
+    expect(renderIcon("data:image/png;base64,AAAA")).toContain("data:image/png;base64,AAAA");
+    expect(renderIcon("data:image/x-icon;base64,AAAA")).toContain("project initial");
   });
 
   it("provides Paseo UI through @getpaseo/plugin/client/ui", () => {

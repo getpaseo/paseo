@@ -20,6 +20,7 @@ export { FilePanelLoading as Loading } from "@/file-panels/loading";
 export { SettingsGroup } from "@/components/settings";
 
 export { Icon } from "../icons";
+export { ProjectIconImage } from "@/components/project-icon-image";
 export { Modal } from "./modal";
 export { ScrollView, FlatList } from "./scroll-view";
 export { TextInput } from "./text-input";
