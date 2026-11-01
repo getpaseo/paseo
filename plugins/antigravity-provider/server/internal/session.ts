@@ -15,7 +15,13 @@ import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
-import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
+import {
+  AntigravityError,
+  diagnostic,
+  isBenignStreamError,
+  type Frame,
+  type Step,
+} from "./wire.js";
 
 const persistenceSchema = z
   .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
@@ -261,15 +267,32 @@ export class Session {
     }
     if (result.status === "ERROR") {
       const canceled = result.error === "interrupted";
-      this.finishTools(turn, canceled ? "canceled" : "failed");
-      this.retire(driver);
-      this.emit({
-        type: "session.turn",
-        sessionId: this.options.id,
-        turnId: turn.id,
-        state: canceled ? "canceled" : "failed",
-        error: { message: diagnostic(result.error) },
-      });
+      const hasContent = Array.from(turn.text.values()).some((chunk) => chunk.trim().length > 0);
+      const hasRunningTools = Array.from(turn.tools.values()).some(
+        (tool) => tool.status === "running",
+      );
+      const isBenign =
+        !canceled && !hasRunningTools && hasContent && isBenignStreamError(result.error);
+      if (isBenign) {
+        this.finishTools(turn, "completed");
+        this.retire(driver);
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: "completed",
+        });
+      } else {
+        this.finishTools(turn, canceled ? "canceled" : "failed");
+        this.retire(driver);
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: canceled ? "canceled" : "failed",
+          error: { message: diagnostic(result.error) },
+        });
+      }
     } else {
       this.finishTools(turn, "completed");
       this.state = { type: "idle", driver };
@@ -313,11 +336,27 @@ export class Session {
     if (state.type !== "running" && state.type !== "idle") return;
     this.retire(state.driver);
     if (state.type === "running") {
-      this.finishTools(state.turn, "failed");
+      const turn = state.turn;
+      const hasContent = Array.from(turn.text.values()).some((chunk) => chunk.trim().length > 0);
+      const hasRunningTools = Array.from(turn.tools.values()).some(
+        (tool) => tool.status === "running",
+      );
+      const isBenign = !hasRunningTools && hasContent && isBenignStreamError(error.message);
+      if (isBenign) {
+        this.finishTools(turn, "completed");
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: "completed",
+        });
+        return;
+      }
+      this.finishTools(turn, "failed");
       this.emit({
         type: "session.turn",
         sessionId: this.options.id,
-        turnId: state.turn.id,
+        turnId: turn.id,
         state: "failed",
         error: { message: error.message, code: error.code },
       });
