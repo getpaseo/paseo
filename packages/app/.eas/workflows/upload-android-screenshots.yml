@@ -1,0 +1,27 @@
+name: Upload Google Play screenshots
+
+# Standalone re-trigger for the release workflow's Google Play screenshot step.
+# Replaces the en-US phone and tablet screenshots with the committed renders,
+# without rebuilding or resubmitting the app.
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version_code:
+        type: string
+        required: false
+        description: "versionCode of the production release to attach the change to, e.g. 14000. Leave empty when the production track has a single release."
+
+jobs:
+  upload_android_screenshots:
+    name: Upload Google Play screenshots
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Upload screenshots
+        run: |
+          export ANDROID_VERSION_CODE="${{ inputs.android_version_code }}"
+          bundle exec fastlane android upload_screenshots

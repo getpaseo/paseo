@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -11,6 +11,7 @@ import {
   type TestAgentClientOptions,
 } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { importSessionFromPersistence } from "../agent/provider-session-import.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
 import { serializePaseoToolInputParameters } from "../agent/tools/paseo-tool-serialization.js";
 import type {
@@ -27,7 +28,7 @@ function recordingProvider(native: boolean, callbacks: TestAgentClientOptions = 
   const events = { interrupts: 0 };
   const inner = createTestAgentClient("codex", {
     ...callbacks,
-    supportsMcpServers: true,
+    supportsMcpServers: callbacks.supportsMcpServers ?? true,
     onStartTurn: (prompt, config) => {
       turns.push({ prompt, launchCount: launches.length });
       callbacks.onStartTurn?.(prompt, config);
@@ -52,6 +53,13 @@ function recordingProvider(native: boolean, callbacks: TestAgentClientOptions = 
       launches.push({ config: config as AgentSessionConfig, context });
       return inner.resumeSession(handle, config, context, options);
     },
+    importSession: (input, context) =>
+      importSessionFromPersistence({
+        provider: "codex",
+        request: input,
+        context,
+        resumeSession: provider.resumeSession.bind(provider),
+      }),
     isAvailable: () => inner.isAvailable(),
     fetchCatalog: (options) => inner.fetchCatalog(options),
   };
@@ -72,7 +80,7 @@ const tool = defineAgentTool({
   },
 });
 export default function contribute(server) {
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x !== "y") return;
     return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, reason: request.reason }) }, tools: [...request.tools, tool] };
   });
@@ -89,14 +97,14 @@ async function setup(
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-tools-"));
   const recorder = recordingProvider(native, providerOptions);
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.13.2",
+    daemonVersion: "0.14.0-beta.1",
     agentClients: { codex: recorder.provider },
     mcpEnabled: true,
     providerOverrides: { codex: { paseoTools: policy } },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.13.2",
+    appVersion: "0.14.0-beta.1",
   });
   const mcps: Client[] = [];
   async function install(id: string, code: string) {
@@ -104,7 +112,7 @@ async function setup(
     await mkdir(pluginDirectory);
     await writeFile(
       path.join(pluginDirectory, "paseo-plugin.json"),
-      JSON.stringify({ id, requirements: { paseo: ">=0.13.2" } }),
+      JSON.stringify({ id, requirements: { paseo: ">=0.14.0-beta.1" } }),
     );
     await writeFile(path.join(pluginDirectory, "index.server.ts"), code);
     await client.installDirectoryPlugin(pluginDirectory);
@@ -297,7 +305,7 @@ test("each plugin owns its tool array and callbacks can remove earlier attachmen
   const source = pluginSource.replace(
     "  return () => {};",
     `
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x === "y" && request.tools[0]?.name !== "plugin_echo") throw new Error("Lost plugin-local definitions");
     return { ...request, tools: [] };
   });
@@ -493,12 +501,12 @@ test("built-in plugins attach and execute tools while configured plugins are dis
   await mkdir(directory);
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({ id: "builtin-tools", requirements: { paseo: ">=0.13.2" } }),
+    JSON.stringify({ id: "builtin-tools", requirements: { paseo: ">=0.14.0-beta.1" } }),
   );
   await writeFile(path.join(directory, "index.server.ts"), pluginSource);
   const recorder = recordingProvider(true);
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.13.2",
+    daemonVersion: "0.14.0-beta.1",
     agentClients: { codex: recorder.provider },
     pluginsEnabled: false,
     builtinPlugins: new BuiltinPluginLoader(root, ["builtin-tools"]),
@@ -746,6 +754,288 @@ test("the agent-tools example appends notes only for labeled agents", async () =
     expect((await mcpB.listTools()).tools.map((tool) => tool.name)).not.toContain(
       "append_workspace_note",
     );
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const companyServer = { type: "http", url: "https://tools.example.com/mcp" } as const;
+const mcpSource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.provider !== "codex") return;
+    return { ...request, mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} },
+      env: { ...request.env, OPEN_REASON: request.reason } };
+  });
+  return () => {};
+}
+`;
+
+test.each([
+  { native: false, serverNames: ["paseo", "company"] },
+  { native: true, serverNames: ["company"] },
+])(
+  "session-open MCP servers reach launch but never saved configuration (native=$native)",
+  async ({ native, serverNames }) => {
+    const h = await setup(native, mcpSource);
+    try {
+      const a = await h.create();
+      expect(h.launches.at(-1)!.config.mcpServers?.company).toEqual(companyServer);
+      expect(a.config.mcpServers?.company).toBeUndefined();
+      const snapshot = (await h.client.fetchAgent(a.id))!.agent;
+      expect(snapshot.id).toBe(a.id);
+      expect(JSON.stringify(snapshot)).not.toContain("tools.example.com");
+      expect(h.launches.at(-1)!.context!.env!.OPEN_REASON).toBe("create");
+      expect(Object.keys(h.launches.at(-1)!.config.mcpServers!)).toEqual(serverNames);
+      await h.daemon.daemon.agentManager.closeAgent(a.id);
+      const agentFiles = await readdir(path.join(h.daemon.paseoHome, "agents"), {
+        recursive: true,
+      });
+      const recordFile = agentFiles.find((file) => file.endsWith(a.id + ".json"))!;
+      const record = await readFile(path.join(h.daemon.paseoHome, "agents", recordFile), "utf8");
+      expect(record).not.toContain("tools.example.com");
+    } finally {
+      await h.close();
+    }
+  },
+  60_000,
+);
+
+test("session-open MCP servers are rederived on resume, SDK reload, and provider import", async () => {
+  const source = reloadRpcSource
+    .replace('    if (request.labels.x !== "y") return;', "")
+    .replace(
+      "return { ...request, env:",
+      `return { ...request, mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} }, env:`,
+    );
+  const h = await setup(true, source);
+  try {
+    const a = await h.create({ x: "y" });
+    const manager = h.daemon.daemon.agentManager;
+    await manager.closeAgent(a.id);
+    await manager.resumeAgentFromPersistence(a.persistence!, a.config, a.id);
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toEqual(companyServer);
+    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO).reason).toBe("resume");
+    await h.client.invokePluginRpc("tools-test", "reload_agent", { id: a.id });
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toEqual(companyServer);
+    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO).reason).toBe("refresh");
+    const imported = await manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "imported-session",
+      cwd: h.directory,
+      workspaceId: "import-workspace",
+      labels: { x: "y" },
+    });
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toEqual(companyServer);
+    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO).reason).toBe("import");
+    expect(imported.config.mcpServers?.company).toBeUndefined();
+    expect(JSON.stringify(imported.persistence)).not.toContain("tools.example.com");
+    expect(manager.getAgent(a.id)!.config.mcpServers?.company).toBeUndefined();
+    expect(JSON.stringify(manager.getAgent(a.id)!.persistence)).not.toContain("tools.example.com");
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("installing and disabling an MCP plugin reopens idle sessions before their next prompt", async () => {
+  const h = await setup(true, "export default function contribute() { return () => {}; }");
+  try {
+    const a = await h.create();
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
+    await h.install("company-mcp", mcpSource);
+    await sendAndFinish(h, a.id, "after install");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toEqual(companyServer);
+    await h.client.disablePlugin("company-mcp");
+    await sendAndFinish(h, a.id, "after disable");
+    expect(h.launches).toHaveLength(3);
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
+    await sendAndFinish(h, a.id, "stable");
+    expect(h.launches).toHaveLength(3);
+    expect(h.events.interrupts).toBe(0);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("installing and disabling an MCP plugin never interrupts a running turn", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(
+    true,
+    "export default function contribute() { return () => {}; }",
+    undefined,
+    { beforeTurnComplete: async () => blocked },
+  );
+  try {
+    const a = await h.create();
+    await h.client.sendMessage(a.id, "busy", { activeTurnBehavior: "steer" });
+    const manager = h.daemon.daemon.agentManager;
+    await expect.poll(() => manager.getAgent(a.id)!.activeTurnId).not.toBeNull();
+    const turn = manager.getAgent(a.id)!.activeTurnId;
+    await h.install("company-mcp", mcpSource);
+    expect(h.launches).toHaveLength(1);
+    expect(manager.getAgent(a.id)!.activeTurnId).toBe(turn);
+    await h.client.disablePlugin("company-mcp");
+    expect(h.launches).toHaveLength(1);
+    expect(manager.getAgent(a.id)!.activeTurnId).toBe(turn);
+    expect(h.events.interrupts).toBe(0);
+    release();
+    await expect.poll(() => manager.hasInFlightRun(a.id)).toBe(false);
+    await sendAndFinish(h, a.id, "idle");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
+  } finally {
+    release();
+    await h.close();
+  }
+}, 60_000);
+
+test.each([
+  {
+    target: "saved configuration",
+    saved: true,
+    name: "company",
+    other: false,
+    error: /company.*plugin tools-test.*agent saved configuration/,
+  },
+  {
+    target: "saved Paseo name",
+    saved: true,
+    name: "paseo",
+    other: false,
+    error: /paseo.*plugin tools-test.*agent saved configuration/,
+  },
+  {
+    target: "Paseo internal server",
+    saved: false,
+    name: "paseo",
+    other: false,
+    error: /paseo.*plugin tools-test.*Paseo internal MCP server/,
+  },
+  {
+    target: "another plugin with identical config",
+    saved: false,
+    name: "company",
+    other: true,
+    error: /Plugin tools-test.*company.*plugin other-mcp/,
+  },
+])(
+  "session-open MCP collisions with $target name both owners",
+  async ({ saved, name, other, error }) => {
+    const h = await setup(true, mcpSource.replace("company:", name + ":"));
+    try {
+      if (other) await h.install("other-mcp", mcpSource);
+      await expect(
+        h.daemon.daemon.agentManager.createAgent(
+          {
+            provider: "codex",
+            cwd: h.directory,
+            ...(saved
+              ? { mcpServers: { [name]: { type: "http", url: "https://saved.example.com" } } }
+              : {}),
+          },
+          undefined,
+          {},
+        ),
+      ).rejects.toThrow(error);
+      expect(h.launches).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  },
+  60_000,
+);
+
+test("session-open MCP servers fail on unsupported providers and leave saved config untouched", async () => {
+  const h = await setup(false, mcpSource, undefined, { supportsMcpServers: false });
+  try {
+    await h.client.disablePlugin("tools-test");
+    const a = await h.create();
+    await h.client.enablePlugin("tools-test");
+    await expect(h.daemon.daemon.agentManager.reloadAgentSession(a.id)).rejects.toThrow(
+      /does not support MCP servers.*plugin tools-test/,
+    );
+    expect(a.config.mcpServers?.company).toBeUndefined();
+    await expect(h.create()).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+    const imported = h.daemon.daemon.agentManager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "unsupported-import",
+      cwd: h.directory,
+      workspaceId: "import-workspace",
+    });
+    await expect(imported).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("history opens ignore session-open MCP servers", async () => {
+  const h = await setup(true, mcpSource);
+  try {
+    const a = await h.create();
+    await h.client.archiveAgent(a.id);
+    await h.install("other-mcp", mcpSource);
+    await h.daemon.daemon.agentManager.resumeAgentFromPersistence(a.persistence!, a.config, a.id);
+    expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
+    expect(h.launches.at(-1)!.context!.mcpServers).toBeUndefined();
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("session-open MCP maps are plugin-local and accumulate only across their own callbacks", async () => {
+  const h = await setup(true, mcpSource);
+  try {
+    await h.install(
+      "z-extend",
+      `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if ("mcpServerOwners" in request) throw new Error("Daemon provenance leaked");
+    if (Object.keys(request.mcpServers).length !== 0) throw new Error("Saw another plugin servers");
+    return { ...request, mcpServers: { ...request.mcpServers, extra: { type: "stdio", command: "company-tools", args: ["--mcp"], env: { MODE: "agent" } } } };
+  });
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.mcpServers.extra.command !== "company-tools") throw new Error("Lost own earlier server");
+    return { ...request, mcpServers: { ...request.mcpServers, additional: { type: "http", url: "https://additional.example.com/mcp" } } };
+  });
+  server.addHook("agent.open.before", async () => undefined);
+  return () => {};
+}`,
+    );
+    const a = await h.create();
+    expect(h.launches.at(-1)!.config.mcpServers).toEqual({
+      company: companyServer,
+      extra: { type: "stdio", command: "company-tools", args: ["--mcp"], env: { MODE: "agent" } },
+      additional: { type: "http", url: "https://additional.example.com/mcp" },
+    });
+    const contributedServers = h.launches.at(-1)!.config.mcpServers;
+    await h.install(
+      "zz-remove",
+      `export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, mcpServers: {} }));
+  return () => {};
+}`,
+    );
+    await sendAndFinish(h, a.id, "after removal");
+    expect(h.launches.at(-1)!.config.mcpServers).toEqual(contributedServers);
+    expect(a.config.mcpServers).toBeUndefined();
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("session-open MCP configs are validated before a provider launches", async () => {
+  const h = await setup(
+    true,
+    mcpSource.replace(JSON.stringify(companyServer), '{ type: "http", url: 42 }'),
+  );
+  try {
+    await expect(h.create()).rejects.toThrow(/Plugin tools-test.*agent.open.before/s);
+    expect(h.launches).toHaveLength(0);
   } finally {
     await h.close();
   }

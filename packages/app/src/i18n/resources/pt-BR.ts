@@ -68,6 +68,7 @@ export const ptBR: TranslationResources = {
       daemonClientUnavailable: "Cliente do daemon indisponível",
       daemonClientDisconnected: "O cliente do daemon está desconectado",
       noFileFound: "Nenhum arquivo encontrado para {{token}}",
+      folderOutsideWorkspace: "{{path}} está fora deste workspace",
       unexpectedDictationError: "Ocorreu um erro inesperado ao processar o ditado.",
     },
     connectionStatus: {
@@ -621,6 +622,7 @@ export const ptBR: TranslationResources = {
     terminal: {
       hostDisconnected: "Host não está conectado",
       updateHost: "Atualize o host para usar o renderizador de terminal nativo.",
+      restoreRequiresUpdate: "Atualize o host para visualizar os terminais.",
       unableToSubscribe: "Não foi possível assinar o terminal",
       fileUploaded: "Arquivo enviado",
       pasteFileFailed: "Falha ao colar o arquivo: {{reason}}",
@@ -1946,7 +1948,6 @@ export const ptBR: TranslationResources = {
     parent: {
       backToParent: "Voltar ao pai",
       backTo: "Voltar para {{label}}",
-      parent: "Pai",
       parentAgent: "Agente pai",
       openParent: "Abrir pai",
     },
@@ -2046,7 +2047,6 @@ export const ptBR: TranslationResources = {
   toolCallDetails: {
     error: "Erro",
     empty: "Nenhum detalhe adicional disponível",
-    subAgentActivity: "Atividade do subagente",
     input: "Entrada",
     output: "Saída",
   },
@@ -2125,6 +2125,11 @@ export const ptBR: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Consultar uso",
+    checkUsageHint: "Aplica-se a {{host}} em todos os dispositivos",
+    off: "O uso está desativado em {{host}}.",
+    turnOn: "Ativar",
+
     options: "Configurações",
     refreshFailed: "Não foi possível atualizar o uso",
     noHosts: "Nenhum host conectado",
@@ -2172,6 +2177,7 @@ export const ptBR: TranslationResources = {
       days: "{{value}} d",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Última atualização {{relativeTime}}",
@@ -2179,6 +2185,8 @@ export const ptBR: TranslationResources = {
       resetTimePassed: "O horário de redefinição passou",
       resettingNow: "redefinindo agora",
       resetsIn: "redefine em {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "esgota agora",
       runsOutIn: "esgota em {{duration}}",
       justNow: "agora mesmo",
@@ -2782,6 +2790,14 @@ export const ptBR: TranslationResources = {
       },
       agents: {
         unavailable: "Conecte-se a este host para gerenciar agentes",
+        resumeOnStartup: {
+          title: "Retomar agentes após reiniciar",
+          info: "Reabre os agentes que estavam trabalhando quando o host parou e envia a mensagem de retomada. Aplica-se após reinicializações normais e falhas.",
+          hint: "Continuar automaticamente o trabalho interrompido.",
+          prompt: "Mensagem de retomada",
+          edit: "Editar",
+          editAccessibilityLabel: "Editar mensagem",
+        },
         idleRuntimeCleanup: {
           title: "Liberar agentes ociosos",
           hint: "Libera memória após uma hora de inatividade.",
@@ -2880,6 +2896,10 @@ export const ptBR: TranslationResources = {
           requestFailedTitle: "Erro",
           requestFailedMessage:
             "Falha ao enviar a solicitação de reinício. O Paseo reconecta automaticamente. Tente novamente quando o host aparecer como online.",
+          closeTerminals: "Reiniciar e fechar terminais",
+          closeTerminalsHint: "Reinicia e também fecha todos os terminais abertos neste host.",
+          closeTerminalsConfirmMessage:
+            "Isso reiniciará o daemon e fechará todos os terminais dele, encerrando os programas que rodam neles. O app vai se reconectar automaticamente.",
           dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação de reinício.",
         },
         update: {

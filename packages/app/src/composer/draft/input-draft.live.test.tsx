@@ -2,7 +2,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
@@ -126,17 +126,13 @@ afterEach(async () => {
   });
 });
 
-let useAgentInputDraft: typeof import("./input-draft").useAgentInputDraft;
 type DraftRecordForTest = ReturnType<typeof useDraftStore.getState>["drafts"][string];
 
-beforeAll(async () => {
-  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
-    value: true,
-    configurable: true,
-  });
-
-  ({ useAgentInputDraft } = await import("./input-draft"));
+Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
+  value: true,
+  configurable: true,
 });
+const { useAgentInputDraft } = await import("./input-draft");
 
 describe("useAgentInputDraft live contract", () => {
   beforeEach(() => {

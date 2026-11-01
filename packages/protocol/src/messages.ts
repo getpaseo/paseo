@@ -229,6 +229,8 @@ export const MutableDaemonConfigSchema = z
       .optional(),
     app: z.object({ baseUrl: z.string() }).optional(),
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
+    // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
+    usage: z.object({ enabled: z.boolean() }).optional(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
@@ -237,6 +239,9 @@ export const MutableDaemonConfigSchema = z
     // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
     // Persisted host-wide value, applied live by the daemon.
     idleRuntimeCleanup: z.boolean().optional(),
+    // COMPAT(restartRecovery): added in v0.14.0, keep optional for older hosts.
+    resumeOnStartup: z.boolean().optional(),
+    resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -253,6 +258,7 @@ export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
+    usage: z.object({ enabled: z.boolean() }).optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
@@ -262,6 +268,8 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
+    resumeOnStartup: z.boolean().optional(),
+    resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -633,7 +641,9 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       subAgentType: z.string().optional(),
       description: z.string().optional(),
       childSessionId: z.string().optional(),
-      log: z.string(),
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. A sub-agent card is a
+      // launch marker; apps before v0.14.1 required `log`, so daemons still send it empty.
+      log: z.string().optional(),
       // Compat cruft for clients <= 0.1.65-beta.3 that required this field. Producers still
       // emit `[]`; nothing reads it. Drop the field (and the `[]` emissions) once those
       // clients are no longer in the field.
@@ -1470,6 +1480,10 @@ export const DiagnosticsRequestSchema = z.object({
 export const PluginCatalogGetRequestSchema = z.object({
   type: z.literal("plugin.catalog.get.request"),
   requestId: z.string(),
+  /** Client bundles the client already holds; the daemon leaves out each one whose hash matches. */
+  cachedClientBundles: z
+    .array(z.object({ id: PluginIdSchema, clientBundleHash: z.string() }))
+    .optional(),
 });
 
 export const PluginListRequestSchema = z.object({
@@ -1892,11 +1906,17 @@ export const RestartServerRequestMessageSchema = z.object({
   type: z.literal("restart_server_request"),
   reason: z.string().optional(),
   requestId: z.string(),
+  // Restart keeps terminals unless this is true. Daemons that predate
+  // `features.terminalsSurviveRestart` ignore it and close terminals anyway.
+  killTerminals: z.boolean().optional(),
 });
 
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
+  // Shutdown closes terminals unless this is true. Gate on
+  // `features.terminalsSurviveRestart`: older daemons drop the field.
+  keepTerminals: z.boolean().optional(),
 });
 
 export const DaemonUpdateRequestMessageSchema = z.object({
@@ -3658,6 +3678,8 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
+        // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
+        usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3721,12 +3743,16 @@ export const ServerInfoStatusPayloadSchema = z
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
         idleRuntimeCleanupSetting: z.boolean().optional(),
+        // COMPAT(restartRecovery): added in v0.14.0, remove gate after 2027-04-28.
+        resumeOnStartupSetting: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
+        "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -3759,6 +3785,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
         daemonSelfUpdate: z.boolean().optional(),
+        // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
+        terminalsSurviveRestart: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
@@ -3808,6 +3836,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
@@ -5121,6 +5150,22 @@ export const DaemonGetStatusResponseSchema = z.object({
           error: z.string().nullable().optional(),
         }),
       ),
+      // Processes a terminal cleanup on this host (a kill restart or stop) could not confirm
+      // gone; empty when every cleanup finished. Daemons without terminalsSurviveRestart have
+      // no such cleanup and omit it.
+      terminalCleanupUnconfirmed: z
+        .array(
+          z.object({
+            pid: z.number(),
+            role: z.string(),
+            reason: z.string(),
+            detail: z.string(),
+          }),
+        )
+        .optional(),
+      // Set when this host's terminals are held by a terminal worker from a newer Paseo, which
+      // this daemon leaves running but cannot drive: why, and what the user can do.
+      terminalsUnavailable: z.string().optional(),
     })
     .passthrough(),
 });
@@ -6757,7 +6802,10 @@ export const PluginCatalogGetResponseSchema = z.object({
     plugins: z.array(
       z.object({
         id: PluginIdSchema,
-        clientBundle: z.string(),
+        /** Left out only when the request listed this plugin with the same `clientBundleHash`. */
+        clientBundle: z.string().optional(),
+        /** SHA-256 of `clientBundle`, hex encoded. */
+        clientBundleHash: z.string().optional(),
         requirements: PluginRequirementsSchema.optional(),
       }),
     ),

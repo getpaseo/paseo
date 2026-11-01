@@ -33,7 +33,9 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
+  readTaskNotificationFromHistoryRecord,
 } from "./task-notification-tool-call.js";
+import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
   getClaudeContextWindowMaxTokens,
   getClaudeModelsWithSettings,
@@ -46,6 +48,7 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
+import { expandTilde } from "../../../../utils/path.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -56,6 +59,8 @@ import {
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
 import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
+import { mapTaskStatus } from "./subagents/task-status.js";
+import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
 import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
@@ -77,6 +82,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
+  findSteeredMessageParent,
   realClaudeRewindSdk,
   revertClaudeConversation,
   revertClaudeFiles,
@@ -425,7 +431,6 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
   "usage",
 ]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
-const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
@@ -645,6 +650,40 @@ function readClaudeFastModeSetting(settings: ClaudeOptions["settings"]): boolean
   return typeof settings.fastMode === "boolean" ? settings.fastMode : null;
 }
 
+type ClaudeSettingsObject = NonNullable<Exclude<ClaudeOptions["settings"], string>>;
+
+// Mirrors `claude --settings`: the value is inline JSON or a path to a JSON file,
+// resolved against the session cwd like the Claude process would.
+async function readClaudeCliSettings(value: string, cwd: string): Promise<ClaudeSettingsObject> {
+  const trimmed = value.trim();
+  const isInlineJson = trimmed.startsWith("{");
+  const source = isInlineJson ? "--settings JSON" : path.resolve(cwd, expandTilde(trimmed));
+  let raw = trimmed;
+  if (!isInlineJson) {
+    try {
+      raw = await fsPromises.readFile(source, "utf8");
+    } catch (error) {
+      throw new Error(
+        `Failed to read Claude settings file ${source}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Claude ${source} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Claude ${source} must contain a JSON object`);
+  }
+  return parsed as ClaudeSettingsObject;
+}
+
 function mergeClaudeSettings(
   settings: ClaudeOptions["settings"],
   updates: NonNullable<Exclude<ClaudeOptions["settings"], string>>,
@@ -787,11 +826,6 @@ function normalizeClaudeTranscriptText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function isClaudeInterruptPlaceholderText(value: unknown): boolean {
-  const normalized = normalizeClaudeTranscriptText(value);
-  return normalized !== null && INTERRUPT_PLACEHOLDER_PATTERN.test(normalized);
 }
 
 function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
@@ -2594,7 +2628,7 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     this.enqueueSteer(input, message, options.clearPendingPermissions === true);
-    return { status: "accepted" };
+    return { status: "accepted", ...(message.uuid ? { providerMessageId: message.uuid } : {}) };
   }
 
   private enqueueSteer(
@@ -3061,7 +3095,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async revertConversation(input: { messageId: string }): Promise<void> {
     await this.ensureHistoryReady();
-    const target = this.resolveConversationRewindTarget(input.messageId);
+    const target = await this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {
       this.startFreshConversationSession();
       return;
@@ -3396,12 +3430,24 @@ class ClaudeAgentSession implements AgentSession {
     return messageId;
   }
 
-  private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
+  private async resolveConversationRewindTarget(
+    messageId: string,
+  ): Promise<ClaudeConversationRewindTarget> {
     const targetUserMessageId = this.resolveClaudeMessageId(messageId);
     const index = this.rewindTurnAnchors.findIndex(
       (anchor) => anchor.userMessageId === targetUserMessageId,
     );
     if (index < 0) {
+      // A message steered into a running turn opens no turn of its own.
+      const transcriptPath = this.claudeSessionId
+        ? await this.resolveHistoryPath(this.claudeSessionId)
+        : null;
+      const steerParent = transcriptPath
+        ? await findSteeredMessageParent(transcriptPath, targetUserMessageId)
+        : null;
+      if (steerParent) {
+        return { kind: "fork", messageId: steerParent };
+      }
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
 
@@ -3612,7 +3658,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.providerOptions,
       this.config.toolPolicy,
     );
-    const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
+    const settingsOptions = await this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
 
@@ -3697,10 +3743,10 @@ class ClaudeAgentSession implements AgentSession {
     return base;
   }
 
-  private buildSettingsOptions(
+  private async buildSettingsOptions(
     providerOptions: ClaudeProviderOptions,
     input: { ultracode: boolean },
-  ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
+  ): Promise<Pick<ClaudeOptions, "settings" | "extraArgs"> | Record<string, never>> {
     const fastMode = this.resolveFastModeSetting();
     // Internal agents do daemon work such as naming a branch, so the user's and
     // project's hooks must not run for them.
@@ -3708,12 +3754,21 @@ class ClaudeAgentSession implements AgentSession {
     if (fastMode === null && !input.ultracode && !disableAllHooks) {
       return {};
     }
+    const updates = {
+      ...(fastMode === null ? {} : { fastMode }),
+      ...(input.ultracode ? { ultracode: true } : {}),
+      ...(disableAllHooks ? { disableAllHooks: true } : {}),
+    };
+    // The SDK replaces extraArgs.settings with Options.settings, so a user's
+    // `--settings` would be dropped whenever Paseo sets flag settings. Fold it in.
+    const { settings: extraArgsSettings, ...extraArgs } = providerOptions.extraArgs ?? {};
+    if (typeof extraArgsSettings !== "string") {
+      return { settings: mergeClaudeSettings(providerOptions.settings, updates) };
+    }
+    const cliSettings = await readClaudeCliSettings(extraArgsSettings, this.config.cwd);
     return {
-      settings: mergeClaudeSettings(providerOptions.settings, {
-        ...(fastMode === null ? {} : { fastMode }),
-        ...(input.ultracode ? { ultracode: true } : {}),
-        ...(disableAllHooks ? { disableAllHooks: true } : {}),
-      }),
+      extraArgs,
+      settings: { ...cliSettings, ...providerOptions.settings, ...updates },
     };
   }
 
@@ -4625,7 +4680,7 @@ class ClaudeAgentSession implements AgentSession {
   /**
    * The Task card in the parent transcript, built from the declaration.
    *
-   * The sidechain tracker also emits this card, enriched with the child's action log, and the two
+   * The sidechain tracker also emits this card when it first sees the child, and the two
    * collapse on the shared tool-call id. Emitting it at declaration matters because a
    * backgrounded subagent produces no sidechain frames at all — verified on the wire — so the
    * tracker never runs for one and its card would otherwise stay an unlabeled "Task".
@@ -5400,6 +5455,7 @@ class ClaudeAgentSession implements AgentSession {
         convertEntry: (entry) => this.convertHistoryEntry(entry),
       })),
     ];
+    this.taskProtocolSource.restore(subagentReplay.restored);
     const restoredProviderSubagentIds = new Set(
       observations
         .filter((observation) => observation.kind === "declared")
@@ -6234,6 +6290,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
+    // COMPAT(subagent-log): remove after 2027-04-30.
     log: "",
     actions: [],
   };
@@ -6262,33 +6319,34 @@ async function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
 ): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
-  const linksByAgentId = new Map<string, { toolCallId: string; failed: boolean }>();
-  const outcomes = new Map<string, { failed: boolean }>();
+  const linksByAgentId = new Map<string, { toolCallId: string }>();
+  const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
+    const notification = readTaskNotificationFromHistoryRecord(entry);
+    const status = mapTaskStatus(notification?.status ?? undefined);
+    if (notification?.toolUseId && status) {
+      outcomes.set(notification.toolUseId, { status });
+    }
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
       const block = toObjectRecord(value);
+      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
+      if (declaration) toolCalls.set(declaration.id, declaration.identity);
       if (
-        block?.type === "tool_use" &&
-        (block.name === "Task" || block.name === "Agent") &&
-        typeof block.id === "string"
-      ) {
-        const input = toObjectRecord(block.input);
-        const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-        const description = readNonEmptyString(input?.description);
-        toolCalls.set(block.id, {
-          ...(title ? { title } : {}),
-          ...(description ? { description } : {}),
+        entry.type !== "user" ||
+        block?.type !== "tool_result" ||
+        typeof block.tool_use_id !== "string"
+      )
+        continue;
+      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
+        outcomes.set(block.tool_use_id, {
+          status: block.is_error === true ? "failed" : "completed",
         });
-      }
-      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      outcomes.set(block.tool_use_id, { failed: block.is_error === true });
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {
           toolCallId: block.tool_use_id,
-          failed: block.is_error === true,
         });
     }
   }
@@ -6296,6 +6354,29 @@ async function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+  };
+}
+
+function readClaudeReplayTaskDeclaration(
+  entryType: unknown,
+  block: Record<string, unknown> | undefined,
+): {
+  id: string;
+  identity: { title?: string; description?: string };
+} | null {
+  if (
+    entryType !== "assistant" ||
+    block?.type !== "tool_use" ||
+    (block.name !== "Task" && block.name !== "Agent") ||
+    typeof block.id !== "string"
+  )
+    return null;
+  const input = toObjectRecord(block.input);
+  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
+  const description = readNonEmptyString(input?.description);
+  return {
+    id: block.id,
+    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
   };
 }
 
@@ -6364,6 +6445,10 @@ function convertClaudeHistoryEntryPreamble(
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
     return { shortCircuit: [] };
   }
+  const steeredPrompt = readSteeredPromptHistoryItem(entry);
+  if (steeredPrompt) {
+    return { shortCircuit: [steeredPrompt] };
+  }
   // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
   // API request as `api-request-blob` records whose message replays the system context.
   if (entry.type !== "user" && entry.type !== "assistant") {
@@ -6388,6 +6473,21 @@ function convertClaudeHistoryEntryPreamble(
 
 function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
+}
+
+/**
+ * A message steered into a running turn. Claude Code gives it no user entry: it records a
+ * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
+ * also what a rewind to it resolves. The other modes carry task notifications, not user messages.
+ */
+function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineItem | null {
+  if (entry.type !== "attachment") return null;
+  const attachment = toObjectRecord(entry.attachment);
+  if (attachment?.type !== "queued_command" || attachment.commandMode !== "prompt") return null;
+  const text = extractUserMessageText(attachment.prompt);
+  if (!text) return null;
+  const messageId = readTrimmedString(attachment.source_uuid);
+  return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
 }
 
 export async function convertClaudeHistoryEntry(

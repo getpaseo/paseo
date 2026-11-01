@@ -6,10 +6,10 @@ All workspaces share one version and release together.
 
 A release has exactly two steps. The agent does the first, the user authorizes the second.
 
-**Preparation** (local, reversible — agent does this):
+**Preparation** (reversible — agent does this):
 
 - format, lint, typecheck all green
-- resolve the release source to one commit and confirm that commit's existing CI is green
+- resolve the [release base](#release-base-and-source), get the [release inventory](#release-inventory) approved when one applies, and confirm CI for the resulting release source is green
 - classify the diff from the previous stable to the release source as patch or minor, then show the
   target version and rationale to the user
 - draft the changelog, show it to the user, wait for review
@@ -17,9 +17,10 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 
 **Go-ahead** (user says "go ahead"):
 
-- commit the approved release inputs locally
-- run the release, which publishes npm and pushes the prepared branch and tag
+- commit the approved release inputs locally on the release branch
+- run the release, which publishes npm and pushes the release branch and tag
 - create the release heartbeat immediately and babysit it to completion
+- [reconcile `main`](#reconcile-main) with what shipped
 
 Rules that apply to both steps:
 
@@ -27,56 +28,128 @@ Rules that apply to both steps:
 - No code changes bundled into the changelog commit or the release commit. Code shims live in their own commit, reviewed on their own merits.
 - A sanity-check finding is information, not a directive. The agent surfaces it; the user decides.
 - Invoking a release skill is intent to start the flow, not blanket authorization to publish.
+- An approval the user already gave covers what it names, such as an explicit PR selection or authorization to release autonomously. Do not ask for it again.
 - If the user asks for a release preview, show the prospective changelog/release contents and answer questions, but do not commit, tag, publish, or run release commands until they explicitly authorize the release.
 
-## Release source and CI
+## Main stays open
 
-The default release source is `origin/main`. Fetch `origin`, then record the
-resolved commit. The default release checkout is a clean local `main` whose
-`HEAD` equals `origin/main`.
+Merge normal PRs into `main` at any time, including while a beta soaks or a release is being
+finalized. Each release builds in a short-lived release workspace, and its published tag records
+the shipped source.
 
-An explicit user instruction can select another ref, such as a hotfix commit or
-tag. Resolve that ref once and apply every source, diff, and CI check to that
-commit instead of `origin/main`.
+## Choosing a path
 
-Before making release-preparation commits, confirm the existing CI run for the
-resolved commit is green. Pending CI is watched to completion. Release
-preparation then stays local through the changelog, any explicitly requested ACP
-catalog update, lockfile preparation, and the version commit. After approval,
-commit the prepared inputs locally and run the release command. Its branch and
-tag push is the one remote release batch and starts CI for the complete release
-commit.
+The user decides when the changes on `main` warrant a release and how much risk it takes:
 
-## Release branch discipline
+1. **Direct stable release** for a low-risk batch of polish and bug fixes. Stable desktop updates
+   already ramp over 36 hours (see [Staged rollout](#staged-rollout-stable-channel)), and store
+   review often takes about a day, with no guaranteed timing.
+2. **Beta flow**, the default for changes that need testing. Release candidates on the `beta`
+   channel. Each beta folds into the series' single changelog entry, publishes npm only on the
+   explicit `beta` dist-tag, and stays behind the Stable/Beta switch on `/download`.
 
-While you finalize a release on `main`, use a temporary `next` branch for work intended for the following
-release. This applies to both beta and stable releases.
+A beta follows these defaults, which the user can explicitly override:
 
-- Create each new `next` from freshly fetched `origin/main`. Reuse it while active.
-- "This goes to next" means create the PR against `next` or retarget an existing
-  PR, and keep that destination through delivery.
-- Keep `next` current by merging `origin/main` into it as release fixes land.
-  Avoid rebasing this shared branch because agents and open PRs depend on its history.
-- After the release ships, bring `next` up to date and open a `next` → `main` PR.
-  Pass CI and merge without squashing away the individual PR commits needed for
-  the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
-  `next`. Create it fresh when needed again.
+- Soak a beta at least 24 hours before promotion. Soak longer for risky or breaking changes, or
+  while feedback is open. Changes added in a later beta get their own soak; earlier soak time does
+  not count for them.
+- A follow-up beta carries regressions, fixes, and polish for what that beta delivers. Unrelated
+  work on `main` and pre-existing bugs wait for a later release unless the user explicitly selects
+  them.
+- Promotion ships the tested beta's product content unchanged and does not pull from `main`.
+  Adding a product change needs the user's explicit selection and a new beta, which soaks again.
+- During a soak, ship urgent stable regressions and compatibility or provider model updates as a
+  [stable hotfix](#release-base-and-source) from the latest stable tag. The beta keeps its own
+  pace.
 
-**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
-push runs target only `main`, and GitHub permits only squash merges. Enable
-required-check protection for `next`, CI on its pushes, and merge commits for the
-integration PR. Handle PR
-base changes (`edited` events) so retargeting runs checks against the new base;
-GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
+npm dist-tags are independent pointers:
 
-### Hotfix from a release tag
+- A beta release publishes with `--tag beta` and moves only `beta`; `latest` remains on the
+  newest stable.
+- A stable release publishes to `latest`. Move `beta` to it as well when the stable version is
+  newer than the version `beta` points to, which covers promotions and direct stable releases, so
+  `@getpaseo/cli@beta` users never sit behind stable. A stable hotfix on an older line leaves
+  `beta` on the active newer beta.
 
-If `main` contains changes you do not want to release, branch from the affected
-release tag and cherry-pick only the required fixes. Run CI on that branch, then
-use the normal release flow with it as the explicit source, choosing a new patch
-or beta version. Ensure the fixes and changelog also reach `main` and any active
-`next`, preserving newer development and version changes there. This is a
-short-lived hotfix branch, not another maintained release track.
+## Release base and source
+
+The release base is the tag or commit a release workspace starts from. The release source is the
+base plus any approved cherry-picks, and every source, diff, and CI check uses it.
+
+| Release                                                  | Base                                                         | Changes on top               |
+| -------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------- |
+| Starting release: first beta of a line, or direct stable | `origin/main`, captured once                                 | None                         |
+| Follow-up beta                                           | The selected published beta tag, normally the series' latest | Approved commits from `main` |
+| Promotion                                                | The beta tag being promoted                                  | None by default              |
+| Stable hotfix                                            | The latest appropriate stable tag                            | Approved commits from `main` |
+
+An explicit user instruction can select another base.
+
+1. Fetch `origin` with tags and resolve the base to one commit.
+2. Create the release workspace through Paseo MCP on a new branch from the base, named
+   `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` for the version being cut. Run the release from
+   this workspace: `release:push` pushes `HEAD` to the current branch.
+3. Cherry-pick the approved commits in their `main` order with `git cherry-pick -x`, so each
+   commit records the `main` commit it came from. Include the prerequisites the inventory listed.
+   Resolve conflicts within the approved changes and report how. A resolution that needs new
+   behavior is a scope addition: surface it for selection.
+4. Confirm CI for the release source. When the source is a commit whose CI already passed (the
+   captured `origin/main`, or the beta tag being promoted), use that run and watch pending CI to
+   completion. Otherwise push the release branch and run `gh workflow run ci.yml --ref <branch>`,
+   because CI push runs target only `main`.
+5. Keep the changelog, any explicitly requested ACP catalog update, lockfile preparation, and the
+   version commit local until the go-ahead. The release command pushes the release branch and tag
+   as one batch, and the tag push starts the release workflows. Then run
+   `gh workflow run ci.yml --ref <branch>` so CI covers the complete release commit.
+6. [Reconcile `main`](#reconcile-main).
+
+A stable hotfix can take the version a patch beta line would promote to, such as `0.13.3`
+shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version. Continue the line
+as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
+computes that from a prerelease, so follow the [manual steps](#manual-step-by-step) with
+`npm version 0.13.4-beta.1 --include-workspace-root --message "chore(release): cut %s"` and
+`npm run release:publish:beta`. Record the tested beta tag as its source so its soak still counts
+for the unchanged content.
+
+## Release inventory
+
+When the user asks for a follow-up beta or a promotion, list what `main` has that the base does
+not, then get the batch approved. There is no release label or queue.
+
+1. Find the commits on `origin/main` whose patches are not in the base tag:
+
+   ```bash
+   git log --cherry-pick --right-only --no-merges --format='%h %s' <base-tag>...origin/main
+   ```
+
+   Patch equivalence recognizes commits already cherry-picked into the tag, so trust the tag
+   content over PR state or branch names.
+
+2. Present a short include/defer list. Link each PR and give one plain reason. List separately the
+   prerequisites an included PR depends on and anything that adds scope beyond what the beta
+   delivers. For each fix that shipped in a stable hotfix after the beta's base, confirm the beta
+   preserves its behavior, directly or through a superseding change. List the missing ones for
+   explicit selection; adding one to a promotion needs a new beta.
+3. Wait for the user to approve the batch, unless an explicit selection or autonomous
+   authorization they already gave covers it.
+
+For a promotion, every item defaults to defer.
+
+## Reconcile main
+
+After the release push, open a PR into `main` that brings in what shipped and keeps newer
+development on `main`:
+
+- The shipped `CHANGELOG.md` and `CHANGELOG.zh-CN.md` entries, exactly as tagged. A beta or
+  promotion entry replaces the series entry on `main`. A stable hotfix on an older line goes
+  below any newer entries.
+- The shipped version in every `package.json` and `package-lock.json`, unless `main` already
+  carries a newer version, plus the F-Droid changelog files a stable release generates.
+- No claims about unshipped work: a shipped entry describes only the tagged content, and notes
+  `main` holds for changes that have not shipped stay out of it.
+
+Delete the release branch once the PR merges. The tag is the record of shipped source; Paseo
+maintains no release track besides `main`.
 
 ## ACP catalog updates
 
@@ -90,21 +163,6 @@ ACP catalog work enters a release through an explicit user request:
 
 The release authorization covers the requested ACP commit. It ships in the same
 release push as the changelog and version commit.
-
-## Two paths
-
-There are two supported release paths:
-
-1. **Direct stable release**: you are ready to ship the resolved release source to everyone immediately (default `origin/main`).
-2. **Beta flow**: release candidates on the `beta` channel. Each beta folds into the series' single changelog entry, publishes npm only on the explicit `beta` dist-tag, and stays behind the Stable/Beta switch on `/download`.
-
-Paseo has one linear release track even though npm dist-tags are independent
-pointers. The npm invariant is:
-
-- A beta release moves only `beta`; `latest` remains on the newest stable.
-- A stable release moves both `latest` and `beta` to that stable version. This
-  keeps users who install `@getpaseo/cli@beta` on the newest Paseo release after
-  a beta is promoted or superseded by a direct stable release.
 
 ## Release version decision
 
@@ -133,7 +191,7 @@ as described in **Fixing a failed release build**.
 
 Before running any stable release command:
 
-- Make sure the resolved release source passed CI, the approved release inputs are committed locally on the intended branch, and the working tree is clean.
+- Make sure the release source passed CI, the approved release inputs are committed locally on the release branch, and the working tree is clean.
 - **Run `npm run format`, `npm run lint`, and `npm run typecheck` and commit any resulting changes BEFORE you start any `release:*` command.** `release:check` runs `npm install --workspaces --include-workspace-root` as part of `release:prepare`, which can mutate `package-lock.json` (e.g. churning `"dev": true` markers on optional deps). The next step, `version:all:*`, runs `npm version` which aborts when the working tree is dirty. If this happens mid-flight you have to commit the lockfile churn before retrying — and the pre-commit format hook will reject a lockfile-only commit because oxfmt internally skips `package-lock.json` while lefthook's glob still matches it. Avoid the whole mess by running format/lint/typecheck first, then `release:prepare` once on its own to absorb any lockfile churn into a normal commit, then start the release.
 - Do not use a release command as a substitute for checking whether the current commit is actually ready.
 
@@ -145,9 +203,9 @@ npm run release:minor
 
 This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. The workflows create the GitHub Release as a draft while builds and release-note sync run. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no mobile-release workflow under `.github/workflows`.
 
-After the stable release succeeds, move npm's `beta` pointer to the new stable
-version for every published package. This changes dist-tags only; do not
-republish the packages:
+After the stable release succeeds, check `npm view @getpaseo/cli dist-tags`. When the new stable
+is newer than `beta`, move `beta` to it for every published package. This changes dist-tags only;
+do not republish the packages:
 
 ```bash
 PASEO_VERSION=$(node -p "require('./package.json').version")
@@ -156,8 +214,8 @@ for package in highlight relay protocol client plugin server cli; do
 done
 ```
 
-Verify both npm tags now resolve to `PASEO_VERSION` before considering the
-stable release complete.
+Verify `latest` resolves to `PASEO_VERSION`, and `beta` resolves to `PASEO_VERSION` or the
+active newer beta, before considering the stable release complete.
 
 The Docker workflow builds images from the checked-out source tree on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
 
@@ -175,7 +233,7 @@ npm run version:all:patch
 npm run version:all:minor
 npm run release:publish      # Publish to npm
 npm run release:push         # Push HEAD + tag (triggers CI workflows)
-# Then move npm's beta dist-tag to this stable version using the command above.
+# Then move npm's beta dist-tag to this stable version when it is newer than beta (see above).
 ```
 
 ## Beta flow
@@ -305,8 +363,8 @@ macOS 13 maps to Darwin 22. The two values use different version domains; do not
 
 iOS and Android store builds are not in `.github/workflows`. They are triggered by the EAS GitHub app the moment the `v*` tag is pushed:
 
-- **Android (Play Store)** — EAS builds with profile `production` and auto-submits to the Play Store via `eas submit` (EAS-managed credentials, no Fastlane).
-- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane submits that same build for App Store review.
+- **Android (Play Store)** — EAS builds with profile `production` and auto-submits to the Play Store via `eas submit` (EAS-managed credentials). A Fastlane lane then replaces the store screenshots.
+- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane uploads the store screenshots and submits that same build for App Store review.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
 EAS uses the local app version source. `packages/app/app.config.js` derives the native version from the package version. Android `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. iOS reserves 1,000 build slots per app version: beta `N` uses slot `N`, and stable uses slot `999`. For example, `0.2.6-beta.2` appears in App Store Connect as version `0.2.6` build `2006002`; stable uses build `2006999`. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut the next beta or patch instead of relying on EAS remote auto-increment.
@@ -316,6 +374,17 @@ Stable tags run `Release Mobile`; beta tags run `Release iOS Beta`. Both distrib
 Stable iOS releases use one binary for two Apple review paths: Beta App Review for external TestFlight distribution and App Store review. [Apple says](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers) the first submitted build requires a full TestFlight review; later builds for the same version might not. Do not assume a stable patch skips review.
 
 There is no mobile-release workflow under `.github/workflows`. The EAS GitHub app reads the workflows under `packages/app/.eas/workflows` and handles tag triggering directly.
+
+### Store screenshots
+
+Each stable release publishes the screenshots committed under `assets/store-screenshots/output/` (see [its README](../assets/store-screenshots/README.md) for how they are made). To change the store screenshots, re-render and commit them before you tag.
+
+- **App Store:** `submit_review` uploads `output/apple/` and `output/apple-ipad/` to the version it submits, replacing that version's `en-US` screenshots. Apple ties screenshots to an app version, so a version that is already live keeps the ones it shipped with. `Resubmit iOS for App Store review` uploads them again.
+  - When `submit_review` fails with `appStoreVersions … is not in valid state`, the reason is in the API error's `meta.associatedErrors`, which fastlane does not print. Read it with a `POST /v1/reviewSubmissionItems` against the version. A required age-rating question that Apple added, such as `socialMedia`, fails this way; answer it under App Information > Age Rating in App Store Connect, then resubmit.
+- **Google Play:** `upload_android_screenshots` runs `fastlane android upload_screenshots` after `submit_android`. It replaces only the `en-US` phone and 10-inch tablet screenshots, never the listing text or changelogs, and skips images whose checksum already matches. The lane stages only `en-US`: supply uploads every locale folder in one edit, and Play rejects F-Droid locales such as `ja`, which fails the whole edit. `Upload Google Play screenshots` reruns the step for the current release without a rebuild.
+- **F-Droid:** reads the same files as Google Play. `fastlane/metadata/android/en-US/images/phoneScreenshots/` and `tenInchScreenshots/` hold symlinks to the Google renders. `render.mjs` rewrites them on every render, so added or renamed panels reach Google Play and F-Droid as well.
+
+Fastlane cannot use the Play key Expo stores for `eas submit`. The Play lane reads its own copy of the same service-account key from the `GOOGLE_PLAY_JSON_KEY` file secret in the EAS `production` environment, and that service account needs the Play Console permission **Manage store presence**.
 
 ### Watching mobile builds from the terminal
 
@@ -359,6 +428,7 @@ For the `Release Mobile` EAS workflow, these jobs must pass:
 - `submit_ios_for_review` — iOS build submitted for App Store review via Fastlane
 - `build_android` — Android store binary built
 - `submit_android` — Android binary submitted to the Play Store
+- `upload_android_screenshots` — Google Play screenshots replaced from the repo
 
 Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
 
@@ -477,7 +547,7 @@ git tag -f android-v0.1.28 HEAD && git push origin android-v0.1.28 --force
 git tag -f v0.1.29-beta.2 HEAD && git push origin v0.1.29-beta.2 --force
 ```
 
-This ensures the checkout ref matches the actual code on `main` with the fix included.
+This ensures the checkout ref matches the code you want built, with the fix included.
 
 - `vX.Y.Z` or `vX.Y.Z-beta.N` rebuilds the full tagged release
 - `desktop-vX.Y.Z` rebuilds desktop for all desktop platforms only
@@ -620,7 +690,7 @@ Rules:
 
   This returns every distinct GitHub login that authored or co-authored a commit in the PR. Use those logins for attribution. Fall back to `gh pr view N --json author` only if the commits command returns nothing (which should not happen for merged PRs).
 
-  When listing PR numbers, `git log --format='%H %s' v<previous>..<release-source-sha> | grep -E '\(#[0-9]+\)$'` pulls the PR number out of squash commit subjects.
+  When listing PR numbers, `git log --cherry-pick --right-only --no-merges --format='%H %s' v<previous>...<release-source-sha> | grep -E '\(#[0-9]+\)$'` pulls the PR number out of squash commit subjects and skips commits the previous stable already shipped as cherry-picks.
 
 ## Changelog ordering
 
@@ -652,11 +722,11 @@ Every entry covers `previous stable release → release source`: first beta, lat
 
 ### Beta release
 
-- [ ] The resolved release source is the intended commit (default `origin/main`) and its existing CI is green
+- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory), and CI for the release source is green
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
 - [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before cutting the release
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
-- [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
+- [ ] The changelog, ACP, lockfile, and version commits stayed local until the approved release command pushed the release branch and tag
 - [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
 - [ ] Every GitHub Actions run for the complete release commit and tag is green
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
@@ -667,22 +737,24 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] GitHub `Docker` workflow is green and the versioned beta image is published without moving `latest`
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
 - [ ] EAS `Release iOS Beta` completed its build, TestFlight distribution, external beta group, and Beta App Review path
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed
 
 ### Stable release (or promotion)
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
-- [ ] The resolved release source is the intended commit (default `origin/main`) and its existing CI is green
+- [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory), and CI for the release source is green
+- [ ] A promotion ships the tested beta's product content after its soak, unless the user explicitly overrode either default
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
 - [ ] Ensure the approved release inputs are committed locally and the git worktree is clean before running any release command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release. Commit the matching [`CHANGELOG.zh-CN.md` entry](#changelog-translations) with it
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
-- [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
+- [ ] The changelog, ACP, lockfile, and version commits stayed local until the approved release command pushed the release branch and tag
 - [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully
 - [ ] Every GitHub Actions run for the complete release commit and tag is green
-- [ ] Move npm's `beta` dist-tag to the new stable version for every published package and verify both `latest` and `beta` resolve to it
+- [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] The GitHub Release contains `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`
@@ -696,4 +768,5 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed

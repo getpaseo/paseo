@@ -16,7 +16,8 @@ import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
+import { deriveProjectPlacementFromCwd } from "@/utils/project-placement";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
 import { useWorkspaceLabels } from "@/workspace-labels";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -41,12 +42,15 @@ class FakeDirectoryClient {
   supportsWorkspaceLabels = false;
   listWorkspaceLabelsCalls = 0;
   fetchAgentsCalls = 0;
+  observeAgentsCalls = 0;
   lastAgentOptions: unknown;
   fetchWorkspacesCalls = 0;
+  observeWorkspacesCalls = 0;
   lastWorkspaceOptions: unknown;
   listProjectsCalls = 0;
   lastProjectOptions: unknown;
   projectResult: ProjectListResult | null = null;
+  readonly listSnapshots: Promise<unknown>[] = [];
   private pendingAgentFetch: Promise<AgentFetchResult> | null = null;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
   private pendingProjectFetch: Promise<ProjectListResult> | null = null;
@@ -151,15 +155,22 @@ class FakeDirectoryClient {
   }
 
   observeAgents(options: Parameters<DaemonClient["observeAgents"]>[0]) {
-    return subscriptionFixture(this.fetchAgents({ ...options, subscribe: {} }), (receive) =>
-      this.on("agent_update", receive),
+    this.observeAgentsCalls += 1;
+    const subscription = subscriptionFixture(
+      this.fetchAgents({ ...options, subscribe: {} }),
+      (receive) => this.on("agent_update", receive),
     );
+    this.listSnapshots.push(subscription.ready);
+    return subscription;
   }
 
   observeWorkspaces(options: Parameters<DaemonClient["observeWorkspaces"]>[0]) {
-    return subscriptionFixture(this.fetchWorkspaces(options), (receive) =>
+    this.observeWorkspacesCalls += 1;
+    const subscription = subscriptionFixture(this.fetchWorkspaces(options), (receive) =>
       this.on("workspace_update", receive),
     );
+    this.listSnapshots.push(subscription.ready);
+    return subscription;
   }
 
   observeEvents(events: readonly SessionOutboundMessage["type"][]) {
@@ -591,6 +602,83 @@ describe("DirectorySync session readiness", () => {
     expect(client.fetchWorkspacesCalls).toBe(1);
     directory.dispose();
   });
+
+  it.each([
+    ["full", "before"],
+    ["full", "after"],
+    ["route", "before"],
+    ["route", "after"],
+  ] as const)(
+    "restores live directory updates when %s demand returns %s refresh completion",
+    async (demand, timing) => {
+      const serverId = `released-directory-${demand}-${timing}`;
+      const { client, directory } = createDirectory(serverId);
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+      store.updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: "test",
+        features: { workspaceMultiplicity: true, projectList: true },
+      });
+      const source = {};
+      function setDemand(demanded: boolean): void {
+        if (demand === "full") directory.setDemand(source, demanded);
+        else directory.setAgentRouteDemand(demanded ? ["agent-1"] : []);
+      }
+      const releaseProjects = client.holdProjectFetch();
+      const projects: ProjectListResult = { requestId: "projects", projects: [] };
+
+      try {
+        setDemand(true);
+        const refresh = directory.refreshDemand();
+        await expect
+          .poll(() => [client.observeAgentsCalls, client.observeWorkspacesCalls])
+          .toEqual([1, 1]);
+
+        await Promise.all(client.listSnapshots);
+        setDemand(false);
+        if (timing === "before") setDemand(true);
+        releaseProjects(projects);
+        await refresh;
+        if (timing === "after") setDemand(true);
+
+        await expect
+          .poll(() => [client.observeAgentsCalls, client.observeWorkspacesCalls])
+          .toEqual([2, 2]);
+        client.emit({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent: {
+              ...projectAgentSnapshot(createAgent(serverId, "agent-1")),
+              title: "Live title",
+            },
+            project: deriveProjectPlacementFromCwd("/repo"),
+          },
+        });
+        client.emit({
+          type: "workspace_update",
+          payload: {
+            kind: "upsert",
+            workspace: { ...createWorkspaceEntry("workspace-1"), name: "Live workspace" },
+          },
+        });
+
+        await expect
+          .poll(() => {
+            const session = useSessionStore.getState().sessions[serverId];
+            return [
+              session.agents.get("agent-1")?.title,
+              session.workspaces.get("workspace-1")?.name,
+            ];
+          })
+          .toEqual(["Live title", "Live workspace"]);
+      } finally {
+        directory.dispose();
+      }
+    },
+  );
 
   it("publishes cached directory data before the authoritative request completes", async () => {
     const serverId = "cached-directory";

@@ -24,7 +24,9 @@ export default defineConfig({
       transform(source, id) {
         // The ESM package contains a CommonJS WASM factory. Metro handles the
         // interop; Vite needs an ESM export instead of the CommonJS trailer.
-        if (!id.endsWith("/lib/module/web/wasm/md4c.js")) return;
+        // Vite can request the file with a version query (`md4c.js?v=<hash>`), so match the
+        // path without it.
+        if (!id.split("?")[0].endsWith("/lib/module/web/wasm/md4c.js")) return;
         const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
         if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
         return {
@@ -80,6 +82,7 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/**/*.{test,spec}.{ts,tsx}",
+            "modules/**/*.{test,spec}.{ts,tsx}",
             "native-release-version.test.ts",
             "app.config.test.ts",
             "vitest-environment.test.ts",
@@ -96,7 +99,10 @@ export default defineConfig({
           include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              // Exercise real WebGL glyph rendering on GPU-less CI runners.
+              launchOptions: { args: ["--enable-unsafe-swiftshader"] },
+            }),
             headless: true,
             connectTimeout: 180_000,
             instances: [{ browser: "chromium" }],
