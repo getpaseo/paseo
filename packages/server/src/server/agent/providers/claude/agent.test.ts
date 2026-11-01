@@ -1507,6 +1507,44 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("rejects a change to a launch option while the first query is starting", async () => {
+    const { queryFactory } = createQueryMock();
+    let releaseBinary!: () => void;
+    const binaryLookup = new Promise<void>((resolve) => {
+      releaseBinary = resolve;
+    });
+    let lookupStarted!: () => void;
+    const lookupEntered = new Promise<void>((resolve) => {
+      lookupStarted = resolve;
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        lookupStarted();
+        await binaryLookup;
+        return "/test/claude/bin";
+      },
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { disallowedTools: ["Bash"] },
+    });
+
+    const turn = session.startTurn("hello");
+    await lookupEntered;
+    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
+      /disallowedTools.*cannot change on a running session/,
+    );
+    releaseBinary();
+    await turn;
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({ disallowedTools: ["Bash"] });
+    await session.close();
+  });
+
   test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

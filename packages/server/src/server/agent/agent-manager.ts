@@ -1,4 +1,5 @@
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
+import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
@@ -2283,7 +2284,17 @@ export class AgentManager {
   async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
     let ended: ProviderOptionsPatch = {};
-    if (agent.session.applyOptions && Object.keys(patch).length > 0) {
+    if (Object.keys(patch).length > 0) {
+      // A provider that cannot apply options to a running agent must not store them either.
+      if (!agent.session.applyOptions) {
+        throw new ProviderOptionsValidationError(
+          agent.provider,
+          Object.keys(patch).map((key) => ({
+            path: [key],
+            message: "cannot change on a running session; it applies when the agent is opened",
+          })),
+        );
+      }
       const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
       const resolved = this.effectiveOptionsFor(agent.provider, set);
       ended =

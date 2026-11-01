@@ -1,6 +1,6 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../option-controls.js";
-import { validateProviderOptions } from "../provider-options.js";
+import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
@@ -4698,6 +4698,13 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   /** Applies only the options the patch sets; the rest of the running options stay as they are. */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    // The approval policy and sandbox are sent when the thread starts, not with each turn.
+    assertChangesAreLive({
+      provider: "codex",
+      patch: options,
+      current: this.providerOptions,
+      live: ["service_tier", "fast_mode", "plan_mode"],
+    });
     const { fast_mode: _legacyFast, ...running } = this.providerOptions;
     const valid =
       validateProviderOptions(

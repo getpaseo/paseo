@@ -2378,6 +2378,8 @@ class ClaudeAgentSession implements AgentSession {
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
+  /** True from the moment a query's launch options are copied until the query exists. */
+  private queryStarting = false;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -2811,7 +2813,7 @@ class ClaudeAgentSession implements AgentSession {
   async applyOptions(options: ProviderOptions): Promise<void> {
     // Every option but Fast is read when the query is built, and replacing a started query would
     // end its background work, so once it exists only Fast can change.
-    if (this.query) {
+    if (this.query || this.queryStarting) {
       assertChangesAreLive({
         provider: "claude",
         patch: options,
@@ -3531,7 +3533,15 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
-    const options = await this.buildOptions(launchMode);
+    // buildOptions copies the launch options before it waits, so from here they are fixed.
+    this.queryStarting = true;
+    let options: ClaudeOptions;
+    try {
+      options = await this.buildOptions(launchMode);
+    } catch (error) {
+      this.queryStarting = false;
+      throw error;
+    }
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
@@ -3549,6 +3559,7 @@ class ClaudeAgentSession implements AgentSession {
         },
       },
     );
+    this.queryStarting = false;
     const fastMode = this.resolveFastModeSetting();
     if (fastMode !== null) {
       await this.query.applyFlagSettings({ fastMode });

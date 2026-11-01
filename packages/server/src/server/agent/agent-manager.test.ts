@@ -12950,6 +12950,38 @@ describe("agent options", () => {
     expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: false });
   });
 
+  test("a provider whose session cannot apply options rejects a patch and stores nothing", async () => {
+    // Like a provider with no live option support: the session has no `applyOptions`.
+    class NoOptionsSession extends TestAgentSession {
+      constructor(config: AgentSessionConfig) {
+        super(config);
+        Object.defineProperty(this, "applyOptions", { value: undefined });
+      }
+    }
+    class NoOptionsClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new NoOptionsSession(config);
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-no-options-"));
+    const manager = new AgentManager({
+      clients: { codex: new NoOptionsClient() },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    await expect(manager.setAgentOptions(agent.id, { fast_mode: true })).rejects.toThrow(
+      /fast_mode.*cannot change on a running session/,
+    );
+
+    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({ fast_mode: false });
+  });
+
   test("agent.create.before hook featureValues fold into providerOptions", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
