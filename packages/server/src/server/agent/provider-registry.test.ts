@@ -791,6 +791,24 @@ test("ACP provider configuration retains opaque options", () => {
   });
 });
 
+test("a saved legacy Codex Fast preference wins over a configured service_tier default", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: { codex: { options: { service_tier: "default", plan_mode: false } } },
+  });
+  const client = registry.codex.createClient(logger);
+
+  // Pre-v0.10 agents saved `fast_mode`; the agent's own preference beats the configured default.
+  expect(client.effectiveOptions?.({ fast_mode: true })).toEqual({
+    fast_mode: true,
+    plan_mode: false,
+  });
+  expect(client.effectiveOptions?.({ service_tier: "fast" })).toEqual({
+    service_tier: "fast",
+    plan_mode: false,
+  });
+  expect(client.effectiveOptions?.({})).toEqual({ service_tier: "default", plan_mode: false });
+});
+
 test("cursor provider extending acp uses CursorACPAgentClient", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
