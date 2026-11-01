@@ -154,6 +154,42 @@ export interface AgentFeatureSelect {
 
 export type AgentFeature = AgentFeatureToggle | AgentFeatureSelect;
 
+export interface AgentOptionChoice {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+interface AgentOptionControlBase {
+  /** Top-level provider option key this control reads and writes. */
+  key: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  icon?: string;
+}
+
+export interface AgentOptionToggleControl extends AgentOptionControlBase {
+  type: "toggle";
+  /** What an unset option stands for; omitted means off. */
+  defaultValue?: boolean;
+}
+
+export interface AgentOptionSelectControl extends AgentOptionControlBase {
+  type: "select";
+  /** Desktop toolbar presentation; omitted means labeled. Mobile selectors stay labeled. */
+  desktopTrigger?: "icon" | "label";
+  /** The choice an unset option stands for. */
+  defaultValue?: string;
+  choices: AgentOptionChoice[];
+}
+
+/**
+ * A provider's description of a composer control over one top-level option key.
+ * The control carries no value: it is read from the agent's effective options.
+ */
+export type AgentOptionControl = AgentOptionToggleControl | AgentOptionSelectControl;
+
 export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
   supportsStreaming: boolean;
@@ -523,6 +559,10 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
+  /**
+   * @deprecated COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+   * Folded into `providerOptions` at the daemon's edge; the daemon never reads it internally.
+   */
   featureValues?: Record<string, unknown>;
   title?: string | null;
   providerOptions?: ProviderOptions;
