@@ -792,6 +792,22 @@ describe("OMP agent client and session", () => {
     expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
   });
 
+  test("a Fast change the runtime reports when a turn completes is published", async () => {
+    const omp = new OmpHarness();
+    omp.acceptFastOnNextRuntime();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    omp.runtime().state = { ...omp.runtime().state, fastModeEnabled: false, fastModeActive: false };
+
+    const { completion } = await omp.startPromptUntilProviderIdle("hello", "done", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await completion;
+    await omp.requireSession().getRuntimeInfo();
+
+    expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
+  });
+
   test("restores Fast from the initial OMP state on create and resume", async () => {
     const created = new OmpHarness();
     await created.start({ providerOptions: { fast_mode: true } });

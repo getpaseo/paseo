@@ -1014,6 +1014,25 @@ describe("ClaudeAgentSession features", () => {
     ).resolves.toEqual([]);
   });
 
+  test("opens with Fast off on a model that has none, so unrelated options still apply", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      providerOptions: { fast_mode: true },
+    });
+
+    expect(session.openOptionsPatch).toEqual({ fast_mode: false });
+    await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("passes initial fast mode through Claude flag settings", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
