@@ -55,18 +55,32 @@ export class V2Timeline {
     return { type: "timeline", provider: "opencode", item, timestamp: new Date().toISOString() };
   }
 
-  messages(messages: SessionMessageInfo[]): AgentStreamEvent[] {
-    const events: AgentStreamEvent[] = [];
+  private pendingMessages: Promise<unknown> = Promise.resolve();
+
+  // Publish each cursor advance in the same synchronous step. Buffering snapshot
+  // events until image IO finishes lets live deltas overtake already committed text.
+  messages(
+    messages: SessionMessageInfo[],
+    publish: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
+    const result = this.pendingMessages.then(() => this.publishMessages(messages, publish));
+    this.pendingMessages = result.catch(() => {});
+    return result;
+  }
+
+  private async publishMessages(
+    messages: SessionMessageInfo[],
+    publish: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
     const state: TimelineState = { structured: false, accepted: false };
     for (const message of messages) {
       const timestamp = new Date(message.time.created).toISOString();
       const push = (item: AgentTimelineItem) =>
-        events.push({ type: "timeline", provider: "opencode", item, timestamp });
+        publish({ type: "timeline", provider: "opencode", item, timestamp });
       if (message.type === "user") this.userMessage(message, state, push);
-      else if (message.type === "assistant") this.assistantMessage(message, state, push);
+      else if (message.type === "assistant") await this.assistantMessage(message, state, push);
       else if (message.type === "compaction") this.compactionMessage(message, push);
     }
-    return events;
   }
 
   private userMessage(
@@ -89,7 +103,7 @@ export class V2Timeline {
     });
   }
 
-  private assistantMessage(
+  private async assistantMessage(
     message: Extract<SessionMessageInfo, { type: "assistant" }>,
     state: TimelineState,
     push: (item: AgentTimelineItem) => void,
@@ -99,16 +113,16 @@ export class V2Timeline {
     // paths address the same cursor entry.
     let textOrdinal = 0;
     let reasoningOrdinal = 0;
-    message.content.forEach((part, partIndex) => {
+    for (const [partIndex, part] of message.content.entries()) {
       if (part.type === "tool" && part.name === STRUCTURED_OUTPUT_TOOL) {
         this.structuredOutputPart(message.id, partIndex, part, state, push);
       } else if (part.type === "text" || part.type === "reasoning") {
         const ordinal = part.type === "text" ? textOrdinal++ : reasoningOrdinal++;
         this.textPart(message.id, part, ordinal, state, push);
       } else {
-        this.toolPart(message.id, partIndex, part, push);
+        await this.toolPart(message.id, partIndex, part, push);
       }
-    });
+    }
   }
 
   private structuredOutputPart(
@@ -156,7 +170,7 @@ export class V2Timeline {
     else push({ type: "reasoning", text: suffix });
   }
 
-  private toolPart(
+  private async toolPart(
     messageID: string,
     partIndex: number,
     part: Extract<
@@ -174,16 +188,16 @@ export class V2Timeline {
     if (item) push(item);
     // Images follow their tool call as markdown, as Claude and Codex emit them,
     // so base64 never reaches the tool output.
-    images.forEach((image, index) => {
+    for (const [index, image] of images.entries()) {
       const imageKey = `${key}:image:${index}`;
-      if (this.content.has(imageKey)) return;
+      if (this.content.has(imageKey)) continue;
       this.content.set(imageKey, "");
-      const imageItem = renderProviderImageOutputAsAssistantMarkdown(
+      const imageItem = await renderProviderImageOutputAsAssistantMarkdown(
         { url: image.uri, mimeType: image.mime },
         { materialize: materializeProviderImage },
       );
       if (imageItem) push(imageItem);
-    });
+    }
   }
 
   private compactionMessage(

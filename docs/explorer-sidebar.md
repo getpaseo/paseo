@@ -33,25 +33,36 @@ keeps only agents and terminals. A panel kind opts in with `compactSheet` in its
 (`packages/app/src/panels/panel-manifest.ts`), and the layout store's `openTab` decides between
 sheet and tab, so callers open targets the same way on every layout. Each such sheet holds one
 ordinary `WorkspaceTab` (`SheetTab` in the store) and is an `IsolatedBottomSheetModal` like every
-other sheet in the app, so it sits on the one app-wide stack: a sheet opened from any sheet, a
-subagent chosen from the subagents list included, lands on top of it, and closing the top sheet
-(drag, Close, backdrop, or Android Back) uncovers the one below. The list stays open under the
-sheet it opened; see [menus.md](menus.md#selecting-an-item-on-ios) for the row contract.
+other sheet in the app, so it sits on the one app-wide stack: a sheet opened from any sheet lands on
+top of it, and closing the top sheet (drag, Close, backdrop, or Android Back) uncovers the one below.
+
+A subagent chosen from the subagents list is the exception. It opens as a page of the list's own
+sheet and replaces the list in place: Back returns to the list, Close ends both, and Open parent
+closes the list, landing on the pane the list was opened from. The store's `selectSheetTab` describes
+the `SheetTab` a reveal would show without opening it, so the page never enters `sheetsByWorkspace`.
+See [menus.md](menus.md#a-page-that-fills-the-sheet) for the page contract.
 
 The store keeps `sheetsByWorkspace` in opening order and never reorders it, because moving a sheet
 remounts its panel. Revealing a target that already has a sheet uncovers that sheet by closing the
 ones above it, except ones holding unsaved work, which stay where they are. Opening a sheet as a tab
 dismisses the sheets above it, since the tab would sit under them. The stack is not persisted.
 
-Sheets are modal and cover both compact sidebars as well as the workspace. A sheet's header is its drag
-handle, because the panel scrolls on its own and content panning would fight it. Its trailing rail
-holds icon buttons only (`SheetHeaderIconButton`): Open as tab is the full-screen glyph beside
-Close, so the title keeps its width. Compact sheets use the app overlay host: a workspace-local
-host sits behind the app-level left sidebar. The workspace environment bridge preserves existing
-editing sessions, caches, file-link resolution and supported navigation context without moving
-their providers. Keep this capability at the workspace boundary; new sheet callers must not
-assemble provider internals. Wide layouts retain local hosting and pane geometry. Both hosts
-forward the same Gorhom modal queue; neither creates another stack. See
+Both kinds render the same `SheetPane` (`packages/app/src/screens/workspace/sheet-pane/`): the
+header (icon, title, Back when there is a list to return to, Open as tab, Close), the pane, its
+bottom inset, and its focus. Only the container differs, a workspace sheet in `sheet-tabs.tsx` or a
+menu page in `sheet-pane/page.tsx`, so a fix to what a sheet shows lands in one place. The
+container owns Android Back; the pane never subscribes to it.
+
+Sheets are modal and cover both compact sidebars as well as the workspace. The header drags the
+sheet through `SheetDragArea`, because the panel scrolls on its own and content panning would fight
+it. Its trailing rail holds icon buttons only (`SheetHeaderIconButton`): Open as tab is the
+full-screen glyph beside Close, so the title keeps its width. Compact sheets use the app overlay
+host: a workspace-local host sits behind the app-level left sidebar. The sheet pane bridge
+(`useSheetPaneBridge`) preserves existing editing sessions, caches, file-link resolution and
+supported navigation context without moving their providers. Keep this capability at the workspace
+boundary; new sheet callers must not assemble provider internals. Wide layouts retain local hosting
+and pane geometry. Both hosts forward the same Gorhom modal queue; neither creates another stack.
+See
 [floating-panels.md Gotcha 7](floating-panels.md#gotcha-7--a-sheet-cannot-read-context-from-its-call-site).
 
 A sheet holding unsaved work is never implicitly displaced; only its guarded close removes it.

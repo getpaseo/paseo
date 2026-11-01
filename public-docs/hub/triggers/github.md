@@ -74,6 +74,10 @@ steps:
 
 `github.pull_request_created` fires only when someone opens a pull request.
 
+To wait until a draft is finished, change `on` in the example above to `github.pull_request_ready_for_review`. It fires only when a draft is marked ready, with the user making that transition checked against `from_users`. Opening a pull request, later pushes, and converting it back to draft do not fire this event.
+
+Pull request webhook context includes `github.pull_request.draft` and `github.pull_request.head_sha` as delivered by GitHub. `github.pull_request` is `null` for other events, including conversation comments on a pull request. Fetch the live pull request with `gh pr view` before reviewing and again before posting. Finish without posting if it is now draft or its head differs from the reviewed SHA. Converting back to draft does not cancel a Hub run already in progress; the workflow owns these live checks.
+
 ## Respond to new comments
 
 `.paseo/workflows/respond-to-issue-comment.yml`:
@@ -177,14 +181,15 @@ steps:
 
 ## Choose the event
 
-| `on`                                  | Fires when                                           |
-| ------------------------------------- | ---------------------------------------------------- |
-| `github.issue_created`                | An issue is opened.                                  |
-| `github.pull_request_created`         | A pull request is opened.                            |
-| `github.issue_comment_created`        | A comment is created on an issue.                    |
-| `github.pull_request_comment_created` | A conversation comment is created on a pull request. |
-| `github.issue_label_added`            | A label is added to an issue.                        |
-| `github.pull_request_label_added`     | A label is added to a pull request.                  |
+| `on`                                   | Fires when                                           |
+| -------------------------------------- | ---------------------------------------------------- |
+| `github.issue_created`                 | An issue is opened.                                  |
+| `github.pull_request_created`          | A pull request is opened.                            |
+| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.     |
+| `github.issue_comment_created`         | A comment is created on an issue.                    |
+| `github.pull_request_comment_created`  | A conversation comment is created on a pull request. |
+| `github.issue_label_added`             | A label is added to an issue.                        |
+| `github.pull_request_label_added`      | A label is added to a pull request.                  |
 
 Choose `github.issue_comment_created` for a comment on an issue and `github.pull_request_comment_created` for a conversation comment on a pull request. GitHub delivers both as issue comments; Hub separates them for you. A comment on a changed line is a diff comment, covered by the legacy `github.pull_request_review_comment` event.
 

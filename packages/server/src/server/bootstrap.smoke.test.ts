@@ -670,11 +670,11 @@ describe("paseo daemon bootstrap", () => {
 
   test("rolls back standalone listener without starting plugins when main listen fails", async () => {
     const mainPort = await findFreePort();
-    const standalonePort = await findFreePort();
     const occupiedMain = http.createServer((_req, res) => {
       res.end("occupied-main");
     });
     await new Promise<void>((resolve) => occupiedMain.listen(mainPort, "127.0.0.1", resolve));
+    const standalonePort = await findFreePort();
 
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-main-rollback-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
@@ -1069,7 +1069,7 @@ function probeWebSocketConnection(
   });
 }
 
-test("startup closes stale active records before serving status without resuming sessions", async () => {
+test("disabled recovery closes stale active records without resuming sessions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-stale-status-"));
   const logger = pino({ level: "silent" });
   const storagePath = path.join(root, ".paseo", "agents");
@@ -1121,6 +1121,7 @@ test("startup closes stale active records before serving status without resuming
   let sessionsCreated = 0;
   const handle = await createTestPaseoDaemon({
     paseoHomeRoot: root,
+    resumeOnStartup: false,
     agentClients: createTestAgentClients({
       beforeCreateSession: async () => {
         sessionsCreated++;
@@ -1131,6 +1132,7 @@ test("startup closes stale active records before serving status without resuming
   try {
     const expected = records.map((record) => ({
       ...record,
+      resumeOnStartup: false,
       lastStatus:
         record.lastStatus === "running" || record.lastStatus === "initializing"
           ? "closed"

@@ -17,6 +17,26 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("refreshes the existing location before reading a forced catalog", async () => {
+    const harness = new V2Harness();
+    const refreshed: string[] = [];
+    harness.connection.refreshLocation = async (directory) => {
+      refreshed.push(directory);
+    };
+    harness.api.model.list = async () => ({ location: harness.info.location, data: [] });
+    harness.api.provider.list = async () => ({
+      location: harness.info.location,
+      data: [{ id: "test", name: "Test", activation: "enabled", package: "test" }],
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/project", force: true });
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/project", force: false });
+    expect(refreshed).toEqual(["/tmp/project"]);
+    await client.shutdown();
+  });
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();
     harness.prompt = async (input) => {
@@ -1073,4 +1093,111 @@ describe("OpenCode v2 session lifecycle", () => {
       await session.close();
     }
   });
+});
+
+test("OpenCode v2 runtime safety retains shells, queued reports and shared executions", async () => {
+  const harness = new V2Harness();
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  try {
+    expect(await session.canStopRuntime!()).toBe(true);
+    harness.api.shell.list = async () => ({
+      location: { directory: "/tmp/project" },
+      data: [
+        {
+          id: "quiet-shell",
+          status: "running",
+          command: "sleep 7200",
+          cwd: "/tmp/project",
+          shell: "sh",
+          file: "/tmp/out",
+          metadata: {},
+          time: { started: 1 },
+        },
+      ],
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
+    harness.api.shell.list = async () => ({ location: { directory: "/tmp/project" }, data: [] });
+    harness.api.session.inbox.list = async () => [
+      {
+        id: "report",
+        sessionID: session.id!,
+        type: "synthetic",
+        delivery: "queue",
+        time: { created: 1 },
+        payload: { text: "Background child finished" },
+      },
+    ];
+    expect(await session.canStopRuntime!()).toBe(false);
+    harness.api.session.inbox.list = async () => [];
+    harness.api.session.active = async () => ({
+      "unrelated-autonomous-session": { type: "running" },
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
+    harness.api.session.active = async () => ({});
+    expect(await session.canStopRuntime!()).toBe(true);
+    harness.api.shell.list = async () => {
+      throw new Error("No shell inventory");
+    };
+    await expect(session.canStopRuntime!()).rejects.toThrow("No shell inventory");
+  } finally {
+    await session.close();
+  }
+});
+
+test("OpenCode v2 runtime safety follows descendant locations before releasing the last lease", async () => {
+  const harness = new V2Harness();
+  const child = {
+    ...harness.info,
+    id: "child",
+    parentID: harness.info.id,
+    location: { directory: "/tmp/child-worktree" },
+  };
+  const locations: string[] = [];
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  // A completed native child can still own a quiet shell in another location.
+  harness.api.session.list = async (input) => ({
+    data: input.parentID === session.id ? [child] : [],
+    cursor: {},
+  });
+  let running = true;
+  harness.api.shell.list = async (input) => {
+    const directory = input?.location?.directory ?? "";
+    locations.push(directory);
+    return {
+      location: { directory },
+      data:
+        directory === child.location.directory && running
+          ? [
+              {
+                id: "child-shell",
+                status: "running",
+                command: "sleep 7200",
+                cwd: directory,
+                shell: "sh",
+                file: "/tmp/out",
+                metadata: {},
+                time: { started: 1 },
+              },
+            ]
+          : [],
+    };
+  };
+  try {
+    expect(await session.canStopRuntime!()).toBe(false);
+    expect(locations).toEqual(["/tmp/project", "/tmp/child-worktree"]);
+    running = false;
+    expect(await session.canStopRuntime!()).toBe(true);
+    await session.close();
+    expect(harness.releases).toBe(1);
+  } finally {
+    await session.close();
+  }
 });

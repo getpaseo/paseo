@@ -61,10 +61,24 @@ describe("managed Git plugin sources", () => {
     roots.push(home);
     const sources = new ManagedPluginSources(home);
 
-    const failure = sources.prepareInstall({
-      source: "git:https://oauth2:super-secret@127.0.0.1:1/missing.git",
+    // Own the failure response instead of relying on a closed port and OS connect timing.
+    const server = createServer((_request, response) => {
+      response.writeHead(500, { "Content-Type": "text/plain" });
+      response.end("clone rejected for oauth2:super-secret\n");
     });
-    await expect(failure).rejects.not.toThrow(/oauth2|super-secret/);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as { port: number };
+    try {
+      const failure = sources.prepareInstall({
+        source: `git:http://oauth2:super-secret@127.0.0.1:${address.port}/missing.git`,
+      });
+      await expect(failure).rejects.toThrow("500");
+      await expect(failure).rejects.toThrow("clone rejected for [redacted]:[redacted]");
+      await expect(failure).rejects.not.toThrow(/oauth2|super-secret/);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("normalizes explicit GitHub and Git identifiers to the same Git source", async () => {

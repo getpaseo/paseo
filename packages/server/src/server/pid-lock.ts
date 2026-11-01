@@ -30,13 +30,16 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err;
 }
 
+// The field is assigned explicitly rather than declared as a constructor parameter property:
+// the terminal worker loads this module under --experimental-strip-types, which cannot emit
+// the assignment a parameter property implies.
 export class PidLockError extends Error {
-  constructor(
-    message: string,
-    public readonly existingLock?: PidLockInfo,
-  ) {
+  readonly existingLock?: PidLockInfo;
+
+  constructor(message: string, existingLock?: PidLockInfo) {
     super(message);
     this.name = "PidLockError";
+    this.existingLock = existingLock;
   }
 }
 
@@ -69,7 +72,7 @@ let cachedBootId: string | null | undefined;
 // Linux names each boot. The wall-clock boot instant is not enough there: a VM paused while
 // its host sleeps keeps its uptime, so after it resumes the instant lands after locks its
 // running supervisor wrote.
-function currentBootId(): string | null {
+export function currentBootId(): string | null {
   if (cachedBootId === undefined) {
     try {
       cachedBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf-8").trim() || null;
@@ -80,10 +83,17 @@ function currentBootId(): string | null {
   return cachedBootId;
 }
 
-function writtenDuringThisBoot(lock: PidLockInfo): boolean {
+/**
+ * Whether a record stamped with `startedAt` (and, on Linux, `bootId`) was written during the
+ * current boot. Daemon locks and terminal worker records share this rule.
+ */
+export function writtenDuringThisBoot(stamp: {
+  startedAt: string;
+  bootId?: string | null;
+}): boolean {
   const thisBoot = currentBootId();
-  if (lock.bootId && thisBoot) return lock.bootId === thisBoot;
-  return !precedesThisBoot(lock.startedAt);
+  if (stamp.bootId && thisBoot) return stamp.bootId === thisBoot;
+  return !precedesThisBoot(stamp.startedAt);
 }
 
 /**

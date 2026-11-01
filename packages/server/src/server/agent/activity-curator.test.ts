@@ -247,7 +247,7 @@ second line'`,
     ]);
   });
 
-  it("keeps nested sub-agent logs beside the sub-agent that produced them", () => {
+  it("lists each sub-agent as its launch marker", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "assistant_message", text: "Before first child." },
       toolCallItem({
@@ -257,7 +257,7 @@ second line'`,
           type: "sub_agent",
           subAgentType: "Child one",
           description: "First investigation",
-          log: "[Assistant] First child result.",
+          log: "",
         },
       }),
       { type: "assistant_message", text: "Between children." },
@@ -268,7 +268,7 @@ second line'`,
           type: "sub_agent",
           subAgentType: "Child two",
           description: "Second investigation",
-          log: "[Assistant] Second child result.",
+          log: "",
         },
       }),
       { type: "assistant_message", text: "After second child." },
@@ -279,10 +279,8 @@ second line'`,
     expect(result.split("\n")).toEqual([
       "[Assistant] Before first child.",
       "[Child one] First investigation",
-      "[Assistant] First child result.",
       "[Assistant] Between children.",
       "[Child two] Second investigation",
-      "[Assistant] Second child result.",
       "[Assistant] After second child.",
     ]);
   });

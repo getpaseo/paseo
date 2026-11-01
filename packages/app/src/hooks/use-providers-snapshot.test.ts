@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -8,7 +8,7 @@ import {
   expandProviderSnapshot,
 } from "@getpaseo/protocol/provider-snapshot-codec";
 import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
-import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
+import { draftAgentCommandsQueryKey, sessionAgentCommandsQueryKey } from "@/agent-commands/cache";
 import { providerSnapshotIcons } from "@/data/provider-icons";
 import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
 import {
@@ -363,6 +363,153 @@ describe("applyProvidersSnapshotUpdate", () => {
     };
   }
 
+  it("refreshes active commands only when their provider changes after discovery", async () => {
+    const key = sessionAgentCommandsQueryKey({ serverId, agentId: "agent-1" });
+    let requests = 0;
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: async () => {
+        requests++;
+        return [{ name: "review" }];
+      },
+      staleTime: Infinity,
+      meta: { agentCommandProvider: "codex", agentCommandCwd: "/repo-a" },
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await observer.refetch({ cancelRefetch: false });
+    expect(requests).toBe(1);
+    const codex = codexEntry("ready", [readyCodexModel]);
+    const other = { provider: "claude", status: "loading", enabled: true } as ProviderSnapshotEntry;
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("loading"), other], "/repo-a"),
+    });
+    expect(requests).toBe(1);
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage([codex, other], "/repo-a"),
+    });
+    expect(requests).toBe(1);
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage([codex, { ...other, status: "ready" }], "/repo-a"),
+    });
+    expect(requests).toBe(1);
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage(
+        [
+          { ...codex, fetchedAt: "2026-01-01T00:00:02.000Z" },
+          { ...other, status: "ready" },
+        ],
+        "/repo-a",
+      ),
+    });
+    expect(requests).toBe(1);
+    queryClient.setQueryData(
+      providersSnapshotQueryKey(serverId, "/repo-b"),
+      providersSnapshot([codex]),
+    );
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage(
+        [codexEntry("ready", [{ ...readyCodexModel, label: "Other checkout" }])],
+        "/repo-b",
+      ),
+    });
+    expect(requests).toBe(1);
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage(
+        [
+          codexEntry("ready", [{ ...readyCodexModel, label: "Updated" }]),
+          { ...other, status: "ready" },
+        ],
+        "/repo-a",
+      ),
+    });
+    await observer.refetch({ cancelRefetch: false });
+    expect(requests).toBe(2);
+    unsubscribe();
+    queryClient.clear();
+  });
+
+  it("retries a failed command discovery when its provider first becomes ready", async () => {
+    const key = sessionAgentCommandsQueryKey({ serverId, agentId: "agent-1" });
+    let ready = false;
+    let requests = 0;
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: async () => {
+        requests++;
+        if (!ready) throw new Error("provider unavailable");
+        return [{ name: "review" }];
+      },
+      retry: false,
+      meta: { agentCommandProvider: "codex", agentCommandCwd: "/repo-a" },
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await observer.refetch({ cancelRefetch: false });
+    expect(observer.getCurrentResult().isError).toBe(true);
+    ready = true;
+    await applyProvidersSnapshotUpdate({
+      client: createClient(),
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])], "/repo-a"),
+    });
+    await observer.refetch({ cancelRefetch: false });
+    expect(requests).toBe(2);
+    expect(observer.getCurrentResult().data).toEqual([{ name: "review" }]);
+    unsubscribe();
+    queryClient.clear();
+  });
+
+  it("refreshes again when its provider changes during an active refresh", async () => {
+    const key = sessionAgentCommandsQueryKey({ serverId, agentId: "agent-1" });
+    queryClient.setQueryData(key, [{ name: "old" }]);
+    let requests = 0;
+    const waiting = new Promise<{ name: string }[]>(() => {});
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: async () => (++requests === 1 ? waiting : [{ name: "new" }]),
+      staleTime: Infinity,
+      meta: { agentCommandProvider: "codex", agentCommandCwd: "/repo-a" },
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    queryClient.setQueryData(
+      providersSnapshotQueryKey(serverId, "/repo-a"),
+      providersSnapshot([codexEntry("ready", [readyCodexModel])]),
+    );
+    const send = (label: string) =>
+      applyProvidersSnapshotUpdate({
+        client: createClient(),
+        serverId,
+        queryClient,
+        message: updateMessage([codexEntry("ready", [{ ...readyCodexModel, label }])], "/repo-a"),
+      });
+    await send("First change");
+    expect(requests).toBe(1);
+    await send("Second change");
+    expect(requests).toBe(2);
+    await observer.refetch({ cancelRefetch: false });
+    expect(observer.getCurrentResult().data).toEqual([{ name: "new" }]);
+    unsubscribe();
+    queryClient.clear();
+  });
+
   it("routes updates to the home query cache when the message carries no cwd", async () => {
     await applyProvidersSnapshotUpdate({
       client: createClient(),
@@ -455,6 +602,10 @@ describe("applyProvidersSnapshotUpdate", () => {
       draftConfig: { provider: "codex", cwd: "/repo-a" },
     });
     queryClient.setQueryData(commandsKey, [{ name: "compact", description: "", argumentHint: "" }]);
+    queryClient.setQueryData(
+      providersSnapshotQueryKey(serverId, "/repo-a"),
+      providersSnapshot([codexEntry("ready")]),
+    );
 
     await applyProvidersSnapshotUpdate({
       client: createClient(),
