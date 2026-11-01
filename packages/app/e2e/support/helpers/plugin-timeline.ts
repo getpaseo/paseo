@@ -7,6 +7,7 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 import { expectReconnectingToastVisible } from "./workspace-ui";
+import { userScrollsTimelineToHistoryStart } from "./timeline-pagination";
 
 const PLUGIN_ID = "timeline-transform-e2e";
 
@@ -366,4 +367,82 @@ export async function viewInlineThinkingExample(page: Page, info: TestInfo): Pro
     await agent.cleanup();
     await example.cleanup();
   }
+}
+
+/** Reuse plugin-local IDs across distinct source messages in a real virtualized chat. */
+export async function withRepeatedOutputTimeline(
+  page: Page,
+  info: TestInfo,
+  run: () => Promise<void>,
+): Promise<void> {
+  info.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-local-ids-",
+    title: "Repeated plugin output IDs",
+  });
+  try {
+    for (const label of ["First", "Second", "Third"]) {
+      await agent.client.sendAgentMessage(
+        agent.agentId,
+        `${label}: emit 1 coalesced agent stream updates`,
+      );
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+    }
+    await withDirectoryPlugin({
+      pluginId: "timeline-local-ids",
+      source: `import React from "react";
+import { Text, View } from "react-native";
+import { z } from "zod";
+function Row({ item }) {
+  return <View style={{ height: item.data.tall ? 120 : 24 }}>
+    <Text>{item.data.label}</Text>
+  </View>;
+}
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "local-ids", query: { itemType: "user_message" },
+    transform({ item }) {
+      const label = item.text.split(":")[0];
+      return { items: Array.from({ length: 60 }, (_, index) => ({
+        type: "plugin", id: "part-" + index, kind: "reply", version: 1,
+        data: { label: label + " replacement " + index, tall: label === "Second" },
+      })) };
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "reply", version: 1,
+    schema: z.object({ label: z.string(), tall: z.boolean() }), Component: Row,
+  });
+  return () => {};
+}`,
+      run: async () => {
+        await openAgentRoute(page, agent);
+        await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
+        await run();
+      },
+    });
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function readOldestPluginReplacement(page: Page): Promise<void> {
+  await expect(page.getByText("Third replacement 59", { exact: true }).first()).toBeAttached();
+  await expect
+    .poll(async () => {
+      await userScrollsTimelineToHistoryStart(page);
+      return page.getByText("First replacement 0", { exact: true }).isVisible();
+    })
+    .toBe(true);
+}
+
+export async function expectOldestPluginReplacementReadable(page: Page): Promise<void> {
+  await expect(
+    page
+      .getByTestId("agent-chat-scroll")
+      .locator("[data-index]")
+      .getByText("First replacement 0", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
+  await expect(page.getByText("Paseo ran into a problem.", { exact: true })).toHaveCount(0);
 }

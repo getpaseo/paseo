@@ -10,7 +10,6 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { reduceStreamUpdate, type StreamItem } from "@/types/stream";
 import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
-import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 
 vi.hoisted(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -56,11 +55,10 @@ function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
   };
 }
 
-function MeasuredTestRow({ item, measuredHeight }: { item: StreamItem; measuredHeight?: number }) {
+function MeasuredTestRow({ item }: { item: StreamItem }) {
   const [loaded, setLoaded] = React.useState(false);
   const load = React.useCallback(() => setLoaded(true), []);
-  const height =
-    measuredHeight ?? (item.kind === "user_message" && item.text === "grown" ? 120 : 24);
+  const height = item.kind === "user_message" && item.text === "grown" ? 120 : 24;
   const measure = React.useCallback(
     (node: HTMLDivElement | null) => {
       if (!node?.parentElement) return;
@@ -252,75 +250,6 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
-  });
-
-  it("settles row measurement when a plugin reuses output IDs across source messages", () => {
-    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    const renderRow = (rowItem: StreamItem) => (
-      <MeasuredTestRow
-        item={rowItem}
-        measuredHeight={rowItem.kind === "plugin" && rowItem.sourceId === "message-2" ? 120 : 24}
-      />
-    );
-    const historyVirtualized = projectPluginTimelineItems(
-      [userMessage(0), userMessage(1), userMessage(2), userMessage(3), userMessage(4)],
-      ({ sourceId }) =>
-        sourceId === "message-2" || sourceId === "message-3"
-          ? [
-              {
-                type: "plugin",
-                id: "part-0",
-                pluginId: "split",
-                kind: "part",
-                version: 1,
-                data: null,
-              },
-            ]
-          : undefined,
-    );
-    const input: StreamRenderInput = {
-      agentId: "agent",
-      segments: { historyVirtualized, historyMounted: [], liveHead: [] },
-      boundary: { hasVirtualizedHistory: true, hasMountedHistory: false, hasLiveHead: false },
-      renderers: {
-        renderHistoryVirtualizedRow: renderRow,
-        renderHistoryMountedRow: renderRow,
-        renderLiveHeadRow: renderRow,
-        renderLiveAuxiliary: () => null,
-      },
-      listEmptyComponent: null,
-      viewportRef: React.createRef<StreamViewportHandle>(),
-      routeBottomAnchorRequest: null,
-      isAuthoritativeHistoryReady: true,
-      onNearBottomChange: () => {},
-      onNearHistoryStart: () => true,
-      isLoadingOlderHistory: false,
-      hasOlderHistory: false,
-      olderHistoryProgressKey: null,
-      scrollEnabled: true,
-      listStyle: null,
-      baseListContentContainerStyle: null,
-      forwardListContentContainerStyle: null,
-      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
-    };
-
-    // Before the fix, this render aborted with "Maximum update depth exceeded".
-    act(() => root?.render(strategy.render(input)));
-
-    const rows = [...container.querySelectorAll<HTMLElement>("[data-history-row-id]")];
-    expect(rows.map((row) => row.dataset.historyRowId)).toEqual(
-      historyVirtualized.map((row) => row.id),
-    );
-    expect(rows.map((row) => row.style.transform)).toEqual([
-      "translateY(0px)",
-      "translateY(24px)",
-      "translateY(48px)",
-      "translateY(168px)",
-      "translateY(192px)",
-    ]);
   });
 
   it("retains a row's DOM and local state when recent history becomes virtualized", () => {
