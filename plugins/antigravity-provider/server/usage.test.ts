@@ -448,6 +448,125 @@ describe("Antigravity Usage", () => {
     });
   });
 
+  test("Usage.fetch returns rejected problem for agy's real signed-out JSON", async () => {
+    // Captured from agy 1.4.12 on Linux with no login: response is empty and the reason
+    // lives in the error field.
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        conversation_id: "",
+        status: "ERROR",
+        response: "",
+        error: "authentication failed or timed out",
+        duration_seconds: 0,
+        num_turns: 0,
+        usage: { total_tokens: 0 },
+        finished_reason: "error",
+      }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  test("Usage.fetch returns rejected problem for agy's real signed-out stderr", async () => {
+    // Captured from agy 1.4.12 exiting non-zero: the sign-in guidance arrives on stderr and
+    // Node folds it into the error message.
+    const runner = vi.fn(async () => {
+      throw new Error(
+        "Command failed: agy -p /usage --output-format json\n" +
+          "Error: authentication required. Run 'agy' to log in, then retry.\n" +
+          "error: authentication failed or timed out\n",
+      );
+    });
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  test("Usage.fetch reports empty agy output", async () => {
+    const runner = vi.fn(async () => "  \n");
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Empty output from agy usage",
+    });
+  });
+
+  test("Usage.fetch reports unparsable agy output", async () => {
+    const runner = vi.fn(async () => "not-json");
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Failed to parse agy output: not-json",
+    });
+  });
+
+  test("Usage.fetch reports an unexpected agy response shape", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({ status: "SUCCESS", command: { data: { groups: "not-an-array" } } }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Unexpected response format from agy usage",
+    });
+  });
+
+  test("Usage.fetch surfaces the failure agy reports", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({ status: "QUOTA_UNAVAILABLE", response: "quota backend unavailable" }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "quota backend unavailable",
+    });
+  });
+
   test("Usage.fetch throws for unknown account", async () => {
     const usage = new Usage();
     const source = usage.registration();

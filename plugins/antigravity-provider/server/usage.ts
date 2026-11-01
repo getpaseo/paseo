@@ -38,6 +38,7 @@ export const agyGroupSchema = z.object({
 export const agyUsageResponseSchema = z.object({
   status: z.string().optional(),
   response: z.string().optional(),
+  error: z.string().optional(),
   command: z
     .object({
       name: z.string().optional(),
@@ -55,6 +56,15 @@ export function accountKey(env: ProviderLaunch["env"]): string {
   const home = env.HOME ?? homedir();
   const configHome = env.ANTIGRAVITY_HOME ?? path.join(home, ".gemini", "antigravity-cli");
   return hashAccountKey(path.resolve(configHome));
+}
+
+/**
+ * agy reports a signed-out login in more than one shape: `status: "ERROR"` with an `error`
+ * field, an empty `response`, or a non-zero exit with the guidance on stderr ("authentication
+ * required", "log in"). All of them mean the stored login is no longer usable.
+ */
+function isAuthenticationFailure(text: string): boolean {
+  return /authenticat|sign[ -]?in|log ?in/i.test(text);
 }
 
 function getGroupInfo(name?: string): { prefix: string; short: string; id: string } {
@@ -280,8 +290,10 @@ export class Usage {
 
           if (parsed.data.status !== "SUCCESS") {
             const responseMsg =
-              parsed.data.response || `agy reported status: ${parsed.data.status ?? "UNKNOWN"}`;
-            if (/not authenticated|unauthenticated|sign in/i.test(responseMsg)) {
+              parsed.data.response ||
+              parsed.data.error ||
+              `agy reported status: ${parsed.data.status ?? "UNKNOWN"}`;
+            if (isAuthenticationFailure(responseMsg)) {
               return unavailable({
                 kind: "rejected",
                 status: 401,
@@ -316,7 +328,7 @@ export class Usage {
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (/not authenticated|unauthenticated|sign in/i.test(message)) {
+          if (isAuthenticationFailure(message)) {
             return unavailable({
               kind: "rejected",
               status: 401,
