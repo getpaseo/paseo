@@ -73,7 +73,6 @@ interface SidebarViewStoreState {
   clearProjectFilters: () => void;
   toggleLabelFilter: (name: string) => void;
   clearLabelFilter: () => void;
-  reconcileLabelFilter: (labels: readonly string[]) => void;
   reconcileHostFilters: (serverIds: readonly string[]) => void;
 }
 
@@ -217,15 +216,6 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
           return { labelFilter: { ...state.labelFilter, labels } };
         }),
       clearLabelFilter: () => set({ labelFilter: emptyLabelFilter() }),
-      reconcileLabelFilter: (labels) =>
-        set((state) => {
-          const available = new Set(labels.map(workspaceLabelKey));
-          const next = state.labelFilter.labels.filter(
-            (label) => label === SIDEBAR_UNLABELLED_LABEL_KEY || available.has(label),
-          );
-          if (next.length === state.labelFilter.labels.length) return state;
-          return { labelFilter: { labels: next } };
-        }),
       reconcileHostFilters: (serverIds) =>
         set((state) => {
           if (state.hostFilters.length === 0) {
