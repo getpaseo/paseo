@@ -1096,7 +1096,9 @@ function createToolCatalog(
       features: z
         .record(z.string(), z.unknown())
         .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+        .describe(
+          'Provider-specific feature values returned by inspect_provider, for example { service_tier: "priority" } for Codex or { fast_mode: true } for Claude.',
+        ),
     })
     .strict();
   const UpdateAgentSettingsInputSchema = z
@@ -1111,7 +1113,9 @@ function createToolCatalog(
       features: z
         .record(z.string(), z.unknown())
         .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+        .describe(
+          'Provider-specific feature values returned by inspect_provider, for example { service_tier: "priority" } for Codex or { fast_mode: true } for Claude.',
+        ),
     })
     .strict();
   const InspectProviderSettingsInputSchema = z
