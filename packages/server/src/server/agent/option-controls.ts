@@ -111,7 +111,9 @@ export function foldHookFeatureValues<
     // No copy was sent, so everything the hook put in `featureValues` is new.
     return foldFeatureValues({ config: returned, provider: returned.provider });
   }
-  const after = featureValues ?? {};
+  // The copy the hook was sent is canonical; what it returns may name the old key, so both
+  // sides are compared in the same form and a replaced speed is not read as a deletion.
+  const after = convertLegacyOptions({ provider: returned.provider, options: featureValues ?? {} });
   const patch: ProviderOptionsPatch = {};
   for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (isDeepStrictEqual(after[key], before[key])) continue;
@@ -124,7 +126,7 @@ export function foldHookFeatureValues<
         provider: returned.provider,
         options: rest.providerOptions ?? undefined,
       }),
-      patch: convertLegacyOptions({ provider: returned.provider, options: patch }),
+      patch,
     }),
   };
 }

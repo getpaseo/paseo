@@ -31,7 +31,11 @@ export interface AgentConfigOperations {
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
   /** COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Older clients' values. */
-  setFeatureValues(agentId: string, values: Record<string, unknown>): Promise<void>;
+  setFeatureValues(input: {
+    agentId: string;
+    values: Record<string, unknown>;
+    options?: ProviderOptionsPatch;
+  }): Promise<void>;
   setThinking(
     agentId: string,
     thinkingOptionId: string | null,
@@ -117,7 +121,7 @@ export class AgentConfigSession {
       failureText: "Failed to set agent feature",
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A feature is a one-key options patch.
       run: async () => {
-        await this.operations.setFeatureValues(agentId, { [featureId]: value });
+        await this.operations.setFeatureValues({ agentId, values: { [featureId]: value } });
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_feature_response", payload }),
@@ -194,11 +198,16 @@ export class AgentConfigSession {
       notice ??= thinkingNotice;
     }
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. `featureValues` is an options patch.
-    if (config.featureValues && Object.keys(config.featureValues).length > 0) {
-      await this.operations.setFeatureValues(agentId, config.featureValues);
-    }
-    if (config.options && Object.keys(config.options).length > 0) {
-      await this.operations.setOptions(agentId, config.options);
+    const hasValues = config.featureValues && Object.keys(config.featureValues).length > 0;
+    const hasOptions = config.options && Object.keys(config.options).length > 0;
+    if (hasValues) {
+      await this.operations.setFeatureValues({
+        agentId,
+        values: config.featureValues ?? {},
+        options: config.options,
+      });
+    } else if (hasOptions) {
+      await this.operations.setOptions(agentId, config.options ?? {});
     }
 
     return notice;

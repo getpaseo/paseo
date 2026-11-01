@@ -13,7 +13,11 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
   readonly optionsCalls: Array<{ agentId: string; patch: Record<string, unknown> }> = [];
-  readonly featureValueCalls: Array<{ agentId: string; values: Record<string, unknown> }> = [];
+  readonly featureValueCalls: Array<{
+    agentId: string;
+    values: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
   /** Cross-operation ordering, which the per-operation arrays above cannot show. */
   readonly callLog: string[] = [];
@@ -46,8 +50,12 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     if (this.failWith) throw this.failWith;
   }
 
-  async setFeatureValues(agentId: string, values: Record<string, unknown>): Promise<void> {
-    this.featureValueCalls.push({ agentId, values });
+  async setFeatureValues(input: {
+    agentId: string;
+    values: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }): Promise<void> {
+    this.featureValueCalls.push(input);
     this.callLog.push("featureValues");
     if (this.failWith) throw this.failWith;
   }
@@ -366,7 +374,7 @@ describe("AgentConfigSession", () => {
     ]);
   });
 
-  test("apply: legacy featureValues are applied first and options after, so options win", async () => {
+  test("apply: legacy featureValues and options go in one call, options winning", async () => {
     const { subsystem, operations } = makeSubsystem();
 
     await subsystem.handleAgentConfigApplyRequest({
@@ -379,11 +387,14 @@ describe("AgentConfigSession", () => {
       requestId: "req-1",
     });
 
-    expect(operations.callLog).toEqual(["featureValues", "options"]);
+    expect(operations.callLog).toEqual(["featureValues"]);
     expect(operations.featureValueCalls).toEqual([
-      { agentId: "agent-1", values: { fast_mode: true, service_tier: "fast" } },
+      {
+        agentId: "agent-1",
+        values: { fast_mode: true, service_tier: "fast" },
+        options: { fast_mode: false },
+      },
     ]);
-    expect(operations.optionsCalls).toEqual([{ agentId: "agent-1", patch: { fast_mode: false } }]);
   });
 
   test("apply: leaves omitted fields alone", async () => {

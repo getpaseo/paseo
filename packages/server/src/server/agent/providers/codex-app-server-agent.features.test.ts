@@ -797,7 +797,7 @@ describe("Codex app-server provider controls", () => {
       const agentId = await create();
       expect(shownSpeed(agentId).selected).toBe("default");
 
-      await manager.setAgentFeatureValues(agentId, { fast_mode: true });
+      await manager.setAgentFeatureValues({ agentId, values: { fast_mode: true } });
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
       await runTurn(agentId, "priority");
 
@@ -818,7 +818,24 @@ describe("Codex app-server provider controls", () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create({ service_tier: "priority" });
 
-      await manager.setAgentFeatureValues(agentId, { service_tier: "default", fast_mode: true });
+      await manager.setAgentFeatureValues({
+        agentId,
+        values: { service_tier: "default", fast_mode: true },
+      });
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
+      await runTurn(agentId, "default");
+    });
+
+    test("options sent with the older values replace them before anything is applied", async () => {
+      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await create({ service_tier: "priority" });
+
+      await manager.setAgentFeatureValues({
+        agentId,
+        values: { service_tier: "retired-tier" },
+        options: { service_tier: "default" },
+      });
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
       await runTurn(agentId, "default");
@@ -828,7 +845,7 @@ describe("Codex app-server provider controls", () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create({ service_tier: "priority" });
 
-      await manager.setAgentFeatureValues(agentId, { fast_mode: false });
+      await manager.setAgentFeatureValues({ agentId, values: { fast_mode: false } });
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
       await runTurn(agentId, "default");
