@@ -1671,7 +1671,8 @@ function ExpandableBadgeLabelRow({
           onPress={onOpenFilePress}
           onHoverIn={onOpenFileHoverIn}
           onHoverOut={onOpenFileHoverOut}
-          accessibilityRole="button"
+          // The whole badge header is already a button on web, and a <button> cannot nest another.
+          accessibilityRole={isWeb ? undefined : "button"}
           accessibilityLabel={t("message.actions.openFile")}
           testID="tool-call-open-file"
           style={expandableBadgeStylesheet.openFileButton}
