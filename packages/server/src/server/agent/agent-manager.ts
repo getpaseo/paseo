@@ -2323,9 +2323,18 @@ export class AgentManager {
    * `settings.features` sends composer values as `featureValues`; this is where they become an
    * options patch for the agent's provider.
    */
-  async setAgentFeatureValues(agentId: string, values: Record<string, unknown>): Promise<void> {
+  async setAgentFeatureValues(input: {
+    agentId: string;
+    values: Record<string, unknown>;
+    /** Options sent with the values; they win over a value of the same name. */
+    options?: Record<string, unknown>;
+  }): Promise<void> {
+    const { agentId, values, options } = input;
     const provider = this.requireAgent(agentId).provider;
-    await this.setAgentOptions(agentId, convertLegacyOptions({ provider, options: values }));
+    await this.setAgentOptions(agentId, {
+      ...convertLegacyOptions({ provider, options: values }),
+      ...options,
+    });
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */

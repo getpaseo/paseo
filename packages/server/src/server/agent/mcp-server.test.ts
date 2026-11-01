@@ -4718,8 +4718,9 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentMode).toHaveBeenCalledWith("agent-1", "full-access");
     expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
     expect(spies.agentManager.setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
-    expect(spies.agentManager.setAgentFeatureValues).toHaveBeenCalledWith("agent-1", {
-      fast_mode: true,
+    expect(spies.agentManager.setAgentFeatureValues).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      values: { fast_mode: true },
     });
     expect(spies.agentManager.updateAgentMetadata).toHaveBeenCalledWith("agent-1", {
       title: "Updated agent",

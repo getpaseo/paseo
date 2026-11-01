@@ -49,4 +49,17 @@ describe("legacy Codex Fast at the other entry points", () => {
       service_tier: "fast",
     });
   });
+
+  test("a hook that replaces the speed it was sent with fast_mode selects Fast", () => {
+    const sent = {
+      provider: "codex",
+      providerOptions: { service_tier: "default" },
+      featureValues: { service_tier: "default" },
+    };
+    const returned = { ...sent, featureValues: { fast_mode: true } };
+
+    expect(foldHookFeatureValues({ returned, sent }).providerOptions).toEqual({
+      service_tier: "fast",
+    });
+  });
 });

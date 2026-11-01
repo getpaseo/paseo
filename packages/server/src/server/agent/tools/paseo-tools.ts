@@ -2292,7 +2292,7 @@ function createToolCatalog(
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
       if (settings?.features) {
-        await agentManager.setAgentFeatureValues(agentId, settings.features);
+        await agentManager.setAgentFeatureValues({ agentId, values: settings.features });
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });
