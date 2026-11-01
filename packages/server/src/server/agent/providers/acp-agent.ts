@@ -3363,9 +3363,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           turnId,
           // A budget stop means the provider ran out of room, not that it finished. The UI
           // shows it as a truncated turn so the user knows the task is unfinished.
-          ...(isBudgetStopReason(response.stopReason)
-            ? { stopReason: response.stopReason }
-            : {}),
+          ...(isBudgetStopReason(response.stopReason) ? { stopReason: response.stopReason } : {}),
         });
         break;
     }

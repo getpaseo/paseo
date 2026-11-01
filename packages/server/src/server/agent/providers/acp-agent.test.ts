@@ -3138,7 +3138,9 @@ describe("ACPAgentSession", () => {
 
     const completed = events.find((event) => event.type === "turn_completed");
     expect(completed).toMatchObject({ type: "turn_completed", turnId });
-    expect(completed && "stopReason" in completed ? completed.stopReason : undefined).toBeUndefined();
+    expect(
+      completed && "stopReason" in completed ? completed.stopReason : undefined,
+    ).toBeUndefined();
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {

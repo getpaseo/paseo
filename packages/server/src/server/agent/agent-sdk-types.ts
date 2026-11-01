@@ -4,6 +4,7 @@ import type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  AgentTurnStopReason,
   JsonValue,
   ProviderOptions,
   ToolPolicy,
@@ -18,6 +19,7 @@ export type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  AgentTurnStopReason,
 };
 
 export type AgentProvider = string;
@@ -415,7 +417,18 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      /**
+       * Why the provider ended the turn, when it says. A budget stop
+       * (`max_turn_requests`, `max_tokens`, `refusal`) means the turn was cut
+       * short rather than finished, so the UI can present it as truncated.
+       */
+      stopReason?: AgentTurnStopReason;
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "mode_changed";
