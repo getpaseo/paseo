@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { expect, test as base } from "../support/fixtures";
 import {
   answerNextRemovalWarning,
@@ -97,6 +97,31 @@ test.describe("Host agent skills", () => {
     await saveSkillSelection(page);
     expect((await warning).message()).toContain(partial);
     await expectSkillFile(skills, "claude", partial, "SKILL.md");
+    await expectSavedSelection(skills, { mode: "all" });
+  });
+
+  test("dismisses and then accepts removal of retired paseo-loop", async ({ page, skills }) => {
+    await skills.install({ mode: "all" });
+    await skills.placeSkillOnDisk("paseo-loop", "claude", {
+      "SKILL.md": "# Retired paseo-loop\n",
+      "notes/mine.md": "user notes",
+    });
+    await openAgentSkillsSettings(page, skills);
+    await openSkillSelection(page);
+    await expect(page.getByRole("checkbox", { name: "paseo-loop", exact: true })).toHaveCount(0);
+
+    const dismissedWarning = answerNextRemovalWarning(page, "dismiss");
+    await saveSkillSelection(page);
+    expect((await dismissedWarning).message()).toContain("paseo-loop");
+    await expect(
+      readFile(`${skills.targets.claude}/paseo-loop/notes/mine.md`, "utf8"),
+    ).resolves.toEqual("user notes");
+    await expectSavedSelection(skills, { mode: "all" });
+
+    const acceptedWarning = answerNextRemovalWarning(page, "accept");
+    await saveSkillSelection(page);
+    expect((await acceptedWarning).message()).toContain("paseo-loop");
+    await expectInstalledSkills(skills, skills.available);
     await expectSavedSelection(skills, { mode: "all" });
   });
 
