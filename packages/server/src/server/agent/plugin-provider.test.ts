@@ -1082,11 +1082,9 @@ describe("PluginAgentClientRegistry", () => {
 
       changeOnItsOwn({ loud: true });
 
-      await vi.waitFor(() =>
-        expect(eventsOfType(events, "options_changed")).toEqual([
-          { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
-        ]),
-      );
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
       await session.close();
     });
 
