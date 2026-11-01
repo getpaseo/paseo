@@ -2426,6 +2426,10 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      chatCopyOnSelect: {
+        label: "Copiar al seleccionar",
+        description: "Copia el texto del chat al portapapeles al seleccionarlo",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:

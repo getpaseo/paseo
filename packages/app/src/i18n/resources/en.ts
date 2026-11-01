@@ -2498,6 +2498,10 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      chatCopyOnSelect: {
+        label: "Copy on select",
+        description: "Copy chat text to the clipboard when you select it",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
