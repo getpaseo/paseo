@@ -1095,6 +1095,7 @@ export class OmpAgentSession implements AgentSession {
       const old = this.runtimeSession;
       const oldHostTools = this.hostTools;
       const previousSessionId = this.state.sessionId;
+      const fastModeBefore = this.state.fastModeEnabled;
       const restarted = await this.restartRuntime(
         this.config.internal ? null : (this.state.sessionFile ?? null),
         modeId,
@@ -1115,6 +1116,7 @@ export class OmpAgentSession implements AgentSession {
         this.config.modeId = modeId;
         this.runtimeDead = false;
         this.attachRuntime(next);
+        this.publishFastModeChange(fastModeBefore);
         this.subagentIndex.clear(old);
         await oldHostTools?.close();
         await old.close().catch(() => undefined);
@@ -2267,6 +2269,11 @@ export class OmpAgentSession implements AgentSession {
   private async refreshState(): Promise<void> {
     const before = this.state.fastModeEnabled;
     this.state = await this.runtimeSession.getState();
+    this.publishFastModeChange(before);
+  }
+
+  // The runtime owns Fast: whatever it accepted is what the session now runs with.
+  private publishFastModeChange(before: boolean | undefined): void {
     if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
       this.rememberFastMode(this.state.fastModeEnabled);
       this.emit({
