@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import {
+  compareReports,
   resolveUsageReport,
   displayPercent,
   resolveAgentUsageView,
@@ -237,8 +238,9 @@ describe("upsertReport", () => {
     expect(upsertReport(undefined, alpha)).toEqual([alpha]);
   });
 
-  it("appends a report the list does not have yet", () => {
+  it("adds a report the list does not have yet in report order, whatever order they arrive in", () => {
     expect(upsertReport([alpha], beta)).toEqual([alpha, beta]);
+    expect(upsertReport([beta], alpha)).toEqual([alpha, beta]);
   });
 
   it("replaces a report the list already has, in place", () => {
@@ -272,18 +274,48 @@ describe("settleReports", () => {
     expect(settleReports(streamed, [beta, refreshed])).toEqual([refreshed, beta]);
   });
 
-  it("drops missing reports and appends new ones without moving surviving reports", () => {
+  it("drops missing reports and puts new ones in report order", () => {
     const gamma = entry({ sourceId: "gamma" });
     const delta = entry({ sourceId: "delta" });
     expect(settleReports([alpha, beta, gamma], [delta, gamma, alpha])).toEqual([
       alpha,
-      gamma,
       delta,
+      gamma,
     ]);
   });
 
-  it("takes the finished list as is when nothing was shown yet", () => {
-    expect(settleReports(undefined, [alpha, beta])).toEqual([alpha, beta]);
+  it("orders the finished list when nothing was shown yet", () => {
+    expect(settleReports(undefined, [beta, alpha])).toEqual([alpha, beta]);
+  });
+});
+
+describe("compareReports", () => {
+  function report(input: {
+    sourceId: string;
+    sourceLabel: string;
+    account?: string;
+  }): UsageReportEntry {
+    return {
+      ...entry({ sourceId: input.sourceId }),
+      id: `${input.sourceId}:${input.account ?? "default"}`,
+      sourceLabel: input.sourceLabel,
+      account: input.account ? { label: input.account } : {},
+    };
+  }
+
+  it("orders by source name ignoring case, then source, then account", () => {
+    const zai = report({ sourceId: "zai", sourceLabel: "Z.AI" });
+    const codexWork = report({ sourceId: "codex", sourceLabel: "Codex", account: "work" });
+    const codexHome = report({ sourceId: "codex", sourceLabel: "Codex", account: "home" });
+    const claude = report({ sourceId: "claude", sourceLabel: "claude" });
+    const otherClaude = report({ sourceId: "claude-team", sourceLabel: "Claude" });
+    expect([zai, codexWork, otherClaude, codexHome, claude].sort(compareReports)).toEqual([
+      claude,
+      otherClaude,
+      codexHome,
+      codexWork,
+      zai,
+    ]);
   });
 });
 
