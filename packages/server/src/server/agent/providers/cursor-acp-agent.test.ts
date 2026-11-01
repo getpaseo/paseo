@@ -215,7 +215,9 @@ describe("CursorACPAgentClient session start", () => {
     session: {
       currentModelId: string;
       configOptions: SessionConfigOption[];
-      setSessionConfigOption?: () => Promise<{ configOptions: SessionConfigOption[] }>;
+      setSessionConfigOption?: (request: {
+        value: string;
+      }) => Promise<{ configOptions: SessionConfigOption[] }>;
     } = { currentModelId: "kimi-k3", configOptions: KIMI_K3_CONFIG_OPTIONS },
     logger = createTestLogger(),
   ): ACPAgentSession {
@@ -323,6 +325,52 @@ describe("CursorACPAgentClient session start", () => {
 
     await expect(session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" })).rejects.toThrow(
       "acp does not expose ACP feature 'fast'",
+    );
+  });
+
+  test("removing auto_accept stops answering permission requests on its own", async () => {
+    const session = createCursorSession({ model: "composer-2.5" });
+    await session.initializeNewSession();
+    const request = {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", title: "Run command", kind: "execute", status: "pending" },
+      options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+    } as const;
+
+    await session.applyOptions({ auto_accept: true });
+    await expect(session.requestPermission({ ...request })).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-always" },
+    });
+
+    await session.applyOptions({});
+    void session.requestPermission({ ...request });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+  });
+
+  test("removing the Fast option returns the session to the value it started with", async () => {
+    const setSessionConfigOption = vi.fn(async (request: { value: string }) => ({
+      configOptions: [fastConfigOption(request.value === "true" ? "true" : "false")],
+    }));
+    const session = createCursorSession(
+      { model: "composer-2.5" },
+      {
+        currentModelId: "composer-2.5",
+        configOptions: [fastConfigOption("false")],
+        setSessionConfigOption,
+      },
+    );
+    await session.initializeNewSession();
+
+    await session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" });
+    // `{ fast: null }` with no config.json default reaches the provider as no key at all.
+    await session.applyOptions({});
+
+    expect(setSessionConfigOption.mock.calls.map(([request]) => request.value)).toEqual([
+      "true",
+      "false",
+    ]);
+    expect(session.controls).toContainEqual(
+      expect.objectContaining({ key: "fast", defaultValue: "false" }),
     );
   });
 

@@ -12784,20 +12784,31 @@ describe("agent options", () => {
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
   });
 
-  test("shows the option as the session resolved it while the stored intent stays", async () => {
-    class ResolvingSession extends OptionsSession {
-      displayOptions(options: ProviderOptions): ProviderOptions {
-        return options.service_tier === "fast" ? { ...options, service_tier: "priority" } : options;
+  test("the snapshot reports the configured options and resolves aliases through controls", async () => {
+    class AliasSession extends OptionsSession {
+      get controls(): AgentOptionControl[] {
+        return [
+          {
+            type: "select",
+            key: "service_tier",
+            label: "Speed",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Normal" },
+              { value: "priority", label: "Fast", aliases: ["fast"] },
+            ],
+          },
+        ];
       }
     }
-    class ResolvingClient extends OptionsClient {
+    class AliasClient extends OptionsClient {
       override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-        return new ResolvingSession(config);
+        return new AliasSession(config);
       }
     }
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
     const manager = new AgentManager({
-      clients: { codex: new ResolvingClient() },
+      clients: { codex: new AliasClient() },
       registry: new AgentStorage(join(workdir, "agents"), logger),
       logger,
     });
@@ -12807,9 +12818,11 @@ describe("agent options", () => {
       { workspaceId: undefined },
     );
 
-    const agent = manager.getAgent(created.id);
-    expect(agent?.config.providerOptions).toEqual({ service_tier: "fast" });
-    expect(agent?.effectiveOptions).toEqual({ service_tier: "priority" });
+    const payload = toAgentPayload(manager.getAgent(created.id)!);
+    expect(payload.options).toEqual({ service_tier: "fast" });
+    expect(payload.features).toEqual([
+      expect.objectContaining({ id: "service_tier", value: "priority" }),
+    ]);
   });
 
   test("an option without a control is settable through the patch and readable in the snapshot", async () => {

@@ -1348,6 +1348,35 @@ describe("DaemonConfigStore reload", () => {
     expect(store.get().agentProfiles).toBeUndefined();
   });
 
+  test("reload folds a profile file written with featureValues into options, and saving it persists options", async () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    writeConfig(paseoHome, {
+      ...persisted,
+      daemon: {
+        ...persisted.daemon,
+        agentProfiles: [
+          {
+            id: "legacy",
+            name: "Legacy",
+            provider: "codex",
+            featureValues: { service_tier: "fast" },
+          },
+        ],
+      },
+    });
+
+    await store.reload();
+
+    expect(store.get().agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
+    // The app reads the profile and writes the list back on its next edit.
+    await store.patch({ agentProfiles: store.get().agentProfiles });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
+  });
+
   test("reports a launch-controlled edit without changing live state", async () => {
     const { paseoHome, store, persisted } = createReloadableStore({
       overrideControlledPaths: ["daemon.relay.enabled"],

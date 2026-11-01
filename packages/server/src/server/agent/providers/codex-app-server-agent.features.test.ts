@@ -1,3 +1,4 @@
+import { featuresFromControls } from "../option-controls.js";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
@@ -49,7 +50,7 @@ function speedControl() {
     defaultValue: "default",
     choices: [
       { value: "default", label: "Normal" },
-      { value: "priority", label: "Fast" },
+      { value: "priority", label: "Fast", aliases: ["fast"] },
     ],
   };
 }
@@ -165,7 +166,7 @@ describe("Codex app-server provider controls", () => {
           defaultValue: "default",
           choices: [
             { value: "default", label: "Normal" },
-            { value: "priority", label: "Fast" },
+            { value: "priority", label: "Fast", aliases: ["fast"] },
             { value: "ultrafast", label: "Ultrafast" },
           ],
         }),
@@ -304,7 +305,7 @@ describe("Codex app-server provider controls", () => {
           key: "service_tier",
           choices: [
             { value: "default", label: "Normal" },
-            { value: "priority", label: "Fast" },
+            { value: "priority", label: "Fast", aliases: ["fast"] },
           ],
         }),
       );
@@ -522,23 +523,24 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("shows a saved Fast preference as the tier the model resolves it to", async () => {
+  test("a saved Fast preference selects the model's Fast tier without rewriting the stored option", async () => {
     const { session, appServer } = await createConnectedSession({
       providerOptions: { service_tier: "fast" },
     });
 
-    // Stored intent stays "fast"; the model's Fast tier is "priority", which is what runs and what is shown.
-    expect(session.displayOptions?.({ service_tier: "fast" })).toEqual({
-      service_tier: "priority",
+    // The model's Fast tier is "priority". The choice names "fast" as an alias, so a client reading
+    // `options` + `controls` selects it, and the legacy features projection agrees.
+    const speed = session.controls.find((control) => control.key === "service_tier");
+    expect(speed).toMatchObject({
+      choices: expect.arrayContaining([
+        expect.objectContaining({ value: "priority", aliases: ["fast"] }),
+      ]),
     });
-    expect(session.displayOptions?.({ fast_mode: true })).toMatchObject({
-      service_tier: "priority",
-    });
-    expect(session.displayOptions?.({ plan_mode: true })).toEqual({ plan_mode: true });
-    expect(session.displayOptions?.({ service_tier: "default" })).toEqual({
-      service_tier: "default",
-    });
-    expect(session.displayOptions?.({ service_tier: "gone" })).toEqual({});
+    expect(
+      featuresFromControls(session.controls, { service_tier: "fast" }).find(
+        (feature) => feature.id === "service_tier",
+      ),
+    ).toMatchObject({ value: "priority" });
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });

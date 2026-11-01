@@ -4673,13 +4673,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
   }
 
-  displayOptions(options: ProviderOptions): ProviderOptions {
-    if (readCodexServiceTier(options) === null) return options;
-    const { service_tier: _stored, ...rest } = options;
-    const resolved = this.resolveServiceTier(readCodexServiceTier(options));
-    return resolved === null ? rest : { ...rest, service_tier: resolved };
-  }
-
   private isServiceTierAvailable(tier: string | null): boolean {
     if (tier === null || tier === "default") return true;
     const tiers = this.currentServiceTiers();
