@@ -5,6 +5,7 @@ const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
 const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
+const { buildSync } = require("esbuild");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -2493,18 +2494,39 @@ async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
   await withTimeout(
     win.loadFile(path.join(ROOT, "index.html"), {
       query: {
-        webviewCount: "2",
-        targetUrl: sourceUrl,
-        profilePartition: partition,
-        profileBrowserIds: "browser-first,browser-second",
+        webviewCount: "0",
       },
     }),
     "browser profile window loadFile",
   );
   await waitForInactiveReveal(handle, "browser profile window");
+  const appRoot = path.resolve(ROOT, "../../app");
+  const productionBrowserModule = buildSync({
+    entryPoints: [path.join(appRoot, "src/desktop/browser/resident-webviews.ts")],
+    tsconfig: path.join(appRoot, "tsconfig.json"),
+    alias: { "react-native": require.resolve("react-native-web") },
+    bundle: true,
+    format: "iife",
+    globalName: "PaseoResidentBrowser",
+    write: false,
+  }).outputFiles[0].text;
+  await renderer(win, productionBrowserModule);
+  for (const name of ["first", "second"]) {
+    await withTimeout(
+      renderer(
+        win,
+        `window.captureHarness.addProfileWebview({
+      ...${JSON.stringify({ browserId: `browser-${name}`, workspaceId: `workspace-${name}`, partition, sourceUrl })},
+      prepareBrowserWebview: PaseoResidentBrowser.prepareBrowserWebview
+    })`,
+      ),
+      `browser profile ${name} production registration`,
+      BROWSER_PROFILE_TIMEOUT_MS,
+    );
+  }
   const [guests, identities] = await withTimeout(
     Promise.all([guestsPromise, renderer(win, "window.captureHarness.profileIdentities()")]),
-    "browser profile did-attach",
+    "browser profile ready registration",
     BROWSER_PROFILE_TIMEOUT_MS,
   );
   return { handle, guests, identities };
@@ -2608,7 +2630,9 @@ async function runBrowserProfileGroup() {
     assertBrowserProfileFixture(firstState, profileValue, "browser profile first tab");
     assertBrowserProfileFixture(secondState, profileValue, "browser profile second tab");
 
-    pass("browser profile renderer did-attach identities match their main-process guests");
+    pass(
+      "browser profile production registration waits for ready guests and maps their identities",
+    );
     pass("browser profile tabs share cookies, localStorage, and one persistent session");
     if (BROWSER_PROFILE_PHASE === "read") {
       pass("browser profile cookies and localStorage survived an Electron process restart");
