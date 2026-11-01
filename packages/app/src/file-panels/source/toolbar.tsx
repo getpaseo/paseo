@@ -6,6 +6,7 @@ import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
 import { formatFileSize } from "@/utils/format-file-size";
+import { FilePathActions } from "./file-actions";
 import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
 import type { FileEditorStatus } from "./editor/model";
 
@@ -19,6 +20,8 @@ export type TextFileView = "preview" | "source";
  * cursor, the Preview|Source control when the panel has a preview, and a conflict under it.
  */
 export function TextFileToolbar({
+  path,
+  workspaceId,
   size,
   lineCount,
   view,
@@ -28,6 +31,8 @@ export function TextFileToolbar({
   vimMode,
   conflict,
 }: {
+  path: string;
+  workspaceId: string;
   size: number;
   lineCount: number;
   view?: TextFileView;
@@ -115,6 +120,7 @@ export function TextFileToolbar({
               options={views}
             />
           ) : null}
+          <FilePathActions path={path} workspaceId={workspaceId} />
         </View>
       </PaneContentToolbar>
       {conflict ? <FileConflictAlert state={conflict} /> : null}
