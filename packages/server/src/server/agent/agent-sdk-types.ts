@@ -316,6 +316,8 @@ export type ToolCallDetail =
       type: "sub_agent";
       subAgentType?: string;
       description?: string;
+      /** The task text the parent handed the subagent, verbatim. */
+      prompt?: string;
       childSessionId?: string;
       // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. Apps before v0.14.1
       // require `log`; every producer sends it empty and carries the same tag. Optional here because
