@@ -326,6 +326,44 @@ describe("Codex app-server provider controls", () => {
     }
   });
 
+  test("a Fast chosen by alias is kept as the catalog's id, so a model with a different Fast id resets it", async () => {
+    const { session, appServer } = await createConnectedSession(
+      { model: "model-a" },
+      {
+        models: [
+          {
+            id: "model-a",
+            isDefault: true,
+            serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+          },
+          {
+            id: "model-b",
+            serviceTiers: [{ id: "rapid", name: "Fast", description: "Faster" }],
+          },
+        ],
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await expect(session.applyOptions?.({ fast_mode: true })).resolves.toEqual({
+        service_tier: "priority",
+        fast_mode: null,
+      });
+
+      await session.setModel("model-b");
+
+      // The option the session reports and the tier the turn runs are the same speed.
+      expect(events.filter((event) => event.type === "options_changed")).toEqual([
+        expect.objectContaining({ patch: { service_tier: "default" } }),
+      ]);
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("maps legacy Fast commands to the catalog's request id", async () => {
     const { session, appServer } = await createConnectedSession();
     try {
