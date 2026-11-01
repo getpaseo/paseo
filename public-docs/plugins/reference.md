@@ -1854,6 +1854,55 @@ Precedence is built-in client commands, plugin commands, then provider commands.
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
 order wins a collision between plugins. Commands do not run while the composer has attachments.
 
+## Workspace list presentation
+
+**Unreleased API.** Set `requirements.paseo` to the release that introduces `workspaceList` and
+button `selected` state before publishing your plugin.
+
+`client.workspaceList` exposes this app's workspace-list grouping to client plugins. The state is
+local to each connected app; changing it does not alter the daemon or another device.
+
+```tsx
+const project = client.addHeaderButton({
+  id: "group-project",
+  workspaceId,
+  button: {
+    title: "Group workspaces by project",
+    icon: "FolderKanban",
+    selected: client.workspaceList.getGrouping() === "project",
+    behavior: { kind: "action", onPress: () => client.workspaceList.setGrouping("project") },
+  },
+});
+const status = client.addHeaderButton({
+  id: "group-status",
+  workspaceId,
+  button: {
+    title: "Group workspaces by status",
+    icon: "ListFilter",
+    selected: client.workspaceList.getGrouping() === "status",
+    behavior: { kind: "action", onPress: () => client.workspaceList.setGrouping("status") },
+  },
+});
+
+const unsubscribe = client.workspaceList.subscribeGrouping((grouping) => {
+  project.update({ selected: grouping === "project" });
+  status.update({ selected: grouping === "status" });
+});
+
+return () => {
+  unsubscribe();
+  project.remove();
+  status.remove();
+};
+```
+
+`getGrouping()` returns `"project"` or `"status"`. `setGrouping(grouping)` updates the client
+preference and persists it through the same path as the built-in workspace menu.
+`subscribeGrouping(listener)` reports subsequent changes, including changes made through built-in
+UI, and returns an idempotent unsubscribe function. The plugin lifetime also releases outstanding
+subscriptions. Read once before subscribing, as shown above; subscribing does not emit an initial
+value.
+
 ## Header buttons
 
 Try the [button example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/buttons) for
@@ -1933,6 +1982,7 @@ These contracts are exported from `@getpaseo/plugin/client`.
 | `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
 | `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
 | `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
+| `selected` | No       | `true` or `false` marks a choice; omit it for ordinary action buttons.  |
 | `behavior` | Yes      | One of the three shapes below.                                          |
 
 ```tsx

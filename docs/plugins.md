@@ -616,6 +616,11 @@ placement can reuse behavior without copying registration or action state. The h
 and the compact workspace menu share one builder that turns buttons into menu rows and pages; the
 workspace menu reaches it through `usePluginWorkspaceMenu`.
 
+`client.workspaceList` is the public boundary around client-local workspace-list presentation.
+Keep it narrow and imperative in `packages/app/src/plugins/workspace-list.ts`; plugins must not
+import the app's Zustand store or depend on browser storage. Its subscription is installation-owned
+and reports changes made by either plugins or built-in UI.
+
 Native sheets teleport their children. Button surfaces rebuild the installation's SDK, state,
 query, and toast providers inside the surface content. A host menu can hold buttons from several
 installations, so each of its rows and pages resolves its own installation's runtime. Providers
