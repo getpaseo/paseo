@@ -5,6 +5,7 @@ import {
   observeProviderSubagentTimeline,
   providerSubagentKey,
   refreshProviderSubagents,
+  hydrateProviderSubagents,
   resyncProviderSubagents,
   useProviderSubagentStore,
 } from "./provider-store";
@@ -813,6 +814,36 @@ describe("resyncing after the update feed resubscribes", () => {
     expect(status(PARENT_ID, "child-1")).toBe("completed");
   });
 
+  test("invalidates successful hydration after reconnect refresh fails and retries discovery", async () => {
+    const error = new DaemonConnectionError("Native list unavailable after reconnect");
+    let unavailable = false;
+    let currentStatus: ProviderSubagentDescriptorPayload["status"] = "completed";
+    let requests = 0;
+    const client = {
+      async listProviderSubagents(parentAgentId: string) {
+        requests += 1;
+        if (unavailable) throw error;
+        return {
+          requestId: "list",
+          parentAgentId,
+          error: null,
+          subagents: [child("child-1", parentAgentId, currentStatus)],
+        };
+      },
+    };
+    await hydrateProviderSubagents(client, SERVER_ID, [PARENT_ID]);
+    currentStatus = "running";
+    unavailable = true;
+    await resyncProviderSubagents(client, SERVER_ID);
+    expect(requests).toBe(2);
+    await expect(hydrateProviderSubagents(client, SERVER_ID, [PARENT_ID])).rejects.toBe(error);
+    expect(requests).toBe(3);
+    unavailable = false;
+    await hydrateProviderSubagents(client, SERVER_ID, [PARENT_ID]);
+    expect(requests).toBe(4);
+    expect(status(PARENT_ID, "child-1")).toBe("running");
+  });
+
   test("lists again only the parents this server was showing", async () => {
     const daemon = fakeDaemon({});
     await refreshProviderSubagents(daemon.client, SERVER_ID, PARENT_ID);
@@ -822,5 +853,55 @@ describe("resyncing after the update feed resubscribes", () => {
     await resyncProviderSubagents(daemon.client, SERVER_ID);
 
     expect(daemon.requested).toEqual([PARENT_ID]);
+  });
+});
+
+describe("provider subtree dismissal", () => {
+  function child(
+    id: string,
+    parentSubagentId: string | null,
+    status: ProviderSubagentDescriptorPayload["status"],
+  ): ProviderSubagentDescriptorPayload {
+    return {
+      id,
+      parentAgentId: PARENT_ID,
+      parentSubagentId,
+      provider: "claude",
+      title: "Explore",
+      description: null,
+      status,
+      createdAt: "2026-10-07T10:00:00.000Z",
+      updatedAt: "2026-10-07T10:00:00.000Z",
+      toolCallId: id,
+    };
+  }
+  test("retains a completed native ancestor with a running nested descendant", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceList(SERVER_ID, PARENT_ID, [
+      child("parent", null, "completed"),
+      child("middle", "parent", "completed"),
+      child("leaf", "middle", "running"),
+    ]);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, ["parent", "middle", "leaf"]);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.size).toBe(0);
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: child("leaf", "middle", "completed"),
+    });
+    store.hideFromTrack(SERVER_ID, PARENT_ID, ["parent", "middle"]);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.size).toBe(2);
+    store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: child("leaf", "middle", "running") });
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.size).toBe(0);
+  });
+  test("restores dismissed ancestors when reconnect lists reveal new running descendants", () => {
+    const store = useProviderSubagentStore.getState();
+    store.replaceList(SERVER_ID, PARENT_ID, [child("parent", null, "completed")]);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, ["parent"]);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.size).toBe(1);
+    store.replaceList(SERVER_ID, PARENT_ID, [
+      child("parent", null, "completed"),
+      child("leaf", "parent", "running"),
+    ]);
+    expect(useProviderSubagentStore.getState().hiddenFromTrack.size).toBe(0);
   });
 });

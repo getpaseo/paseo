@@ -1,5 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
+import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
+import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { subagentActivityStatus } from "./activity";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentPillPresentation,
@@ -25,6 +28,7 @@ function row(
       (overrides.status === "running"
         ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
         : { phase: "idle", cancellationRequestId: null }),
+    hasActiveDescendants: overrides.hasActiveDescendants ?? false,
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
@@ -40,6 +44,62 @@ describe("buildSubagentPillPresentation", () => {
   });
 
   const pill = (rows: SubagentRow[]) => buildSubagentPillPresentation(i18n.t, rows);
+
+  it("shows a new own turn as working before a previous error status catches up", () => {
+    const retrying = row({
+      id: "retrying",
+      status: "error",
+      turn: { phase: "open", turnId: "retry-turn", startedAt: null, cancellationRequestId: null },
+    });
+    expect(buildSubagentRowPresentationData(retrying).statusBucket).toBe("running");
+    expect(countFinishedSubagents([retrying])).toBe(0);
+  });
+
+  it("shows an optimistically submitted retry as working before the provider opens its turn", () => {
+    const turn = resolveTurnPresentation(TURN_LIVENESS_IDLE, true);
+    const status = subagentActivityStatus({
+      status: "error",
+      isSelfActive: turn.isActive,
+      hasActiveDescendants: false,
+    });
+    expect(deriveSidebarStateBucket({ status, pendingPermissionCount: 0 })).toBe("running");
+  });
+
+  it("keeps a child's own failure above inherited activity while protecting its subtree", () => {
+    const failedNative: ProviderSubagentRow = {
+      kind: "provider",
+      id: "native",
+      parentAgentId: "parent",
+      provider: "claude",
+      title: "Explore",
+      description: null,
+      subtitle: null,
+      status: "failed",
+      hasActiveDescendants: true,
+      requiresAttention: true,
+      createdAt: new Date("2026-04-20T00:00:00.000Z"),
+    };
+    const rows = [
+      row({ id: "managed", status: "error", hasActiveDescendants: true }),
+      failedNative,
+    ];
+    expect(pill(rows)).toEqual({
+      segments: [{ bucket: "failed", text: "2 failed" }],
+      accessibilityLabel: "2 failed",
+    });
+    expect(countFinishedSubagents(rows)).toBe(0);
+    expect(rows.every((candidate) => candidate.hasActiveDescendants)).toBe(true);
+  });
+
+  it("counts inherited activity once per direct child and excludes it from finished", () => {
+    const rows = [row({ id: "parent", hasActiveDescendants: true }), row({ id: "finished" })];
+    expect(pill(rows)).toEqual({
+      segments: [{ bucket: "running", text: "1 working" }],
+      accessibilityLabel: "1 working",
+    });
+    expect(countFinishedSubagents(rows)).toBe(1);
+    expect(rows[0]?.turn.phase).toBe("idle");
+  });
 
   it("counts the children that are working, not the fan-out", () => {
     expect(pill([row({ id: "a" }), row({ id: "b", status: "running" })])).toEqual({
@@ -111,6 +171,7 @@ describe("countFinishedSubagents", () => {
         description: null,
         subtitle: null,
         status: "running",
+        hasActiveDescendants: false,
         requiresAttention: false,
         createdAt: new Date("2026-04-20T00:00:00.000Z"),
       },
@@ -123,6 +184,7 @@ describe("countFinishedSubagents", () => {
         description: null,
         subtitle: null,
         status: "failed",
+        hasActiveDescendants: false,
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
       },
@@ -218,6 +280,7 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
       description: overrides.description ?? null,
       subtitle: overrides.subtitle ?? null,
       status: overrides.status ?? "running",
+      hasActiveDescendants: false,
       requiresAttention: false,
       createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
     };
@@ -272,6 +335,7 @@ describe("provider-owned row subtitles", () => {
       description: "Reply with banana",
       subtitle: null,
       status: "running",
+      hasActiveDescendants: false,
       requiresAttention: false,
       createdAt: new Date("2026-07-26T00:00:00.000Z"),
       ...overrides,
