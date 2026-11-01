@@ -130,6 +130,35 @@ it("preserves empty table cells while escaping spoilers in cell text", () => {
   );
 });
 
+describe("tables directly below prose", () => {
+  const table = "| # | Case |\n|---|---|\n| 1 | a |";
+  const quoted = `> ${table.replace(/\n/g, "\n> ")}`;
+  const indented = `  ${table.replace(/\n/g, "\n  ")}`;
+  it("separates the table from the paragraph it interrupts", () => {
+    expect(prepareMarkdownSource(`**Plan** (on staging)\n${table}`).render()).toBe(
+      `**Plan** (on staging)\n\n${table}`,
+    );
+    expect(prepareMarkdownSource(`> Quote text\n${quoted}`).render()).toBe(
+      `> Quote text\n>\n${quoted}`,
+    );
+    expect(prepareMarkdownSource(`- Item text\n${indented}`).render()).toBe(
+      `- Item text\n\n${indented}`,
+    );
+  });
+  it("leaves tables that already start a block unchanged", () => {
+    for (const source of [table, `Intro\n\n${table}`, `> Intro\n>\n${quoted}`]) {
+      expect(prepareMarkdownSource(source).render()).toBe(source);
+    }
+  });
+  it("renders the table through the library parser", async () => {
+    const tree = await parseMarkdown(prepareMarkdownSource(`**Plan**\n${table}`).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    expect(tree.children?.map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+  });
+});
+
 it.each([
   "src/components/message.tsx",
   "C:\\repo\\file.ts",
