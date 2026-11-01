@@ -9,6 +9,7 @@ import type {
 } from "react";
 import type {
   StyleProp,
+  ImageStyle,
   ViewStyle,
   ScrollView as NativeScrollView,
   ScrollViewProps,
@@ -60,6 +61,13 @@ export type IconProps = Partial<PluginIconProps> &
   ({ name: string; icon?: never } | { icon: PluginIcon; name?: never });
 
 export declare const Icon: ComponentType<IconProps>;
+/** Draws the project's image using the same native and web renderer as Paseo. */
+export interface ProjectIconImageProps {
+  dataUri: string;
+  fallback: ReactElement;
+  style: StyleProp<ImageStyle>;
+}
+export declare const ProjectIconImage: ComponentType<ProjectIconImageProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
 export interface StreamedTextProps extends Omit<TextProps, "children"> {
