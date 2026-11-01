@@ -2400,6 +2400,260 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("does not consume a queued steer when the outstanding foreground prompt has the same text", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("continue", {
+      clientMessageId: "client-prompt-1",
+    });
+    await session.steerActiveTurn("continue", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    pi.latestSession().emit({ type: "agent_start" });
+    pi.latestSession().emit({ type: "turn_start" });
+    pi.latestSession().finishSubmittedUserMessage({
+      id: "native-prompt-1",
+      parentId: null,
+      text: "continue",
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "notification",
+        level: "warning",
+        message: "Not delivered (stopped): continue",
+      },
+    ]);
+  });
+
+  test("keeps a consumed steer distinct from an identical foreground prompt", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("continue", { clientMessageId: "client-prompt-1" });
+    await session.steerActiveTurn("continue", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    const native = pi.latestSession();
+    native.finishSubmittedUserMessage({ id: "native-prompt-1", parentId: null, text: "continue" });
+    native.finishSubmittedUserMessage({
+      id: "native-steer-1",
+      parentId: "native-prompt-1",
+      text: "continue",
+    });
+    await session.interrupt();
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test.each([1, 2])(
+    "labels a stopped image-only steer containing %i image(s)",
+    async (imageCount) => {
+      const { pi, session, events } = await createSession();
+      const native = pi.latestSession();
+      native.setModelResult = {
+        provider: "openai",
+        id: "gpt-4o",
+        name: "GPT-4o",
+        input: ["text", "image"],
+      };
+      await session.setModel("openai/gpt-4o");
+      const { turnId } = await session.startTurn([
+        { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+      ]);
+      await session.steerActiveTurn(
+        Array.from({ length: imageCount }, () => ({
+          type: "image" as const,
+          data: ONE_BY_ONE_PNG_BASE64,
+          mimeType: "image/png",
+        })),
+        { expectedTurnId: turnId, clientMessageId: "client-steer-1" },
+      );
+      native.emit({ type: "message_end", message: { role: "user", content: [] } });
+      await session.interrupt();
+      expect(native.steerCalls).toEqual([{ message: "", imageCount }]);
+      expect(events.timelineItems()).toEqual([
+        {
+          type: "notification",
+          level: "warning",
+          message: `Not delivered (stopped): ${imageCount} ${imageCount === 1 ? "image" : "images"}`,
+        },
+      ]);
+    },
+  );
+
+  test("reports an unconsumed steer as not delivered when Stop clears the queue", async () => {
+    const { session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("Reply STEER_CHECK_7391", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "notification",
+      level: "warning",
+      message: "Not delivered (stopped): Reply STEER_CHECK_7391",
+    });
+  });
+
+  test("does not report a consumed steer before its native entry ID arrives", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("already consumed", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    pi.latestSession().emit({
+      type: "message_end",
+      message: { role: "user", content: "already consumed" },
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([]);
+  });
+
+  test("tracks native consumption before the steer RPC is acknowledged", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    const native = pi.latestSession();
+    native.steer = async (message) => {
+      native.finishSubmittedUserMessage({ id: "native-entry-1", parentId: null, text: message });
+    };
+
+    await expect(
+      session.steerActiveTurn("already consumed", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer-1",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "already consumed",
+        messageId: "native-entry-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("keeps identical steers distinct from native message IDs when one is consumed", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("same text", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    await session.steerActiveTurn("same text", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-2",
+    });
+    pi.latestSession().finishSubmittedUserMessage({
+      id: "native-entry-1",
+      parentId: null,
+      text: "same text",
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "same text",
+        messageId: "native-entry-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "notification",
+        level: "warning",
+        message: "Not delivered (stopped): same text",
+      },
+    ]);
+  });
+
+  test("retains steer tracking when clear_queue fails so Stop can be retried", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("queued", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    const native = pi.latestSession();
+    native.clearQueueError = new Error("Queue clear failed");
+
+    await expect(session.interrupt()).rejects.toThrow("Queue clear failed");
+    expect(native.controlRequests).toEqual(["clear_queue"]);
+    expect(events.timelineItems()).toEqual([]);
+
+    native.clearQueueError = null;
+    await session.interrupt();
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "notification",
+        level: "warning",
+        message: "Not delivered (stopped): queued",
+      },
+    ]);
+  });
+
+  test("reports an acknowledged queue removal even when abort subsequently fails", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("queued", { expectedTurnId: turnId });
+    const native = pi.latestSession();
+    native.abort = async () => {
+      throw new Error("Abort failed");
+    };
+
+    await expect(session.interrupt()).rejects.toThrow("Abort failed");
+    native.abort = async () => {};
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "notification",
+        level: "warning",
+        message: "Not delivered (stopped): queued",
+      },
+    ]);
+  });
+
+  test("does not claim queue removal when an older Pi lacks clear_queue", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("queued", { expectedTurnId: turnId });
+    pi.latestSession().clearQueueError = new Error("Unknown command: clear_queue");
+
+    await session.interrupt();
+
+    expect(pi.latestSession().controlRequests).toEqual(["clear_queue", "abort"]);
+    expect(events.timelineItems()).toEqual([]);
+  });
+
   test("steers the active Pi turn and correlates the echoed user message", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

@@ -232,7 +232,14 @@ interface StartTurnResult {
 
 interface PiPendingSteerSubmission {
   text: string;
+  label: string;
   clientMessageId: string | null;
+  consumed: boolean;
+}
+
+interface PiPendingForegroundSubmission {
+  text: string;
+  consumed: boolean;
 }
 
 // COMPAT(piSteerFallback): added in v0.5.0, remove after 2027-03-01 once the pi floor
@@ -1211,6 +1218,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
+  private pendingForegroundSubmission: PiPendingForegroundSubmission | null = null;
   currentLeafOverrideId: string | null | undefined;
   private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
@@ -1319,6 +1327,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = { text: payload.text, consumed: false };
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("Pi session is closed");
@@ -1365,6 +1374,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
+        this.pendingForegroundSubmission = null;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
           this.emit({
@@ -1403,9 +1413,29 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
 
+    const imageCount = payload.images?.length ?? 0;
+    const isImageOnly = payload.text.trim().length === 0 && imageCount > 0;
+    let label = payload.text;
+    if (isImageOnly) {
+      if (imageCount === 1) {
+        label = "1 image";
+      } else {
+        label = `${imageCount} images`;
+      }
+    }
+    const submission: PiPendingSteerSubmission = {
+      text: payload.text,
+      label,
+      clientMessageId: options.clientMessageId ?? null,
+      consumed: false,
+    };
+    // Pi can consume the message before acknowledging the steer RPC.
+    this.pendingSteerSubmissions.push(submission);
     try {
       await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
+      const index = this.pendingSteerSubmissions.indexOf(submission);
+      if (index >= 0) this.pendingSteerSubmissions.splice(index, 1);
       if (isPiDefinitiveSteerRejection(error)) {
         return { status: "unavailable" };
       }
@@ -1416,10 +1446,6 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed || this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
-    this.pendingSteerSubmissions.push({
-      text: payload.text,
-      clientMessageId: options.clientMessageId ?? null,
-    });
     if (options.clearPendingPermissions) {
       await this.clearPendingPermissionsForSteer();
     }
@@ -1438,6 +1464,11 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private takePendingSteerSubmission(text: string): PiPendingSteerSubmission | undefined {
+    // The original prompt is also echoed, possibly after a matching steer is queued.
+    if (this.pendingForegroundSubmission?.text === text) {
+      this.pendingForegroundSubmission = null;
+      return undefined;
+    }
     const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
     if (index < 0) {
       return undefined;
@@ -1537,6 +1568,23 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       try {
         await this.runtimeSession.clearQueue();
+        // Only an acknowledged clear_queue proves queued messages were dropped.
+        for (const submission of this.pendingSteerSubmissions.splice(0)) {
+          if (submission.consumed) {
+            this.pendingSteerSubmissions.push(submission);
+            continue;
+          }
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: {
+              type: "notification",
+              level: "warning",
+              message: `Not delivered (stopped): ${submission.label}`,
+            },
+          });
+        }
       } catch (error) {
         // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
         // the pi floor supports clear_queue (added in pi 0.84.4).
@@ -1559,6 +1607,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
+        this.pendingForegroundSubmission = null;
         this.clearNoTurnBuffers();
         this.emit({
           type: "turn_failed",
@@ -1583,6 +1632,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
       this.pendingSteerSubmissions.length = 0;
+      this.pendingForegroundSubmission = null;
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -2205,6 +2255,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = null;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2483,6 +2534,21 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
   ): void {
+    if (event.message.role === "user") {
+      // Entry IDs arrive through the extension later; consumption is already known.
+      const text = getUserMessageText(event.message.content);
+      const foreground = this.pendingForegroundSubmission;
+      // prompt() runs asynchronously, so its first user event may follow steer().
+      if (foreground && !foreground.consumed && foreground.text === text) {
+        foreground.consumed = true;
+        return;
+      }
+      const submission = this.pendingSteerSubmissions.find(
+        (pending) => !pending.consumed && pending.text === text,
+      );
+      if (submission) submission.consumed = true;
+      return;
+    }
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
       return;
@@ -2565,6 +2631,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = null;
     this.clearNoTurnBuffers();
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
