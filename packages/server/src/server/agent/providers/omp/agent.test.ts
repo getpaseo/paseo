@@ -12,7 +12,7 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderOptions } from "./provider-config.js";
 import { OmpRuntimeEventSchema, OmpSessionStateSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
-import { OmpAgentClient } from "./agent.js";
+import { OmpAgentClient, transformOmpModels } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
@@ -61,6 +61,36 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });
+});
+
+test("OMP model labels drop only the leading vendor prefix", () => {
+  expect(
+    transformOmpModels([
+      {
+        provider: "omp",
+        id: "openrouter/openai/gpt-5.5",
+        label: "openrouter/OpenAI: GPT-5.5",
+      },
+      {
+        provider: "omp",
+        id: "cline/liquid/lfm-2.5-2.6b:free",
+        label: "cline/LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+      },
+    ]),
+  ).toEqual([
+    {
+      provider: "omp",
+      id: "openrouter/openai/gpt-5.5",
+      label: "GPT-5.5",
+      description: "openrouter/OpenAI: GPT-5.5",
+    },
+    {
+      provider: "omp",
+      id: "cline/liquid/lfm-2.5-2.6b:free",
+      label: "LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+      description: "cline/LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+    },
+  ]);
 });
 
 test("OMP import uses the runtime's custom agent directory without a configured sessionDir", async () => {
