@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  AgentProvider,
-  AgentSessionConfig,
-  ProviderOptions,
-} from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import {
+  draftControlsRequest,
   openDraftOptions,
   ownDraftOptions,
   viewDraftOptions,
@@ -14,11 +11,6 @@ import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
-
-type DraftControlsConfig = Pick<
-  AgentSessionConfig,
-  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "providerOptions"
->;
 
 /**
  * Adapter between a draft's options model and the screen: it sends the model's complete options
@@ -47,17 +39,17 @@ export function useDraftProviderOptions(input: {
   useEffect(() => model.setRemembered(persisted ?? {}), [model, persisted]);
 
   const ownOptions = ownDraftOptions(state);
-  const draftConfig = useMemo<DraftControlsConfig | null>(() => {
-    if (!provider || !normalizedCwd) return null;
-    return {
-      provider,
-      cwd: normalizedCwd,
-      ...(modeId ? { modeId } : {}),
-      ...(modelId ? { model: modelId } : {}),
-      ...(thinkingOptionId ? { thinkingOptionId } : {}),
-      ...(ownOptions ? { providerOptions: ownOptions } : {}),
-    };
-  }, [modeId, modelId, normalizedCwd, ownOptions, provider, thinkingOptionId]);
+  const draftConfig = useMemo(
+    () =>
+      draftControlsRequest(state, {
+        provider,
+        cwd: normalizedCwd,
+        modeId,
+        modelId,
+        thinkingOptionId,
+      }),
+    [modeId, modelId, normalizedCwd, provider, state, thinkingOptionId],
+  );
   const queryKey = useMemo(
     () => ["providerControls", serverId ?? null, draftConfig],
     [draftConfig, serverId],
