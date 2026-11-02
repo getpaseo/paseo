@@ -4801,6 +4801,47 @@ describe("adding hosts from plugin connection targets", () => {
     await waitForHostOnline(store, "srv_direct");
     store.syncHosts([]);
   });
+  it("persists the supplied password and reconnects after the app restarts", async () => {
+    const storage = createMemoryHostRuntimeStorage({ "@paseo:e2e": "1" });
+    const first = createPairingStore({
+      storage,
+      password: "secret",
+      serverIdForHost: () => "srv_direct",
+    });
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(first, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const result = await plugin.addHost({ connection: "tcp://example.com:6767?password=secret" });
+    expect(result.status).toBe("saved");
+    expect(JSON.stringify(result)).not.toContain("secret");
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0].password).toBe("secret");
+    lifetime.abort();
+    first.syncHosts([]);
+
+    const attempts: string[] = [];
+    const restarted = createPairingStore({
+      storage,
+      password: "secret",
+      connectAttempts: attempts,
+      serverIdForHost: () => "srv_direct",
+    });
+    await restarted.boot();
+    await waitForHostOnline(restarted, "srv_direct");
+    expect(attempts).toContain("direct:example.com:6767");
+    expect(restarted.getHosts()[0].password).toBe("secret");
+    const restartedLifetime = new AbortController();
+    const restartedPlugin = createPluginHosts(restarted, restartedLifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    expect(JSON.stringify(restartedPlugin.getSnapshot())).not.toContain("secret");
+    restartedLifetime.abort();
+    restarted.syncHosts([]);
+  });
+
   it("asks before saving a relay target and respects rejection", async () => {
     const uri = "relay://relay.paseo.sh:443/srv_offer?key=pk_test_offer&ssl=true";
     const rejected = createPairingStore();
