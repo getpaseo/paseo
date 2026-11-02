@@ -122,7 +122,11 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "gpui:install": "node scripts/gpui.mjs install",
+    "gpui:bundle": "node scripts/gpui.mjs bundle",
+    "build:gpui": "node scripts/gpui.mjs build",
+    "dev:gpui": "node scripts/gpui.mjs run"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

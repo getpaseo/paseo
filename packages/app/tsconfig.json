@@ -13,5 +13,6 @@
     "expo-env.d.ts",
     "nativewind-env.d.ts",
     "react-native-web.d.ts"
-  ]
+  ],
+  "exclude": ["gpui"]
 }
