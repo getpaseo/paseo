@@ -1133,6 +1133,17 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    await expect(
+      omp.runPrompt("continue after resume", "resumed follow-up complete"),
+    ).resolves.toMatchObject({
+      finalText: "resumed follow-up complete",
+    });
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "resumed follow-up complete",
+      }),
+    );
     expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
     await omp.close();
     expect(omp.usageSession()).toBeNull();
@@ -1332,13 +1343,14 @@ describe("OMP agent client and session", () => {
     expect(omp.runtimeLaunches()).toHaveLength(1);
   });
 
-  test("closes a replacement process if the session closes during relaunch", async () => {
+  test("rejects a pending recovery start and closes its processes when the session closes", async () => {
     const omp = new OmpHarness();
     await omp.start();
     omp.processExit("OMP RPC process exited with code 1 and signal null");
     const turn = omp.startTurnDetached("continue");
+    const rejected = expect(turn).rejects.toThrow("closed");
     await omp.close();
-    await turn;
+    await rejected;
     await waitForImmediate();
     expect(omp.runtimeSessions().every((session) => session.closed)).toBe(true);
   });
@@ -1627,3 +1639,93 @@ test.each([
     expect(await session.canStopRuntime!()).toBe(expected);
   },
 );
+
+test.each([false, true])(
+  "image prompt keeps OMP's vision capability contract (vision: %s)",
+  async (vision) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: {
+          provider: "test",
+          id: "image-model",
+          input: vision ? ["text", "image"] : ["text"],
+        },
+      };
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+    onTestFinished(() => session.close());
+    const bytes = Buffer.from("OMP attachment fixture");
+    const first = session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+    ]);
+    await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+    await first;
+    const [prompt] = runtime.latestSession().prompts;
+    expect(prompt.imageCount).toBe(vision ? 1 : 0);
+    if (vision) expect(prompt.message).toBe("Describe this image.");
+    else {
+      const imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTruthy();
+      const { readFile, rm } = await import("node:fs/promises");
+      expect(await readFile(imagePath!)).toEqual(bytes);
+      await rm(imagePath!);
+    }
+  },
+);
+
+test("interrupting OMP during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 53).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(runtime.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing OMP during image conversion rejects its pending start", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 54).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
+});

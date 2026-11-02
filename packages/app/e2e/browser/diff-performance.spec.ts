@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CDPSession, Locator, Page, TestInfo } from "@playwright/test";
+import { pullRequestCorpus } from "../../src/git/diff-document/benchmark-corpus";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { test, expect } from "../support/fixtures";
 import { getServerId } from "../support/helpers/server-id";
@@ -296,7 +297,186 @@ diffPerfDescribe("Diff canvas performance", () => {
       await repo.cleanup().catch(() => undefined);
     }
   });
+  test("toggling line wrap on a pull-request-sized diff", async ({ page }, testInfo) => {
+    test.setTimeout(300_000);
+    const corpus = await createPullRequestCorpusRepository();
+    const client = await connectSeedClient();
+
+    try {
+      const created = await client.createWorkspace({
+        source: { kind: "directory", path: corpus.repo.path },
+      });
+      if (!created.workspace) {
+        throw new Error(created.error ?? "Failed to create wrap performance workspace");
+      }
+
+      await configureUnwrappedUnifiedDiff(page);
+      await instrumentDiffLatency(page);
+      await page.setViewportSize({ width: 1400, height: 900 });
+      await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+      await waitForWorkspaceTabsVisible(page);
+      const openStartedAt = performance.now();
+      await openChangesPanel(page, 90_000);
+      await expect(page.getByTestId("git-diff-canvas")).toBeVisible({ timeout: 30_000 });
+      const open = {
+        readyMs: Math.round(performance.now() - openStartedAt),
+        ...(await readDiffDocumentRenders(page)),
+      };
+
+      const toggles: WrapToggleMeasurement[] = [];
+      for (const name of [
+        "wrap on (cold)",
+        "wrap off (cold)",
+        "wrap on (warm)",
+        "wrap off (warm)",
+      ]) {
+        toggles.push(await measureWrapToggle(page, name));
+      }
+      const unwrappedScroll = await continuouslyScrollCanvas(page);
+      toggles.push(await measureWrapToggle(page, "wrap on (warm, scrolled)"));
+      const wrappedScroll = await continuouslyScrollCanvas(page);
+
+      const report = {
+        scenario: "wrap-toggle",
+        sourceFiles: corpus.fileCount,
+        sourceLines: corpus.lineCount,
+        open,
+        toggles,
+        scroll: {
+          unwrapped: summarizeScroll(unwrappedScroll),
+          wrapped: summarizeScroll(wrappedScroll),
+        },
+      };
+      await attachPerformanceReport(testInfo, report);
+      console.log(`[perf] Wrap toggle: ${JSON.stringify(report)}`);
+
+      const [wrapOn, wrapOff] = toggles;
+      expect(wrapOn!.scrollHeightAfter).toBeGreaterThan(wrapOn!.scrollHeightBefore);
+      expect(wrapOff!.scrollHeightAfter).toBe(wrapOn!.scrollHeightBefore);
+    } finally {
+      await client.close().catch(() => undefined);
+      await corpus.repo.cleanup().catch(() => undefined);
+    }
+  });
 });
+
+interface WrapToggleMeasurement {
+  name: string;
+  /** Pointer down on the toolbar button to two painted frames after the document resized. */
+  latencyMs: number;
+  scrollHeightBefore: number;
+  scrollHeightAfter: number;
+  longestTaskMs: number;
+  longTaskTotalMs: number;
+  diffDocumentCommits: number;
+  diffDocumentRenderMs: number;
+}
+
+interface LongTask {
+  startTime: number;
+  duration: number;
+}
+
+interface DiffLatencyScope {
+  __PASEO_RENDER_PROFILE_ENABLED__?: boolean;
+  __PASEO_RENDER_PROFILE__?: Array<{ id: string; actualDuration: number }>;
+  __PASEO_RESET_RENDER_PROFILE__?: () => void;
+  __PASEO_LONG_TASKS__?: LongTask[];
+  __PASEO_WRAP_TOGGLE_AT__?: number;
+}
+
+async function createPullRequestCorpusRepository() {
+  const files = pullRequestCorpus();
+  const repo = await createTempGitRepo("diff-wrap-perf-", {
+    files: files.map((file) => ({ path: file.path, content: "baseline\n" })),
+  });
+  for (const file of files) {
+    await writeFile(path.join(repo.path, file.path), `${file.lines.join("\n")}\n`);
+  }
+  return {
+    repo,
+    fileCount: files.length,
+    lineCount: files.reduce((count, file) => count + file.lines.length, 0),
+  };
+}
+
+async function instrumentDiffLatency(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const scope = globalThis as typeof globalThis & DiffLatencyScope;
+    scope.__PASEO_RENDER_PROFILE_ENABLED__ = true;
+    scope.__PASEO_LONG_TASKS__ = [];
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        scope.__PASEO_LONG_TASKS__?.push({ startTime: entry.startTime, duration: entry.duration });
+      }
+    }).observe({ type: "longtask", buffered: true });
+  });
+}
+
+async function readDiffDocumentRenders(
+  page: Page,
+): Promise<{ diffDocumentCommits: number; diffDocumentRenderMs: number }> {
+  return page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & DiffLatencyScope;
+    const samples = (scope.__PASEO_RENDER_PROFILE__ ?? []).filter(
+      (sample) => sample.id === "DiffDocument",
+    );
+    return {
+      diffDocumentCommits: samples.length,
+      diffDocumentRenderMs: Math.round(
+        samples.reduce((total, sample) => total + sample.actualDuration, 0),
+      ),
+    };
+  });
+}
+
+async function measureWrapToggle(page: Page, name: string): Promise<WrapToggleMeasurement> {
+  const scroll = page.getByTestId("git-diff-scroll");
+  const scrollHeightBefore = await scroll.evaluate((element) => element.scrollHeight);
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & DiffLatencyScope;
+    scope.__PASEO_RESET_RENDER_PROFILE__?.();
+    scope.__PASEO_LONG_TASKS__ = [];
+    scope.__PASEO_WRAP_TOGGLE_AT__ = undefined;
+    document.addEventListener(
+      "pointerdown",
+      () => {
+        scope.__PASEO_WRAP_TOGGLE_AT__ = performance.now();
+      },
+      { capture: true, once: true },
+    );
+  });
+  await page.getByTestId("changes-toggle-wrap-lines").click();
+  const measured = await scroll.evaluate(async (element, before) => {
+    const scope = globalThis as typeof globalThis & DiffLatencyScope;
+    const deadline = performance.now() + 240_000;
+    while (element.scrollHeight === before && performance.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const doneAt = performance.now();
+    // Long task entries are delivered after the task ends; give the observer a turn.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const startedAt = scope.__PASEO_WRAP_TOGGLE_AT__ ?? doneAt;
+    const longTasks = (scope.__PASEO_LONG_TASKS__ ?? []).filter(
+      (task) => task.startTime + task.duration >= startedAt && task.startTime <= doneAt,
+    );
+    return {
+      latencyMs: Math.round(doneAt - startedAt),
+      scrollHeightAfter: element.scrollHeight,
+      longestTaskMs: Math.round(Math.max(0, ...longTasks.map((task) => task.duration))),
+      longTaskTotalMs: Math.round(longTasks.reduce((total, task) => total + task.duration, 0)),
+    };
+  }, scrollHeightBefore);
+  return { name, scrollHeightBefore, ...measured, ...(await readDiffDocumentRenders(page)) };
+}
+
+function summarizeScroll(report: Awaited<ReturnType<typeof continuouslyScrollCanvas>>) {
+  const { frameSignatures: _frameSignatures, ...summary } = report;
+  return summary;
+}
 
 async function measureAdditionalPerformanceScenario(
   page: Page,

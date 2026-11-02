@@ -1615,19 +1615,17 @@ export function processAgentStreamEvent(
         unmatchedUserMessageInsert: "head",
       });
     } else {
-      const overlay = applyStreamEvent({
-        tail: currentHead,
-        head: [],
-        event,
-        timestamp,
+      // Before history arrives, the overlay is one ordered stream. Reducing it
+      // directly keeps consecutive reasoning chunks in the same row.
+      const overlay = reduceStreamUpdate(currentHead, event, timestamp, {
         source: "live",
         timelineCursor,
       });
       streamResult = {
         tail: currentTail,
-        head: [...overlay.tail, ...overlay.head],
+        head: overlay,
         changedTail: false,
-        changedHead: overlay.changedTail || overlay.changedHead,
+        changedHead: overlay !== currentHead,
       };
     }
   } else {

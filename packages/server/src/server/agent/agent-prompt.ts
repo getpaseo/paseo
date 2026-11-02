@@ -15,6 +15,7 @@ export type AgentRunController = Pick<
   | "getAgent"
   | "tryRunOutOfBand"
   | "hasInFlightRun"
+  | "reloadStalePluginSession"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
@@ -115,6 +116,7 @@ export async function startAgentRun(
     return { disposition: "out_of_band" };
   }
   try {
+    await agentManager.reloadStalePluginSession(agentId);
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
   } catch (error) {
     if (!isStaleProviderSessionError(error)) throw error;

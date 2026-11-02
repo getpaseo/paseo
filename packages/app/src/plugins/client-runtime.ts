@@ -2,6 +2,7 @@ import { createPlayAudio, type AudioEngine } from "@/audio";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { createPluginHosts } from "./hosts";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
+import { subscribePluginRpc } from "@getpaseo/plugin/client/host";
 import {
   createPluginAgentActionContext,
   createPluginCapabilities,
@@ -36,6 +37,8 @@ export function createPluginClientRuntime(
     openPanel(panelId, options) {
       openClientPanel({ installation, state, panelId, options });
     },
+    subscribe: (contract, input, onEvent, options) =>
+      subscribePluginRpc(contract, installation.subscribe, input, onEvent, options),
   };
 }
 

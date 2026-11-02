@@ -10,7 +10,7 @@ import {
   resolveRelayoutScrollTop,
   shouldApplyRelayoutScroll,
 } from "./model";
-import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
+import type { BuildDiffDocumentModelInput, DiffCell, TextMeasurer } from "./types";
 
 const measurer: TextMeasurer = { measure: (text) => Array.from(text).length * 10 };
 
@@ -639,17 +639,119 @@ describe("diff document model", () => {
     expect(firstLineCells(last, "b.ts")).toBe(firstLineCells(first, "b.ts"));
   });
 
-  it("keeps wrapped geometry fully measured", () => {
+  it("replaces estimated wrapped heights through reuse and preserves the scroll anchor", () => {
+    const changed = fileWithChangedLine("x".repeat(100));
+    const files = [changed, file("later.ts")];
+    // Deliberately inaccurate M width makes the estimate differ from exact layout.
+    const measureText = {
+      measure: (text: string) => (text === "M" ? 5 : Array.from(text).length * 10),
+    };
+    const options = input({ files, measureText });
+    const first = buildDiffDocumentModel({
+      ...options,
+      materializationWindow: { top: 30, height: 1 },
+    });
+    const eager = buildDiffDocumentModel(options);
+    const exact = buildDiffDocumentModel({ ...options, reuseFrom: [first] });
+    expect(first.height).not.toBe(eager.height);
+    expect(exact.rows).toEqual(eager.rows);
+    expect(exact.height).toBe(eager.height);
+    expect(firstLineCells(exact, changed.path)).toBe(firstLineCells(first, changed.path));
+    const scrollTop = first.files[1]!.bodyTop + 3;
+    const nextScrollTop = resolveRelayoutScrollTop(first, exact, scrollTop);
+    expect(nextScrollTop).toBe(exact.files[1]!.bodyTop + 3);
+    expect(captureScrollAnchor(exact, nextScrollTop)).toEqual(
+      captureScrollAnchor(first, scrollTop),
+    );
+  });
+
+  it("preserves the wrapped source offset when resize leaves the anchor outside the window", () => {
+    const source = file();
+    source.hunks[0]!.lines = Array.from({ length: 200 }, () => ({
+      type: "add" as const,
+      content: "x".repeat(200),
+    }));
+    const options = input({ files: [source], viewportWidth: 500 });
+    const before = buildDiffDocumentModel(options);
+    const scrollTop = before.rows[100]!.top + 36;
+    const anchor = captureScrollAnchor(before, scrollTop)!;
+    expect(anchor).toMatchObject({ kind: "text", cellOffset: 90 });
+    const resizedOptions = { ...options, viewportWidth: 180 };
+    const estimated = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: {
+        top: Math.floor(scrollTop / 800) * 800 - 800,
+        height: 2000,
+      },
+    });
+    const estimatedRow = estimated.rows[100]!;
+    expect(estimatedRow.kind === "line" && estimatedRow.cells[0]?.fragments).toEqual([]);
+    const restored = resolveRelayoutScrollTop(before, estimated, scrollTop);
+    const recaptured = captureScrollAnchor(estimated, restored)!;
+    expect(recaptured).toMatchObject({ kind: "text", cellOffset: 78 });
+
+    const materialized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: restored - 800, height: 2000 },
+      reuseFrom: [estimated],
+    });
+    const eager = buildDiffDocumentModel(resizedOptions);
+    const expected = resolveRelayoutScrollTop(before, eager, scrollTop);
+    expect(expected).toBe(28_938);
+    expect(Math.abs(restored - expected)).toBeLessThan(before.lineHeight);
+    expect(resolveRelayoutScrollTop(estimated, materialized, restored)).toBe(expected);
+  });
+
+  it("materializes the relayout anchor even when off-screen height estimates are inaccurate", () => {
+    const source = file();
+    source.hunks[0]!.lines = Array.from({ length: 200 }, () => ({
+      type: "add" as const,
+      content: "x".repeat(200),
+    }));
+    const options = input({ files: [source], viewportWidth: 500 });
+    const before = buildDiffDocumentModel(options);
+    const scrollTop = before.rows[100]!.top + 38;
+    const anchor = captureScrollAnchor(before, scrollTop)!;
+    const resizedOptions = {
+      ...options,
+      viewportWidth: 180,
+      measureText: { measure: (text: string) => (text === "M" ? 5 : text.length * 10) },
+    };
+    const resized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: scrollTop - 800, height: 2000 },
+      materializationAnchor: anchor,
+    });
+    const row = resized.rows[100]!;
+    expect(row.kind === "line" && row.cells[0]!.fragments.length).toBeGreaterThan(0);
+    const restored = resolveRelayoutScrollTop(before, resized, scrollTop);
+    const materialized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: restored - 800, height: 2000 },
+      materializationAnchor: captureScrollAnchor(resized, restored),
+      reuseFrom: [resized],
+    });
+    const nextScrollTop = resolveRelayoutScrollTop(resized, materialized, restored);
+    const nextAnchor = captureScrollAnchor(materialized, nextScrollTop);
+    // Offset 90 belongs to the fragment beginning at 78 after narrowing.
+    expect(nextAnchor).toMatchObject({ kind: "text", cellOffset: 78, viewportDelta: -2 });
+    expect(nextScrollTop).toBe(resolveScrollAnchor(materialized, anchor));
+  });
+
+  it("materializes wrapped text only inside the window", () => {
     const model = buildDiffDocumentModel(
       input({
         files: [file("a.ts"), file("b.ts")],
         wrapLines: true,
-        materializationWindow: { top: 0, height: FILE_HEADER_HEIGHT },
+        materializationWindow: { top: FILE_HEADER_HEIGHT, height: 1 },
       }),
     );
 
     expect(measuredFragments(model, "a.ts")).toBeGreaterThan(0);
-    expect(measuredFragments(model, "b.ts")).toBeGreaterThan(0);
+    expect(measuredFragments(model, "b.ts")).toBe(0);
+    expect(
+      model.rows.filter((row) => row.kind === "line" && row.cells.some(hasFragments)),
+    ).toHaveLength(1);
   });
 });
 
@@ -797,4 +899,8 @@ function reviewActionsWithEditor(
     onEditComment() {},
     onDeleteComment() {},
   };
+}
+
+function hasFragments(cell: DiffCell | null): boolean {
+  return cell !== null && cell.fragments.length > 0;
 }

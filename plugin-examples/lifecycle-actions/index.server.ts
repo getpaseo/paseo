@@ -2,7 +2,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText, shellCommand } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
-  server.before("workspace.create", ({ request }) => {
+  server.addHook("workspace.create.before", async ({ request }) => {
     if (request.title === "Isolated lifecycle example" && request.source.kind === "directory") {
       return {
         ...request,
@@ -17,7 +17,7 @@ export default function contribute(server: PluginServerContext) {
     return request;
   });
 
-  server.on("agent.turn_ended", async (event, context) => {
+  server.addHook("agent.turn.after", async (event, context) => {
     if (event.outcome.kind === "canceled") {
       return;
     }
@@ -30,7 +30,7 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.on("agent.permission_requested", async (event, context) => {
+  server.addHook("agent.permission.before", async (event, context) => {
     const command = shellCommand(event.request);
     if (command === null) {
       return;
@@ -56,7 +56,7 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.before("agent.create", ({ request }) => {
+  server.addHook("agent.create.before", async ({ request }) => {
     return {
       ...request,
       env: {
@@ -66,7 +66,7 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
-  server.before("agent.create", ({ request }) => {
+  server.addHook("agent.create.before", async ({ request }) => {
     if (request.config.provider === "codex") {
       return {
         ...request,
@@ -82,7 +82,7 @@ export default function contribute(server: PluginServerContext) {
     return request;
   });
 
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     return {
       ...request,
       env: {

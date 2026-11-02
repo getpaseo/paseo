@@ -5,11 +5,13 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
@@ -23,6 +25,7 @@ import {
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
+import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
@@ -2719,6 +2722,7 @@ describe("PiRpcAgentClient", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-import-config-"));
     const cwd = path.join(root, "workspace");
     const sessionsDir = path.join(root, "sessions");
+    mkdirSync(cwd, { recursive: true });
     mkdirSync(sessionsDir, { recursive: true });
     const sessionFile = path.join(sessionsDir, "20260103_session.jsonl");
     writeFileSync(
@@ -3532,6 +3536,320 @@ describe("PiRpcAgentClient", () => {
   });
 });
 
+describe("PiRpcAgentClient history resume", () => {
+  const BUILTIN_MCP_COMMAND = {
+    name: "mcp",
+    source: "extension",
+    sourceInfo: { path: "builtin:mcp" },
+  } as const;
+  const PASEO_MCP_SERVERS = {
+    paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+  } as const;
+
+  interface ArchivedPiSession {
+    handle: {
+      provider: string;
+      sessionId: string;
+      nativeHandle: string;
+      metadata: { cwd: string; model?: string };
+    };
+    sessionFile: string;
+    header: Record<string, unknown>;
+    body: string;
+    originalBytes: Buffer;
+  }
+
+  function createDeletedFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-deleted-cwd-"));
+    rmSync(folder, { recursive: true, force: true });
+    return folder;
+  }
+
+  function createFileWhereFolderWas(): string {
+    const folder = createDeletedFolder();
+    writeFileSync(folder, "not a directory");
+    onTestFinished(() => rmSync(folder, { force: true }));
+    return folder;
+  }
+
+  function createExistingFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-existing-cwd-"));
+    onTestFinished(() => rmSync(folder, { recursive: true, force: true }));
+    return folder;
+  }
+
+  function writeArchivedSession(cwd: string, metadata: { model?: string } = {}): ArchivedPiSession {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-archived-session-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const sessionFile = path.join(dir, "2026-01-01_pi-session-1.jsonl");
+    const header = {
+      type: "session",
+      version: 3,
+      id: "pi-session-1",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd,
+    };
+    const body = [
+      JSON.stringify({
+        type: "message",
+        id: "entry-1",
+        parentId: null,
+        message: { role: "user", content: "Où est le café ☕ ?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "entry-2",
+        parentId: "entry-1",
+        message: { role: "assistant", content: [{ type: "text", text: "Dans la cuisine." }] },
+      }),
+    ]
+      .map((line) => `${line}\n`)
+      .join("");
+    writeFileSync(sessionFile, `${JSON.stringify(header)}\n${body}`);
+    return {
+      handle: {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: sessionFile,
+        metadata: { cwd, ...metadata },
+      },
+      sessionFile,
+      header,
+      body,
+      originalBytes: readFileSync(sessionFile),
+    };
+  }
+
+  function readSessionCopy(sessionFile: string): { header: unknown; body: string } {
+    const content = readUtf8File(sessionFile);
+    const headerEnd = content.indexOf("\n");
+    return {
+      header: JSON.parse(content.slice(0, headerEnd)),
+      body: content.slice(headerEnd + 1),
+    };
+  }
+
+  function resumeArchived(
+    client: PiRpcAgentClient,
+    archived: ArchivedPiSession,
+    purpose: "history" | "interactive",
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentSession> {
+    return client.resumeSession(archived.handle, overrides, undefined, { purpose });
+  }
+
+  function writeFakePiProcess(): {
+    command: [string, ...string[]];
+    readLaunches: () => Array<{ cwd: string; session: string | null }>;
+  } {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-process-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const scriptPath = path.join(dir, "fake-pi.cjs");
+    const launchesPath = path.join(dir, "launches.jsonl");
+    writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const readline = require("node:readline");
+const [launchesPath, ...piArgs] = process.argv.slice(2);
+const sessionFlag = piArgs.indexOf("--session");
+const sessionFile = sessionFlag === -1 ? null : piArgs[sessionFlag + 1];
+fs.appendFileSync(launchesPath, JSON.stringify({ cwd: process.cwd(), session: sessionFile }) + "\\n");
+if (sessionFile) {
+  const header = JSON.parse(fs.readFileSync(sessionFile, "utf8").split("\\n", 1)[0]);
+  if (header.cwd && !fs.existsSync(header.cwd)) {
+    fs.writeSync(
+      2,
+      "Stored session working directory does not exist: " + header.cwd + "\\nSession file: " + sessionFile + "\\nCurrent working directory: " + process.cwd() + "\\n",
+    );
+    process.exit(1);
+  }
+}
+const models = [
+  { provider: "openrouter", id: "a" },
+  { provider: "openrouter", id: "b" },
+];
+const state = {
+  sessionId: "pi-session-1",
+  sessionFile,
+  model: models[0],
+  thinkingLevel: "medium",
+  isStreaming: false,
+  isCompacting: false,
+  messageCount: 0,
+  pendingMessageCount: 0,
+};
+const commands = [${JSON.stringify(BUILTIN_MCP_COMMAND)}];
+function handle(request) {
+  switch (request.type) {
+    case "get_state":
+      return state;
+    case "get_commands":
+      return { commands };
+    case "get_available_models":
+      return { models };
+    case "set_model":
+      fs.appendFileSync(
+        sessionFile,
+        JSON.stringify({ type: "model_change", id: "model-1", provider: request.provider, modelId: request.modelId }) + "\\n",
+      );
+      state.model = models.find((model) => model.id === request.modelId);
+      return state.model;
+    default:
+      return {};
+  }
+}
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(
+    JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data: handle(request) }) + "\\n",
+  );
+});
+`,
+    );
+    return {
+      command: [process.execPath, scriptPath, launchesPath],
+      readLaunches: () =>
+        readUtf8File(launchesPath)
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { cwd: string; session: string | null }),
+    };
+  }
+
+  test.each([
+    ["is gone", createDeletedFolder],
+    ["is now a file", createFileWhereFolderWas],
+  ])(
+    "a history resume of an agent whose folder %s starts Pi from the home directory on a copy of its session",
+    async (_folderState, createFolder) => {
+      const archived = writeArchivedSession(createFolder());
+      const pi = new FakePi();
+
+      const session = await resumeArchived(createClient(pi), archived, "history");
+      onTestFinished(() => session.close());
+
+      expect(pi.recordedLaunches).toHaveLength(1);
+      const launch = pi.recordedLaunches[0]!;
+      expect(launch.cwd).toBe(homedir());
+      expect(launch.session).not.toBe(archived.sessionFile);
+      expect(readSessionCopy(launch.session!)).toEqual({
+        header: { ...archived.header, cwd: homedir() },
+        body: archived.body,
+      });
+    },
+  );
+
+  test("a history resume of an agent whose folder is gone removes its session copy on close and leaves the original unchanged", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    const sessionCopy = pi.recordedLaunches[0]!.session!;
+    expect(existsSync(sessionCopy)).toBe(true);
+    await session.close();
+
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
+  });
+
+  test("a history resume of an agent whose folder is gone persists the original session file while Pi reports the copy", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+    await session.getRuntimeInfo();
+
+    expect(pi.latestSession().state.sessionFile).toBe(pi.recordedLaunches[0]!.session);
+    expect(session.describePersistence()).toMatchObject({
+      nativeHandle: archived.sessionFile,
+      metadata: { cwd: storedCwd },
+    });
+  });
+
+  test("a history resume of an agent whose folder is gone removes its session copy when Pi fails to start", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.getStateError = new Error("Pi RPC process exited with code 1 and signal null");
+    });
+
+    await expect(resumeArchived(createClient(pi), archived, "history")).rejects.toThrow(
+      "Pi RPC process exited with code 1",
+    );
+
+    expect(pi.recordedLaunches).toHaveLength(1);
+    expect(pi.recordedLaunches[0]!.session).not.toBe(archived.sessionFile);
+    expect(existsSync(path.dirname(pi.recordedLaunches[0]!.session!))).toBe(false);
+  });
+
+  test("a history resume of an agent whose folder is gone checks MCP support from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueCommands([BUILTIN_MCP_COMMAND]);
+
+    const session = await resumeArchived(createClient(pi), archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches.map((launch) => launch.cwd)).toEqual([homedir(), homedir()]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+  });
+
+  test("an interactive resume of an agent whose folder is gone still fails in its stored folder", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    await expect(resumeArchived(createClient(pi), archived, "interactive")).rejects.toThrow(
+      `Stored session working directory does not exist: ${storedCwd}`,
+    );
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder exists keeps the stored folder and session file", async () => {
+    const storedCwd = createExistingFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder is gone opens its session in a real Pi process started from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder(), { model: "openrouter/b" });
+    const fakePiProcess = writeFakePiProcess();
+    const logger = pino({ level: "silent" });
+    const client = new PiRpcAgentClient({
+      logger,
+      runtime: new PiCliRuntime({ logger, command: fakePiProcess.command }),
+    });
+
+    const session = await resumeArchived(client, archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    const launches = fakePiProcess.readLaunches();
+    const home = realpathSync.native(homedir());
+    expect(launches.map((launch) => realpathSync.native(launch.cwd))).toEqual([home, home]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const sessionCopy = launches[1]!.session!;
+    expect(readUtf8File(sessionCopy)).toContain('"type":"model_change"');
+    expect(session.describePersistence()?.nativeHandle).toBe(archived.sessionFile);
+
+    await session.close();
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
+  });
+});
+
 describe("transformPiModels", () => {
   test("normalizes labels that include the upstream provider prefix", () => {
     expect(
@@ -3582,4 +3900,175 @@ test("pi runtime safety protects queued replies and runtime-owned activity", asy
   expect(await session.canStopRuntime!()).toBe(true);
   native.getStateError = new Error("Unable to prove idle");
   await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
+
+test("reserves the Pi turn while an image prompt is materialized", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const first = session.startTurn([
+    { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+  ]);
+  await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+  await first;
+  expect(pi.latestSession().prompts).toHaveLength(1);
+});
+
+test("interrupting Pi during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 51).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(pi.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing Pi during image conversion rejects its pending start", async () => {
+  const { pi, session } = await createSession();
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 52).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
+});
+
+describe("Pi tool-result images", () => {
+  test.each([false, true])(
+    "tool-result images precede the reply and completion (isError=%s)",
+    async (isError) => {
+      const { pi, session, events } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      await session.startTurn("run");
+      fakeSession.emit({
+        type: "tool_execution_start",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        args: {},
+      });
+      fakeSession.emit({
+        type: "tool_execution_end",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        result: {
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+          ],
+          structuredContent: {
+            type: "image",
+            data: Buffer.from("hello").toString("base64"),
+            mimeType: "image/png",
+            note: "captured",
+          },
+        },
+        isError,
+      });
+      fakeSession.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "Image read complete." },
+      });
+      fakeSession.finishTurn();
+      await events.nextTurnCompletion();
+
+      const items = events.timelineItems();
+      const toolIndex = items.findIndex(
+        (item) =>
+          item.type === "tool_call" &&
+          item.callId === "shot-1" &&
+          item.status === (isError ? "failed" : "completed"),
+      );
+      expect(toolIndex).toBeGreaterThanOrEqual(0);
+      // Base64 must never reach the tool output stringifier.
+      expect(JSON.stringify(items[toolIndex])).not.toContain(
+        Buffer.from("hello").toString("base64"),
+      );
+      expect(items.slice(toolIndex + 1)).toEqual([
+        expect.objectContaining({
+          type: "assistant_message",
+          text: expect.stringContaining("![Image]("),
+        }),
+        expect.objectContaining({ type: "assistant_message", text: "Image read complete." }),
+      ]);
+      expect(events.timelineAndCompletionEvents().at(-1)).toEqual({ type: "turn_completed" });
+    },
+  );
+});
+
+test("Pi image rendering preserves turn ownership across an interrupt and follow-up", async () => {
+  const { pi, session, events } = await createSession();
+  onTestFinished(() => session.close());
+  const emitted: AgentStreamEvent[] = [];
+  session.subscribe((event) => emitted.push(event));
+  const native = pi.latestSession();
+  const first = await session.startTurn("read image");
+  native.emit({
+    type: "tool_execution_end",
+    toolCallId: "large-image",
+    toolName: "screenshot",
+    result: {
+      content: [
+        {
+          type: "image",
+          data: Buffer.alloc(8 * 1024 * 1024, 73).toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+    },
+    isError: false,
+  });
+  native.finishTurn();
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image");
+  await waitForImmediate();
+  await waitForImmediate();
+  await expect
+    .poll(() =>
+      events
+        .timelineItems()
+        .some((item) => item.type === "assistant_message" && item.text.includes("![Image](")),
+    )
+    .toBe(true);
+  expect(events.turnCompletedEvents().some((event) => event.turnId === followup.turnId)).toBe(
+    false,
+  );
+  const imageEvent = emitted.find(
+    (event) =>
+      event.type === "timeline" &&
+      event.item.type === "assistant_message" &&
+      event.item.text.includes("![Image]("),
+  );
+  expect(imageEvent).toMatchObject({ turnId: first.turnId });
+  native.finishTurn();
+  await events.nextTurnCompletion();
 });

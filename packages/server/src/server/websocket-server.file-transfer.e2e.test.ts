@@ -90,7 +90,11 @@ test(
   TEST_TIMEOUT_MS,
 );
 
-async function connectSocket(port: number, clientId: string): Promise<WebSocket> {
+async function connectSocket(
+  port: number,
+  clientId: string,
+  capabilities?: Record<string, unknown>,
+): Promise<WebSocket> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve);
@@ -98,7 +102,7 @@ async function connectSocket(port: number, clientId: string): Promise<WebSocket>
   });
   await sendAndWait(
     socket,
-    { type: "hello", clientId, clientType: "browser", protocolVersion: 1 },
+    { type: "hello", clientId, clientType: "browser", protocolVersion: 1, capabilities },
     (message) =>
       message.type === "session" &&
       message.message.type === "status" &&
@@ -166,3 +170,97 @@ function sendAndWait(
   socket.send(JSON.stringify(message));
   return response;
 }
+
+test("an awaited timeline framing overflow closes the actual daemon socket", async () => {
+  const { createHostClient } = await import("@getpaseo/client/node");
+  const { createPaseoApi } = await import("@getpaseo/client");
+  const { default: pino } = await import("pino");
+  const { Writable } = await import("node:stream");
+  const messages: string[] = [];
+  const logger = pino(
+    { level: "warn" },
+    new Writable({
+      write(chunk, _encoding, done) {
+        messages.push(JSON.parse(chunk.toString()).msg);
+        done();
+      },
+    }),
+  );
+  daemon = await createTestPaseoDaemon({ logger });
+  const client = createHostClient(`127.0.0.1:${daemon.port}`, {
+    clientId: "framing-seed",
+    reconnect: { enabled: false },
+  });
+  await client.connect();
+  const api = createPaseoApi(client);
+  try {
+    const workspace = await api.workspaces.create({
+      source: { kind: "directory", path: daemon.staticDir },
+    });
+    const agents = [];
+    const text = "x".repeat(240 * 1024);
+    for (const [index, rows] of [350, 90].entries()) {
+      const agent = await workspace.agents.create({
+        config: { provider: "claude/claude-test", modeId: "full-access" },
+        title: `Framing overflow ${index}`,
+      });
+      agents.push(agent.id);
+      for (let row = 0; row < rows; row++)
+        await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text,
+        });
+    }
+    const source = await connectSocket(daemon.port, "framing-overflow", {
+      binary_chunking_v1: true,
+    });
+    sockets.push(source);
+    const closed = new Promise<void>((resolve) => source.once("close", () => resolve()));
+    const firstChunk = new Promise<void>((resolve) => {
+      const listener = (data: RawData, binary: boolean) => {
+        if (!binary || (data as Buffer)[0] !== 0x31) return;
+        source.off("message", listener);
+        source.pause();
+        resolve();
+      };
+      source.on("message", listener);
+    });
+    const fetch = (agentId: string, requestId: string) =>
+      source.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "fetch_agent_timeline_request",
+            requestId,
+            agentId,
+            direction: "tail",
+            projection: "canonical",
+            limit: 0,
+          },
+        }),
+      );
+    fetch(agents[0]!, "first");
+    await firstChunk;
+    fetch(agents[1]!, "overflow");
+    await expect
+      .poll(() => messages.includes("Closing physical WebSocket after outbound framing failure"), {
+        timeout: 15000,
+      })
+      .toBe(true);
+    expect(messages).not.toContain("Closing physical WebSocket at outbound high-water mark");
+    source.resume();
+    await closed;
+  } finally {
+    await api.dispose();
+    await client.close();
+  }
+}, 60000);
+
+test("malformed chunk metadata closes the daemon socket with a protocol error", async () => {
+  daemon = await createTestPaseoDaemon();
+  const source = await connectSocket(daemon.port, "invalid-framing", { binary_chunking_v1: true });
+  sockets.push(source);
+  const closed = new Promise<number>((resolve) => source.once("close", (code) => resolve(code)));
+  source.send(new Uint8Array([0x31, 2, 0, 3, 65]));
+  expect(await closed).toBe(1002);
+});

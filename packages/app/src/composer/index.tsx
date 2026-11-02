@@ -72,7 +72,7 @@ import {
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
+import type { DraftCommandTarget } from "@/agent-commands";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
@@ -2497,6 +2497,7 @@ function ComposerContentImpl({
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
                   defaultSendBehavior={activeSendBehavior}
+                  sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
