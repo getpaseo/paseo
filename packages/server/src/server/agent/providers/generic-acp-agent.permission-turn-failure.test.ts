@@ -12,6 +12,7 @@ describe("GenericACPAgentClient permission requests when a turn ends early", () 
   test.each([
     { ending: "fail", terminalEvent: "turn_failed" },
     { ending: "cancel", terminalEvent: "turn_canceled" },
+    { ending: "end_turn", terminalEvent: "turn_completed" },
   ] as const)(
     "answers a permission request left open by a $terminalEvent turn with cancelled",
     async ({ ending, terminalEvent }) => {
@@ -25,6 +26,16 @@ describe("GenericACPAgentClient permission requests when a turn ends early", () 
           await waitForEvent(events, terminalEvent);
           expect(hasEvent(events, "permission_requested")).toBe(true);
           expect(session.getPendingPermissions()).toEqual([]);
+          const requested = permissionRequests(events)[0]!;
+          expect(resolvedEvents(events)).toEqual([
+            {
+              type: "permission_resolved",
+              provider: "acp",
+              requestId: requested.request.id,
+              resolution: { behavior: "deny", message: "Permission request canceled" },
+              turnId: requested.turnId,
+            },
+          ]);
 
           const replyStart = events.length;
           await session.startTurn("turn two");
@@ -39,6 +50,46 @@ describe("GenericACPAgentClient permission requests when a turn ends early", () 
       });
     },
   );
+
+  test.each(["completed", "failed"] as const)(
+    "cancels only the matching permission when its tool becomes %s",
+    async (status) => {
+      await withFakeACPAgent(status, async (command, cwd) => {
+        const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+        const session = await client.createSession({ provider: "acp", cwd });
+        try {
+          const events = collectEvents(session);
+          await session.startTurn("turn one");
+          await waitForToolUpdate(events);
+          expect(pendingToolIds(session)).toEqual(["tool-2"]);
+          expect(resolvedEvents(events)).toEqual([
+            expect.objectContaining({ requestId: permissionRequests(events)[0]!.request.id }),
+          ]);
+        } finally {
+          await session.close();
+        }
+      });
+    },
+  );
+
+  test("keeps a permission raised outside a turn answerable after another turn completes", async () => {
+    await withFakeACPAgent("outside_turn", async (command, cwd) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+      const session = await client.createSession({ provider: "acp", cwd });
+      try {
+        const outside = session.getPendingPermissions();
+        expect(pendingToolIds(session)).toEqual(["tool-outside"]);
+        const events = collectEvents(session);
+        await session.startTurn("turn one");
+        await waitForEvent(events, "turn_completed");
+        expect(session.getPendingPermissions()).toEqual(outside);
+        await session.respondToPermission(outside[0]!.id, { behavior: "allow" });
+        expect(session.getPendingPermissions()).toEqual([]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
 });
 
 function collectEvents(session: AgentSession): AgentStreamEvent[] {
@@ -77,8 +128,24 @@ function assistantText(events: AgentStreamEvent[]): string {
     .join("");
 }
 
+function permissionRequests(events: AgentStreamEvent[]) {
+  return events.filter((event) => event.type === "permission_requested");
+}
+
+function resolvedEvents(events: AgentStreamEvent[]) {
+  return events.filter((event) => event.type === "permission_resolved");
+}
+
+function pendingToolIds(session: AgentSession) {
+  return session.getPendingPermissions().map((request) => request.metadata?.toolCallId);
+}
+
+async function waitForToolUpdate(events: AgentStreamEvent[]): Promise<void> {
+  await expect.poll(() => assistantText(events)).toBe("tool terminal");
+}
+
 async function withFakeACPAgent(
-  ending: "fail" | "cancel",
+  ending: "fail" | "cancel" | "end_turn" | "completed" | "failed" | "outside_turn",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-permission-turn-failure-"));
@@ -91,8 +158,7 @@ async function withFakeACPAgent(
   }
 }
 
-// Turn one asks for permission, then fails or is cancelled while the request is
-// still open.
+// Turn one ends while its permission request is still open.
 // Later turns report whether that request was ever answered.
 const fakeACPAgentScript = `
 const readline = require("node:readline");
@@ -106,10 +172,27 @@ function write(message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 }
 
+function ask(sessionId, requestId, toolCallId) {
+  const toolCall = { toolCallId, title: "echo hello", kind: "execute", status: "pending" };
+  write({ method: "session/update", params: { sessionId, update: { sessionUpdate: "tool_call", ...toolCall } } });
+  write({
+    id: requestId,
+    method: "session/request_permission",
+    params: {
+      sessionId,
+      toolCall,
+      options: [
+        { optionId: "allow", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  });
+}
+
 rl.on("line", (line) => {
   const message = JSON.parse(line);
-  if (message.method === undefined && message.id === "perm-1") {
-    permissionAnswer = message.result ?? { error: message.error };
+  if (message.method === undefined) {
+    if (message.id === "perm-1") permissionAnswer = message.result ?? { error: message.error };
     return;
   }
   if (message.method === "initialize") {
@@ -117,6 +200,7 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "session/new") {
+    if (ending === "outside_turn") ask("session-1", "perm-outside", "tool-outside");
     write({ id: message.id, result: { sessionId: "session-1" } });
     return;
   }
@@ -124,23 +208,18 @@ rl.on("line", (line) => {
     const sessionId = message.params.sessionId;
     promptCount += 1;
     if (promptCount === 1) {
-      const toolCall = { toolCallId: "tool-1", title: "echo hello", kind: "execute", status: "pending" };
-      write({ method: "session/update", params: { sessionId, update: { sessionUpdate: "tool_call", ...toolCall } } });
-      write({
-        id: "perm-1",
-        method: "session/request_permission",
-        params: {
-          sessionId,
-          toolCall,
-          options: [
-            { optionId: "allow", name: "Allow once", kind: "allow_once" },
-            { optionId: "reject", name: "Reject", kind: "reject_once" },
-          ],
-        },
-      });
+      ask(sessionId, "perm-1", "tool-1");
+      if (ending === "completed" || ending === "failed") {
+        ask(sessionId, "perm-2", "tool-2");
+        write({ method: "session/update", params: { sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: ending } } });
+        write({ method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "tool terminal" } } } });
+        return;
+      }
       setTimeout(() => {
         if (ending === "cancel") {
           write({ id: message.id, result: { stopReason: "cancelled" } });
+        } else if (ending === "end_turn" || ending === "outside_turn") {
+          write({ id: message.id, result: { stopReason: "end_turn" } });
         } else {
           write({ id: message.id, error: { code: -32603, message: "turn failed with a permission open" } });
         }
