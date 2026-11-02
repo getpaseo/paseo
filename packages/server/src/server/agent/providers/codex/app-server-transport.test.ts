@@ -183,3 +183,56 @@ describe("Codex app-server transport", () => {
     codex.child.stdin.end();
   });
 });
+
+describe("Codex stdout byte admission", () => {
+  test("an oversized response fails only its own request", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const terminations: Error[] = [];
+    client.setUnexpectedTerminationHandler((error) => terminations.push(error));
+    const oversized = client.request("thread/items/list", {}).catch((error: Error) => error);
+    const other = client.request("model/list", {});
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    child.stdout.write('{"id":1,"result":"');
+    for (let index = 0; index < 2049; index++) child.stdout.write(chunk);
+    child.stdout.write('"}\n{"id":2,"result":{"data":[]}}\n');
+
+    expect(await oversized).toMatchObject({
+      name: "CodexAppServerResponseTooLargeError",
+      method: "thread/items/list",
+      limitBytes: 128 * 1024 * 1024,
+    });
+    await expect(other).resolves.toEqual({ data: [] });
+    const next = client.request("model/list", {});
+    child.stdout.write('{"id":3,"result":{"data":["next"]}}\n');
+    await expect(next).resolves.toEqual({ data: ["next"] });
+    expect(terminations).toEqual([]);
+    await client.dispose();
+    child.stdout.end();
+    child.stderr.end();
+  });
+
+  test("an oversized notification fails pending requests and the session", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const terminations: Error[] = [];
+    client.setUnexpectedTerminationHandler((error) => terminations.push(error));
+    const request = client.request("thread/resume", {}, 1000).catch((error: Error) => error);
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    child.stdout.write('{"method":"item/completed","params":"');
+    for (let index = 0; index < 2048; index++) child.stdout.write(chunk);
+    const error = await request;
+    expect(error).toMatchObject({
+      name: "ProviderStreamLimitError",
+      code: "PROVIDER_STREAM_LINE_TOO_LARGE",
+      limitBytes: 128 * 1024 * 1024,
+    });
+    expect(terminations).toEqual([error]);
+    expect(client.hasPendingRequests()).toBe(false);
+    child.stdout.write('"}\n{"id":1,"result":"late"}\n');
+    await expect(client.request("model/list")).rejects.toThrow("closed");
+    await client.dispose();
+    child.stdout.end();
+    child.stderr.end();
+  });
+});

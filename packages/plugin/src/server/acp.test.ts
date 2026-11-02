@@ -1307,7 +1307,15 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
     const items = events.flatMap((event) =>
       event.type === "timeline.item" &&
       (event.item.type === "assistant_message" || event.item.type === "reasoning")
-        ? [{ id: event.item.id, text: event.item.text }]
+        ? [
+            {
+              id: event.item.id,
+              text: event.item.text,
+              ...(event.item.type === "assistant_message" && event.item.messageId
+                ? { messageId: event.item.messageId }
+                : {}),
+            },
+          ]
         : [],
     );
     expect(items).toEqual([
@@ -1315,7 +1323,11 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
       { id: "agent_message_chunk:1", text: "- **Current temperature**: 25°C" },
       { id: "agent_message_chunk:2", text: "next turn" },
       { id: "agent_thought_chunk:3", text: "think A" },
-      { id: "m-explicit", text: "say" },
+      {
+        id: JSON.stringify(["agent_message_chunk", "m-explicit"]),
+        messageId: "m-explicit",
+        text: "say",
+      },
       { id: "agent_thought_chunk:4", text: "think B" },
     ]);
     await connection.close();
@@ -1402,6 +1414,21 @@ async function streamChunkTurns(
 }
 
 describe("ACP streamed message boundaries", () => {
+  it("keeps reasoning separate from a reply sharing its native message ID", async () => {
+    expect(
+      await streamChunkTurns([
+        textChunk("private ", "agent_thought_chunk", "shared-id"),
+        textChunk("reasoning", "agent_thought_chunk", "shared-id"),
+        textChunk("public ", "agent_message_chunk", "shared-id"),
+        textChunk("reply", "agent_message_chunk", "shared-id"),
+      ]),
+    ).toEqual([
+      { type: "reasoning", text: "private reasoning" },
+      { type: "assistant_message", text: "public reply" },
+      { type: "assistant_message", text: "Next turn" },
+    ]);
+  });
+
   it.each([
     {
       name: "tool call",
@@ -1499,4 +1526,234 @@ describe("ACP streamed message boundaries", () => {
       ]);
     },
   );
+});
+
+function userChunk(text: string, messageId?: string): SessionUpdate {
+  return {
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text },
+    ...(messageId === undefined ? {} : { messageId }),
+  };
+}
+
+async function openReplaySession(
+  replay: SessionUpdate[],
+  history: "replay" | "skip",
+): Promise<{ connection: ProviderConnection; events: ProviderEvent[] }> {
+  const harness = connectorHarness({
+    capabilities: { loadSession: true },
+    handleRequest(instance, request) {
+      if (request.method !== "session/load") return false;
+      for (const update of replay) {
+        instance.notify("session/update", { sessionId: "connector-session", update });
+      }
+      instance.respond(request, {
+        sessionId: "connector-session",
+        modes: null,
+        configOptions: [],
+      });
+      return true;
+    },
+  });
+  const registration = runAcpProvider({
+    id: "replay-acp",
+    label: "Replay ACP",
+    connector: harness.connector,
+  });
+  const connection = await registration.connect({
+    versions: [1],
+    capabilities: ["prompt.message", "session.persistence"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  const input = openInput();
+  input.persistence = { version: 1, data: { sessionId: "connector-session" } };
+  input.history = history;
+  await connection.send(input);
+  await waitForEvent(events, (event) => event.type === "session.ready");
+  return { connection, events };
+}
+
+function timelineProjection(events: ProviderEvent[]): Array<Record<string, string>> {
+  return events.flatMap((event) => {
+    if (event.type !== "timeline.item") return [];
+    const item = event.item;
+    if (
+      item.type === "user_message" ||
+      item.type === "assistant_message" ||
+      item.type === "reasoning"
+    ) {
+      return [{ type: item.type, id: item.id, text: item.text }];
+    }
+    if (item.type === "tool_call") return [{ type: item.type, id: item.id, status: item.status }];
+    return [{ type: item.type, id: item.id }];
+  });
+}
+
+describe("ACP session history replay", () => {
+  it("restores the timeline replayed before session/load resolves", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("What is the ", "user-1"),
+        userChunk("temperature?", "user-1"),
+        textChunk("Checking the sensor", "agent_thought_chunk"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Read sensor",
+          kind: "read",
+          status: "in_progress",
+        },
+        { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed" },
+        textChunk("It is 25°C"),
+      ],
+      "replay",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: '["user_message_chunk","user-1"]', text: "What is the " },
+        {
+          type: "user_message",
+          id: '["user_message_chunk","user-1"]',
+          text: "What is the temperature?",
+        },
+        { type: "reasoning", id: "agent_thought_chunk:1", text: "Checking the sensor" },
+        { type: "tool_call", id: "tool-1", status: "running" },
+        { type: "tool_call", id: "tool-1", status: "completed" },
+        { type: "assistant_message", id: "agent_message_chunk:2", text: "It is 25°C" },
+      ]);
+      const lastReplayed = events.findLastIndex((event) => event.type === "timeline.item");
+      const opened = events.findIndex((event) => event.type === "session.opened");
+      expect(lastReplayed).toBeLessThan(opened);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps replayed user, reasoning and reply chunks separate when their native IDs match", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("What is the ", "shared-id"),
+        userChunk("temperature?", "shared-id"),
+        textChunk("Checking ", "agent_thought_chunk", "shared-id"),
+        textChunk("the sensor", "agent_thought_chunk", "shared-id"),
+        textChunk("It is ", "agent_message_chunk", "shared-id"),
+        textChunk("25°C", "agent_message_chunk", "shared-id"),
+      ],
+      "replay",
+    );
+    try {
+      const items = new Map(
+        events.flatMap((event) =>
+          event.type === "timeline.item" ? [[event.item.id, event.item] as const] : [],
+        ),
+      );
+      expect([...items.values()]).toEqual([
+        {
+          type: "user_message",
+          id: '["user_message_chunk","shared-id"]',
+          messageId: "shared-id",
+          text: "What is the temperature?",
+        },
+        {
+          type: "reasoning",
+          id: '["agent_thought_chunk","shared-id"]',
+          text: "Checking the sensor",
+        },
+        {
+          type: "assistant_message",
+          id: '["agent_message_chunk","shared-id"]',
+          messageId: "shared-id",
+          text: "It is 25°C",
+        },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("continues anonymous user chunks into one message and starts a new one after an agent reply", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("first "),
+        userChunk("question"),
+        textChunk("answer"),
+        userChunk("second question"),
+      ],
+      "replay",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: "user_message_chunk:1", text: "first " },
+        { type: "user_message", id: "user_message_chunk:1", text: "first question" },
+        { type: "assistant_message", id: "agent_message_chunk:2", text: "answer" },
+        { type: "user_message", id: "user_message_chunk:3", text: "second question" },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("does not duplicate the live prompt echo when the agent echoes it as a user chunk", async () => {
+    const harness = connectorHarness({
+      capabilities: { loadSession: true },
+      promptUpdates: (promptText) => [
+        { sessionUpdate: "user_message_chunk", content: { type: "text", text: promptText } },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Acknowledged" } },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "echo-acp",
+      label: "Echo ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    const input = openInput();
+    input.persistence = { version: 1, data: { sessionId: "connector-session" } };
+    input.history = "replay";
+    await connection.send(input);
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "echo-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    try {
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:echo-1" &&
+          event.state === "completed",
+      );
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: "echo-1", text: "hello" },
+        { type: "assistant_message", id: "agent_message_chunk:1", text: "Acknowledged" },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("drops replayed updates when the open request asks to skip history", async () => {
+    const { connection, events } = await openReplaySession(
+      [userChunk("What is in the README?", "user-1"), textChunk("It describes the project.")],
+      "skip",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
 });

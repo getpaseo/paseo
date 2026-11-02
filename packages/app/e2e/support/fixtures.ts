@@ -1,4 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
+import { hideDeveloperToasts } from "./developer-ui.mjs";
 import { startOutdatedDaemon, type OutdatedDaemon } from "./helpers/daemon-update";
 import { startE2EWorker } from "./helpers/e2e-worker";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
@@ -130,6 +131,8 @@ const test = daemonTest.extend<{
         await ws.close({ code: 1008, reason: "Blocked connection to localhost:6767 during e2e." });
       });
 
+      await hideDeveloperToasts(page);
+
       const entries: string[] = [];
 
       page.on("console", (message) => {
@@ -177,6 +180,11 @@ const test = daemonTest.extend<{
           localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon, ...extraHosts]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+          // New installs collapse finished turns; specs assert on the rows inside them, so they
+          // start from the full chat unless they seed their own settings.
+          if (!localStorage.getItem("@paseo:app-settings")) {
+            localStorage.setItem("@paseo:app-settings", JSON.stringify({ chatDisplay: "full" }));
+          }
         },
         {
           daemon: testDaemon,

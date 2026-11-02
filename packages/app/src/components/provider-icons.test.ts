@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { Bot } from "lucide-react-native";
+import { Bot, PackagePlus } from "lucide-react-native";
 import { SvgXml } from "react-native-svg";
 import { afterEach, describe, expect, it } from "vitest";
 import { replaceProviderSnapshotIcons } from "@/data/provider-icons";
@@ -17,6 +17,16 @@ function renderIcon(Component: ProviderIconComponent) {
 }
 
 describe("useProviderIcon", () => {
+  it.each(["devin", "hermes", "kiro", "antigravity"])(
+    "#7087: %s has a provider mark before a host snapshot arrives",
+    (provider) => {
+      const Icon = renderHook(() => useProviderIcon(provider)).result.current;
+      expect(Icon).not.toBe(Bot);
+      expect(Icon).not.toBe(PackagePlus);
+      expect(typeof Icon).toBe("function");
+    },
+  );
+
   it("renders registered snapshot SVG metadata with the requested size and color", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
     replaceProviderSnapshotIcons("server-1", [{ provider: "rendered-provider", iconSvg: svg }]);

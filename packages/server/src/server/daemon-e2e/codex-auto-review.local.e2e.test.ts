@@ -288,6 +288,12 @@ async function runScenario(modeId: "auto" | "auto-review") {
   try {
     writeMockCodexConfig(codexHome, mockServer.url);
     await client.connect();
+    const permissionEvents = client.observeEvents([
+      "agent_permission_request",
+      "agent_permission_resolved",
+    ]);
+    permissionEvents.subscribe({ snapshot: () => {}, update: () => {} });
+    await permissionEvents.ready;
     await client.fetchAgents({ subscribe: {} });
 
     const agent = await client.createAgent({

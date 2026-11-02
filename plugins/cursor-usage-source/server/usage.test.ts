@@ -273,13 +273,50 @@ describe("cursor usage source", () => {
       writeFileSync(path, JSON.stringify({ accessToken: "session-token" }));
     }
 
+    it("keeps different accounts separate while joining global and session logins for the same account", async () => {
+      function token(sub: string, nonce: string) {
+        return `e30.${Buffer.from(JSON.stringify({ sub, nonce })).toString("base64url")}.signature`;
+      }
+      writeCursorAuthJson(homeDir, token("user-a", "desktop"));
+      writeCursorAuthJson(sessionHome, token("user-b", "session"));
+      const globalAccounts = await discover();
+      const differentAccount = await discoverSession(cursorSession({}), "linux");
+      expect(globalAccounts).toHaveLength(1);
+      expect(differentAccount).toHaveLength(1);
+      expect(differentAccount[0]!.key).not.toBe(globalAccounts[0]!.key);
+
+      writeCursorAuthJson(sessionHome, token("user-a", "refreshed-session"));
+      const sameAccount = await discoverSession(cursorSession({}), "linux");
+      expect(sameAccount).toHaveLength(1);
+      expect(sameAccount[0]!.key).toBe(globalAccounts[0]!.key);
+    });
+
+    it("isolates logins without a readable subject by store and keeps their key across token rotation", async () => {
+      writeCursorAuthJson(homeDir, "opaque-global-token");
+      writeCursorAuthJson(sessionHome, "opaque-session-token");
+      const globalAccounts = await discover();
+      const sessionAccounts = await discoverSession(cursorSession({}), "linux");
+      expect(sessionAccounts).toHaveLength(1);
+      expect(globalAccounts).toHaveLength(1);
+      expect(sessionAccounts[0]!.key).not.toBe(globalAccounts[0]!.key);
+      writeCursorAuthJson(sessionHome, "e30.invalid-json.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+      writeCursorAuthJson(sessionHome, "e30.e30.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+    });
+
     it("reads the login cursor-agent uses under the session's XDG_CONFIG_HOME", async () => {
       const configHome = join(sessionHome, "xdg");
       const authPath = join(configHome, "cursor", "auth.json");
       writeAuthJson(authPath);
       expect(
         await discoverSession(cursorSession({ XDG_CONFIG_HOME: configHome }), "linux"),
-      ).toEqual([{ key: "default", input: { store: "file", locator: authPath } }]);
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
     });
 
     it("reads the login under the session's HOME, not the daemon's", async () => {
@@ -287,7 +324,7 @@ describe("cursor usage source", () => {
       writeCursorAuthJson(sessionHome, "session-token");
       expect(await discoverSession(cursorSession({}), "linux")).toEqual([
         {
-          key: "default",
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
           input: { store: "file", locator: join(sessionHome, ".config", "cursor", "auth.json") },
         },
       ]);
@@ -298,7 +335,10 @@ describe("cursor usage source", () => {
       const authPath = join(appData, "Cursor", "auth.json");
       writeAuthJson(authPath);
       expect(await discoverSession(cursorSession({ APPDATA: appData }), "win32")).toEqual([
-        { key: "default", input: { store: "file", locator: authPath } },
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
       ]);
     });
 
@@ -308,7 +348,12 @@ describe("cursor usage source", () => {
       expect(await discoverSession(cursorSession({}), "darwin")).toEqual([]);
       expect(
         await discoverSession(cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "file" }), "darwin"),
-      ).toEqual([{ key: "default", input: { store: "file", locator: authPath } }]);
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
     });
 
     it.each([
@@ -341,7 +386,10 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
     });
     expect(requested).toBe(true);
     expect(await discover()).toEqual([
-      { key: "default", input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" } },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
+      },
     ]);
   } finally {
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];

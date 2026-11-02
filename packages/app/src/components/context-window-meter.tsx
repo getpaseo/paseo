@@ -11,6 +11,7 @@ import { useHostReportsUsage } from "@/usage";
 import type { Theme } from "@/styles/theme";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
+import { formatContextPercentage } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
   serverId: string;
@@ -111,8 +112,9 @@ const ContextWindowRing = withUnistyles(function ContextWindowRing({
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      {...(isNative
+        ? { accessibilityElementsHidden: true, importantForAccessibility: "no-hide-descendants" }
+        : { "aria-hidden": true })}
     >
       <Circle
         cx={center}
@@ -150,7 +152,7 @@ export function ContextWindowMeter({
   showPercentage = false,
   glyphSize,
 }: ContextWindowMeterProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { width } = useWindowDimensions();
   // Usage cards need a wider popover; without them it keeps the plain tooltip shape.
   const showsUsage = useHostReportsUsage(serverId);
@@ -192,7 +194,9 @@ export function ContextWindowMeter({
   );
   const percentageLabel =
     showPercentage && context ? (
-      <Text style={styles.percentageLabel}>{`${context.percentage}%`}</Text>
+      <Text style={styles.percentageLabel}>
+        {formatContextPercentage(context.percentage, i18n.resolvedLanguage)}
+      </Text>
     ) : null;
   const accessibilityLabel = context
     ? t("contextWindow.accessibility", { percentage: context.percentage })

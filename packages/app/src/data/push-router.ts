@@ -1,11 +1,12 @@
 import type { OwnedSubscription } from "@getpaseo/client";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
 import type {
   ListTerminalsResponse,
   MutableDaemonConfig,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { invalidateCommandsForProviderChange } from "@/agent-commands/cache";
 import { shareCheckoutDiff } from "@/git/diff-sharing";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
@@ -33,7 +34,7 @@ type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionI
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
 interface CheckoutDiffCompare {
-  mode: "uncommitted" | "base";
+  mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
 }
@@ -186,10 +187,10 @@ export async function applyProvidersSnapshotUpdate(input: {
   const snapshot = { ...input.message.payload, requestId: "providers_snapshot_update" };
   const cwd = normalizeProvidersSnapshotCwd(snapshot.cwd);
   const queryKey = providersSnapshotQueryKey(input.serverId, cwd);
-  const previous = input.queryClient.getQueryData<{ snapshotHash?: string }>(queryKey);
+  const previous = input.queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(queryKey);
   let announcement: typeof snapshot | undefined = snapshot;
   void input.queryClient.cancelQueries({ queryKey, exact: true });
-  await input.queryClient.fetchQuery({
+  const current = await input.queryClient.fetchQuery({
     queryKey,
     staleTime: 0,
     structuralSharing: false,
@@ -205,12 +206,13 @@ export async function applyProvidersSnapshotUpdate(input: {
       });
     },
   });
-  if (!snapshot.snapshotHash || previous?.snapshotHash !== snapshot.snapshotHash) {
-    void input.queryClient.invalidateQueries({
-      queryKey: agentCommandsQueryRoot(input.serverId),
-      exact: false,
-    });
-  }
+  void invalidateCommandsForProviderChange({
+    queryClient: input.queryClient,
+    serverId: input.serverId,
+    cwd,
+    previous: previous?.entries,
+    current: current.entries,
+  });
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
@@ -655,7 +657,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   const mode = value.mode;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
-  if (mode !== "uncommitted" && mode !== "base") {
+  if (mode !== "uncommitted" && mode !== "base" && mode !== "all") {
     return null;
   }
   if (baseRef !== undefined && typeof baseRef !== "string") {

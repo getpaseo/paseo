@@ -1,7 +1,10 @@
 import type { AgentMode, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import { useShallow } from "zustand/shallow";
 import { formatAgentModeLabel } from "@/agent-controls/labels";
 import { formatTokenCount } from "@/components/context-window-meter.utils";
 import { resolveAgentModelSelection } from "@/composer/agent-controls/utils";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useSessionStore } from "@/stores/session-store";
 
 export interface AgentFactsInput {
   models: AgentModelDefinition[] | null;
@@ -31,6 +34,32 @@ export function buildAgentFactsLine(input: AgentFactsInput): string | null {
   const context = formatContextUsage(input.contextWindowUsedTokens, input.contextWindowMaxTokens);
   if (context) parts.push(context);
   return parts.join(" · ");
+}
+
+/** The facts line for a Paseo agent in the session store, kept current as the agent reports. */
+export function useAgentFactsLine(serverId: string, agentId: string): string | null {
+  const agent = useSessionStore(
+    useShallow((state) => {
+      const current = state.sessions[serverId]?.agents.get(agentId);
+      return current
+        ? {
+            provider: current.provider,
+            cwd: current.cwd,
+            runtimeModelId: current.runtimeInfo?.model ?? null,
+            configuredModelId: current.model ?? null,
+            runtimeThinkingOptionId: current.runtimeInfo?.thinkingOptionId ?? null,
+            explicitThinkingOptionId: current.thinkingOptionId ?? null,
+            availableModes: current.availableModes,
+            currentModeId: current.currentModeId,
+            contextWindowUsedTokens: current.lastUsage?.contextWindowUsedTokens ?? null,
+            contextWindowMaxTokens: current.lastUsage?.contextWindowMaxTokens ?? null,
+          }
+        : null;
+    }),
+  );
+  const { entries } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
+  const models = entries?.find((entry) => entry.provider === agent?.provider)?.models ?? null;
+  return agent ? buildAgentFactsLine({ ...agent, models }) : null;
 }
 
 /** The mode control shows the current mode, or the provider's first one until the agent reports. */

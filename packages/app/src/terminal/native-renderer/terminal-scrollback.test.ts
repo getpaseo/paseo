@@ -54,16 +54,19 @@ describe("native terminal scrollback retention", () => {
       scrollbackLines: SCROLLBACK,
       lineCount: SCROLLBACK + ROWS + 10,
     });
-    const state = terminal.getState();
     const bounds = terminal.getBufferBounds();
 
-    expect(state.scrollback.length).toBeGreaterThan(0);
-    expect(state.scrollback.length).toBeLessThanOrEqual(SCROLLBACK);
+    const historyRows = bounds.bottomViewport.firstRow - bounds.oldestRow;
+    expect(historyRows).toBeGreaterThan(0);
+    expect(historyRows).toBeLessThanOrEqual(SCROLLBACK);
     expect(bounds.newestRow).toBeGreaterThan(ROWS);
     expect(bounds.oldestRow).toBeGreaterThan(0);
-    expect(bounds.newestRow - bounds.oldestRow + 1).toBe(
-      state.scrollback.length + state.grid.length,
-    );
+    const retained = terminal.getBufferWindow({
+      startRow: bounds.oldestRow,
+      rowCount: SCROLLBACK + ROWS + 1,
+    });
+    expect(retained.rows).toHaveLength(SCROLLBACK + ROWS);
+    expect(rowText(retained.rows[0]!)).toBe(expectedBenchmarkLine(bounds.oldestRow));
   });
 
   test("observable scrollback count is bounded by configured lines", async () => {
@@ -73,9 +76,9 @@ describe("native terminal scrollback retention", () => {
       scrollbackLines: SCROLLBACK,
       lineCount: SCROLLBACK * 3,
     });
-    const state = terminal.getState();
 
-    expect(state.scrollback.length).toBe(SCROLLBACK);
+    const bounds = terminal.getBufferBounds();
+    expect(bounds.bottomViewport.firstRow - bounds.oldestRow).toBe(SCROLLBACK);
   });
 
   test("scroll up moves viewport into retained history", async () => {

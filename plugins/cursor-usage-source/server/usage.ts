@@ -1,4 +1,5 @@
 import type { UsageInput } from "../shared/input.js";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -8,10 +9,12 @@ import {
   toneFromUsedPct,
   usedPctOf,
   unavailable,
+  windowFromUsedPct,
   type UsageAccount,
   type UsageReport,
   type UsageBalance,
   type UsageScope,
+  type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
 
 const ApiNumberSchema = z.coerce.number().finite();
@@ -59,6 +62,9 @@ const CursorUsageResponseSchema = z.object({
       bonusSpend: ApiNullableNumberSchema,
       remaining: ApiNullableNumberSchema,
       limit: ApiNullableNumberSchema,
+      totalPercentUsed: ApiNullableNumberSchema,
+      autoPercentUsed: ApiNullableNumberSchema,
+      apiPercentUsed: ApiNullableNumberSchema,
     })
     .nullish(),
   billingCycleStart: CursorBillingCycleTimestampSchema,
@@ -176,8 +182,29 @@ export async function fetchUsage(
 
   const resp = CursorUsageResponseSchema.parse(await res.json());
   const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const windows: UsageWindow[] = [];
   const balances: UsageBalance[] = [];
   if (resp.planUsage) {
+    // Total spend includes bonus credits; returned percentages measure quota usage.
+    for (const [id, label, usedPct] of [
+      ["plan_usage", "Total", resp.planUsage.totalPercentUsed],
+      ["cursor_usage", "Cursor", resp.planUsage.autoPercentUsed],
+      ["third_party_usage", "Third Party", resp.planUsage.apiPercentUsed],
+    ] as const) {
+      if (usedPct === null) continue;
+      windows.push(
+        windowFromUsedPct({
+          id,
+          label,
+          utilizationPct: usedPct,
+          resetsAt: billingCycleEnd,
+          summary: id === "plan_usage",
+          tone: toneFromUsedPct(usedPct),
+        }),
+      );
+    }
+  }
+  if (resp.planUsage && windows.length === 0) {
     const totalSpend = centsToDollars(resp.planUsage.totalSpend);
     const remaining = centsToDollars(resp.planUsage.remaining);
     const limit = centsToDollars(resp.planUsage.limit);
@@ -196,7 +223,7 @@ export async function fetchUsage(
   return {
     status: "available",
     planLabel: undefined,
-    windows: [],
+    windows,
     balances,
     details: [],
   };
@@ -209,6 +236,26 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
       ? await readCursorTokenFromSqlite(input.locator)
       : await readCursorTokenFromAuthJson(input.locator);
   return token ?? undefined;
+}
+
+const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
+
+function cursorAccount(token: string, input: UsageInput): UsageAccount {
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload: unknown = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+      const identity = CursorIdentitySchema.safeParse(payload);
+      if (identity.success) {
+        const key = createHash("sha256").update(identity.data.sub).digest("hex");
+        return { key: `account-${key}`, input };
+      }
+    } catch {
+      // Non-JWT logins still have a usage card, isolated to their credential store.
+    }
+  }
+  const key = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  return { key: `store-${key}`, input };
 }
 
 export async function discover(): Promise<UsageAccount[]> {
@@ -237,12 +284,14 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
-  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  for (const input of candidates) {
+    const token = await readToken(input);
+    if (token) return [cursorAccount(token, input)];
+  }
   return [];
 }
 
-// Resolves the login a cursor-agent session runs on. The key matches global discovery so
-// the session's login joins the host's Cursor card instead of adding a second one.
+// Account identity joins global and session logins without merging different users.
 export async function discoverSession(
   scope: Extract<UsageScope, { kind: "session" }>,
   platform: NodeJS.Platform = process.platform,
@@ -251,7 +300,8 @@ export async function discoverSession(
   const locator = cursorAgentAuthPath(scope.env, platform);
   if (!locator) return [];
   const input: UsageInput = { store: "file", locator };
-  return (await readToken(input)) ? [{ key: "default", input }] : [];
+  const token = await readToken(input);
+  return token ? [cursorAccount(token, input)] : [];
 }
 
 // Mirrors cursor-agent's credential store. Env credentials win over the stored login and

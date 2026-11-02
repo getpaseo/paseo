@@ -1,4 +1,5 @@
 export { ClaudeIcon, CodexIcon, SourceControlIcon } from "./icons";
+export { type ToolCall, ToolCallRow } from "./chat";
 export { DESIGN_HEIGHT, DESIGN_WIDTH } from "./geometry";
 export { PhoneFrame } from "./mobile/frame";
 export { MobileChat } from "./mobile/chat";

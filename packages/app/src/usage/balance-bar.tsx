@@ -1,16 +1,32 @@
-import { useMemo } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatAmount, formatResetLabel } from "./format";
-import type { UsageBalance, UsageTone } from "./types";
+import {
+  formatAmount,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatResetTime,
+} from "./format";
+import { UsageMeter } from "./meter";
+import { UsageResetLine } from "./reset-line";
+import type { UsageBalance } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 interface ResolvedBalance {
   amountText: string;
   usedPct: number | null;
 }
 
-function resolveBalance(balance: UsageBalance, locale: string): ResolvedBalance {
+function resolveBalance({
+  balance,
+  t,
+  locale,
+}: {
+  balance: UsageBalance;
+  t: TFunction;
+  locale?: string;
+}): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   const format = (value: number) => formatAmount(value, unit, locale);
   if (limit != null && limit > 0) {
@@ -20,7 +36,10 @@ function resolveBalance(balance: UsageBalance, locale: string): ResolvedBalance 
     return { amountText: `${usedText} / ${format(limit)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${format(remaining)} left`, usedPct: null };
+    return {
+      amountText: t("providerUsage.values.remaining", { amount: format(remaining) }),
+      usedPct: null,
+    };
   }
   if (used != null) {
     return { amountText: format(used), usedPct: null };
@@ -28,46 +47,41 @@ function resolveBalance(balance: UsageBalance, locale: string): ResolvedBalance 
   return { amountText: "—", usedPct: null };
 }
 
-function fillToneStyle(tone: UsageTone) {
-  switch (tone) {
-    case "ok":
-      return styles.fillOk;
-    case "warning":
-      return styles.fillWarning;
-    case "danger":
-      return styles.fillDanger;
-    default:
-      return styles.fillDefault;
-  }
-}
-
-export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
-  const { i18n } = useTranslation();
-  const { amountText, usedPct } = resolveBalance(balance, i18n.language);
+export function UsageBalanceBar({
+  balance,
+  retained = false,
+}: {
+  balance: UsageBalance;
+  retained?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const now = useRelativeTimeTick({ enabled: balance.resetsAt != null });
+  const { amountText, usedPct } = resolveBalance({ balance, t, locale: i18n.resolvedLanguage });
   const tone = balance.tone ?? "default";
-  const resetLabel = formatResetLabel(balance.resetsAt);
-
-  const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
-    [usedPct, tone],
-  );
+  const resetLabel = formatResetLabel(balance.resetsAt, retained, now, t);
+  const resetTime = formatResetTime(balance.resetsAt, now, t);
 
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {balance.label}
+          {formatProviderUsageLabel(balance.id, balance.label, t)}
         </Text>
-        <Text style={styles.value}>
+        <Text
+          style={styles.amount}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID={`provider-usage-balance-${balance.id}-value`}
+        >
           {amountText}
-          {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
       </View>
-      {usedPct != null ? (
-        <View style={styles.track}>
-          <View style={fillStyle} />
-        </View>
-      ) : null}
+      {usedPct != null ? <UsageMeter percent={usedPct} tone={tone} /> : null}
+      <UsageResetLine
+        countdown={resetLabel}
+        exactTime={resetTime}
+        testID={`provider-usage-balance-${balance.id}-reset`}
+      />
     </View>
   );
 }
@@ -84,38 +98,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  value: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
-  reset: {
-    color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.normal,
-  },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface3,
-    overflow: "hidden",
-  },
-  fill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
-  },
-  fillOk: {
-    backgroundColor: theme.colors.statusSuccess,
-  },
-  fillWarning: {
-    backgroundColor: theme.colors.statusWarning,
-  },
-  fillDanger: {
-    backgroundColor: theme.colors.statusDanger,
+  amount: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
 }));

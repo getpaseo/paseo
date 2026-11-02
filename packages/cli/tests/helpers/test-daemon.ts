@@ -18,7 +18,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { ChildProcess, spawn } from "child_process";
-import { getAvailablePort } from "./network.ts";
+import { readDaemonInstance } from "@getpaseo/server/daemon-control";
 
 export interface TestDaemonContext {
   /** Available local port for test daemon (never 6767) */
@@ -195,17 +195,20 @@ async function probeDaemonReady(
 }
 
 async function waitForDaemonReady(
-  port: number,
   paseoHome: string,
   timeout = 30000,
   env?: NodeJS.ProcessEnv,
-): Promise<void> {
+): Promise<number> {
   const deadline = Date.now() + timeout;
 
-  async function poll(): Promise<void> {
-    if (await probeDaemonReady(port, paseoHome, env)) return;
+  async function poll(): Promise<number> {
+    const instance = await readDaemonInstance(paseoHome);
+    if (instance?.listen) {
+      const port = Number(new URL(`http://${instance.listen}`).port);
+      if (await probeDaemonReady(port, paseoHome, env)) return port;
+    }
     if (Date.now() >= deadline) {
-      throw new Error(`Daemon failed to become ready on port ${port} within ${timeout}ms`);
+      throw new Error(`Daemon failed to publish a ready endpoint within ${timeout}ms`);
     }
     await sleep(100);
     return poll();
@@ -231,14 +234,13 @@ export async function startTestDaemon(options?: {
   timeout?: number;
   env?: NodeJS.ProcessEnv;
 }): Promise<TestDaemonContext> {
-  const port = options?.port ?? (await getAvailablePort());
+  // Let the listening process allocate its port, without a reserve/release race.
+  const requestedPort = options?.port ?? 0;
   const { paseoHome, workDir } =
     options?.paseoHome && options?.workDir
       ? { paseoHome: options.paseoHome, workDir: options.workDir }
       : await createTempDirs();
   const timeout = options?.timeout ?? 30000;
-
-  const wsUrl = `ws://${TEST_DAEMON_HOST}:${port}`;
 
   // Find the CLI entry point - use the source file directly with tsx
   const cliDir = join(import.meta.dirname, "..", "..");
@@ -252,7 +254,7 @@ export async function startTestDaemon(options?: {
       ),
       ...TEST_DAEMON_ENV_DEFAULTS,
       PASEO_HOME: paseoHome,
-      PASEO_LISTEN: `${TEST_DAEMON_HOST}:${port}`,
+      PASEO_LISTEN: `${TEST_DAEMON_HOST}:${requestedPort}`,
       // Force no TTY to prevent QR code output
       CI: "true",
       ...options?.env,
@@ -312,20 +314,18 @@ export async function startTestDaemon(options?: {
     }
   });
 
-  const ctx: TestDaemonContext = {
-    port,
-    wsUrl,
-    paseoHome,
-    workDir,
-    process: daemonProcess,
-    isReady: false,
-    stop: cleanup,
-  };
-
   // Wait for daemon to be ready
   try {
-    await waitForDaemonReady(port, paseoHome, timeout, options?.env);
-    ctx.isReady = true;
+    const port = await waitForDaemonReady(paseoHome, timeout, options?.env);
+    return {
+      port,
+      wsUrl: `ws://${TEST_DAEMON_HOST}:${port}`,
+      paseoHome,
+      workDir,
+      process: daemonProcess,
+      isReady: true,
+      stop: cleanup,
+    };
   } catch (err) {
     // Daemon failed to start - clean up and rethrow
     await cleanup();
@@ -335,8 +335,6 @@ export async function startTestDaemon(options?: {
       { cause: err },
     );
   }
-
-  return ctx;
 }
 
 /**

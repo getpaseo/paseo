@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
+import type { NavigationContainerRefWithCurrent } from "expo-router/react-navigation";
 import {
   navigateToHostWorkspaceRoute,
   registerWorkspaceRouteNavigationRef,

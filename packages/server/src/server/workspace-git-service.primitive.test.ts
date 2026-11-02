@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -566,19 +567,19 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
     expect(getCheckoutStatus).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
-    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
+    expect(listener.mock.lastCall?.[0] ?? null).toBeNull();
 
     await vi.waitFor(() => {
       expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     });
     await flushPromises();
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
-    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
+    expect(listener.mock.lastCall?.[0] ?? null).toBeNull();
 
     checkoutStatusDeferred.resolve(createCheckoutStatus(REPO_CWD));
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
+    expect(listener.mock.lastCall?.[0] ?? null).toEqual(createSnapshot(REPO_CWD));
 
     subscription.unsubscribe();
     service.dispose();
@@ -703,7 +704,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
     await refresh;
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(
+    expect(await service.getSnapshot(REPO_CWD)).toEqual(
       createSnapshot(REPO_CWD, {
         git: {
           currentBranch: "feature",
@@ -990,7 +991,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(subscribe).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(2));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     subscription.unsubscribe();
@@ -1385,23 +1386,25 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult("Visible PR")),
     });
 
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
     try {
-      await service.getSnapshot(REPO_CWD);
+      workspaceRuntimeStore.set(await service.getSnapshot(REPO_CWD));
       const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("Visible PR");
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest?.title).toBe("Visible PR");
 
       headSha = "2222222222222222222222222222222222222222";
       nowMs = 3_000;
       await service.refresh(REPO_CWD);
 
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest).toBeNull();
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest).toBeNull();
       expect(forge.getCurrentPullRequestStatus).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(0);
       await flushPromises();
 
       expect(forge.getCurrentPullRequestStatus).toHaveBeenCalledTimes(1);
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("MR self-healed");
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest?.title).toBe("MR self-healed");
       subscription.unsubscribe();
     } finally {
       service.dispose();
@@ -2218,7 +2221,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
 
-    service.dispose();
+    await service.dispose();
   });
 
   test("onWorkspaceStateMayHaveChanged preserves includeForge when a file watcher fires within the debounce window", async () => {

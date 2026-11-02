@@ -1,3 +1,4 @@
+import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
 import { gfmTable } from "micromark-extension-gfm-table";
@@ -5,7 +6,7 @@ import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
 import { decodeString } from "micromark-util-decode-string";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import type { Link, Nodes, Root } from "mdast";
+import type { Link, Nodes, Paragraph, PhrasingContent, Root } from "mdast";
 
 // Keep this regex in the syntax shared by JavaScript, ICU and java.util.regex.
 // The Unicode flag makes Metro expand it to escapes rejected by native engines.
@@ -22,29 +23,68 @@ const SEPARATED_PATH = String.raw`${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
 const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
 // Bare prose paths need a known extension, a line suffix, or at least two separators.
 const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
-const INLINE_CODE_PATH = String.raw`${PATH_PREFIX}?${HAS_PATH_LETTER}${SEPARATED_PATH}`;
 
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
 
-const FILE_PATTERN = createFilePattern(PROSE_PATH);
-const INLINE_CODE_FILE_PATTERN = createFilePattern(INLINE_CODE_PATH);
+// Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
+// Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
+const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
-function linkMetadata() {
+const FILE_PATTERN = createFilePattern(PROSE_PATH);
+function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
+  // The engine accepts regexes on both platforms. Classify complete code spans
+  // first, then pass literal matches rather than maintaining a second path grammar.
+  const alternatives = [...inlineCodePaths].map((path) =>
+    path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
   return {
     linkRecognition: {
       text: FILE_PATTERN,
       inlineCode: new RegExp(
-        String.raw`^(?:${INLINE_CODE_FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
+        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,
   };
+}
+
+function collectInlineCodePaths(
+  source: string,
+  workspaceRoot?: string,
+  commandNames?: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const paths = new Set<string>();
+  const previousEnds = new Map<number, number>();
+  // Collect candidates between consecutive runs of equal length. The engine owns
+  // Markdown context (escapes, fences, authored links); extra candidates are harmless
+  // because recognition only applies to complete Code nodes. This avoids an AST
+  // parse on every streaming reveal, including updates inside long code fences.
+  for (const match of source.matchAll(/`+/g)) {
+    const length = match[0].length;
+    const previousEnd = previousEnds.get(length);
+    previousEnds.set(length, match.index + length);
+    if (previousEnd === undefined) continue;
+    let value = source.slice(previousEnd, match.index).replace(/\r\n?|\n/g, " ");
+    // CommonMark code spans replace line endings and strip one surrounding space.
+    if (value.startsWith(" ") && value.endsWith(" ") && /[^ ]/.test(value)) {
+      value = value.slice(1, -1);
+    }
+    const classification = classifyAssistantFileLink(value, { workspaceRoot });
+    if (
+      (classification && classification.kind !== "external") ||
+      (value.startsWith("/") && commandNames?.has(value.slice(1)))
+    )
+      paths.add(value);
+  }
+  return paths;
 }
 
 export function markdownLinkSource(
@@ -80,7 +120,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean } = {},
+  options: { supportsSvg?: boolean; commandNames?: ReadonlySet<string> } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -90,14 +130,21 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
+  const metadata = linkMetadata(
+    collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+  );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
+    // Match content, header, and delimiter lines; quote-only lines count as blank.
+    !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
+      source,
+    ) &&
     !(workspaceRoot && source.includes("]("))
   ) {
-    return { images, ...linkMetadata(), render: () => source };
+    return { images, ...metadata, render: () => source };
   }
 
   const definitions = new Map<string, { url: string; title?: string | null }>();
@@ -130,10 +177,64 @@ export function prepareMarkdownSource(
         end,
       });
   }
-  function visit(node: Nodes) {
-    const start = node.position?.start.offset;
-    const end = node.position?.end.offset;
-    if (start !== undefined && end !== undefined) {
+  // Line boundaries already turned into paragraph breaks, by offset of their newline.
+  const splitBoundaries = new Set<number>();
+  function isImageLike(node: PhrasingContent): boolean {
+    if (node.type === "image" || node.type === "imageReference") return true;
+    return (
+      (node.type === "link" || node.type === "linkReference") &&
+      node.children.length === 1 &&
+      isImageLike(node.children[0])
+    );
+  }
+  // An image alone on its line becomes its own paragraph, so every platform renders
+  // it as a block. The library only treats sole-child paragraph images as blocks;
+  // with hardSoftBreaks every newline is a break node, which made these inline.
+  function splitStandaloneImages(paragraph: Paragraph, start: number, end: number) {
+    for (const child of paragraph.children) {
+      const childStart = child.position?.start.offset;
+      const childEnd = child.position?.end.offset;
+      if (childStart === undefined || childEnd === undefined || !isImageLike(child)) continue;
+      const lineStart = source.lastIndexOf("\n", childStart - 1) + 1;
+      const newline = source.indexOf("\n", childEnd);
+      const lineEnd = newline === -1 ? source.length : newline;
+      const prefix = source.slice(lineStart, childStart);
+      const suffix = source.slice(childEnd, lineEnd);
+      const aloneBefore = childStart === start || /^[\s>]*$/.test(prefix);
+      const aloneAfter = /^\s*\\?$/.test(suffix);
+      if (!aloneBefore || !aloneAfter) continue;
+      // Continuation lines inside quotes and lists keep their quote markers on the blank line.
+      const blank = prefix.replace(/[^>]/g, " ").trimEnd();
+      const split = (boundary: number) => {
+        if (splitBoundaries.has(boundary)) return;
+        splitBoundaries.add(boundary);
+        // A trailing backslash was a hard break; at a paragraph end it would render literally.
+        const cut = source[boundary - 1] === "\\" ? boundary - 1 : boundary;
+        edits.push({ start: cut, end: boundary + 1, text: `\n${blank}\n` });
+      };
+      if (lineStart > start) split(lineStart - 1);
+      if (lineEnd < end) split(lineEnd);
+    }
+  }
+  function visit(node: Nodes, previous?: Nodes) {
+    const position = node.position;
+    if (position?.start.offset !== undefined && position.end.offset !== undefined) {
+      const start = position.start.offset;
+      const end = position.end.offset;
+      if (node.type === "paragraph") splitStandaloneImages(node, start, end);
+      if (
+        node.type === "table" &&
+        previous?.type === "paragraph" &&
+        previous.position?.end.line === position.start.line - 1
+      ) {
+        // MD4C only recognizes a table header on the first line of a paragraph.
+        const lineStart =
+          Math.max(source.lastIndexOf("\n", start - 1), source.lastIndexOf("\r", start - 1)) + 1;
+        const newline = source.slice(lineStart - 2, lineStart).replace(/[^\r\n]/g, "");
+        const blank = source.slice(lineStart, start).replace(/[^>]/g, " ").trimEnd();
+        const boundary = lineStart - newline.length;
+        edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
+      }
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
@@ -161,12 +262,13 @@ export function prepareMarkdownSource(
         if (text !== source.slice(start, end)) edits.push({ start, end, text });
       }
     }
-    if ("children" in node) node.children.forEach(visit);
+    if ("children" in node)
+      node.children.forEach((child, index) => visit(child, node.children[index - 1]));
   }
   visit(getTree());
   return {
     images,
-    ...linkMetadata(),
+    ...metadata,
     render(
       urls: ReadonlyMap<string, string> = new Map(),
       unavailableImages: ReadonlySet<string> = new Set(),

@@ -1,9 +1,12 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 import { EventEmitter } from "node:events";
 
 import { STTManager } from "./stt-manager.js";
-import { PersistedConfigSchema } from "../persisted-config.js";
+import { loadPersistedConfig } from "../persisted-config.js";
 import { resolveSpeechConfig } from "../speech/speech-config-resolver.js";
 import type {
   SpeechToTextProvider,
@@ -97,12 +100,18 @@ class SequencedFakeStt implements SpeechToTextProvider {
 
 describe("STTManager", () => {
   function resolveVoiceLanguage(params: { env?: NodeJS.ProcessEnv; persisted?: unknown }): string {
-    const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
-      env: params.env ?? ({} as NodeJS.ProcessEnv),
-      persisted: PersistedConfigSchema.parse(params.persisted ?? {}),
-    });
-    return result.speech.sttLanguages.voice;
+    const home = mkdtempSync(path.join(tmpdir(), "stt-language-"));
+    try {
+      writeFileSync(path.join(home, "config.json"), JSON.stringify(params.persisted ?? {}));
+      const result = resolveSpeechConfig({
+        paseoHome: home,
+        env: params.env ?? {},
+        persisted: loadPersistedConfig(home),
+      });
+      return result.speech.sttLanguages.voice;
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 
   async function transcribeWithResolvedVoiceLanguage(params: {

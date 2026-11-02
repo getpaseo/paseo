@@ -30,10 +30,29 @@ export interface ComposerRetainedEditor {
  */
 export class ComposerEditingSession {
   private fullscreen = false;
+  private editor: {
+    getText(): string;
+    replaceText(text: string, selection: ComposerSelection): void;
+    focus(): void;
+  } | null = null;
   private retained: ComposerRetainedEditor | null = null;
   private listeners = new Set<() => void>();
   constructor(private readonly onChange?: () => void) {}
   getFullscreen = () => this.fullscreen;
+  attachEditor(editor: NonNullable<ComposerEditingSession["editor"]>) {
+    this.editor = editor;
+    return () => {
+      if (this.editor === editor) this.editor = null;
+    };
+  }
+  insertCommand(command: string) {
+    const editor = this.editor;
+    if (!editor) return;
+    const text = editor.getText();
+    const nextText = `${text}${text && !/\s$/.test(text) ? " " : ""}${command} `;
+    editor.replaceText(nextText, { start: nextText.length, end: nextText.length });
+    editor.focus();
+  }
   /** Called by the unmounting editor; the next mount of this session takes it. */
   retainEditor(retained: ComposerRetainedEditor) {
     this.retained = retained;
@@ -118,6 +137,20 @@ export class ComposerEditingSessions {
 const SessionsContext = createContext<ComposerEditingSessions | null>(null);
 const WorkspaceContext = createContext<string | null>(null);
 const ScopeContext = createContext<{ tabId: string; targetKey: string } | null>(null);
+
+/** Keep the workspace's editing identity when a sheet renders in the app overlay host. */
+export function useComposerEditingEnvironmentBridge() {
+  const sessions = useContext(SessionsContext);
+  const workspaceKey = useContext(WorkspaceContext);
+  return useCallback(
+    (children: ReactNode) => (
+      <SessionsContext.Provider value={sessions}>
+        <WorkspaceContext.Provider value={workspaceKey}>{children}</WorkspaceContext.Provider>
+      </SessionsContext.Provider>
+    ),
+    [sessions, workspaceKey],
+  );
+}
 
 /** App-container ownership survives replacement of both the gesture shell and tab layout. */
 export function ComposerEditingSessionsProvider({ children }: { children: ReactNode }) {

@@ -1,3 +1,4 @@
+import type { SendShortcut } from "@/hooks/use-settings";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload, TextReplacement } from "@/composer/types";
@@ -125,14 +126,53 @@ export function runDefaultSendAction(ctx: SendActionContext): void {
   ctx.handleSendMessage();
 }
 
+export type AlternateSendAction = "queue" | "send";
+
+/**
+ * What Mod+Enter and a long-press on Send do instead of the default send. Null while
+ * no turn is running, where both fall back to the default send.
+ */
+export function resolveAlternateSendAction(
+  ctx: Pick<SendActionContext, "defaultSendBehavior" | "isAgentRunning" | "onQueue">,
+): AlternateSendAction | null {
+  if (!ctx.isAgentRunning || !ctx.onQueue) return null;
+  return ctx.defaultSendBehavior === "queue" ? "send" : "queue";
+}
+
 export function runAlternateSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue") {
+  const action = resolveAlternateSendAction(ctx);
+  if (action === "queue") {
+    ctx.handleQueueMessage();
+    return;
+  }
+  if (action === "send") {
     ctx.handleSendMessage();
     return;
   }
-  if (ctx.isAgentRunning && ctx.onQueue) {
-    ctx.handleQueueMessage();
-  }
+  runDefaultSendAction(ctx);
+}
+
+export type MessageInputEnterAction = "alternate-send" | "default-send";
+
+export interface MessageInputEnterContext {
+  submitOnEnter: boolean;
+  sendShortcut: SendShortcut;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  isAgentRunning: boolean;
+  onQueue: ((payload: MessagePayload) => void) | undefined;
+}
+
+export function resolveMessageInputEnterAction(
+  ctx: MessageInputEnterContext,
+): MessageInputEnterAction | null {
+  if (!ctx.submitOnEnter) return null;
+  if (ctx.shiftKey) return null;
+  const hasModifier = ctx.metaKey || ctx.ctrlKey;
+  if (ctx.sendShortcut === "mod-enter") return hasModifier ? "default-send" : null;
+  if (hasModifier && ctx.isAgentRunning && ctx.onQueue) return "alternate-send";
+  return "default-send";
 }
 
 export function runMessageInputKeyboardAction(

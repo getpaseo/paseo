@@ -1217,6 +1217,14 @@ export function normalizeCapturedShortcutCombo(bindingId: string, combo: string)
   return combo.replace(/(^|\+)[1-9]$/, "$1Digit");
 }
 
+/** Index navigation needs a final number; earlier combos may be any chord prefix. */
+export function isShortcutCaptureComplete(bindingId: string, combos: readonly string[]): boolean {
+  const lastCombo = combos.at(-1);
+  if (!lastCombo) return false;
+  const binding = DEFAULT_BINDINGS.find((candidate) => candidate.id === bindingId);
+  return binding?.payload?.type !== "index" || /(^|\+)(Digit|[1-9])$/.test(lastCombo);
+}
+
 export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
     const override = overrides[binding.id];

@@ -18,6 +18,7 @@ import {
   SquarePlus,
 } from "lucide-react";
 import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { SIDEBAR_W, TITLEBAR_H } from "./geometry";
 import { PaseoMark } from "./icons";
 import { FADE_IN, FADE_OUT } from "./motion";
@@ -197,6 +198,7 @@ function RowAvatar({ avatar, running }: { avatar: Avatar; running?: boolean }) {
 }
 
 function RowMeta({ row }: { row: WorkspaceRow }) {
+  const { t } = useTranslation();
   if (row.host || row.pr) {
     return (
       <span className="mt-[3px] flex items-center gap-[6px] text-[10.5px] leading-[13px] text-mock-fg-muted">
@@ -218,7 +220,7 @@ function RowMeta({ row }: { row: WorkspaceRow }) {
             <span className="text-mock-fg-xmuted">·</span>
             <span className="flex items-center gap-[4px] text-mock-success">
               <CircleCheck size={11} className="shrink-0" />
-              passed
+              {t("landing.mockup.app.checksPassedShort")}
             </span>
           </>
         ) : null}
@@ -264,6 +266,7 @@ function GroupHeader({ icon, label }: { icon: React.ReactNode; label: string }) 
 // --- sidebar ----------------------------------------------------------------
 
 export function Sidebar({ state }: { state: MockupStateId }) {
+  const { t } = useTranslation();
   const extending = state === "extend";
 
   return (
@@ -285,9 +288,9 @@ export function Sidebar({ state }: { state: MockupStateId }) {
         animate={extending ? NAV_EXTENDED_LAYOUT : NAV_DEFAULT_LAYOUT}
         className="overflow-hidden px-[8px] pt-[7px]"
       >
-        <NavItem icon={NEW_WORKSPACE_ICON} label="New workspace" />
-        <NavItem icon={HISTORY_ICON} label="History" />
-        <NavItem icon={SCHEDULES_ICON} label="Schedules" />
+        <NavItem icon={NEW_WORKSPACE_ICON} label={t("landing.mockup.app.newWorkspace")} />
+        <NavItem icon={HISTORY_ICON} label={t("landing.mockup.app.history")} />
+        <NavItem icon={SCHEDULES_ICON} label={t("landing.mockup.app.schedules")} />
         <motion.div initial={false} animate={extending ? FADE_IN : FADE_OUT}>
           <NavItem icon={PLUGIN_ICON} label="Release Radar" active />
         </motion.div>
@@ -296,7 +299,9 @@ export function Sidebar({ state }: { state: MockupStateId }) {
       <div className="mt-[9px] h-px bg-mock-border" />
 
       <div className="min-h-0 flex-1 overflow-hidden px-[8px]">
-        <div className="px-[9px] pt-[8px] text-[11px] text-mock-fg-muted">Pinned</div>
+        <div className="px-[9px] pt-[8px] text-[11px] text-mock-fg-muted">
+          {t("landing.mockup.app.pinned")}
+        </div>
         {PINNED_ROWS.map((row) => (
           <Row key={row.id} row={row} />
         ))}
@@ -309,12 +314,12 @@ export function Sidebar({ state }: { state: MockupStateId }) {
           </span>
         </div>
 
-        <GroupHeader icon={READY_TO_REVIEW_ICON} label="Ready to review" />
+        <GroupHeader icon={READY_TO_REVIEW_ICON} label={t("landing.mockup.app.readyToReview")} />
         {READY_TO_REVIEW_ROWS.map((row) => (
           <Row key={row.id} row={row} indented />
         ))}
 
-        <GroupHeader icon={WORKING_ICON} label="Working" />
+        <GroupHeader icon={WORKING_ICON} label={t("landing.mockup.app.working")} />
         <AnimatePresence initial={false} mode="popLayout">
           {WORKING_ROWS.map((row) => (
             <motion.div key={row.id} layout initial={FADE_OUT} animate={FADE_IN} exit={FADE_OUT}>
@@ -323,7 +328,7 @@ export function Sidebar({ state }: { state: MockupStateId }) {
           ))}
         </AnimatePresence>
 
-        <GroupHeader icon={DONE_ICON} label="Done" />
+        <GroupHeader icon={DONE_ICON} label={t("landing.mockup.app.done")} />
         {DONE_ROWS.map((row) => (
           <Row key={row.id} row={row} indented />
         ))}
@@ -332,7 +337,7 @@ export function Sidebar({ state }: { state: MockupStateId }) {
       <div className="h-px shrink-0 bg-mock-border" />
       <div className="flex h-[44px] shrink-0 items-center gap-[8px] px-[14px] text-[12.5px] text-mock-fg-muted">
         <SquarePlus size={14} />
-        <span className="text-mock-fg">Add project</span>
+        <span className="text-mock-fg">{t("landing.mockup.app.addProject")}</span>
         <span className="flex-1" />
         <PanelBottom size={14} />
         <House size={14} />

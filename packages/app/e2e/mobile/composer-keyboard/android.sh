@@ -19,6 +19,13 @@ MESSAGE=$'keyboard invariant line one\nline two\nline three\nline four'
 LONG_MESSAGE="$(node -e 'process.stdout.write(Array.from({ length: 180 }, (_, index) => `line${index + 1}`).join(" "))')"
 BLANK_LINE_DRAFT="$(node -e 'process.stdout.write("\n".repeat(22) + "ddjdj")')"
 AGENT_TITLE="Keyboard dismiss QA $(date +%s)"
+# `overlays` runs only each host's autocomplete, model selector, attachment menu, and
+# forge picker checks; `all` also runs the chat baseline and the full host scenario.
+SCENARIO="${PASEO_COMPOSER_KEYBOARD_SCENARIO:-all}"
+if [[ "${SCENARIO}" != all && "${SCENARIO}" != overlays ]]; then
+  echo "PASEO_COMPOSER_KEYBOARD_SCENARIO must be all or overlays" >&2
+  exit 1
+fi
 
 if [[ -z "${SERVER_ID}" ]]; then
   if [[ ! -f "${DAEMON_HOME}/server-id" ]]; then
@@ -173,8 +180,10 @@ sleep 3
 
 # Create the fixture while the client is connected so its directory replica observes the insert.
 ad wait 'id="message-input-root"' 90000
+# The compact header names the workspace, not the agent, so the chat waits below find
+# the fixture by its prompt bubble.
 run_json="$(env -u PASEO_CALLER_AGENT_ID -u PASEO_AGENT_ID -u PASEO_WORKSPACE_ID \
-  npm run --silent cli -- run "Exercise the composer keyboard invariant flow" \
+  npm run --silent cli -- run "${AGENT_TITLE}" \
   --background \
   --title "${AGENT_TITLE}" \
   --provider mock \
@@ -206,238 +215,241 @@ clear_input
 ad keyboard dismiss || true
 ad wait 'label="Message, @files, /commands"' 10000
 
-snapshot_json "${ARTIFACTS_DIR}/baseline.json"
-capture_screen "${ARTIFACTS_DIR}/baseline.png"
-read -r input_x input_y baseline_input_height < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "Message, @files, /commands"
-)
-read -r model_x model_y _ < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "combined-model-selector"
-)
-read -r attach_x attach_y _ < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "message-input-attach-button"
-)
-read -r _ header_y _ < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "workspace-tab-switcher-trigger"
-)
+# Chat-only invariants, then the long-draft checks on New workspace.
+run_chat_baseline() {
+  snapshot_json "${ARTIFACTS_DIR}/baseline.json"
+  capture_screen "${ARTIFACTS_DIR}/baseline.png"
+  read -r input_x input_y baseline_input_height < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "Message, @files, /commands"
+  )
+  read -r model_x model_y _ < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "combined-model-selector"
+  )
+  read -r attach_x attach_y _ < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "message-input-attach-button"
+  )
+  read -r _ header_y _ < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/baseline.json" "workspace-tab-switcher-trigger"
+  )
 
-adb shell input keyevent HOME
-adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
-sleep 1
-open_gboard "${input_x}" "${input_y}"
-clear_focused_input_with_adb
-keyboard_shift="$(read_keyboard_shift)"
-adb shell input keyevent 76
-sleep 1
-capture_screen "${ARTIFACTS_DIR}/command-popover.png"
-ad wait 'id="composer-autocomplete-popover"' 10000
-ad wait 'text="/exit"' 10000
-model_open_y="$((model_y - keyboard_shift))"
-adb shell input tap "${model_x}" "${model_open_y}"
-sleep 1
-capture_screen "${ARTIFACTS_DIR}/model-selector-open.png"
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad wait 'id="compact-provider-list"' 10000
-ad press 'label="Close"' --settle
-adb shell input tap "${input_x}" "${input_y}"
-clear_focused_input_with_adb
-ad wait 'editable=true' 10000
+  adb shell input keyevent HOME
+  adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
+  sleep 1
+  open_gboard "${input_x}" "${input_y}"
+  clear_focused_input_with_adb
+  keyboard_shift="$(read_keyboard_shift)"
+  adb shell input keyevent 76
+  sleep 1
+  capture_screen "${ARTIFACTS_DIR}/command-popover.png"
+  ad wait 'id="composer-autocomplete-popover"' 10000
+  ad wait 'text="/exit"' 10000
+  model_open_y="$((model_y - keyboard_shift))"
+  adb shell input tap "${model_x}" "${model_open_y}"
+  sleep 1
+  capture_screen "${ARTIFACTS_DIR}/model-selector-open.png"
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad wait 'id="compact-provider-list"' 10000
+  ad press 'label="Close"' --settle
+  adb shell input tap "${input_x}" "${input_y}"
+  clear_focused_input_with_adb
+  ad wait 'editable=true' 10000
 
-adb shell input keyevent HOME
-adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
-sleep 1
-open_gboard "${input_x}" "${input_y}"
-clear_focused_input_with_adb
-adb shell input keyevent 76
-sleep 1
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad wait 'id="composer-autocomplete-popover"' 10000
-ad wait 'text="/exit"' 10000
-snapshot_json "${ARTIFACTS_DIR}/command-popover.json"
-node "${ASSERT}" above-y \
-  "${ARTIFACTS_DIR}/command-popover.json" \
-  "/exit, Archive the current agent" \
-  "$((input_y - baseline_input_height / 2))"
-adb shell input keyevent 67
-ad wait 'label="Message, @files, /commands"' 10000
+  adb shell input keyevent HOME
+  adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
+  sleep 1
+  open_gboard "${input_x}" "${input_y}"
+  clear_focused_input_with_adb
+  adb shell input keyevent 76
+  sleep 1
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad wait 'id="composer-autocomplete-popover"' 10000
+  ad wait 'text="/exit"' 10000
+  snapshot_json "${ARTIFACTS_DIR}/command-popover.json"
+  node "${ASSERT}" above-y \
+    "${ARTIFACTS_DIR}/command-popover.json" \
+    "/exit, Archive the current agent" \
+    "$((input_y - baseline_input_height / 2))"
+  adb shell input keyevent 67
+  ad wait 'label="Message, @files, /commands"' 10000
 
-ad fill 'label="Message, @files, /commands"' "${MESSAGE}" --settle
-snapshot_json "${ARTIFACTS_DIR}/multiline-first.json"
-ad fill 'editable=true focused=true' "${MESSAGE}" --settle
-snapshot_json "${ARTIFACTS_DIR}/multiline-second.json"
-node "${ASSERT}" same-input-height \
-  "${ARTIFACTS_DIR}/multiline-first.json" \
-  "${ARTIFACTS_DIR}/multiline-second.json"
+  ad fill 'label="Message, @files, /commands"' "${MESSAGE}" --settle
+  snapshot_json "${ARTIFACTS_DIR}/multiline-first.json"
+  ad fill 'editable=true focused=true' "${MESSAGE}" --settle
+  snapshot_json "${ARTIFACTS_DIR}/multiline-second.json"
+  node "${ASSERT}" same-input-height \
+    "${ARTIFACTS_DIR}/multiline-first.json" \
+    "${ARTIFACTS_DIR}/multiline-second.json"
 
-adb shell input keyevent HOME
-adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
-sleep 1
-open_gboard "${input_x}" "${input_y}"
+  adb shell input keyevent HOME
+  adb shell am start -n "${APP_ID}/.MainActivity" >/dev/null
+  sleep 1
+  open_gboard "${input_x}" "${input_y}"
 
-keyboard_shift="$(read_keyboard_shift)"
-capture_screen "${ARTIFACTS_DIR}/keyboard-open.png"
+  keyboard_shift="$(read_keyboard_shift)"
+  capture_screen "${ARTIFACTS_DIR}/keyboard-open.png"
 
-node "${ASSERT}" same-header \
-  "${ARTIFACTS_DIR}/baseline.png" \
-  "${ARTIFACTS_DIR}/keyboard-open.png" \
-  "$((header_y + 48))"
+  node "${ASSERT}" same-header \
+    "${ARTIFACTS_DIR}/baseline.png" \
+    "${ARTIFACTS_DIR}/keyboard-open.png" \
+    "$((header_y + 48))"
 
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad fill 'editable=true focused=true' "${LONG_MESSAGE}" --settle
-open_gboard "${input_x}" "${input_y}"
-capture_ui_xml "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml"
-capture_screen "${ARTIFACTS_DIR}/long-draft-keyboard-open.png"
-node "${ASSERT}" xml-above-y \
-  "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
-  "Add attachment" \
-  "$(read_ime_top)"
-display_density="$(adb shell wm density | awk '/density:/ { density = $NF } END { print density }')"
-node "${ASSERT}" xml-composer-contained \
-  "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
-  "$(read_ime_top)" \
-  "${display_density}"
-# Emptying a capped blank-line draft with Gboard's hold-to-delete must return the input to
-# its baseline height. Fabric only re-measures the Android input when its text prop changes,
-# so the editing input renders again after every edit
-# (packages/app/src/components/ui/text-input/text-input.native.tsx). The sequence mirrors the
-# report: grow to the cap, close and reopen the keyboard, hold delete from the middle of the
-# draft, jump to the end, hold delete again. The first hold-delete must start mid-draft: from
-# the end, the pre-fix input also returns to baseline. Backspace sits on Gboard's third key
-# row on the paseo-api35 layout.
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad fill 'editable=true' "${BLANK_LINE_DRAFT}" --settle
-open_gboard "${input_x}" "${input_y}"
-adb shell input keyevent BACK
-wait_for_ime false
-open_gboard "${input_x}" "${input_y}"
-adb shell input keycombination 113 122
-adb shell input keyevent 20 20 20 20 20 20 20 20
-screen_width="$(adb shell wm size | sed -n 's/.*: \([0-9]*\)x.*/\1/p' | tail -1)"
-backspace_x="$((screen_width - 85))"
-backspace_y="$(($(read_ime_top) + 507))"
-adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 8000
-adb shell input keycombination 113 123
-adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 12000
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad wait 'label="Message, @files, /commands"' 10000
-snapshot_json "${ARTIFACTS_DIR}/after-hold-delete.json"
-node "${ASSERT}" same-input-height \
-  "${ARTIFACTS_DIR}/baseline.json" \
-  "${ARTIFACTS_DIR}/after-hold-delete.json"
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad fill 'editable=true focused=true' "${LONG_MESSAGE}" --settle
+  open_gboard "${input_x}" "${input_y}"
+  capture_ui_xml "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml"
+  capture_screen "${ARTIFACTS_DIR}/long-draft-keyboard-open.png"
+  node "${ASSERT}" xml-above-y \
+    "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
+    "Add attachment" \
+    "$(read_ime_top)"
+  display_density="$(adb shell wm density | awk '/density:/ { density = $NF } END { print density }')"
+  node "${ASSERT}" xml-composer-contained \
+    "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
+    "$(read_ime_top)" \
+    "${display_density}"
+  # Emptying a capped blank-line draft with Gboard's hold-to-delete must return the input to
+  # its baseline height. Fabric only re-measures the Android input when its text prop changes,
+  # so the editing input renders again after every edit
+  # (packages/app/src/components/ui/text-input/text-input.native.tsx). The sequence mirrors the
+  # report: grow to the cap, close and reopen the keyboard, hold delete from the middle of the
+  # draft, jump to the end, hold delete again. The first hold-delete must start mid-draft: from
+  # the end, the pre-fix input also returns to baseline. Backspace sits on Gboard's third key
+  # row on the paseo-api35 layout.
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad fill 'editable=true' "${BLANK_LINE_DRAFT}" --settle
+  open_gboard "${input_x}" "${input_y}"
+  adb shell input keyevent BACK
+  wait_for_ime false
+  open_gboard "${input_x}" "${input_y}"
+  adb shell input keycombination 113 122
+  adb shell input keyevent 20 20 20 20 20 20 20 20
+  screen_width="$(adb shell wm size | sed -n 's/.*: \([0-9]*\)x.*/\1/p' | tail -1)"
+  backspace_x="$((screen_width - 85))"
+  backspace_y="$(($(read_ime_top) + 507))"
+  adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 8000
+  adb shell input keycombination 113 123
+  adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 12000
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad wait 'label="Message, @files, /commands"' 10000
+  snapshot_json "${ARTIFACTS_DIR}/after-hold-delete.json"
+  node "${ASSERT}" same-input-height \
+    "${ARTIFACTS_DIR}/baseline.json" \
+    "${ARTIFACTS_DIR}/after-hold-delete.json"
 
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad fill 'editable=true' "${MESSAGE}" --settle
-open_gboard "${input_x}" "${input_y}"
-keyboard_shift="$(read_keyboard_shift)"
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad fill 'editable=true' "${MESSAGE}" --settle
+  open_gboard "${input_x}" "${input_y}"
+  keyboard_shift="$(read_keyboard_shift)"
 
-read -r changes_x changes_y _ < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/multiline-second.json" "Open Changes tab"
-)
-adb shell input tap "${changes_x}" "$((changes_y - keyboard_shift))"
-ad wait 'id="changes-header"' 10000
-capture_screen "${ARTIFACTS_DIR}/changes-control-open.png"
-ad press 'label="Close Explorer sidebar"' --settle
-ad wait "text=\"${AGENT_TITLE}\"" 10000
-ad wait 'editable=true' 10000
+  read -r changes_x changes_y _ < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/multiline-second.json" "Open Changes tab"
+  )
+  adb shell input tap "${changes_x}" "$((changes_y - keyboard_shift))"
+  ad wait 'id="changes-header"' 10000
+  capture_screen "${ARTIFACTS_DIR}/changes-control-open.png"
+  ad press 'label="Close Explorer sidebar"' --settle
+  ad wait "text=\"${AGENT_TITLE}\"" 10000
+  ad wait 'editable=true' 10000
 
-open_gboard "${input_x}" "${input_y}"
-keyboard_shift="$(read_keyboard_shift)"
-adb shell input tap "${attach_x}" "$((attach_y - keyboard_shift))"
-sleep 1
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad wait 'id="message-input-attachment-menu-content"' 10000
-ad press 540 600 --settle
+  open_gboard "${input_x}" "${input_y}"
+  keyboard_shift="$(read_keyboard_shift)"
+  adb shell input tap "${attach_x}" "$((attach_y - keyboard_shift))"
+  sleep 1
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad wait 'id="message-input-attachment-menu-content"' 10000
+  ad press 540 600 --settle
 
-open_gboard "${input_x}" "${input_y}"
-keyboard_shift="$(read_keyboard_shift)"
-adb shell input tap 983 "$((attach_y - keyboard_shift))"
-wait_for_ime false
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad wait text "keyboard invariant line one" 10000
-snapshot_json "${ARTIFACTS_DIR}/after-submit.json"
-node "${ASSERT}" has-exact-text "${ARTIFACTS_DIR}/after-submit.json" "${MESSAGE}"
-node "${ASSERT}" same-input-height \
-  "${ARTIFACTS_DIR}/baseline.json" \
-  "${ARTIFACTS_DIR}/after-submit.json"
+  open_gboard "${input_x}" "${input_y}"
+  keyboard_shift="$(read_keyboard_shift)"
+  adb shell input tap 983 "$((attach_y - keyboard_shift))"
+  wait_for_ime false
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad wait text "keyboard invariant line one" 10000
+  snapshot_json "${ARTIFACTS_DIR}/after-submit.json"
+  node "${ASSERT}" has-exact-text "${ARTIFACTS_DIR}/after-submit.json" "${MESSAGE}"
+  node "${ASSERT}" same-input-height \
+    "${ARTIFACTS_DIR}/baseline.json" \
+    "${ARTIFACTS_DIR}/after-submit.json"
 
-open_gboard "${input_x}" "${input_y}"
-adb shell input keyevent BACK
-wait_for_ime false
-sleep 0.5
-capture_screen "${ARTIFACTS_DIR}/hidden-focused-baseline.png"
+  open_gboard "${input_x}" "${input_y}"
+  adb shell input keyevent BACK
+  wait_for_ime false
+  sleep 0.5
+  capture_screen "${ARTIFACTS_DIR}/hidden-focused-baseline.png"
 
-open_gboard "${input_x}" "${input_y}"
-node "${STALL_HERMES}" "${METRO_PORT}" 3000 "${APP_ID}" &
-stall_pid="$!"
-sleep 0.25
-adb shell input keyevent BACK
-wait_for_ime false
-sleep 0.5
-capture_screen "${ARTIFACTS_DIR}/hidden-during-js-stall.png"
-wait "${stall_pid}"
-capture_screen "${ARTIFACTS_DIR}/hidden-after-js-stall.png"
-node "${ASSERT}" same-region \
-  "${ARTIFACTS_DIR}/hidden-focused-baseline.png" \
-  "${ARTIFACTS_DIR}/hidden-during-js-stall.png" \
-  1400 \
-  430
-node "${ASSERT}" same-region \
-  "${ARTIFACTS_DIR}/hidden-focused-baseline.png" \
-  "${ARTIFACTS_DIR}/hidden-after-js-stall.png" \
-  1400 \
-  430
+  open_gboard "${input_x}" "${input_y}"
+  node "${STALL_HERMES}" "${METRO_PORT}" 3000 "${APP_ID}" &
+  stall_pid="$!"
+  sleep 0.25
+  adb shell input keyevent BACK
+  wait_for_ime false
+  sleep 0.5
+  capture_screen "${ARTIFACTS_DIR}/hidden-during-js-stall.png"
+  wait "${stall_pid}"
+  capture_screen "${ARTIFACTS_DIR}/hidden-after-js-stall.png"
+  node "${ASSERT}" same-region \
+    "${ARTIFACTS_DIR}/hidden-focused-baseline.png" \
+    "${ARTIFACTS_DIR}/hidden-during-js-stall.png" \
+    1400 \
+    430
+  node "${ASSERT}" same-region \
+    "${ARTIFACTS_DIR}/hidden-focused-baseline.png" \
+    "${ARTIFACTS_DIR}/hidden-after-js-stall.png" \
+    1400 \
+    430
 
-ad press 'id="menu-button"' --settle
-ad press 'id="sidebar-global-new-workspace"' --settle
-ad wait 'id="workspace-create-submit"' 10000
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad fill 'editable=true' "x" --settle
-snapshot_json "${ARTIFACTS_DIR}/new-workspace-short-draft.json"
-read -r new_input_x new_input_y _ < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-short-draft.json" "editable"
-)
-open_gboard "${new_input_x}" "${new_input_y}"
-capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml"
-# Typing more lines moves the setup fields up with the composer instead of
-# hiding their bottom rows behind it.
-adb shell input keycombination 113 123
-adb shell input keyevent 66 66 66
-adb shell input text grown
-sleep 1
-capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
-capture_screen "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.png"
-node "${ASSERT}" xml-fields-follow-growth \
-  "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml" \
-  "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
+  ad press 'id="menu-button"' --settle
+  ad press 'id="sidebar-global-new-workspace"' --settle
+  ad wait 'id="workspace-create-submit"' 10000
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad fill 'editable=true' "x" --settle
+  snapshot_json "${ARTIFACTS_DIR}/new-workspace-short-draft.json"
+  read -r new_input_x new_input_y _ < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-short-draft.json" "editable"
+  )
+  open_gboard "${new_input_x}" "${new_input_y}"
+  capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml"
+  # Typing more lines moves the setup fields up with the composer instead of
+  # hiding their bottom rows behind it.
+  adb shell input keycombination 113 123
+  adb shell input keyevent 66 66 66
+  adb shell input text grown
+  sleep 1
+  capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
+  capture_screen "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.png"
+  node "${ASSERT}" xml-fields-follow-growth \
+    "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml" \
+    "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
 
-adb shell ime set "${HELPER_IME}" >/dev/null
-ad fill 'editable=true' "${LONG_MESSAGE}" --settle
-snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft.json"
-read -r new_input_x new_input_y new_input_height < <(
-  node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-long-draft.json" "editable"
-)
-# The editor shrinks when the keyboard opens. Its bottom stays anchored, while
-# its old center can move into the setup fields after the height constraint.
-new_input_y="$((new_input_y + new_input_height / 2 - 8))"
-open_gboard "${new_input_x}" "${new_input_y}"
-capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml"
-capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.png"
-node "${ASSERT}" xml-composer-contained \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
-  "$(read_ime_top)" \
-  "${display_density}"
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  ad fill 'editable=true' "${LONG_MESSAGE}" --settle
+  snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft.json"
+  read -r new_input_x new_input_y new_input_height < <(
+    node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-long-draft.json" "editable"
+  )
+  # The editor shrinks when the keyboard opens. Its bottom stays anchored, while
+  # its old center can move into the setup fields after the height constraint.
+  new_input_y="$((new_input_y + new_input_height / 2 - 8))"
+  open_gboard "${new_input_x}" "${new_input_y}"
+  capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml"
+  capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.png"
+  node "${ASSERT}" xml-composer-contained \
+    "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
+    "$(read_ime_top)" \
+    "${display_density}"
 
-# Dismissing the keyboard moves the composer down at its editing height and
-# brings the setup fields back fully visible above it.
-adb shell input keyevent BACK
-wait_for_ime false
-capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
-capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.png"
-node "${ASSERT}" same-input-height \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
-node "${ASSERT}" xml-fields-above-composer \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
+  # Dismissing the keyboard moves the composer down at its editing height and
+  # brings the setup fields back fully visible above it.
+  adb shell input keyevent BACK
+  wait_for_ime false
+  capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
+  capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.png"
+  node "${ASSERT}" same-input-height \
+    "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
+    "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
+  node "${ASSERT}" xml-fields-above-composer \
+    "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
+}
 
 # All hosts run the same scenario; only navigation differs.
 # For the shared scenario, tap the editor's blank right edge once. Tapping
@@ -470,20 +482,80 @@ press_composer_control() {
   adb shell input tap "${x}" "${y}"
 }
 
+# Opens suggestions with the keyboard closed, before it opens, or after it settled;
+# checks their bounds and taps the best match where it is drawn. Accessibility keeps
+# reporting rows behind the keyboard, so existence is not evidence. It also drops the
+# composer while suggestions are open, so the composer bounds come from a reference
+# snapshot with an empty input in the keyboard state the suggestions are checked in.
+check_autocomplete() {
+  local host="$1" order="$2" kind="$3" query="$4" expected="$5" inserted="$6"
+  local prefix="${ARTIFACTS_DIR}/${host}-${kind}-${order}"
+  if [[ "${order}" == keyboard-closed ]]; then
+    prepare_composer closed
+    snapshot_json "${prefix}-reference.json"
+    adb shell input text "${query}"
+  else
+    prepare_composer open
+    # The composer follows the keyboard animation, which ends after the IME frame settles.
+    sleep 1
+    snapshot_json "${prefix}-reference.json"
+    if [[ "${order}" == before-keyboard ]]; then
+      adb shell ime set "${HELPER_IME}" >/dev/null
+      wait_for_ime false
+      adb shell input text "${query}"
+      open_editor_keyboard "${overlay_x}" "${overlay_y}"
+    else
+      adb shell input text "${query}"
+    fi
+  fi
+  ad wait 'id="composer-autocomplete-popover"' 10000
+  # The popover remeasures once keyboard motion settles.
+  sleep 1
+  capture_screen "${prefix}.png"
+  snapshot_json "${prefix}.json"
+  local ime_top=""
+  if [[ "${order}" != keyboard-closed ]]; then ime_top="$(read_ime_top)"; fi
+  local best_x best_y
+  read -r best_x best_y < <(
+    node "${ASSERT}" autocomplete-best "${prefix}.json" "${prefix}-reference.json" "${expected}" "${ime_top}"
+  )
+  adb shell input tap "${best_x}" "${best_y}"
+  sleep 1
+  snapshot_json "${prefix}-selected.json"
+  node "${ASSERT}" composer-text "${prefix}-selected.json" "${inserted}"
+  clear_focused_input_with_adb
+  echo "PASS host=${host}: ${kind} ${order}, ${expected} drawn above composer and keyboard and inserted"
+}
+
+# Drafts list commands for their selected provider, and a fresh install selects none.
+select_claude_model() {
+  local x y h
+  press_composer_control combined-model-selector
+  ad wait 'id="agent-controls-model"' 10000
+  ad press 'id="agent-controls-model"' --settle
+  ad press 'id="model-provider-claude"' --settle
+  snapshot_json "${ARTIFACTS_DIR}/model-list.json"
+  read -r x y h < <(node "${ASSERT}" rect "${ARTIFACTS_DIR}/model-list.json" 'model-row-claude-*')
+  adb shell input tap "${x}" "${y}"
+  ad wait 'id="agent-controls-thinking"' 10000
+  ad press 'label="Close"' --settle
+}
+
 run_host_overlays() {
   local host="$1"
+  if [[ "${host}" != chat ]]; then
+    prepare_composer closed
+    select_claude_model
+  fi
+  # Chat lists the mock provider's command; drafts list the release skills in
+  # this repository's .claude/skills for the selected Claude model.
+  local command_query=/release command_match=/release-beta command_inserted="/release-beta "
+  if [[ "${host}" == chat ]]; then command_query=/mo command_match=/mock command_inserted="/mock "; fi
+  for order in keyboard-closed before-keyboard after-keyboard; do
+    check_autocomplete "${host}" "${order}" commands "${command_query}" "${command_match}" "${command_inserted}"
+    check_autocomplete "${host}" "${order}" files @app packages/app '"packages/app"'
+  done
   for mode in closed open; do
-    for query in / @README; do
-      prepare_composer closed
-      adb shell input text "${query}"
-      if [[ "${mode}" == open ]]; then open_editor_keyboard "${overlay_x}" "${overlay_y}"; fi
-      ad wait 'id="composer-autocomplete-popover"' 10000
-      local kind=commands
-      if [[ "${query}" == @* ]]; then kind=files; fi
-      capture_screen "${ARTIFACTS_DIR}/${host}-${kind}-${mode}.png"
-      clear_focused_input_with_adb
-      echo "PASS host=${host}: ${kind} popover keyboard=${mode}"
-    done
     prepare_composer "${mode}"
     press_composer_control combined-model-selector
     ad wait 'id="compact-provider-list"' 10000
@@ -656,19 +728,29 @@ run_host_scenario() {
   run_host_scroll "${host}"
 }
 
+run_host() {
+  if [[ "${SCENARIO}" == overlays ]]; then
+    run_host_overlays "$1"
+  else
+    run_host_scenario "$1"
+  fi
+}
+
+if [[ "${SCENARIO}" == all ]]; then run_chat_baseline; fi
 adb shell am start -a android.intent.action.VIEW -d "paseo://h/${SERVER_ID}/agent/${agent_id}" "${APP_ID}" >/dev/null
 ad wait "text=\"${AGENT_TITLE}\"" 10000
-run_host_scenario chat
+run_host chat
 ad keyboard dismiss || true
 ad press 'id="workspace-tab-switcher-trigger"' --settle
 ad wait 'id="workspace-tab-switcher-new-agent"' 10000
 ad press 'id="workspace-tab-switcher-new-agent"' --settle
-ad wait 'text="New Agent"' 10000
-run_host_scenario workspace-draft
+# Only a draft offers to import a session.
+ad wait 'id="composer-import-agent-pill"' 10000
+run_host workspace-draft
 ad keyboard dismiss || true
 ad press 'id="menu-button"' --settle
 ad press 'id="sidebar-global-new-workspace"' --settle
 ad wait 'id="workspace-create-submit"' 10000
-run_host_scenario new-workspace
+run_host new-workspace
 
 echo "Composer keyboard invariants passed"

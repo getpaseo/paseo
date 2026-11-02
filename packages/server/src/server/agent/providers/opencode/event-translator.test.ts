@@ -1,3 +1,4 @@
+import { collectTimelineSnapshot } from "./test-utils/v2-timeline.js";
 import type { SessionMessageAssistant, SessionMessageUser } from "@opencode/client";
 import { V2Timeline } from "./v2/timeline.js";
 import { describe, expect, it } from "vitest";
@@ -1560,7 +1561,7 @@ describe("translateOpenCodeEvent", () => {
 });
 
 describe("OpenCode v2 history reconciliation", () => {
-  it("keeps client message identity on live echoes but omits it from history", () => {
+  it("keeps client message identity on live echoes but omits it from history", async () => {
     const user: SessionMessageUser = {
       id: "native-message",
       type: "user",
@@ -1568,13 +1569,13 @@ describe("OpenCode v2 history reconciliation", () => {
       time: { created: 1 },
       metadata: { paseoClientMessageId: "client-message" },
     };
-    expect(new V2Timeline().messages([user])).toMatchObject([
+    expect(await collectTimelineSnapshot(new V2Timeline(), [user])).toMatchObject([
       { item: { clientMessageId: "client-message", messageId: "native-message" } },
     ]);
-    expect(new V2Timeline(false).messages([user])).toMatchObject([
+    expect(await collectTimelineSnapshot(new V2Timeline(false), [user])).toMatchObject([
       { item: { type: "user_message", messageId: "native-message" } },
     ]);
-    const [event] = new V2Timeline(false).messages([user]);
+    const [event] = await collectTimelineSnapshot(new V2Timeline(false), [user]);
     expect(event && "item" in event && event.item).not.toHaveProperty("clientMessageId");
   });
   function assistant(text: string): SessionMessageAssistant {
@@ -1587,31 +1588,35 @@ describe("OpenCode v2 history reconciliation", () => {
       content: [{ type: "text", text }],
     };
   }
-  it("emits only the missing suffix after reconnect, even if an intermediate snapshot lags", () => {
+  it("emits only the missing suffix after reconnect, even if an intermediate snapshot lags", async () => {
     const timeline = new V2Timeline();
-    const text = (messages: ReturnType<V2Timeline["messages"]>) =>
+    const text = (messages: Awaited<ReturnType<typeof collectTimelineSnapshot>>) =>
       messages.flatMap((event) =>
         event.type === "timeline" && event.item.type === "assistant_message"
           ? [event.item.text]
           : [],
       );
-    expect(text(timeline.messages([assistant("hello")]))).toEqual(["hello"]);
-    expect(timeline.messages([assistant("hel")])).toEqual([]);
-    expect(text(timeline.messages([assistant("hello world")]))).toEqual([" world"]);
-    expect(timeline.messages([assistant("hello world")])).toEqual([]);
+    expect(text(await collectTimelineSnapshot(timeline, [assistant("hello")]))).toEqual(["hello"]);
+    expect(await collectTimelineSnapshot(timeline, [assistant("hel")])).toEqual([]);
+    expect(text(await collectTimelineSnapshot(timeline, [assistant("hello world")]))).toEqual([
+      " world",
+    ]);
+    expect(await collectTimelineSnapshot(timeline, [assistant("hello world")])).toEqual([]);
   });
-  it("keeps reasoning separate from assistant output", () => {
+  it("keeps reasoning separate from assistant output", async () => {
     const timeline = new V2Timeline();
     const message = assistant("answer");
     message.content.unshift({ type: "reasoning", text: "thinking" });
     expect(
-      timeline.messages([message]).map((event) => (event.type === "timeline" ? event.item : null)),
+      (await collectTimelineSnapshot(timeline, [message])).map((event) =>
+        event.type === "timeline" ? event.item : null,
+      ),
     ).toEqual([
       { type: "reasoning", text: "thinking" },
       { type: "assistant_message", text: "answer", messageId: "message" },
     ]);
   });
-  it("emits tool state transitions once and keeps their call identity", () => {
+  it("emits tool state transitions once and keeps their call identity", async () => {
     const timeline = new V2Timeline();
     const message = assistant("");
     message.content = [
@@ -1623,7 +1628,7 @@ describe("OpenCode v2 history reconciliation", () => {
         state: { status: "running", input: { command: "pwd" }, metadata: {} },
       },
     ];
-    expect(timeline.messages([message])).toMatchObject([
+    expect(await collectTimelineSnapshot(timeline, [message])).toMatchObject([
       { item: { type: "tool_call", callId: "call", status: "running" } },
     ]);
     message.content = [
@@ -1639,9 +1644,9 @@ describe("OpenCode v2 history reconciliation", () => {
         },
       },
     ];
-    expect(timeline.messages([message])).toMatchObject([
+    expect(await collectTimelineSnapshot(timeline, [message])).toMatchObject([
       { item: { type: "tool_call", callId: "call", status: "completed" } },
     ]);
-    expect(timeline.messages([message])).toEqual([]);
+    expect(await collectTimelineSnapshot(timeline, [message])).toEqual([]);
   });
 });

@@ -36,6 +36,7 @@ import {
   type FormState,
   type ProviderModelsByProvider,
 } from "@/provider-selection/resolve-agent-form";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
@@ -186,6 +187,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, { cwd: workingDir });
 
+  const isConnected = useHostRuntimeIsConnected(serverId ?? "");
+
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(
     () => buildProviderDefinitions(snapshotEntries),
@@ -220,8 +223,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [snapshotEntries],
   );
   const snapshotModelSelectorProviders = useMemo(
-    () => buildSelectableProviderSelectorProviders(snapshotEntries),
-    [snapshotEntries],
+    () => buildSelectableProviderSelectorProviders(snapshotEntries, isConnected),
+    [snapshotEntries, isConnected],
   );
   const snapshotSelectedEntry = useMemo(
     () =>
@@ -247,7 +250,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
   const isModelSelectionLoading =
-    resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading;
+    isConnected &&
+    (resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading);
   const isAllModelsLoading = isModelSelectionLoading;
 
   useEffect(() => {

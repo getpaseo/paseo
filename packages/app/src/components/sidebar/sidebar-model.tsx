@@ -134,7 +134,7 @@ export function SidebarModelProvider({
           visibleWorkspaceKeys.has(workspace.workspaceKey),
         );
         return workspaces.length > 0 || (!hasActiveLabelFilter && project.workspaces.length === 0)
-          ? [{ ...project, workspaces }]
+          ? [workspaces.length === project.workspaces.length ? project : { ...project, workspaces }]
           : [];
       });
     }

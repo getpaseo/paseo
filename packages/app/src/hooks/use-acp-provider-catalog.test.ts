@@ -11,6 +11,13 @@ function findProvider(id: string) {
 }
 
 describe("ACP provider catalog", () => {
+  it.each(["devin", "hermes", "kiro"])(
+    "#7087: %s supplies its provider mark to the catalog picker",
+    (provider) => {
+      expect(findProvider(provider).iconSvg).toContain("<svg");
+    },
+  );
+
   it("vendors provider entries with unique ids and concrete commands", () => {
     const ids = new Set<string>();
 
@@ -54,8 +61,10 @@ describe("ACP provider catalog", () => {
   it("offers MiniMax Code through its pinned public ACP package", () => {
     expect(findProvider("minimax-code")).toMatchObject({
       title: "MiniMax Code",
-      version: "0.1.2",
-      command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
+      version: "0.6.13",
+      // The package publishes `mcode`, not `code`, so npx needs the package and
+      // the binary named separately.
+      command: ["npx", "-y", "-p", "@minimax-ai/code@0.6.13", "mcode", "acp"],
     });
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });

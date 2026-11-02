@@ -35,6 +35,7 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
       env: {
         ...env,
         EXPO_NO_DOTENV: "1",
+        EXPO_UNSTABLE_HEADLESS: "1",
         CI: "1",
         PASEO_WEB_PLATFORM: "electron",
         EXPO_PUBLIC_LOCAL_DAEMON: `127.0.0.1:${port}`,

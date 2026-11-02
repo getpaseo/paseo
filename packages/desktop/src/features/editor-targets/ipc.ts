@@ -9,6 +9,10 @@ interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
 
+const EditorTargetListInputSchema = z.object({
+  workspacePath: z.string().trim().min(1).optional(),
+});
+
 const EditorTargetLaunchInputSchema = z.object({
   editorId: z.string().trim().min(1),
   workspacePath: z.string().trim().min(1),
@@ -27,9 +31,10 @@ export function registerEditorTargetHandlers(
   const ipc = options.ipc ?? ipcMain;
   const runtime = options.runtime ?? createEditorTargetRuntime();
 
-  ipc.handle("paseo:editor:listTargets", () =>
-    listAvailableEditorTargets(runtime, options.targets),
-  );
+  ipc.handle("paseo:editor:listTargets", (_event, payload: unknown) => {
+    const { workspacePath } = EditorTargetListInputSchema.parse(payload ?? {});
+    return listAvailableEditorTargets(runtime, options.targets, { workspacePath });
+  });
   ipc.handle("paseo:editor:openTarget", async (_event, payload: unknown) => {
     const input = EditorTargetLaunchInputSchema.parse(payload);
     await openEditorTarget(input, runtime, options.targets);

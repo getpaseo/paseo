@@ -6,9 +6,6 @@ export function getDiagramBoxStyle(style: TextStyle): ViewStyle {
     borderColor: style.borderColor,
     borderRadius: style.borderRadius,
     borderWidth: style.borderWidth,
-    marginBottom: style.marginBottom,
-    marginTop: style.marginTop,
-    marginVertical: style.marginVertical,
     padding: style.padding,
   };
 }

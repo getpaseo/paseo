@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import { PluginAttachmentItemSchema, type PluginAttachmentItem } from "@getpaseo/plugin";
+import {
+  PluginAttachmentItemSchema,
+  type PluginAttachmentItem,
+  type PluginSerializableIcon,
+} from "@getpaseo/plugin";
 import type { UserComposerAttachment } from "@/attachments/types";
 
 export const PluginResourceComposerAttachmentSchema = z.object({
@@ -8,7 +12,8 @@ export const PluginResourceComposerAttachmentSchema = z.object({
   pluginId: z.string().min(1),
   sourceId: z.string().min(1),
   sourceTitle: z.string().min(1),
-  sourceIcon: z.string().min(1),
+  // Validated when the source registered; a draft keeps the icon its source had then.
+  sourceIcon: z.union([z.string().min(1), z.object({ svg: z.string().min(1) })]),
   item: PluginAttachmentItemSchema,
 });
 
@@ -20,7 +25,7 @@ export interface PluginResourceSourceIdentity {
   pluginId: string;
   sourceId: string;
   sourceTitle: string;
-  sourceIcon: string;
+  sourceIcon: PluginSerializableIcon;
 }
 
 export function createPluginResourceAttachment(

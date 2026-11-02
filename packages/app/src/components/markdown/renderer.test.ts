@@ -1,5 +1,12 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
+import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
+import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
+import { matchCommandLink } from "@/agent-commands";
+
+import { classifyAssistantFileLink } from "@/assistant-file-links";
+import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
+import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 import { describe, expect, it } from "vitest";
@@ -7,6 +14,28 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
+
+it("recognizes complete known commands in inline code", () => {
+  const names = new Set(["code-review", "review:fast"]);
+  const prepared = prepareMarkdownSource("`/code-review` `/unknown`", undefined, {
+    commandNames: names,
+  });
+  expect(prepared.linkRecognition.inlineCode.test("/code-review")).toBe(true);
+  expect(prepared.linkRecognition.inlineCode.test("/unknown")).toBe(
+    prepareMarkdownSource("`/unknown`").linkRecognition.inlineCode.test("/unknown"),
+  );
+  const nonPath = prepareMarkdownSource("`/review:fast`", undefined, { commandNames: names });
+  expect(nonPath.linkRecognition.inlineCode.test("/review:fast")).toBe(true);
+  expect(matchCommandLink("/code-review", "inline-code", names)).toBe("/code-review");
+});
+
+it("resolves authored root-relative links only when the target is a known command", () => {
+  const names = new Set(["code-review"]);
+  expect(matchCommandLink("/code-review", "markdown", names)).toBe("/code-review");
+  expect(matchCommandLink("/code-review/file", "markdown", names)).toBeNull();
+  expect(matchCommandLink("/code-review", "text", names)).toBeNull();
+  expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
+});
 
 describe("shared Markdown source adaptation", () => {
   it("keeps paragraphs, fences and quotes together for the library", () => {
@@ -31,6 +60,56 @@ describe("shared Markdown source adaptation", () => {
       "> - ![Image](<file:///cache/a.png>)\n\n[picture]: ../a.png",
     );
   });
+  it("gives an image alone on its line its own paragraph", () => {
+    expect(
+      prepareMarkdownSource("Before the shot:\n![Shot](https://x/a.png)\nAfter it.").render(),
+    ).toBe("Before the shot:\n\n![Shot](https://x/a.png)\n\nAfter it.");
+    expect(prepareMarkdownSource("![A](https://x/a.png)\n![B](https://x/b.png)").render()).toBe(
+      "![A](https://x/a.png)\n\n![B](https://x/b.png)",
+    );
+    expect(
+      prepareMarkdownSource(
+        "Line one\\\n[![Linked](https://x/a.png)](https://x)\nLine three",
+      ).render(),
+    ).toBe("Line one\n\n[![Linked](https://x/a.png)](https://x)\n\nLine three");
+  });
+  it("keeps images that share a line with text inline", () => {
+    const source = "Icon ![i](https://x/i.png) in text\n![a](https://x/a.png) caption\nNext line";
+    expect(prepareMarkdownSource(source).render()).toBe(source);
+  });
+  it("splits own-line images inside quotes and list items without ending the container", () => {
+    expect(prepareMarkdownSource("> Quote text\n> ![Shot](https://x/a.png)\n> More").render()).toBe(
+      "> Quote text\n>\n> ![Shot](https://x/a.png)\n>\n> More",
+    );
+    expect(
+      prepareMarkdownSource("- Item text\n  ![Shot](https://x/a.png)\n  More\n- Next").render(),
+    ).toBe("- Item text\n\n  ![Shot](https://x/a.png)\n\n  More\n- Next");
+    expect(prepareMarkdownSource("- ![Shot](https://x/a.png)\n  Caption line").render()).toBe(
+      "- ![Shot](https://x/a.png)\n\n  Caption line",
+    );
+  });
+  it("renders own-line images as blocks through the library parser", async () => {
+    const source =
+      "Before:\n![Shot](https://x/a.png)\nIcon ![i](https://x/i.png) in text\n> Quoted\n> ![Q](https://x/q.png)";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    markInlineImages(tree);
+    const images: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Image") images.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(
+      images.map((image) => [image.attributes?.url, image.attributes?.isInline === true]),
+    ).toEqual([
+      ["https://x/a.png", false],
+      ["https://x/i.png", true],
+      ["https://x/q.png", false],
+    ]);
+  });
   it("escapes spoiler delimiters only in prose", () => {
     expect(prepareMarkdownSource("Show ||words|| and `||code||`.").render()).toBe(
       "Show \\|\\|words\\|\\| and `||code||`.",
@@ -51,6 +130,186 @@ it("preserves empty table cells while escaping spoilers in cell text", () => {
   );
 });
 
+it("renders a table directly after a paragraph through the library parser", async () => {
+  const source = "**Notes**\n| Item | Detail |\n| --- | --- |\n| A | one |\n| B | two |";
+  const separated = "**Notes**\n\n| Item | Detail |\n| --- | --- |\n| A | one |\n| B | two |";
+  const flags = { hardSoftBreaks: true, latexMath: false };
+  const expected = await parseMarkdown(separated, flags);
+  expect(expected.children?.map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+  expect(await parseMarkdown(prepareMarkdownSource(source).render(), flags)).toEqual(expected);
+});
+
+it.each([
+  [
+    "a quote",
+    "> Notes\n> | Item |\n> | --- |\n> | A |",
+    "> Notes\n>\n> | Item |\n> | --- |\n> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item",
+    "- Notes\n  | Item |\n  | --- |\n  | A |\n- Next",
+    "- Notes\n\n  | Item |\n  | --- |\n  | A |\n- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a quoted list item",
+    "> - Notes\n>   | Item |\n>   | --- |\n>   | A |",
+    "> - Notes\n>\n>   | Item |\n>   | --- |\n>   | A |",
+    ["Document", ["Blockquote", ["UnorderedList", ["ListItem", "Paragraph", "Table"]]]],
+  ],
+  [
+    "a quote inside a list item",
+    "- > Notes\n  > | Item |\n  > | --- |\n  > | A |",
+    "- > Notes\n  >\n  > | Item |\n  > | --- |\n  > | A |",
+    ["Document", ["UnorderedList", ["ListItem", ["Blockquote", "Paragraph", "Table"]]]],
+  ],
+  [
+    "aligned columns without outer pipes",
+    "Notes\nItem | Detail\n:--- | ---:\nA | one",
+    "Notes\n\nItem | Detail\n:--- | ---:\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "an entity at the start of a header without outer pipes",
+    "Notes\nAT&amp;T | Detail\n--- | ---\nA | one",
+    "Notes\n\nAT\\&T | Detail\n--- | ---\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a local image at the start of a header without outer pipes",
+    "Notes\n![Local](assets/a.png) | Detail\n--- | ---\nA | one",
+    "Notes\n\nLocal | Detail\n--- | ---\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "CRLF lines",
+    "Notes\r\n| Item |\r\n| --- |\r\n| A |",
+    "Notes\r\n\r\n| Item |\r\n| --- |\r\n| A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "CR lines",
+    "Notes\r| Item |\r| --- |\r| A |",
+    "Notes\r\r| Item |\r| --- |\r| A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a quote with CRLF lines",
+    "> Notes\r\n> | Item |\r\n> | --- |\r\n> | A |",
+    "> Notes\r\n>\r\n> | Item |\r\n> | --- |\r\n> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item with CRLF lines",
+    "- Notes\r\n  | Item |\r\n  | --- |\r\n  | A |\r\n- Next",
+    "- Notes\r\n\r\n  | Item |\r\n  | --- |\r\n  | A |\r\n- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a quote with CR lines",
+    "> Notes\r> | Item |\r> | --- |\r> | A |",
+    "> Notes\r>\r> | Item |\r> | --- |\r> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item with CR lines",
+    "- Notes\r  | Item |\r  | --- |\r  | A |\r- Next",
+    "- Notes\r\r  | Item |\r  | --- |\r  | A |\r- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a non-interrupting ordered marker with tildes",
+    "Intro\n2. ~~~\n   Notes\n   | A |\n   | --- |\n   | x |",
+    "Intro\n2. ~~~\n   Notes\n\n   | A |\n   | --- |\n   | x |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a non-interrupting ordered marker with backticks",
+    "Notes\n2. ```\n   | Item |\n   | --- |\n   | A |",
+    "Notes\n2. ```\n\n   | Item |\n   | --- |\n   | A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+])("preserves tables after paragraphs in %s", async (_name, source, separated, expected) => {
+  const rendered = prepareMarkdownSource(source).render();
+  expect(rendered).toEqual(separated);
+  const flags = { hardSoftBreaks: true, latexMath: false };
+  function blocks(node: ASTNode): unknown {
+    if (node.type === "Paragraph" || node.type === "Table") return node.type;
+    return [node.type, ...(node.children ?? []).map(blocks)];
+  }
+  expect(blocks(await parseMarkdown(rendered, flags))).toEqual(expected);
+});
+
+it.each([
+  [
+    "a literal backslash",
+    "Notes\\\n| Item |\n| --- |\n| A |",
+    "Notes\\\n\n| Item |\n| --- |\n| A |",
+    "Notes\\",
+  ],
+  [
+    "an entity and literal backslash with LF lines",
+    "AT&amp;T\\\n| Item |\n| --- |\n| A |",
+    "AT\\&T\\\n\n| Item |\n| --- |\n| A |",
+    "AT&T\\",
+  ],
+  [
+    "an entity and literal backslash with CRLF lines",
+    "AT&amp;T\\\r\n| Item |\r\n| --- |\r\n| A |",
+    "AT\\&T\\\r\n\r\n| Item |\r\n| --- |\r\n| A |",
+    "AT&T\\",
+  ],
+  [
+    "an entity and literal backslash with CR lines",
+    "AT&amp;T\\\r| Item |\r| --- |\r| A |",
+    "AT\\&T\\\r\r| Item |\r| --- |\r| A |",
+    "AT&T\\",
+  ],
+])(
+  "preserves paragraph text before an interrupting table in %s",
+  async (_name, source, separated, text) => {
+    const rendered = prepareMarkdownSource(source).render();
+    expect(rendered).toEqual(separated);
+    const tree = await parseMarkdown(rendered, { hardSoftBreaks: true, latexMath: false });
+    expect(tree.children?.map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+    expect(tree.children?.[0]?.children?.map((node) => node.content).join("")).toEqual(text);
+  },
+);
+
+it.each([
+  "```yaml\n---\nkey: value\n---\n```\n",
+  "~~~md\n| Item |\n| --- |\n| A |\n~~~\n",
+  "````md\n```\n| Item |\n| --- |\n```\n`````\n",
+  "> ```md\n> | Item |\n> | --- |\n> ```\n",
+  "> ```md\n> Code\n",
+  "- ```md\n  Code\n",
+  "    ```\n\n",
+  "```not`a-fence\n",
+])("renders a table after a fence without changing its code: %s", async (prefix) => {
+  const table = "| Item |\n| --- |\n| A |";
+  const rendered = prepareMarkdownSource(`${prefix}Notes\n${table}`).render();
+  expect(rendered).toEqual(`${prefix}Notes\n\n${table}`);
+  const tree = await parseMarkdown(rendered, { hardSoftBreaks: true, latexMath: false });
+  expect(tree.children?.slice(-2).map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+});
+
+it.each([
+  "| Item | Detail |\n| --- | --- |\n" + "| A | one |\n".repeat(100),
+  "Notes\n\n| Item | Detail |\n| --- | --- |\n" + "| A | one |\n".repeat(100),
+  "Notes\n\n| Item |\n| --- |\n| A |",
+  "| Item |\n| --- |\n| A |",
+  "```md\nNotes\n| Item |\n| --- |\n| A |\n```",
+  "```yaml\n---\nkey: value\n---\n```",
+  "```yaml\n---\nkey: value",
+  "~~~md\n| Item |\n| --- |\n| A |\n~~~",
+  "````md\n```\n| Item |\n| --- |\n```\n````",
+  "    Notes\n    | Item |\n    | --- |\n    | A |",
+  "Notes\n| Item | Detail |\n| --- |\n| A |",
+])("leaves separated tables and table-like text unchanged: %s", (source) => {
+  expect(prepareMarkdownSource(source).render()).toEqual(source);
+});
+
 it.each([
   "src/components/message.tsx",
   "C:\\repo\\file.ts",
@@ -59,13 +318,192 @@ it.each([
   "src/file.ts:10-20",
   "src/file.ts(10,2)",
 ])("recognizes inline paths through the file resolver: %s", (path) => {
-  const prepared = prepareMarkdownSource(`Open \`${path}\`.`);
+  const prepared = prepareMarkdownSource(`Open \`${path}\`.`, "/repo");
   expect(prepared.linkRecognition.inlineCode?.test(path)).toBe(true);
   expect(prepared.linkSource(path, "inline-code")).toEqual({
     href: path,
     text: path,
     sourceType: "inline-code",
   });
+});
+
+it("preserves stable inline-code file classification through the library parser", async () => {
+  const paths = [
+    "src/app/[id].tsx",
+    "src/app/(tabs)/index.tsx",
+    "src/a$b.ts",
+    ".gitignore",
+    "src/index.ts#L10-L20",
+    "src/index.ts:10-20",
+    "src/index.ts:20-10",
+    "src/index.ts#L0",
+    "src/index.ts?raw",
+    "before/after",
+    "word.word",
+    "README.md",
+    "./scripts/run",
+    "src/file.ts(10,2)",
+    "src/file.ts lines 10-20",
+    "/tmp/[route].tsx",
+    "file:///tmp/file.ts#L10-L20",
+  ];
+  const source = paths.map((path) => `\`${path}\``).join(" and ");
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const links: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link") links.push(String(node.attributes?.url));
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(links).toEqual([
+    "src/app/[id].tsx",
+    "src/app/(tabs)/index.tsx",
+    "src/a$b.ts",
+    ".gitignore",
+    "src/index.ts#L10-L20",
+    "src/index.ts:10-20",
+    "README.md",
+    "./scripts/run",
+    "src/file.ts(10,2)",
+    "/tmp/[route].tsx",
+    "file:///tmp/file.ts#L10-L20",
+  ]);
+  expect(
+    classifyAssistantFileLink("src/index.ts#L10-L20", { workspaceRoot: "/repo" }),
+  ).toMatchObject({ target: { path: "/repo/src/index.ts", lineStart: 10, lineEnd: 20 } });
+});
+
+it("lets the engine own code boundaries while classifying candidate values", async () => {
+  const source = [
+    "```ts\n`src/fenced.ts`\n```",
+    "`` src/app/[id].tsx `` and `  src/spaced.ts  `",
+    "``src/a`b.ts`` and `src/after.ts`",
+    "\\`src/escaped.ts` and `src/final.ts`",
+    "`\nsrc/newline.ts\n`",
+    "[`src/explicit.ts`](https://example.com)",
+  ].join("\n\n");
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const recognized: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link" && node.attributes?.recognizedLink === "true") {
+      recognized.push(String(node.attributes.url));
+    }
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(recognized).toEqual([
+    "src/app/[id].tsx",
+    " src/spaced.ts ",
+    "src/a`b.ts",
+    "src/after.ts",
+    "src/escaped.ts",
+    "src/final.ts",
+    "src/newline.ts",
+  ]);
+});
+
+describe("bare URL sentence punctuation", () => {
+  it.each([".", ",", ";", ":", "!", "?", ")", ").", "...", "?!"])(
+    "leaves %s outside the link and preserves the rendered sentence",
+    async (punctuation) => {
+      const url = "https://github.com/getpaseo/paseo/pull/7357";
+      const source = `${url}${punctuation} Not merged.`;
+      const prepared = prepareMarkdownSource(source);
+      const tree = recognizeTextLinks(
+        await parseMarkdown(prepared.render(), { latexMath: false }),
+        prepared.linkRecognition.text,
+        prepared.linkRecognition.inlineCode,
+      );
+      expect(tree.children?.[0]?.children).toEqual([
+        {
+          type: "Link",
+          attributes: { url },
+          children: [{ type: "Text", content: url }],
+        },
+        { type: "Text", content: `${punctuation} Not merged.` },
+      ]);
+    },
+  );
+
+  it.each([
+    "https://example.com/a.b",
+    "https://example.com/a?foo=bar&baz=2",
+    "https://example.com/a#L10",
+    "https://en.wikipedia.org/wiki/Function_(mathematics)",
+    "https://example.com/a_(b_(c))",
+  ])("preserves internal URL punctuation: %s", async (url) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(`${url}.`).render());
+    expect(tree.children?.[0]?.children).toEqual([
+      {
+        type: "Link",
+        attributes: { url },
+        children: [{ type: "Text", content: url }],
+      },
+      { type: "Text", content: "." },
+    ]);
+  });
+
+  it.each([
+    ["http://127.0.0.1:8059/?token=t-1", ""],
+    ["http://example.com:8080/a", "."],
+    ["http://localhost:8059/?token=t-1", "."],
+    ["http://localhost:8059/?token=t-1", ")"],
+    ["http://user@127.0.0.1:8059/?token=t-1", '"'],
+    ["http://user:pass@127.0.0.1:8059/?token=t-1", ""],
+    ["http://localhost", ":"],
+    ["http://[::1]:8059/?token=t-1", "'"],
+    ["https://github.com/o/r/compare/main...user:repo:fix/branch", ""],
+    ["https://example.com/a:b/c", ":"],
+  ])("links %s whole and leaves %j outside", async (url, punctuation) => {
+    const prepared = prepareMarkdownSource(`See ${url}${punctuation} now`);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Text", content: "See " },
+      {
+        type: "Link",
+        attributes: expect.objectContaining({ url }),
+        children: [{ type: "Text", content: url }],
+      },
+      { type: "Text", content: `${punctuation} now` },
+    ]);
+  });
+
+  it.each(["[Authored](https://example.com/a.)", "<https://example.com/a.>"])(
+    "preserves punctuation in explicit destinations: %s",
+    async (source) => {
+      const tree = await parseMarkdown(prepareMarkdownSource(source).render());
+      expect(tree.children?.[0]?.children?.[0]?.attributes?.url).toBe("https://example.com/a.");
+    },
+  );
+});
+
+it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
+  const source = "`src/app/[id].tsx` and `src/a+b.ts` and `README.md` and `/tmp/file.ts`";
+  const withoutWorkspace = prepareMarkdownSource(source).linkRecognition.inlineCode;
+  expect(withoutWorkspace.test("src/app/[id].tsx")).toBe(false);
+  expect(withoutWorkspace.test("README.md")).toBe(false);
+  expect(withoutWorkspace.test("/tmp/file.ts")).toBe(true);
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const native = toNativeLinkRecognition(prepared.linkRecognition);
+  const pattern = new RegExp(native.inlineCode.pattern);
+  expect(pattern.test("src/app/[id].tsx")).toBe(true);
+  expect(pattern.test("src/a+b.ts")).toBe(true);
+  expect(pattern.test("src/app/i.tsx")).toBe(false);
+  expect(pattern.test("src/ab.ts")).toBe(false);
 });
 
 it("recognizes bare Unicode filenames and preserves inline-code URLs", () => {
@@ -152,7 +590,7 @@ describe("shared Markdown theme colours", () => {
     ["dark", darkTheme],
     ["light", lightTheme],
   ] as const)("uses %s theme colours for tables and task labels", (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.table).toMatchObject({
       color: theme.colors.foreground,
       headerTextColor: theme.colors.foreground,
@@ -182,7 +620,7 @@ it.each([
 ] as const)(
   "uses %s theme colours for quotes, admonitions, code, links and dividers",
   (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.blockquote).toMatchObject({
       color: `${theme.colors.foreground}cc`,
       backgroundColor: theme.colors.surface1,
@@ -209,7 +647,7 @@ it.each([
 );
 
 it.each([darkTheme, lightTheme])("supplies the theme selection colour to the renderer", (theme) => {
-  expect(createMarkdownStyles(theme)).toHaveProperty(
+  expect(createMarkdownStyles(theme, { blockGap: 16 })).toHaveProperty(
     "selectionColor",
     theme.colors.terminal.selectionBackground,
   );
@@ -276,7 +714,7 @@ it("preserves backslashes and decodes entities inside HTML code", () => {
 it.each([false, true])(
   "caps inline images to the paragraph line height (compact: %s)",
   (compact) => {
-    const { markdownStyle } = createMarkdownStyles(darkTheme, compact);
+    const { markdownStyle } = createMarkdownStyles(darkTheme, { compact, blockGap: 16 });
     expect(markdownStyle.inlineImage?.size).toBe(markdownStyle.paragraph?.lineHeight);
   },
 );
@@ -436,7 +874,7 @@ it.each([
   "×/÷",
   "２０２４/１０/１６",
 ])("leaves non-path tokens unlinked in prose and inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then continue.`);
+  const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then \`${token}\`.`, "/repo");
   expect([...`Value ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
   expect(linkRecognition.inlineCode.test(token)).toBe(false);
 });
@@ -461,12 +899,11 @@ it.each([
   "123.ts",
   "FILE.TS",
   "https://example.com/path",
-])("recognizes complete paths and URLs in prose and inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Open ${token} then continue.`);
+])("recognizes complete paths and URLs in prose: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(`Open ${token} then \`${token}\`.`, "/repo");
   expect(
     [...`Open ${token} then continue.`.matchAll(linkRecognition.text)].map(([text]) => text),
   ).toEqual([token]);
-  expect(linkRecognition.inlineCode.test(token)).toBe(true);
 });
 
 it.each([
@@ -477,10 +914,13 @@ it.each([
   "packages/app",
   "123/file",
   "src/123",
-])("requires stronger path intent in prose while preserving inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Compare ${token}, then continue.`);
+])("leaves extensionless relative paths unlinked in prose and inline code: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(
+    `Compare ${token}, then \`${token}\`.`,
+    "/repo",
+  );
   expect([...`Compare ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
-  expect(linkRecognition.inlineCode.test(token)).toBe(true);
+  expect(linkRecognition.inlineCode.test(token)).toBe(false);
 });
 
 it("keeps prose and inline-code recognition enabled through the native regex adapter", () => {
@@ -561,3 +1001,25 @@ it("replaces the native placeholder only after the resolved URL decodes", () => 
   const prepared = prepareMarkdownSource("![image](shot.png)", undefined, { supportsSvg: false });
   expect(prepared.render(new Map([["shot.png", url]]))).toBe(`![image](<${url}>)`);
 });
+
+it("makes the web Markdown container selectable in Safari as well as unprefixed browsers", () => {
+  expect(createMarkdownStyles(lightTheme, { blockGap: 12 }).containerStyle).toEqual({
+    userSelect: "text",
+    WebkitUserSelect: "text",
+  });
+});
+
+it.each([false, true])(
+  "scales inline code from theme tokens with its surrounding block (compact: %s)",
+  (compact) => {
+    const theme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, code: 13, content: 17, base: 16 },
+    };
+    const { markdownStyle } = createMarkdownStyles(theme, { compact, blockGap: 16 });
+    const bodySize = compact ? theme.fontSize.base : theme.fontSize.content;
+    expect(markdownStyle.code).not.toHaveProperty("fontSize");
+    expect(markdownStyle.code).toHaveProperty("fontScale", theme.fontSize.code / bodySize);
+    expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
+  },
+);

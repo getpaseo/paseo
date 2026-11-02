@@ -3,7 +3,11 @@ import type { Logger } from "pino";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
-import { DEFAULT_OPENAI_TTS_MODEL, type OpenAiSpeechProviderConfig } from "./config.js";
+import {
+  DEFAULT_OPENAI_TTS_MODEL,
+  type OpenAiSpeechProviderConfig,
+  type OpenAiSttFeature,
+} from "./config.js";
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
 
@@ -33,7 +37,7 @@ function resolveOpenAiCredentials(
   return {
     openaiSttApiKey: sttApiKey,
     openaiTtsApiKey: openaiConfig?.tts?.apiKey,
-    openaiDictationApiKey: sttApiKey,
+    openaiDictationApiKey: openaiConfig?.dictationStt?.apiKey,
   };
 }
 
@@ -94,13 +98,16 @@ export function validateOpenAiCredentialRequirements(params: {
   }
 }
 
-function createOpenAiStt(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-  logger: Logger,
-): SpeechToTextProvider {
-  const { apiKey: _sttApiKey, ...sttConfig } = openaiConfig?.stt ?? {};
-  return new OpenAISTT({ apiKey, ...sttConfig }, logger);
+function createOpenAiStt(params: {
+  apiKey: string;
+  openaiConfig: OpenAiSpeechProviderConfig | undefined;
+  feature: OpenAiSttFeature;
+  logger: Logger;
+}): SpeechToTextProvider {
+  const site =
+    params.feature === "dictation" ? params.openaiConfig?.dictationStt : params.openaiConfig?.stt;
+  const { apiKey: _sttApiKey, ...sttConfig } = site ?? {};
+  return new OpenAISTT({ apiKey: params.apiKey, ...sttConfig }, params.logger);
 }
 
 function createOpenAiTts(
@@ -154,7 +161,12 @@ export function initializeOpenAiSpeechServices(params: {
     logger.info("OpenAI speech provider initialized");
 
     if (needsOpenAiStt && openAiCredentials.openaiSttApiKey) {
-      sttService = createOpenAiStt(openAiCredentials.openaiSttApiKey, openaiConfig, logger);
+      sttService = createOpenAiStt({
+        apiKey: openAiCredentials.openaiSttApiKey,
+        openaiConfig,
+        feature: "voiceMode",
+        logger,
+      });
     }
 
     if (needsOpenAiTts && openAiCredentials.openaiTtsApiKey) {
@@ -162,11 +174,12 @@ export function initializeOpenAiSpeechServices(params: {
     }
 
     if (needsOpenAiDictation && openAiCredentials.openaiDictationApiKey) {
-      dictationSttService = createOpenAiStt(
-        openAiCredentials.openaiDictationApiKey,
+      dictationSttService = createOpenAiStt({
+        apiKey: openAiCredentials.openaiDictationApiKey,
         openaiConfig,
+        feature: "dictation",
         logger,
-      );
+      });
     }
   } else if (needsAnyOpenAi) {
     // validateOpenAiCredentialRequirements already warned about missing credentials

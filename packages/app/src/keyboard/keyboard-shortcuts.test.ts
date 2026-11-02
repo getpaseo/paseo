@@ -4,7 +4,9 @@ import { keyboardEventToComboString } from "./shortcut-string";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
+  DEFAULT_BINDINGS,
   normalizeCapturedShortcutCombo,
+  isShortcutCaptureComplete,
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
@@ -1388,5 +1390,24 @@ describe("number-group shortcut capture", () => {
     expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+K")).toBe("Ctrl+K");
     expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+0")).toBe("Ctrl+0");
     expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+9")).toBe("Ctrl+Digit");
+  });
+});
+
+describe("shortcut capture completion", () => {
+  const indexBindings = DEFAULT_BINDINGS.filter((binding) => binding.payload?.type === "index");
+  it.each(indexBindings)("requires a final 1–9 number for $id", ({ id }) => {
+    for (const combos of [[], ["Ctrl+K"], ["Ctrl+0"], ["Ctrl+Digit", "Ctrl+K"]]) {
+      expect(isShortcutCaptureComplete(id, combos)).toBe(false);
+    }
+    for (let index = 1; index <= 9; index++) {
+      const combo = normalizeCapturedShortcutCombo(id, `Ctrl+${index}`);
+      expect(isShortcutCaptureComplete(id, [combo])).toBe(true);
+      expect(isShortcutCaptureComplete(id, ["Ctrl+K", combo])).toBe(true);
+    }
+  });
+  it("keeps ordinary shortcuts available without a number", () => {
+    expect(isShortcutCaptureComplete("show-shortcuts", [])).toBe(false);
+    expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+K"])).toBe(true);
+    expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+0"])).toBe(true);
   });
 });

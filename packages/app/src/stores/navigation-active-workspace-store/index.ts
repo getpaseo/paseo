@@ -1,3 +1,5 @@
+import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
+import { usePanelStore } from "@/stores/panel-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
@@ -34,10 +36,17 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
 
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
+    revealTab: revealWorkspaceTab,
+    revealWorkspace: () => {
+      if (useWorkspaceLayoutStore.getState().layoutMode === "compact") {
+        usePanelStore.getState().showMobileAgent();
+      }
+    },
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
+    deferOpenTab: (input) => useWorkspaceLayoutStore.getState().deferOpenTab(input),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {

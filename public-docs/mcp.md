@@ -155,6 +155,8 @@ Both use the same cron engine, but they have deliberately different interfaces.
 
 MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
+New-agent run workspaces are archived when each run ends by default. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
+
 ### Agent profiles
 
 | Tool            | Function                                                                                                                           |

@@ -35,6 +35,20 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
+For Android background fold recovery, install the release APK on a foldable AVD, open a
+connected workspace, close the keyboard, and run:
+
+```bash
+ANDROID_SERIAL=emulator-5574 node packages/app/e2e/mobile/fold/android.mjs
+```
+
+The AVD must expose `CLOSED` and `OPENED` device states. The test backgrounds the app,
+changes posture, resumes immediately, and asserts compact/wide workspace controls without
+restarting the process. It writes snapshots and native failure state under
+`.dev/agent-device-artifacts/android-fold`. Set `PASEO_MOBILE_APP_ID=sh.paseo` for a
+production package. This needs a native rebuild when the Unistyles patch changes; a Metro
+reload cannot update it.
+
 For Android keyboard continuity, run the current checkout in the app, open an idle terminal
 with an empty prompt, hide its keyboard, and run:
 
@@ -53,7 +67,18 @@ hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
 tab, and New workspace. It checks empty-content taps and header taps at the cap
 without changing the input height. Each
 host also opens command/file autocomplete, the model selector, the attachment
-menu, and the forge picker from both keyboard states. It then submits a long
+menu, and the forge picker from both keyboard states. Autocomplete opens with
+the keyboard closed, before the keyboard opens, and after it settles. Each time
+the expected best match must be drawn whole between the header and the composer,
+above the IME frame, and tapping it there must produce the exact composer text.
+Accessibility reports rows behind the keyboard too, so
+`packages/app/e2e/mobile/composer-keyboard/autocomplete-placement.mjs` compares
+bounds. Android leaves the chat and composer out of the accessibility tree while
+suggestions are open, so the composer bounds come from a snapshot with an empty
+input in the same keyboard state. The queries are partial names with known best
+matches: in chat `/mo` finds the mock provider's `/mock` command, in drafts
+`/release` finds this repository's `release-beta` skill for the first Claude model,
+and `@app` finds `packages/app`. It then submits a long
 fixture from each host and checks native stream displacement twice: after the
 response settles, and after returning to the bottom and letting the scrollbar
 fade. The image comparison excludes the scrollbar; keyboard dismissal alone
@@ -64,6 +89,31 @@ Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
 `packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
 the headless input helper cannot verify the
 [visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
+To rerun only the autocomplete, model selector, attachment menu, and forge picker
+checks on each host, skipping the chat baseline and the growth, dismissal, and
+stream scenarios:
+
+```bash
+PASEO_COMPOSER_KEYBOARD_SCENARIO=overlays npm run test:e2e:composer-keyboard:android
+```
+
+`node packages/app/e2e/mobile/composer-keyboard/ios.mjs` runs the same
+autocomplete checks on iOS for chat, a workspace draft tab, and New workspace,
+with commands, files, and files under a grown draft. Suggestions open while the
+keyboard opens (`fill` taps and types at once), after it settles, with it closed,
+and before it reopens. `test:e2e:mobile` cannot host this: its `.ad` flows assert
+accessibility state and cannot compare bounds. Run it where `agent-device`
+reaches the simulator, with the development app connected to the fixture host
+and its Claude provider available. Set `PASEO_COMPOSER_KEYBOARD_SERVER_ID`,
+`_AGENT_ID` (an idle mock chat), and `_WORKSPACE_ID` (its workspace); `_DEVICE`,
+`_SESSION`, and `_DRAFT_ID` are optional. Artifacts go to
+`.dev/agent-device-artifacts/composer-keyboard-ios`.
+With a Codex draft selected, set `_SCENARIO=growth` on a 402pt-wide iPhone to
+check live wrapping, shrinking, the 12pt anchor gap, and command insertion. Set
+`_SCENARIO=previews` on an SE-sized iPhone to check long and short descriptions
+under an eight-line draft, selection with the keyboard shown and hidden, and
+file mentions. These scenarios only need `_SERVER_ID` and `_WORKSPACE_ID`;
+`_UDID` selects an exact simulator and `_ARTIFACTS_DIR` overrides the output path.
 
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and

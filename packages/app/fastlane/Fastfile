@@ -1,6 +1,46 @@
+require "fileutils"
+require "tmpdir"
+
 default_platform(:ios)
 
 APP_IDENTIFIER = "sh.paseo"
+
+# Store screenshots are rendered into assets/store-screenshots/output; see the
+# README there. Google Play and F-Droid both read fastlane/metadata/android at
+# the repo root, whose screenshot files link to those renders.
+REPO_ROOT = File.expand_path("../../..", __dir__)
+STORE_SCREENSHOTS = File.join(REPO_ROOT, "assets/store-screenshots/output")
+ANDROID_METADATA = File.join(REPO_ROOT, "fastlane/metadata/android")
+
+# deliver reads screenshots from one folder per language and picks the device
+# slot from each image's size, so both Apple sets go into en-US together.
+def stage_app_store_screenshots
+  root = Dir.mktmpdir("app-store-screenshots")
+  locale = File.join(root, "en-US")
+  FileUtils.mkdir_p(locale)
+  { "apple" => "iphone", "apple-ipad" => "ipad" }.each do |set, device|
+    Dir.glob(File.join(STORE_SCREENSHOTS, set, "*.png")).sort.each do |file|
+      FileUtils.cp(file, File.join(locale, "#{device}-#{File.basename(file)}"))
+    end
+  end
+  root
+end
+
+# Google Play only has en-US screenshots, and some F-Droid locales in
+# ANDROID_METADATA are not Play languages (Play rejects "ja"). supply uploads
+# every locale folder in one edit, so give it only the en-US images.
+def stage_google_play_screenshots
+  root = Dir.mktmpdir("google-play-screenshots")
+  images = File.join(ANDROID_METADATA, "en-US/images")
+  %w[phoneScreenshots tenInchScreenshots].each do |kind|
+    target = File.join(root, "en-US/images", kind)
+    FileUtils.mkdir_p(target)
+    Dir.glob(File.join(images, kind, "*.png")).sort.each do |file|
+      FileUtils.cp(File.realpath(file), File.join(target, File.basename(file)))
+    end
+  end
+  root
+end
 
 platform :ios do
   desc "Submit the latest TestFlight build to App Store Review"
@@ -87,12 +127,35 @@ platform :ios do
       },
       force: true,
       skip_binary_upload: true,
-      skip_screenshots: true,
+      screenshots_path: stage_app_store_screenshots,
+      overwrite_screenshots: true,
       precheck_include_in_app_purchases: false,
       submission_information: {
         add_id_info_uses_idfa: false,
         export_compliance_uses_encryption: false,
       },
+    )
+  end
+end
+
+platform :android do
+  desc "Replace the Google Play store screenshots with the ones in the repo"
+  lane :upload_screenshots do
+    # supply attaches listing changes to a release on the production track.
+    # The release workflow passes the version code it just submitted; without
+    # it, supply uses the track's only release.
+    version_code = ENV["ANDROID_VERSION_CODE"].to_s.strip
+    supply(
+      package_name: APP_IDENTIFIER,
+      json_key: ENV.fetch("GOOGLE_PLAY_JSON_KEY"),
+      metadata_path: stage_google_play_screenshots,
+      version_code: version_code.empty? ? nil : version_code.to_i,
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      sync_image_upload: true,
     )
   end
 end
