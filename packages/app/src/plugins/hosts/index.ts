@@ -259,6 +259,16 @@ export function createPluginHosts(
           async removeConnection(connectionId) {
             await perform(id, async () => {
               assertHost(id);
+              const isManaged = await options.isManagedLocalHost(id);
+              assertHost(id);
+              const host = source.getHosts().find((candidate) => candidate.serverId === id)!;
+              if (
+                isManaged &&
+                host.connections.length === 1 &&
+                host.connections[0].id === connectionId
+              ) {
+                throw new Error("Cannot remove the desktop daemon host");
+              }
               await source.removeConnection(id, connectionId);
             });
           },
@@ -346,9 +356,15 @@ export function createPluginHosts(
     },
     observeHosts(listener: (hosts: readonly PluginHost[]) => void) {
       if (signal.aborted) throw new Error("Plugin has stopped");
-      const notify = () => listener(snapshot);
+      const notify = () => {
+        try {
+          listener(snapshot);
+        } catch (error) {
+          console.error("[Plugins] Host observer failed", error);
+        }
+      };
       listeners.add(notify);
-      listener(snapshot);
+      notify();
       return () => {
         listeners.delete(notify);
       };

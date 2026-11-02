@@ -1,6 +1,9 @@
 import { createPlayAudio, type AudioEngine } from "@/audio";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { getDesktopDaemonStatus, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import {
+  resolveDesktopDaemonServerId,
+  shouldUseDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
 import { createPluginHosts } from "./hosts";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import {
@@ -32,7 +35,7 @@ export function createPluginClientRuntime(
         createPluginNavigation({ serverId, workspaceId: null }).openHostSettings(serverId);
       },
       async isManagedLocalHost(serverId) {
-        return shouldUseDesktopDaemon() && (await getDesktopDaemonStatus()).serverId === serverId;
+        return shouldUseDesktopDaemon() && (await resolveDesktopDaemonServerId()) === serverId;
       },
     }),
     addComposerPill(contribution) {

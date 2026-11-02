@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginHosts, type PluginHostsSource } from "./index";
+import { resolveDesktopDaemonServerId } from "@/desktop/daemon/desktop-daemon";
 
 function registry() {
   const hosts = [
@@ -154,6 +155,37 @@ describe("plugin host access", () => {
     h.lifetime.abort();
   });
 
+  it("isolates a throwing observer from other observers and registry mutations", async () => {
+    const h = registry();
+    let calls = 0;
+    h.runtime.observeHosts(() => {
+      if (calls++ > 0) throw new Error("plugin listener failed");
+    });
+    let delivered = 0;
+    h.runtime.observeHosts(() => {
+      delivered++;
+    });
+    await expect(h.runtime.getSnapshot()[0].removeConnection("one")).resolves.toBeUndefined();
+    expect(delivered).toBe(2);
+    expect(h.runtime.getSnapshot()[0].connections).toHaveLength(1);
+    h.lifetime.abort();
+  });
+
+  it("refuses to remove the last connection of the desktop daemon", async () => {
+    const h = registry();
+    const lifetime = new AbortController();
+    const runtime = createPluginHosts(h.source, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async (id) => id === "a",
+    });
+    const host = runtime.getSnapshot()[0];
+    await host.removeConnection("one");
+    await expect(host.removeConnection("two")).rejects.toThrow("desktop daemon");
+    expect(host.connections).toHaveLength(1);
+    lifetime.abort();
+    h.lifetime.abort();
+  });
+
   it("returns the projected handle after adding a host", async () => {
     const h = registry();
     h.source.addHost = async () => ({ status: "saved", serverId: "a" });
@@ -226,6 +258,26 @@ describe("plugin host access", () => {
     const runtime = createPluginHosts(h.source, lifetime.signal, {
       openSettings() {},
       isManagedLocalHost: async (id) => id === "a",
+    });
+    await expect(runtime.getSnapshot()[0].remove()).rejects.toThrow("desktop daemon");
+    expect(runtime.getSnapshot()).toHaveLength(2);
+    lifetime.abort();
+    h.lifetime.abort();
+  });
+
+  it("protects the desktop host after its daemon has stopped", async () => {
+    const h = registry();
+    const lifetime = new AbortController();
+    const runtime = createPluginHosts(h.source, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async (id) =>
+        id ===
+        (await resolveDesktopDaemonServerId({
+          getStatus: async () => {
+            throw new Error("daemon stopped");
+          },
+          getSavedId: async () => "a",
+        })),
     });
     await expect(runtime.getSnapshot()[0].remove()).rejects.toThrow("desktop daemon");
     expect(runtime.getSnapshot()).toHaveLength(2);
