@@ -144,7 +144,8 @@ function describeControl(
     selectedId: String(item.value ?? ""),
     value: choiceLabel,
     iconOnly,
-    tooltip: item.tooltip ?? (iconOnly ? `${item.title}: ${choiceLabel}` : item.title),
+    // An icon-only trigger names its value; a sheet row shows the value, so it names the action.
+    tooltip: iconOnly && !isSheet ? `${item.title}: ${choiceLabel}` : (item.tooltip ?? item.title),
     opensList: true,
   };
 }

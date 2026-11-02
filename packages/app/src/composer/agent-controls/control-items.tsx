@@ -55,7 +55,7 @@ function toFeatureItem(
   return {
     ...base,
     type: "select",
-    tooltip: iconOnly ? undefined : getControlTooltip(control),
+    tooltip: getControlTooltip(control),
     value: readSelectOption(control, options),
     choices: control.choices,
     iconOnly,
