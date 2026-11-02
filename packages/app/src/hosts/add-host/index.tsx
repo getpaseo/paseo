@@ -78,6 +78,7 @@ function AddHostSessionView({ session }: { session: AddHostSession }) {
           onClose={session.close}
           scrollable={false}
           snapPoints={SCAN_SNAP_POINTS}
+          desktopHeight="85%"
         >
           <PairScanContent onConnected={scanned} onClose={back} />
         </AdaptiveModalSheet>
