@@ -454,6 +454,9 @@ export class ChangeSetPipeline {
     });
     this.trackAgent(goal.id, agentId, true);
     try {
+      // abort() could not see this agent while it was being created, so the goal may have ended
+      // meanwhile. Do not start a billable turn for it; the finally block discards the agent.
+      if (this.host.isStopped() || this.store.get(goal.id)?.status !== "executing") return null;
       let prompt = buildReviewPrompt(goal, task, cs);
       let problem = "";
       for (let attempt = 0; attempt < REPLY_ATTEMPTS; attempt += 1) {
@@ -796,26 +799,40 @@ export class ChangeSetPipeline {
     }
   }
 
+  /**
+   * Where the verifier looks. With nothing integrated there is no branch to check, so it verifies
+   * in a throwaway worktree rather than in the user's own checkout, and that worktree's start is
+   * the baseline it must be left at. A goal that runs in the checkout has nothing to compare.
+   */
+  private async verifierWorkspace(
+    goal: Goal,
+    config: GoalConfig,
+  ): Promise<{
+    scratch: { workspaceId: string; cwd: string } | null;
+    scratchBase: string | null;
+    workspace: { workspaceId: string; cwd: string };
+  } | null> {
+    if (goal.integration) {
+      const { workspaceId, cwd } = goal.integration;
+      return { scratch: null, scratchBase: null, workspace: { workspaceId, cwd } };
+    }
+    const scratch = await this.workspaces.create({
+      cwd: config.cwd,
+      isolation: "worktree",
+      title: `${goal.title} (verify)`,
+      ...(config.baseCommit ? { baseRef: config.baseCommit } : {}),
+    });
+    const scratchBase = await this.git.head(scratch.cwd);
+    return { scratch, scratchBase, workspace: scratch };
+  }
+
   /** Returns the unmet criteria as readable lines, or null if the goal ended meanwhile. */
   private async askVerifier(goal: Goal, ids: string[]): Promise<string[] | null> {
     const config = goal.config;
     if (!config) return null;
-    // With nothing integrated there is no branch to check, so verify in a throwaway
-    // worktree rather than in the user's own checkout.
-    const scratch = goal.integration
-      ? null
-      : await this.workspaces.create({
-          cwd: config.cwd,
-          isolation: "worktree",
-          title: `${goal.title} (verify)`,
-          ...(config.baseCommit ? { baseRef: config.baseCommit } : {}),
-        });
-    const workspace =
-      scratch ??
-      (goal.integration
-        ? { workspaceId: goal.integration.workspaceId, cwd: goal.integration.cwd }
-        : null);
-    if (!workspace) return null;
+    const prepared = await this.verifierWorkspace(goal, config);
+    if (!prepared) return null;
+    const { scratch, scratchBase, workspace } = prepared;
     const { agentId, thinking } = await this.agents.createAgent({
       provider: verifierProvider(config),
       ...thinkingInput(goalRoleThinking(config, "verifier")),
@@ -827,6 +844,8 @@ export class ChangeSetPipeline {
     });
     this.trackAgent(goal.id, agentId, true);
     try {
+      // See askForVerdict: the goal may have ended while the agent was being created.
+      if (this.host.isStopped() || this.store.get(goal.id)?.status !== "executing") return null;
       let prompt = buildVerifyPrompt(goal, goal.integration?.branch ?? null);
       let problem = "";
       for (let attempt = 0; attempt < REPLY_ATTEMPTS; attempt += 1) {
@@ -838,7 +857,7 @@ export class ChangeSetPipeline {
         if (result.outcome !== "completed") {
           throw new Error(`Verifier did not finish (${turnEnd(result)})`);
         }
-        await this.assertUnchanged(goal, workspace.cwd);
+        await this.assertUnchanged(goal, workspace.cwd, scratchBase);
         try {
           return await this.recordVerification(goal.id, parseVerification(result.text, ids), goal);
         } catch (error) {
@@ -854,14 +873,29 @@ export class ChangeSetPipeline {
     }
   }
 
-  /** The verifier may only look. If it changed the integration branch, discard its verdict. */
-  private async assertUnchanged(goal: Goal, cwd: string): Promise<void> {
-    if (!goal.integration) return;
+  /**
+   * The verifier may only look. If it changed the integration branch, or the scratch worktree
+   * a goal without one verifies in, discard its verdict.
+   */
+  private async assertUnchanged(
+    goal: Goal,
+    cwd: string,
+    scratchBase: string | null,
+  ): Promise<void> {
+    if (goal.integration) {
+      const unchanged =
+        (await this.git.head(cwd)) === goal.integration.headCommit && (await this.git.isClean(cwd));
+      if (unchanged) return;
+      await this.git.resetHard({ cwd, commit: goal.integration.headCommit });
+      throw new Error("The verifier changed the integration branch, so its verdict was discarded");
+    }
+    if (!scratchBase) return;
+    // Setup scripts may leave untracked files, so only commits and edits to tracked files count.
     const unchanged =
-      (await this.git.head(cwd)) === goal.integration.headCommit && (await this.git.isClean(cwd));
+      (await this.git.head(cwd)) === scratchBase && !(await this.git.trackedChanges(cwd)).trim();
     if (unchanged) return;
-    await this.git.resetHard({ cwd, commit: goal.integration.headCommit });
-    throw new Error("The verifier changed the integration branch, so its verdict was discarded");
+    await this.git.resetHard({ cwd, commit: scratchBase });
+    throw new Error("The verifier changed the scratch worktree, so its verdict was discarded");
   }
 
   private async recordVerification(

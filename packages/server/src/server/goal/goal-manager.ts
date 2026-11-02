@@ -1924,6 +1924,8 @@ export class GoalManager {
   private async launch(goalId: string, taskId: string): Promise<void> {
     const goal = this.store.get(goalId);
     if (!goal?.config) return;
+    // A pause can land while the pump awaits an earlier launch; start nothing after it.
+    if (goal.pausedAt) return;
     // The pump picked its tasks before earlier launches awaited; a revision applied since may
     // have changed, removed or held this one. Read it again, synchronously up to task.started,
     // so the run starts on the spec the reducer accepts it under.

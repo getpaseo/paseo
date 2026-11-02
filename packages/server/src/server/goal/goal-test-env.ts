@@ -189,6 +189,8 @@ export class FakeGit implements GitPort {
 export class Harness {
   /** Make the next createAgent call fail. */
   failNextCreate: Error | null = null;
+  /** While set, every createAgent waits for it before it returns. */
+  createHold: Promise<void> | null = null;
   /** Simulate a provider that keeps running after it is told to stop. */
   ignoreCancel = false;
   /** While set, every cancel waits for it before it returns. */
@@ -245,6 +247,8 @@ export class Harness {
 
   agentPort: ManagerAgentPort = {
     createAgent: async (input) => {
+      if (this.createHold && input.labels?.["paseo.goal-role"] === "reviewer")
+        await this.createHold;
       if (this.failNextCreate) {
         const error = this.failNextCreate;
         this.failNextCreate = null;

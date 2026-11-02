@@ -1210,6 +1210,8 @@ function applyTaskEvent(goal: Goal, event: GoalEvent): Goal {
   switch (event.type) {
     case "task.started": {
       requireStatus(goal, event, "executing");
+      // A pause that lands while the pump is mid-loop must not let it start another worker.
+      if (goal.pausedAt) throw new GoalTransitionError(event.type, "goal is paused");
       if (!readyTasks(goal.tasks).some((t) => t.id === event.taskId)) {
         const known = goal.tasks.some((t) => t.id === event.taskId);
         throw new GoalTransitionError(

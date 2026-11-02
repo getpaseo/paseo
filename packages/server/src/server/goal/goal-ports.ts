@@ -138,9 +138,20 @@ export function watchTurn(
 ): TurnWatcher {
   let end: TurnEnd | null = null;
   let reading: AgentUsage | undefined;
+  // Turns that already ended in this run. A question answered after its turn ended starts a
+  // follow-up turn, which belongs to the same logical run: its end decides the outcome and its
+  // usage adds to the first turn's.
+  const earlier: AgentUsage[] = [];
   const unsubscribe = subscribe((event) => {
-    if (end || event.type !== "agent_stream") return;
+    if (event.type !== "agent_stream") return;
     const inner = event.event;
+    if (end) {
+      if (inner.type !== "turn_started") return;
+      if (reading) earlier.push(reading);
+      end = null;
+      reading = undefined;
+      return;
+    }
     // Providers report usage on turn completion or as updates during the turn; updates
     // that only describe the context window are skipped.
     if (
@@ -153,12 +164,32 @@ export function watchTurn(
     else if (inner.type === "turn_canceled") end = { type: "turn_canceled" };
     else if (inner.type === "turn_failed") end = { type: "turn_failed", error: inner.error };
   });
+  const combined = () => withEarlierTurns(earlier, reading);
   return {
     end: () => end,
-    reading: () => reading,
-    usage: () => toTurnUsage(reading),
+    reading: combined,
+    usage: () => toTurnUsage(combined()),
     stop: unsubscribe,
   };
+}
+
+/**
+ * The latest reading with the per-turn totals of the turns before it added in. Providers that
+ * report session totals already include those turns, so only `turnTotals` needs summing.
+ */
+function withEarlierTurns(
+  earlier: AgentUsage[],
+  latest: AgentUsage | undefined,
+): AgentUsage | undefined {
+  if (!latest?.turnTotals || earlier.length === 0) return latest;
+  const turnTotals: AgentUsageTotals = { ...latest.turnTotals };
+  for (const prior of earlier) {
+    for (const field of USAGE_FIELDS) {
+      const add = prior.turnTotals?.[field];
+      if (add !== undefined) turnTotals[field] = (turnTotals[field] ?? 0) + add;
+    }
+  }
+  return { ...latest, turnTotals };
 }
 
 interface AgentWait {
