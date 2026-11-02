@@ -697,6 +697,62 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("preserves retained launch output across a failed configuration read", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-config-read-failure-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    const configPath = join(directory, "paseo.json");
+    const config = JSON.stringify({
+      worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+      launches: { dev: { command: "./bin/dev" } },
+    });
+    writeFileSync(configPath, config);
+    const terminalManager = createTerminalManager();
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-config-read-failure",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      const launch = await manager.start(context, "dev");
+      const terminalId = launch.terminalId!;
+      const terminal = terminalManager.manager.getTerminal(terminalId);
+      expect(terminal).toMatchObject({ id: terminalId });
+      terminalManager.created[0]?.triggerExit(17);
+      const retainedLaunch = expect.objectContaining({
+        launchName: "dev",
+        lifecycle: "stopped",
+        terminalId,
+        exitCode: 17,
+      });
+
+      writeFileSync(configPath, "{");
+      expect(await manager.buildSnapshot(context)).toEqual([retainedLaunch]);
+      expect(terminalManager.manager.getTerminal(terminalId)).toBe(terminal);
+
+      writeFileSync(configPath, config);
+      expect(await manager.buildSnapshot(context)).toEqual([retainedLaunch]);
+      expect(terminalManager.manager.getTerminal(terminalId)).toBe(terminal);
+
+      writeFileSync(configPath, JSON.stringify({ launches: {} }));
+      expect(await manager.buildSnapshot(context)).toEqual([]);
+      expect(terminalManager.manager.getTerminal(terminalId)).toBeUndefined();
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("keeps dynamic service leases from every workspace outside the launch port block", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-planned-port-"));
     tempDirs.push(directory);

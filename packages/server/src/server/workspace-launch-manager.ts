@@ -158,17 +158,20 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   }
 
   async buildSnapshot(context: WorkspaceLaunchContext): Promise<WorkspaceLaunchPayload[]> {
-    const configuredNames = new Set(
-      await this.readLaunchConfigNames(this.getConfigDirectory(context)),
-    );
+    const launchConfigNames = await this.readLaunchConfigNames(this.getConfigDirectory(context));
+    const configuredNames = new Set(launchConfigNames);
     const workspaceRuntimes = this.runtimes.get(context.workspaceId);
     for (const [name, runtime] of workspaceRuntimes ?? []) {
-      if (runtime.lifecycle === "running" || configuredNames.has(name)) {
+      if (
+        launchConfigNames === null ||
+        runtime.lifecycle === "running" ||
+        configuredNames.has(name)
+      ) {
         configuredNames.add(name);
         continue;
       }
-      // Configuration is the source of truth for stopped launches. Keep an
-      // orphan visible only while it is still running so users can stop it.
+      // Only a successful config read can confirm removal; a transient editor
+      // write must not discard a stopped launch's retained output.
       if (runtime.terminalId) {
         this.deps.terminalManager?.killTerminal(runtime.terminalId);
       }
@@ -785,14 +788,14 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     };
   }
 
-  private async readLaunchConfigNames(workspaceDirectory: string): Promise<string[]> {
+  private async readLaunchConfigNames(workspaceDirectory: string): Promise<string[] | null> {
     const configResult = await readPaseoConfig(workspaceDirectory);
     if (!configResult.ok) {
       this.deps.logger.warn(
         { err: configResult.error, configPath: configResult.configPath },
         "Failed to read workspace launch configuration",
       );
-      return [];
+      return null;
     }
     return Array.from(getWorkspaceLaunchConfigs(configResult.config).keys());
   }
