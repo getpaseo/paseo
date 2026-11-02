@@ -48,6 +48,22 @@ test("a plugin's branch applies when the project has no default base to branch o
   );
 });
 
+test("a branch and metadata chosen for one project are not sent for another", async ({ page }) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(
+    page,
+    { compact: false, otherProject: true },
+    async (screen) => {
+      await screen.chooseWorktree();
+      await screen.chooseIssue("PAS-101 Slow sidebar");
+      await screen.switchToOtherProject();
+      const created = await screen.createWorkspace();
+      expect(created.branch).not.toBe("pas-101-slow-sidebar");
+      expect(JSON.stringify(created.metadata ?? {})).not.toContain("PAS-101");
+    },
+  );
+});
+
 test("an isolation set from a mount effect is remembered like a pick", async ({ page }) => {
   test.setTimeout(180_000);
   await withNewWorkspaceIssuesExample(

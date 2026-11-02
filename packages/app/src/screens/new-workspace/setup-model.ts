@@ -80,6 +80,7 @@ export function createNewWorkspaceSetup(
     metadata: {},
   };
   let inputs = initial;
+  let target = initial.project?.id ?? null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<SetupState>) => {
     state = { ...state, ...patch };
@@ -110,6 +111,12 @@ export function createNewWorkspaceSetup(
     chooseIsolation,
     syncInputs: (next) => {
       inputs = next;
+      // A branch and metadata are chosen for one project on one host. A project id is
+      // host-scoped, so a change of host changes it too. An absent project is a screen that is
+      // still resolving, not a switch.
+      if (!next.project) return;
+      if (target && target !== next.project.id) update({ branch: null, metadata: {} });
+      target = next.project.id;
     },
     commands: {
       async setIsolation(isolation) {

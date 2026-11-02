@@ -63,6 +63,19 @@ describe("New workspace setup commands", () => {
     });
   });
 
+  it("drops the branch and metadata chosen for another project, but not while the project resolves", async () => {
+    const setup = createNewWorkspaceSetup({ ...READY, project: null }, recordingEffects().effects);
+    await setup.commands.setBranch("pas-101");
+    setup.syncInputs(READY);
+    expect(setup.getSnapshot().branch).toBe("pas-101");
+
+    await setup.commands.setMetadata({ issue: "PAS-101" });
+    setup.syncInputs({ ...READY, project: { id: "p2", name: "other" } });
+
+    expect(setup.getSnapshot().branch).toBeNull();
+    expect(setup.getSnapshot().metadata).toEqual({});
+  });
+
   it("rejects every command while the screen is locked, as the pickers do", async () => {
     const setup = createNewWorkspaceSetup({ ...READY, locked: true }, recordingEffects().effects);
 

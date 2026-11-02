@@ -68,11 +68,18 @@ const COMPACT = { width: 500, height: 800 };
 /** Runs `run` on the New workspace screen with the new-workspace-issues example installed. */
 export async function withNewWorkspaceIssuesExample(
   page: Page,
-  options: { compact: boolean; detachedHead?: boolean; setsOnMount?: boolean },
+  options: {
+    compact: boolean;
+    detachedHead?: boolean;
+    setsOnMount?: boolean;
+    /** A second project the screen can switch to. */
+    otherProject?: boolean;
+  },
   run: (screen: {
     chooseWorktree(): Promise<void>;
     chooseIssue(label: string): Promise<void>;
     createWorkspace(options?: { prompt?: string }): Promise<{ branch: string; metadata: unknown }>;
+    switchToOtherProject(): Promise<void>;
     expectIsolation(isolation: "local" | "worktree"): Promise<void>;
     /** Removes the plugin, leaves the screen, and opens New workspace for the project again. */
     reopenWithoutPlugin(): Promise<void>;
@@ -83,6 +90,9 @@ export async function withNewWorkspaceIssuesExample(
   const example = await copyPluginExample("new-workspace-issues");
   if (options.setsOnMount) await replaceWithMountEffectItem(example.directory);
   const repo = await createTempGitRepo("new-workspace-issues-", { branches: ["main"] });
+  const otherRepo = options.otherProject
+    ? await createTempGitRepo("new-workspace-other-", { branches: ["main"] })
+    : null;
   let createdDirectory: string | null = null;
   try {
     // A detached HEAD leaves the screen with no default base to branch off.
@@ -90,6 +100,8 @@ export async function withNewWorkspaceIssuesExample(
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(example.directory);
     const project = await openProjectViaDaemon(client, repo.path);
+    const other = otherRepo ? await openProjectViaDaemon(client, otherRepo.path) : null;
+    let target = project;
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await openNewWorkspaceComposer(page, project);
@@ -105,6 +117,20 @@ export async function withNewWorkspaceIssuesExample(
         test.step(`choose the issue "${label}"`, async () => {
           await page.getByRole("button", { name: "Issue", exact: true }).click();
           await page.getByText(label, { exact: true }).click();
+        }),
+      switchToOtherProject: () =>
+        test.step("switch to the other project", async () => {
+          if (!other) throw new Error("Open the example with otherProject to switch projects");
+          await page.getByRole("button", { name: "Workspace project" }).click();
+          await page
+            .getByTestId("combobox-desktop-container")
+            .last()
+            .getByText(other.projectDisplayName, { exact: true })
+            .click();
+          await expect(page.getByRole("button", { name: "Workspace project" })).toContainText(
+            other.projectDisplayName,
+          );
+          target = other;
         }),
       expectIsolation: (isolation) =>
         test.step(`the screen is on ${isolation}`, () =>
@@ -124,8 +150,8 @@ export async function withNewWorkspaceIssuesExample(
           const created = await assertNewWorkspaceSidebarAndHeader(page, {
             serverId: getServerId(),
             client,
-            previousWorkspaceId: project.workspaceId,
-            projectDisplayName: project.projectDisplayName,
+            previousWorkspaceId: target.workspaceId,
+            projectDisplayName: target.projectDisplayName,
             // The sidebar is closed at compact width.
             assertSidebarRow: !options.compact,
           });
@@ -142,5 +168,6 @@ export async function withNewWorkspaceIssuesExample(
     await client.close();
     await example.cleanup();
     await repo.cleanup();
+    await otherRepo?.cleanup();
   }
 }
