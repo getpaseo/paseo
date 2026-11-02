@@ -19,7 +19,7 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative, isWeb, supportsMaskedEffects } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 
 interface StartupSplashScreenProps {
@@ -86,7 +86,11 @@ function LogoShimmer() {
     return <WebLogoShimmer color={theme.colors.foreground} />;
   }
 
-  return <NativeLogoShimmer color={theme.colors.foreground} />;
+  return supportsMaskedEffects ? (
+    <NativeLogoShimmer color={theme.colors.foreground} />
+  ) : (
+    <PaseoLogo size={LOGO_SIZE} color={theme.colors.foreground} />
+  );
 }
 
 function WebLogoShimmer({ color }: { color: string }) {

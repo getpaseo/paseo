@@ -1,0 +1,15 @@
+{
+  "name": "@react-native-gpui/screens",
+  "version": "0.1.0",
+  "description": "GPUI platform integration for react-native-screens",
+  "files": [
+    "desktop",
+    "react-native.config.js",
+    "src"
+  ],
+  "peerDependencies": {
+    "react-native": "0.87.1",
+    "react-native-screens": "4.28.x"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,8 @@
+[package]
+name = "rn-gpui-module-build"
+version = "0.1.0"
+edition = "2021"
+description = "Build script helper that generates Rust TurboModule glue from TypeScript specs"
+
+[lib]
+path = "src/lib.rs"

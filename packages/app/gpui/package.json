@@ -1,0 +1,40 @@
+{
+  "name": "paseo-gpui",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@formatjs/intl-datetimeformat": "^7.9.0",
+    "@formatjs/intl-displaynames": "^7.4.0",
+    "@formatjs/intl-getcanonicallocales": "^3.3.0",
+    "@formatjs/intl-locale": "^5.4.1",
+    "@formatjs/intl-numberformat": "^9.5.0",
+    "@formatjs/intl-pluralrules": "^6.4.0",
+    "@formatjs/intl-segmenter": "^12.3.0",
+    "@react-native-gpui/codegen": "file:../../../vendor/react-native-gpui/packages/codegen",
+    "@react-native-gpui/core": "file:../../../vendor/react-native-gpui/packages/core",
+    "@react-native-gpui/fs": "file:../../../vendor/react-native-gpui/modules/fs",
+    "@react-native-gpui/gesture-handler": "file:../../../vendor/react-native-gpui/modules/gesture-handler",
+    "@react-native-gpui/hermes": "file:../../../vendor/react-native-gpui/packages/hermes",
+    "@react-native-gpui/reanimated": "file:../../../vendor/react-native-gpui/modules/reanimated",
+    "@react-native-gpui/safe-area-context": "file:../../../vendor/react-native-gpui/modules/safe-area-context",
+    "@react-native-gpui/screens": "file:../../../vendor/react-native-gpui/modules/screens",
+    "@react-native-gpui/svg": "file:../../../vendor/react-native-gpui/modules/svg",
+    "@react-native-gpui/worklets": "file:../../../vendor/react-native-gpui/modules/worklets",
+    "@react-native/assets-registry": "^0.87.1",
+    "react": "19.2.3",
+    "react-native": "0.87.1",
+    "react-native-gesture-handler": "3.3.0",
+    "react-native-reanimated": "https://github.com/ammarahm-ed/react-native-reanimated/releases/download/4.7.1-desktop.1/react-native-reanimated-4.7.1.tgz",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.28.0",
+    "react-native-svg": "15.15.5",
+    "react-native-worklets": "https://github.com/ammarahm-ed/react-native-reanimated/releases/download/worklets-0.13.0-desktop.1/react-native-worklets-0.13.0.tgz"
+  },
+  "devDependencies": {
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-gpui/cli": "file:../../../vendor/react-native-gpui/packages/cli",
+    "@react-native/babel-preset": "0.87.1",
+    "@react-native/metro-config": "0.87.1",
+    "typescript": "^5.8.3"
+  }
+}

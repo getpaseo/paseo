@@ -15,7 +15,7 @@ import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mut
 import { TaskListRow } from "@/components/task-list-row";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative, isWeb, supportsMaskedEffects } from "@/constants/platform";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -1800,7 +1800,7 @@ function computeShimmerMetrics(input: {
   // React Native Web only observes a node when onLayout exists at mount. Keep
   // measuring while idle so a retained badge has dimensions when it starts loading.
   const shouldMeasureWebShimmer = isWeb;
-  const shouldMeasureNativeShimmer = input.isLoading && isNative;
+  const shouldMeasureNativeShimmer = input.isLoading && isNative && supportsMaskedEffects;
   const isNativeShimmer =
     shouldMeasureNativeShimmer && input.labelRowWidth > 0 && input.labelRowHeight > 0;
   const webShimmerSpanStartX = input.labelOffsetX;

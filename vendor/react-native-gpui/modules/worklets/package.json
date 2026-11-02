@@ -1,0 +1,20 @@
+{
+  "name": "@react-native-gpui/worklets",
+  "version": "0.1.0",
+  "description": "GPUI platform bindings for react-native-worklets",
+  "files": [
+    "desktop",
+    "react-native.config.js",
+    "src"
+  ],
+  "peerDependencies": {
+    "react-native": "0.87.1",
+    "react-native-worklets": "0.13.x"
+  },
+  "codegenConfig": {
+    "name": "GPUIWorkletsSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  },
+  "license": "MIT"
+}

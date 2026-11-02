@@ -29,6 +29,13 @@ the titlebar row. Production builds leave the variable unset and show no label.
 
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
+## Experimental GPUI client
+
+The opt-in [GPUI target](../packages/app/gpui/README.md) runs the existing React
+Native app on Linux. Its contributor guide covers setup, the renderer comparison,
+unsupported features, native checks, and experiments to pick up. It connects to
+an already-running daemon and does not replace the Electron dev command.
+
 ## Nix desktop package
 
 The flake exposes `packages.<system>.desktop` on Linux and macOS:

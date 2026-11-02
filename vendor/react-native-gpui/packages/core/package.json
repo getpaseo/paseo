@@ -1,0 +1,74 @@
+{
+  "name": "@react-native-gpui/core",
+  "version": "0.1.0",
+  "description": "React Native platform powered by GPUI. Desktop React Native for macOS, Windows and Linux with one GPU-accelerated renderer.",
+  "main": "index.desktop.js",
+  "files": [
+    "index.desktop.js",
+    "js-engine.js",
+    "navigation.ts",
+    "desktop.ts",
+    "types.d.ts",
+    "babel-plugin-node-addons.js",
+    "polyfills",
+    "NativeViewHost.tsx",
+    "NativeViewHostNativeComponent.ts",
+    "metro.config.js",
+    "metro-transform-worker.js",
+    "setup-env.js",
+    "src-gpui",
+    "bin",
+    "ReactCommonOverrides",
+    "ReactCxxPlatform",
+    "ReactGpui/Cargo.lock",
+    "ReactGpui/Cargo.toml",
+    "ReactGpui/GPUI_PIN.md",
+    "ReactGpui/rn-gpui/Cargo.toml",
+    "ReactGpui/rn-gpui/build.rs",
+    "ReactGpui/rn-gpui/src",
+    "ReactGpui/rn-gpui-sys/Cargo.toml",
+    "ReactGpui/rn-gpui-sys/build.rs",
+    "ReactGpui/rn-gpui-sys/src",
+    "ReactGpui/rn-gpui-sys/cpp",
+    "ReactGpui/rn-gpui-sys/scripts",
+    "react-native.config.js",
+    "overrides.json",
+    "prebuilt-binaries.json",
+    "scripts/prebuilt-binaries.mjs",
+    "scripts/prebuilt-inputs.mjs",
+    "scripts/repo-root.mjs",
+    "scripts/build-prebuilt.mjs",
+    "scripts/generate-prebuilt-inputs.mjs",
+    "scripts/check-standalone-cmake.mjs",
+    "scripts/check-prebuilt-pin.mjs",
+    "prebuilt-binaries.json",
+    "ReactGpui/rn-gpui-module/Cargo.toml",
+    "ReactGpui/rn-gpui-module/src",
+    "ReactGpui/rn-gpui-module/tests",
+    "ReactGpui/rn-gpui-module-build/Cargo.toml",
+    "ReactGpui/rn-gpui-module-build/src"
+  ],
+  "scripts": {
+    "prepublishOnly": "node scripts/check-prebuilt-pin.mjs"
+  },
+  "peerDependencies": {
+    "react": "19.2.3",
+    "react-native": "0.87.1"
+  },
+  "dependencies": {
+    "@react-native-gpui/codegen": "0.1.0"
+  },
+  "keywords": [
+    "react-native",
+    "gpui",
+    "desktop",
+    "macos",
+    "windows",
+    "linux"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/streetwriters/react-native-gpui"
+  }
+}

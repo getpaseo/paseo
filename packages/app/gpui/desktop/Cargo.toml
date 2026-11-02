@@ -1,0 +1,55 @@
+[package]
+name = "react-native-gpui-paseo-gpui"
+version = "0.1.0"
+edition = "2021"
+
+# Set CARGO_PROFILE_DEV_DEBUG=full to opt into full debug information.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+# Dependencies are optimized even in a dev build: GPUI rebuilds and paints the
+# element tree on every frame, and they are only compiled once.
+[profile.dev.package."*"]
+debug = false
+opt-level = 3
+
+# The C++ bridge picks its CMake build type from this crate's opt-level, and a
+# Release build of React Native has no dev server, inspector or Fast Refresh.
+[profile.dev.package.rn-gpui-sys]
+opt-level = 0
+
+[profile.release]
+debug = "line-tables-only"
+# Cargo strips inside the linker, before dsymutil, so package-desktop writes the
+# dSYM and then strips. Full LTO: 2 MB smaller for 1.4x the build time.
+strip = "none"
+split-debuginfo = "packed"
+lto = "fat"
+codegen-units = 1
+
+[build-dependencies]
+rn-gpui-module-build = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module-build" }
+serde_json = "1"
+
+[features]
+visual-capture = ["react-native-gpui/visual-capture"]
+test-driver = ["react-native-gpui/test-driver"]
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+rusqlite = { version = "0.38", features = ["bundled"] }
+rn-gpui-module = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module" }
+rn-gpui-autolink = { path = "autolink" }
+react-native-gpui = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui" }
+
+[patch.crates-io]
+# Managed by @react-native-gpui/cli autolink; do not edit between these markers.
+react-native-gpui = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui" }
+rn-gpui-sys = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-sys" }
+rn-gpui-module = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module" }
+rn-gpui-module-build = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module-build" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+# End managed by autolink.

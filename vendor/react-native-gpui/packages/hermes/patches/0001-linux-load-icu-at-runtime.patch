@@ -1,0 +1,423 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ea0a9cfb0..9449165a7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -233,6 +233,9 @@ set(HERMES_STATIC_LINK OFF CACHE BOOL
+ set(HERMES_USE_STATIC_ICU OFF CACHE BOOL
+   "Force static linking of ICU. May only work on GNU/Linux.")
+ 
++set(HERMES_ICU_RUNTIME_LOAD OFF CACHE BOOL
++  "Resolve ICU with dlopen at run time instead of linking it. Linux only.")
++
+ set(HERMES_UNICODE_LITE OFF CACHE BOOL
+   "Enable to use internal no-op unicode functionality instead of relying on underlying system libraries")
+ 
+@@ -664,6 +667,19 @@ if (NOT ICU_FOUND)
+     list(REMOVE_DUPLICATES ICU_RPATH)
+     message("icu dir: ${ICU_RPATH}")
+     include_directories(${ICU_INCLUDE_DIRS})
++
++    if (HERMES_ICU_RUNTIME_LOAD)
++      if (HERMES_ENABLE_INTL)
++        message(FATAL_ERROR "HERMES_ICU_RUNTIME_LOAD does not support HERMES_ENABLE_INTL yet")
++      endif()
++      if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
++        message(FATAL_ERROR "HERMES_ICU_RUNTIME_LOAD is only supported on Linux")
++      endif()
++      add_definitions(-DHERMES_ICU_RUNTIME_LOAD)
++      # Headers are still needed for types. Nothing is linked.
++      set(ICU_LIBRARIES "")
++      set(ICU_RPATH "")
++    endif()
+   endif()
+ endif()
+ 
+diff --git a/include/hermes/Platform/Unicode/ICULoader.h b/include/hermes/Platform/Unicode/ICULoader.h
+new file mode 100644
+index 000000000..2825e8c0e
+--- /dev/null
++++ b/include/hermes/Platform/Unicode/ICULoader.h
+@@ -0,0 +1,90 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++#ifndef HERMES_PLATFORM_UNICODE_ICULOADER_H
++#define HERMES_PLATFORM_UNICODE_ICULOADER_H
++
++#ifdef HERMES_ICU_RUNTIME_LOAD
++
++/// The ICU entry points Hermes uses. Every one of them is resolved with
++/// dlsym() against the system's libicui18n at first use; see ICULoader.cpp.
++/// Types come from the ICU headers, so they never drift.
++struct ICUFunctions {
++  decltype(&::u_strToLower) u_strToLower;
++  decltype(&::u_strToUpper) u_strToUpper;
++  decltype(&::ucol_open) ucol_open;
++  decltype(&::ucol_close) ucol_close;
++  decltype(&::ucol_setAttribute) ucol_setAttribute;
++  decltype(&::ucol_strcoll) ucol_strcoll;
++  decltype(&::udat_open) udat_open;
++  decltype(&::udat_close) udat_close;
++  decltype(&::udat_format) udat_format;
++  decltype(&::uloc_getDefault) uloc_getDefault;
++  decltype(&::unorm2_getNFCInstance) unorm2_getNFCInstance;
++  decltype(&::unorm2_getNFDInstance) unorm2_getNFDInstance;
++  decltype(&::unorm2_getNFKCInstance) unorm2_getNFKCInstance;
++  decltype(&::unorm2_getNFKDInstance) unorm2_getNFKDInstance;
++  decltype(&::unorm2_normalize) unorm2_normalize;
++};
++
++namespace hermes {
++namespace platform_unicode {
++
++/// Returns the function table for the system ICU, or nullptr when no ICU with
++/// every required entry point could be loaded. The search runs once.
++const ICUFunctions *icuFunctions();
++
++} // namespace platform_unicode
++} // namespace hermes
++
++#ifndef HERMES_ICU_LOADER_NO_MACROS
++
++// Send the ICU names to the loaded table. Callers must check icuFunctions()
++// first; the table is only handed out when every entry resolved.
++#undef u_strToLower
++#define u_strToLower (::hermes::platform_unicode::icuFunctions()->u_strToLower)
++#undef u_strToUpper
++#define u_strToUpper (::hermes::platform_unicode::icuFunctions()->u_strToUpper)
++#undef ucol_open
++#define ucol_open (::hermes::platform_unicode::icuFunctions()->ucol_open)
++#undef ucol_close
++#define ucol_close (::hermes::platform_unicode::icuFunctions()->ucol_close)
++#undef ucol_setAttribute
++#define ucol_setAttribute \
++  (::hermes::platform_unicode::icuFunctions()->ucol_setAttribute)
++#undef ucol_strcoll
++#define ucol_strcoll (::hermes::platform_unicode::icuFunctions()->ucol_strcoll)
++#undef udat_open
++#define udat_open (::hermes::platform_unicode::icuFunctions()->udat_open)
++#undef udat_close
++#define udat_close (::hermes::platform_unicode::icuFunctions()->udat_close)
++#undef udat_format
++#define udat_format (::hermes::platform_unicode::icuFunctions()->udat_format)
++#undef uloc_getDefault
++#define uloc_getDefault \
++  (::hermes::platform_unicode::icuFunctions()->uloc_getDefault)
++#undef unorm2_getNFCInstance
++#define unorm2_getNFCInstance \
++  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFCInstance)
++#undef unorm2_getNFDInstance
++#define unorm2_getNFDInstance \
++  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFDInstance)
++#undef unorm2_getNFKCInstance
++#define unorm2_getNFKCInstance \
++  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKCInstance)
++#undef unorm2_getNFKDInstance
++#define unorm2_getNFKDInstance \
++  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKDInstance)
++#undef unorm2_normalize
++#define unorm2_normalize \
++  (::hermes::platform_unicode::icuFunctions()->unorm2_normalize)
++
++#endif // HERMES_ICU_LOADER_NO_MACROS
++
++#endif // HERMES_ICU_RUNTIME_LOAD
++
++#endif // HERMES_PLATFORM_UNICODE_ICULOADER_H
+diff --git a/include/hermes/Platform/Unicode/icu.h b/include/hermes/Platform/Unicode/icu.h
+index b1f54f6ac..f57dddbf5 100644
+--- a/include/hermes/Platform/Unicode/icu.h
++++ b/include/hermes/Platform/Unicode/icu.h
+@@ -45,6 +45,11 @@
+ #include <unicode/unorm2.h>
+ #include <unicode/ustring.h>
+ #else
++#ifdef HERMES_ICU_RUNTIME_LOAD
++/// The runtime loader resolves the plain names, so the ICU headers must not
++/// rename them to the library's version suffix.
++#define U_DISABLE_RENAMING 1
++#endif
+ #include <unicode/ucnv.h>
+ #include <unicode/ucol.h>
+ #include <unicode/udat.h>
+@@ -52,6 +57,9 @@
+ #include <unicode/uniset.h>
+ #include <unicode/unorm2.h>
+ #include <unicode/ustring.h>
++#ifdef HERMES_ICU_RUNTIME_LOAD
++#include "hermes/Platform/Unicode/ICULoader.h"
++#endif
+ #endif
+ 
+ #endif // HERMES_SUPPORT_ICU_H
+diff --git a/lib/Platform/Unicode/CMakeLists.txt b/lib/Platform/Unicode/CMakeLists.txt
+index dda0e7d8f..b9db514ba 100644
+--- a/lib/Platform/Unicode/CMakeLists.txt
++++ b/lib/Platform/Unicode/CMakeLists.txt
+@@ -12,8 +12,18 @@ set(source_files
+    CharacterProperties.cpp
+ )
+ 
++if(HERMES_ICU_RUNTIME_LOAD)
++  list(APPEND source_files ICULoader.cpp)
++endif()
++
+ add_hermes_library(hermesPlatformUnicode ${source_files})
+ 
++if(HERMES_ICU_RUNTIME_LOAD)
++  # The loader calls dlopen/dlsym. An OBJECT library propagates the link
++  # requirement to its consumers.
++  target_link_libraries(hermesPlatformUnicode_obj ${CMAKE_DL_LIBS})
++endif()
++
+ if(HERMES_UNICODE_LITE)
+   # nothing
+ elseif(HERMES_IS_ANDROID)
+diff --git a/lib/Platform/Unicode/ICULoader.cpp b/lib/Platform/Unicode/ICULoader.cpp
+new file mode 100644
+index 000000000..699f41aba
+--- /dev/null
++++ b/lib/Platform/Unicode/ICULoader.cpp
+@@ -0,0 +1,136 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++#include "hermes/Platform/Unicode/PlatformUnicode.h"
++
++#ifdef HERMES_ICU_RUNTIME_LOAD
++
++/// This file fills the ICUFunctions table. It must not use the redirecting
++/// macros from ICULoader.h, or every lookup would call back into itself.
++#define HERMES_ICU_LOADER_NO_MACROS 1
++#include "hermes/Platform/Unicode/icu.h"
++
++#include <dlfcn.h>
++
++#include <cstdio>
++#include <cstdlib>
++#include <string>
++
++namespace hermes {
++namespace platform_unicode {
++
++namespace {
++
++ICUFunctions gFunctions;
++
++/// Resolves one entry point, preferring the versioned symbol ("ucol_open_78")
++/// and falling back to the plain name (ICU built without renaming).
++template <typename Fn>
++bool resolveSymbol(void *handle, const char *name, int version, Fn *out) {
++  std::string suffixed = std::string(name) + "_" + std::to_string(version);
++  if (void *symbol = dlsym(handle, suffixed.c_str())) {
++    *out = reinterpret_cast<Fn>(symbol);
++    return true;
++  }
++  if (void *symbol = dlsym(handle, name)) {
++    *out = reinterpret_cast<Fn>(symbol);
++    return true;
++  }
++  return false;
++}
++
++bool resolveAll(void *handle, int version) {
++#define HERMES_ICU_SYMBOL(name)                                    \
++  if (!resolveSymbol(handle, #name, version, &gFunctions.name)) {  \
++    return false;                                                  \
++  }
++  HERMES_ICU_SYMBOL(u_strToLower);
++  HERMES_ICU_SYMBOL(u_strToUpper);
++  HERMES_ICU_SYMBOL(ucol_open);
++  HERMES_ICU_SYMBOL(ucol_close);
++  HERMES_ICU_SYMBOL(ucol_setAttribute);
++  HERMES_ICU_SYMBOL(ucol_strcoll);
++  HERMES_ICU_SYMBOL(udat_open);
++  HERMES_ICU_SYMBOL(udat_close);
++  HERMES_ICU_SYMBOL(udat_format);
++  HERMES_ICU_SYMBOL(uloc_getDefault);
++  HERMES_ICU_SYMBOL(unorm2_getNFCInstance);
++  HERMES_ICU_SYMBOL(unorm2_getNFDInstance);
++  HERMES_ICU_SYMBOL(unorm2_getNFKCInstance);
++  HERMES_ICU_SYMBOL(unorm2_getNFKDInstance);
++  HERMES_ICU_SYMBOL(unorm2_normalize);
++#undef HERMES_ICU_SYMBOL
++  return true;
++}
++
++/// Returns the version to try, or -1 to search. 0 means "do not load".
++int requestedVersion() {
++  const char *value = std::getenv("HERMES_ICU_VERSION");
++  if (value == nullptr || *value == '\0') {
++    return -1;
++  }
++  char *end = nullptr;
++  long version = std::strtol(value, &end, 10);
++  if (end == value || *end != '\0' || version < 0 || version > 1000) {
++    return -1;
++  }
++  return static_cast<int>(version);
++}
++
++void warnNoICU() {
++  std::fprintf(
++      stderr,
++      "hermes: no system ICU found (libicui18n.so.N); non-ASCII case "
++      "mapping, collation and normalization are disabled\n");
++}
++
++const ICUFunctions *loadVersion(int version) {
++  std::string soname = "libicui18n.so." + std::to_string(version);
++  void *handle = dlopen(soname.c_str(), RTLD_NOW | RTLD_LOCAL);
++  if (handle == nullptr) {
++    return nullptr;
++  }
++  if (!resolveAll(handle, version)) {
++    dlclose(handle);
++    return nullptr;
++  }
++  return &gFunctions;
++}
++
++const ICUFunctions *load() {
++  int requested = requestedVersion();
++  if (requested == 0) {
++    warnNoICU();
++    return nullptr;
++  }
++  if (requested > 0) {
++    const ICUFunctions *functions = loadVersion(requested);
++    if (functions == nullptr) {
++      warnNoICU();
++    }
++    return functions;
++  }
++  for (int version = 100; version >= 50; --version) {
++    if (const ICUFunctions *functions = loadVersion(version)) {
++      return functions;
++    }
++  }
++  warnNoICU();
++  return nullptr;
++}
++
++} // namespace
++
++const ICUFunctions *icuFunctions() {
++  static const ICUFunctions *functions = load();
++  return functions;
++}
++
++} // namespace platform_unicode
++} // namespace hermes
++
++#endif // HERMES_ICU_RUNTIME_LOAD
+diff --git a/lib/Platform/Unicode/PlatformUnicodeICU.cpp b/lib/Platform/Unicode/PlatformUnicodeICU.cpp
+index 4d0f8b40b..5467d7b26 100644
+--- a/lib/Platform/Unicode/PlatformUnicodeICU.cpp
++++ b/lib/Platform/Unicode/PlatformUnicodeICU.cpp
+@@ -59,6 +59,22 @@ const UCollator *getUCollatorInstance() {
+ int localeCompare(
+     llvh::ArrayRef<char16_t> left,
+     llvh::ArrayRef<char16_t> right) {
++#ifdef HERMES_ICU_RUNTIME_LOAD
++  if (!icuFunctions()) {
++    // UTF-16 code unit order, same as PlatformUnicodeLite.
++    for (size_t i = 0; i < left.size(); i++) {
++      if (i >= right.size()) {
++        return 1;
++      }
++      if (left[i] > right[i]) {
++        return 1;
++      } else if (left[i] < right[i]) {
++        return -1;
++      }
++    }
++    return left.size() < right.size() ? -1 : 0;
++  }
++#endif
+   const UCollator *coll = getUCollatorInstance();
+   auto result = ucol_strcoll(
+       coll,
+@@ -83,6 +99,35 @@ void dateFormat(
+     bool formatDate,
+     bool formatTime,
+     llvh::SmallVectorImpl<char16_t> &buf) {
++#ifdef HERMES_ICU_RUNTIME_LOAD
++  if (!icuFunctions()) {
++    // C-locale formatting via strftime.
++    time_t seconds = static_cast<time_t>(unixtimeMs / 1000);
++    struct tm timeInfo;
++#ifdef _WINDOWS
++    localtime_s(&timeInfo, &seconds);
++#else
++    localtime_r(&seconds, &timeInfo);
++#endif
++    char buffer[128];
++    size_t length = 0;
++    if (formatDate) {
++      length += strftime(
++          buffer + length, sizeof(buffer) - length, "%a %b %d %Y", &timeInfo);
++    }
++    if (formatTime && length < sizeof(buffer)) {
++      if (length > 0) {
++        buffer[length++] = ' ';
++      }
++      length += strftime(
++          buffer + length, sizeof(buffer) - length, "%H:%M:%S", &timeInfo);
++    }
++    for (size_t i = 0; i < length; i++) {
++      buf.push_back(static_cast<char16_t>(buffer[i]));
++    }
++    return;
++  }
++#endif
+   UDateFormatStyle dateStyle = formatDate ? UDAT_MEDIUM : UDAT_NONE;
+   UDateFormatStyle timeStyle = formatTime ? UDAT_MEDIUM : UDAT_NONE;
+ 
+@@ -144,6 +189,25 @@ void convertToCase(
+     llvh::SmallVectorImpl<char16_t> &buf,
+     CaseConversion targetCase,
+     bool useCurrentLocale) {
++#ifdef HERMES_ICU_RUNTIME_LOAD
++  if (!icuFunctions()) {
++    // ASCII-only case mapping; non-ASCII code points are left alone.
++    if (targetCase == CaseConversion::ToUpper) {
++      for (auto &ch : buf) {
++        if (ch >= u'a' && ch <= u'z') {
++          ch = static_cast<char16_t>(ch - u'a' + u'A');
++        }
++      }
++    } else {
++      for (auto &ch : buf) {
++        if (ch >= u'A' && ch <= u'Z') {
++          ch = static_cast<char16_t>(ch - u'A' + u'a');
++        }
++      }
++    }
++    return;
++  }
++#endif
+   // To be able to call the converters, we have to get a pointer.
+   // UChar is 16 bits, so a cast works.
+   const UChar *src = (const UChar *)buf.data();
+@@ -172,6 +236,12 @@ void convertToCase(
+ }
+ 
+ void normalize(llvh::SmallVectorImpl<char16_t> &buf, NormalizationForm form) {
++#ifdef HERMES_ICU_RUNTIME_LOAD
++  if (!icuFunctions()) {
++    // No normalization without ICU; leave the buffer unchanged.
++    return;
++  }
++#endif
+   // To be able to call the converters, we have to get a pointer.
+   // UChar is 16 bits, so a cast works.
+   const UChar *src = (const UChar *)buf.data();

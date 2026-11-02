@@ -1,0 +1,19 @@
+{
+  "name": "@react-native-gpui/fs",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "desktop",
+    "react-native.config.js",
+    "README.md"
+  ],
+  "codegenConfig": {
+    "name": "RNFsModuleSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  },
+  "peerDependencies": {
+    "react-native": ">=0.76"
+  }
+}

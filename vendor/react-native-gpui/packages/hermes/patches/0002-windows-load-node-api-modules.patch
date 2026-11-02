@@ -1,0 +1,215 @@
+diff --git a/API/napi/hermes_napi.cpp b/API/napi/hermes_napi.cpp
+index 777171e..a423d5b 100644
+--- a/API/napi/hermes_napi.cpp
++++ b/API/napi/hermes_napi.cpp
+@@ -20,8 +20,11 @@
+ 
+ #ifndef _WIN32
+ #include <dlfcn.h>
++#else
++#include <windows.h>
+ #endif
+ #include <cstring>
++#include <string>
+ 
+ //===========================================================================
+ // Error messages for napi_status codes.
+@@ -801,6 +804,105 @@ const napi_module *hermes_napi_get_last_registered_module() {
+ // Module loading
+ //===========================================================================
+ 
++#ifdef _WIN32
++/// Converts a UTF-8 path to UTF-16, the form LoadLibraryExW takes. Returns
++/// false when the input is not valid UTF-8.
++static bool hermes_napi_utf8ToWide(const char *utf8, std::wstring &out) {
++  // An empty path is never valid, and MultiByteToWideChar rejects a zero
++  // length, so reject it before asking.
++  if (utf8 == nullptr || *utf8 == '\0') {
++    return false;
++  }
++  const int length = MultiByteToWideChar(
++      CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, nullptr, 0);
++  if (length <= 0) {
++    return false;
++  }
++  out.resize(static_cast<size_t>(length));
++  // The call writes the terminating NUL too; resize() has already made room
++  // for it, and the returned buffer is one longer than the text.
++  const int written = MultiByteToWideChar(
++      CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, &out[0], length);
++  if (written <= 0) {
++    return false;
++  }
++  // Drop the terminator MultiByteToWideChar wrote so the string's own
++  // terminator is the only one.
++  out.resize(static_cast<size_t>(written - 1));
++  return true;
++}
++
++/// The system's message for the last failed Win32 call, as UTF-8. This is what
++/// tells a user that an addon needs `uv_*`, or was built without the
++/// node-gyp delay-load hook (a missing `node.exe` import).
++static std::string hermes_napi_lastErrorMessage() {
++  const DWORD error = GetLastError();
++  if (error == 0) {
++    return "unknown error";
++  }
++  LPWSTR buffer = nullptr;
++  const DWORD length = FormatMessageW(
++      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
++          FORMAT_MESSAGE_IGNORE_INSERTS,
++      nullptr,
++      error,
++      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
++      reinterpret_cast<LPWSTR>(&buffer),
++      0,
++      nullptr);
++  std::string message;
++  if (length == 0 || buffer == nullptr) {
++    message = "error " + std::to_string(error);
++    if (buffer != nullptr) {
++      LocalFree(buffer);
++    }
++    return message;
++  }
++  const int utf8Length = WideCharToMultiByte(
++      CP_UTF8,
++      0,
++      buffer,
++      static_cast<int>(length),
++      nullptr,
++      0,
++      nullptr,
++      nullptr);
++  if (utf8Length > 0) {
++    message.resize(static_cast<size_t>(utf8Length));
++    WideCharToMultiByte(
++        CP_UTF8,
++        0,
++        buffer,
++        static_cast<int>(length),
++        &message[0],
++        utf8Length,
++        nullptr,
++        nullptr);
++  } else {
++    message = "error " + std::to_string(error);
++  }
++  LocalFree(buffer);
++  // FormatMessage's text ends with a newline; a raised TypeError should not.
++  while (!message.empty() &&
++         (message.back() == '\n' || message.back() == '\r' ||
++          message.back() == ' ' || message.back() == '.')) {
++    message.pop_back();
++  }
++  // Some system messages are templates — "193: %1 is not a valid Win32
++  // application" — and `FORMAT_MESSAGE_IGNORE_INSERTS` leaves the placeholder
++  // in place because there is no argument array to fill it from. The only
++  // insert these messages take is the name of the file, so substitute the
++  // caller-visible noun for it rather than showing a user a bare `%1`.
++  static const char *const kPlaceholder = "%1";
++  for (std::string::size_type at = message.find(kPlaceholder);
++       at != std::string::npos;
++       at = message.find(kPlaceholder, at)) {
++    message.replace(at, sizeof("%1") - 1, "the file");
++  }
++  return message;
++}
++#endif
++
+ napi_status
+ hermes_napi_load_module(napi_env env, const char *path, napi_value *result) {
+   NAPI_PREAMBLE(env);
+@@ -810,10 +912,64 @@ hermes_napi_load_module(napi_env env, const char *path, napi_value *result) {
+   using namespace hermes::vm;
+   Runtime &runtime = env->runtime;
+ 
++  // The addon's entry point. Each branch below opens the library its own way and
++  // fills this in; everything after the `#endif` is shared by both. This is
++  // declared out here because upstream declared it inside the `#else`, which put
++  // the whole tail — creating the exports object, calling the entry point, and
++  // the `return` — inside that branch. On Windows the function then fell off the
++  // end and returned whatever happened to be in the return register, which
++  // surfaced as `napi_invalid_arg` with no last-error set.
++  using InitFunc = napi_value (*)(napi_env, napi_value);
++  InitFunc initFunc = nullptr;
++
+ #ifdef _WIN32
+-  (void)runtime.raiseTypeError(
+-      TwineChar16("Loading native modules is not supported on Windows"));
+-  return captureRuntimeException(env, napi_pending_exception);
++  // Windows has no dlopen. A DLL is loaded with LoadLibraryExW and the path
++  // must be UTF-16; the caller always passes an absolute path.
++  std::wstring widePath;
++  if (!hermes_napi_utf8ToWide(path, widePath)) {
++    (void)runtime.raiseTypeError(
++        TwineChar16("Failed to load module: the path is not valid UTF-8"));
++    return captureRuntimeException(env, napi_pending_exception);
++  }
++
++  // LOAD_WITH_ALTERED_SEARCH_PATH searches the loaded DLL's own directory for
++  // its dependencies, so an addon that ships a sibling DLL finds it.
++  HMODULE handle =
++      LoadLibraryExW(widePath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
++  if (handle == nullptr) {
++    // Read the error and format it before anything else can overwrite
++    // GetLastError; `TwineChar16` does not own the string, so it has to outlive
++    // the expression that raises with it.
++    const std::string reason = hermes_napi_lastErrorMessage();
++    (void)runtime.raiseTypeError(
++        TwineChar16("Failed to load module: ") + TwineChar16(reason));
++    return captureRuntimeException(env, napi_pending_exception);
++  }
++
++  // Look up the modern symbol-based entry point.
++  initFunc = reinterpret_cast<InitFunc>(
++      GetProcAddress(handle, "napi_register_module_v1"));
++
++  // If the modern symbol isn't found, check the deprecated
++  // napi_module_register() path. The shared library's static constructors may
++  // have called napi_module_register() during LoadLibraryExW.
++  const napi_module *mod = nullptr;
++  if (!initFunc) {
++    mod = hermes_napi_get_last_registered_module();
++    if (mod && mod->nm_register_func) {
++      initFunc = mod->nm_register_func;
++    }
++  }
++
++  if (!initFunc) {
++    // The library is deliberately not unloaded, matching the other branch: a
++    // module may already have registered itself through napi_module_register,
++    // and unloading would leave a dangling pointer in lastRegisteredModule.
++    (void)runtime.raiseTypeError(TwineChar16(
++        "Module has no 'napi_register_module_v1' "
++        "export and no registered napi_module"));
++    return captureRuntimeException(env, napi_pending_exception);
++  }
+ #else
+   // Open the shared library. RTLD_LOCAL prevents symbol collisions
+   // between different addons. RTLD_NOW ensures all symbols are resolved
+@@ -827,9 +983,7 @@ hermes_napi_load_module(napi_env env, const char *path, napi_value *result) {
+   }
+ 
+   // Look up the modern symbol-based entry point.
+-  using InitFunc = napi_value (*)(napi_env, napi_value);
+-  auto initFunc =
+-      reinterpret_cast<InitFunc>(dlsym(handle, "napi_register_module_v1"));
++  initFunc = reinterpret_cast<InitFunc>(dlsym(handle, "napi_register_module_v1"));
+ 
+   // If the modern symbol isn't found, check the deprecated
+   // napi_module_register() path. The shared library's static
+@@ -850,6 +1004,7 @@ hermes_napi_load_module(napi_env env, const char *path, napi_value *result) {
+         "export and no registered napi_module"));
+     return captureRuntimeException(env, napi_pending_exception);
+   }
++#endif
+ 
+   // Record the module filename on the caller's env.
+   env->moduleFileName_ = path;
+@@ -877,5 +1032,4 @@ hermes_napi_load_module(napi_env env, const char *path, napi_value *result) {
+   }
+ 
+   return napi_clear_last_error(env);
+-#endif
+ }

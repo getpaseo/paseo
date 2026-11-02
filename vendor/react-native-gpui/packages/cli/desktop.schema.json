@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/streetwriters/react-native-gpui/packages/cli/desktop.schema.json",
+  "title": "React Native GPUI desktop app configuration",
+  "description": "The desktop/desktop.json file of a React Native GPUI app. Every field is optional: an app with no desktop.json runs and packages with the defaults.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "Path to this schema, for editor completion.",
+      "type": "string"
+    },
+    "productName": {
+      "description": "The name a person sees: window title bar, Dock, menu bar, installers. Defaults to the app's displayName, else its name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "description": "The reverse-DNS bundle id, e.g. com.example.myapp. Defaults to an id derived from the app name.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$"
+    },
+    "version": {
+      "description": "The app version. Defaults to the version in package.json.",
+      "type": "string",
+      "minLength": 1
+    },
+    "icon": {
+      "description": "One square PNG, recommended 1024x1024, relative to desktop/. Per-OS icon formats are generated from it. When this is unset the CLI uses its own placeholder, so every packaging format can be built.",
+      "type": "string",
+      "minLength": 1
+    },
+    "window": {
+      "description": "The main window.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "description": "The title bar text. Defaults to productName.",
+          "type": "string"
+        },
+        "width": {
+          "description": "The window width in points. Defaults to 1024.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "description": "The window height in points. Defaults to 768.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "position": {
+          "description": "Where the window opens. Omit to let the platform place it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          }
+        },
+        "resizable": {
+          "description": "Whether the window can be resized. Defaults to true.",
+          "type": "boolean"
+        },
+        "restoreState": {
+          "description": "Whether the window remembers its size and position between launches. Defaults to true.",
+          "type": "boolean"
+        },
+        "titleBar": {
+          "description": "How the window's title bar is drawn. 'default' keeps the platform's; 'transparent' keeps the window's chrome but lets the app draw under it, which on macOS leaves the traffic lights over the app's own bar; 'hidden' removes it entirely, and the app must draw and move its own bar. On Linux 'transparent' and 'hidden' both ask the compositor for client-side decorations, and a window manager that refuses leaves the native title bar in place. Defaults to 'default'.",
+          "default": "default",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["default"]
+            },
+            {
+              "type": "string",
+              "enum": ["transparent"]
+            },
+            {
+              "type": "string",
+              "enum": ["hidden"]
+            }
+          ]
+        },
+        "trafficLightPosition": {
+          "description": "Where the macOS traffic lights sit inside a transparent or hidden title bar, in points from the window's top-left corner. Ignored on Windows and Linux, which have no traffic lights. Defaults to the platform's own position.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "menuBar": {
+          "description": "Whether the main window shows a menu bar. Windows and Linux draw one inside the window; on macOS this does nothing, because the bar belongs to the system. Defaults to true.",
+          "type": "boolean"
+        }
+      }
+    },
+    "devMenu": {
+      "description": "Whether the development menu is available. Defaults to true in development builds.",
+      "type": "boolean"
+    },
+    "tray": {
+      "description": "A menu-bar or notification-area icon for the app.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "description": "The React component to render as the tray popover.",
+          "type": "string",
+          "minLength": 1
+        },
+        "tooltip": {
+          "description": "The tooltip text.",
+          "type": "string"
+        },
+        "icon": {
+          "description": "The tray icon, a PNG or JPEG path relative to desktop/. Without one the tray shows a built-in glyph.",
+          "type": "string",
+          "minLength": 1
+        },
+        "iconTemplate": {
+          "description": "macOS: draw the icon as a template the menu bar tints for light and dark mode. Use it for a monochrome glyph. Defaults to false.",
+          "type": "boolean"
+        },
+        "accessory": {
+          "description": "Whether the app runs as an accessory, with no Dock icon. Defaults to true.",
+          "type": "boolean"
+        }
+      }
+    },
+    "bundle": {
+      "description": "How the app is packaged.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "description": "The formats to build. 'all' means every alpha format for the current OS.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["all"]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": ["app", "dmg", "nsis", "deb", "appimage"]
+              }
+            }
+          ]
+        },
+        "resources": {
+          "description": "Extra files to ship, relative to desktop/.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "copyright": {
+          "description": "The copyright line shown by installers.",
+          "type": "string"
+        },
+        "category": {
+          "description": "The app category, for the Linux desktop entry.",
+          "type": "string"
+        },
+        "macos": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "minimumSystemVersion": {
+              "description": "The oldest macOS the app supports. Defaults to 13.0.",
+              "type": "string"
+            },
+            "entitlements": {
+              "description": "A path to an entitlements plist, relative to desktop/.",
+              "type": ["string", "null"]
+            },
+            "infoPlist": {
+              "description": "Extra keys merged into the generated Info.plist.",
+              "type": "object"
+            }
+          }
+        },
+        "windows": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "nsis": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "installMode": {
+                  "description": "Whether the installer installs for the current user or for everyone.",
+                  "type": "string",
+                  "enum": ["currentUser", "perMachine", "both"]
+                }
+              }
+            }
+          }
+        },
+        "linux": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deb": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "depends": {
+                  "description": "Extra Debian package dependencies.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "appimage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
+            }
+          }
+        }
+      }
+    }
+  }
+}

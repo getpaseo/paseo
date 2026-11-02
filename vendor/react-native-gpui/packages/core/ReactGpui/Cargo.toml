@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+  "rn-gpui-sys",
+  "rn-gpui",
+  "rn-gpui-module",
+  "rn-gpui-module-build",
+  "rn-gpui-module/tests/generated",
+]
+
+# Set CARGO_PROFILE_DEV_DEBUG=full to opt into full debug information.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+# The same dev profile as every other workspace root in the checkout (the tester's
+# and each module's): they all build into the one root `target/`, and a profile
+# that differs gives the same dependency a different hash, so it is compiled and
+# stored once per variant.
+[profile.dev.package."*"]
+debug = false
+opt-level = 3
+
+[profile.dev.package.rn-gpui-sys]
+opt-level = 0
+
+[profile.release]
+# Line tables, not `false`: a release crash is worth symbolizing, and with
+# `split-debuginfo` the debug info lives in a separate dSYM rather than the
+# binary, so it costs the package nothing.
+debug = "line-tables-only"
+# Strip the symbol table: nothing reads it at run time.
+## Keep the symbols Cargo's link step produces: `strip = "symbols"` runs in the
+## linker, so `dsymutil` runs afterwards on an already-stripped binary and writes
+## an empty dSYM. The stripping happens in `package-desktop` instead, after the
+## dSYM exists.
+strip = "none"
+split-debuginfo = "packed"
+# Full LTO: measured on the tester, 27.3 MB with thin and 25.3 MB with fat, at
+# 112 s and 161 s for a clean build. 1.4x the time for 2 MB less is worth it.
+lto = "fat"
+codegen-units = 1
+
+[workspace.dependencies]
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+cxx = "=1.0.202"
+cxx-build = "=1.0.202"
+cmake = "0.1"
+async-channel = "2"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+serde_json = "1"
+futures = "0.3"
+http_client = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+fontdue = "0.9"
