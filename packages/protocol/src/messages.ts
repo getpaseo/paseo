@@ -1887,6 +1887,7 @@ export const ImportAgentRequestMessageSchema = z.object({
   cwd: z.string().optional(),
   workspaceId: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  modeId: z.string().optional(),
   requestId: z.string(),
 });
 
@@ -3825,6 +3826,8 @@ export const ServerInfoStatusPayloadSchema = z
         hopliteProvider: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
+        // COMPAT(importSessionMode): added after v0.11.4, remove gate after 2027-04-16.
+        importSessionMode: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
         importSessionSearch: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
