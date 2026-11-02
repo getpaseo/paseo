@@ -497,3 +497,33 @@ test("traverses native system and summary messages without displaying private co
     userEntries: [{ id: "1", text: "question" }],
   });
 });
+
+test("restores surrounding chat when native system content uses text blocks", async () => {
+  const records = [
+    { type: "session", version: 3 },
+    { type: "message", id: "u", parentId: null, message: { role: "user", content: "question" } },
+    {
+      type: "message",
+      id: "s",
+      parentId: "u",
+      message: { role: "system", content: [{ type: "text", text: "private instructions" }] },
+    },
+    {
+      type: "message",
+      id: "a",
+      parentId: "s",
+      message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+    },
+  ];
+  const history = readPiTranscript(records.map((record) => JSON.stringify(record)).join("\n"));
+  expect(history.messages).toEqual([
+    { role: "user", content: "question" },
+    { role: "assistant", content: [{ type: "text", text: "answer" }] },
+  ]);
+  expect(history.userEntries).toEqual([{ id: "u", text: "question" }]);
+  const events = await collectHistory(history.messages, history.userEntries);
+  expect(events.map((event) => event.item)).toEqual([
+    { type: "user_message", text: "question", messageId: "u" },
+    { type: "assistant_message", text: "answer", messageId: "pi-history-assistant-1" },
+  ]);
+});

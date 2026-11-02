@@ -13,7 +13,9 @@ const image = z
   .passthrough();
 const content = z.union([z.string(), z.array(z.union([text, image]))]);
 const message = z.discriminatedUnion("role", [
-  z.object({ role: z.literal("system"), content: z.string().nullish() }).passthrough(),
+  z
+    .object({ role: z.literal("system"), content: z.union([z.string(), z.array(text)]).nullish() })
+    .passthrough(),
   z.object({ role: z.literal("branchSummary"), summary: z.string() }).passthrough(),
   z.object({ role: z.literal("compactionSummary"), summary: z.string() }).passthrough(),
   z.object({ role: z.literal("user"), content }).passthrough(),

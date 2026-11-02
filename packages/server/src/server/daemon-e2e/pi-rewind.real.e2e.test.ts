@@ -406,7 +406,11 @@ test("seeded compacted Pi history survives daemon reload, native rewind and Fork
       id: "system",
       parentId: null,
       timestamp,
-      message: { role: "system", content: "private system context", timestamp: Date.now() },
+      message: {
+        role: "system",
+        content: [{ type: "text", text: "private system context" }],
+        timestamp: Date.now(),
+      },
     },
     {
       type: "message",
