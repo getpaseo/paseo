@@ -565,6 +565,7 @@ function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent
     pendingPermissions: new Map(),
     persistence: null,
     labels: {},
+    metadata: {},
     attention: { requiresAttention: false },
     ...overrides,
   } as ManagedAgent;
