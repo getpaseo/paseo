@@ -27,4 +27,6 @@ export { copyText } from "./clipboard";
 export { useToast } from "./toast";
 export { StreamedText } from "./streamed-text";
 
+export { ForkMenu } from "./fork-menu";
+
 export { Markdown } from "./markdown";

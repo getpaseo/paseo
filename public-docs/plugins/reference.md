@@ -1188,6 +1188,35 @@ Text added only by your renderer is not independently indexed. Matches stay with
 block, and find skips buttons, icons, and anything with `aria-hidden="true"`. Find only runs on
 the web and desktop apps.
 
+### Fork a transformed assistant reply
+
+Render the host's `ForkMenu` beside your reply's Copy action:
+
+```tsx
+import { Text, View } from "react-native";
+import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import { ForkMenu } from "@getpaseo/plugin/client/ui";
+
+function Reply({ item }: PluginTimelineItemProps<{ text: string }>) {
+  return (
+    <View>
+      <Text>{item.data.text}</Text>
+      <ForkMenu />
+    </View>
+  );
+}
+```
+
+`ForkMenu` accepts an optional `testID`. Paseo owns its New tab / New workspace menu,
+pending state, errors, history attachment, draft settings, and navigation. The boundary is
+pinned to the original completed assistant message, even when a transformer splits it into
+several rows. Render one menu on the final row to avoid duplicate controls.
+
+It renders nothing outside a timeline renderer, in read-only views, for streaming or
+non-assistant rows, for daemon-pushed plugin rows, or when no supported message boundary
+exists. It never substitutes the whole conversation for a missing boundary. Use a client
+release that exports `ForkMenu` and declare that release in `requirements.paseo`.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:
