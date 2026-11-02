@@ -65,6 +65,7 @@ import {
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 import { assertChangesAreLive } from "./provider-options.js";
+import { readPluginOptionState } from "./plugin-provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -606,7 +607,7 @@ class ProviderRuntimeSession {
   private readonly activeTurnIds = new Set<string>();
   private terminal = false;
   private closePromise: Promise<void> | null = null;
-  config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [], settings: [] };
+  config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
   persistence: ProviderPersistence | null = null;
 
@@ -1117,7 +1118,7 @@ class PluginAgentClient implements AgentClient {
       this.provider,
       bridge,
       forget,
-      async (persistence, state) => {
+      async (persistence, state, options) => {
         forget();
         return await this.runtime.openSession({
           sessionId: randomUUID(),
@@ -1126,9 +1127,8 @@ class PluginAgentClient implements AgentClient {
             model: state.model,
             mode: state.mode,
             thinkingOption: state.thinkingOption,
-            settings: Object.fromEntries(
-              state.settings.map((setting) => [setting.id, setting.value]),
-            ),
+            settings: options,
+            providerOptions: options,
           },
           persistence,
           history: "replay",
@@ -1204,9 +1204,12 @@ class PluginAgentSession implements AgentSession {
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   private unsubscribe: (() => void) | null = null;
-  /** How the opened session differs from the settings it was given. */
+  /** How the opened session differs from the options it was given. */
   readonly openOptionsPatch: Record<string, JsonValue>;
-  private knownSettings: Record<string, JsonValue> = {};
+  private knownOptions: Record<string, JsonValue> = {};
+  // The options a reopened session starts with: what it launched with, then every value the
+  // plugin reported or was given, minus every key that was reset.
+  private readonly committedOptions: Record<string, JsonValue>;
   /** While `applyOptions` waits on the plugin, its `session.config` answers that call. */
   private applyingOptions = false;
   private currentTurnId: string | null = null;
@@ -1227,14 +1230,16 @@ class PluginAgentSession implements AgentSession {
     private readonly reopen: (
       persistence: ProviderPersistence,
       state: ProviderConfigState,
+      options: Readonly<Record<string, JsonValue>>,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
-    private readonly givenSettings: Readonly<Record<string, JsonValue>>,
+    private readonly givenOptions: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
-    this.openOptionsPatch = this.settingDifferences(givenSettings);
-    this.knownSettings = this.currentSettings();
+    this.committedOptions = { ...givenOptions };
+    this.openOptionsPatch = this.optionDifferences(givenOptions);
+    this.commitOptions();
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.
     // Commit them on registration and replay the same timestamps from history.
@@ -1258,28 +1263,8 @@ class PluginAgentSession implements AgentSession {
     };
   }
 
-  /** The plugin's `settings` are its option controls; each setting id is an option key. */
   get controls(): AgentOptionControl[] {
-    return this.bridge.config.settings.map(
-      (setting): AgentOptionControl =>
-        setting.type === "toggle"
-          ? {
-              type: "toggle",
-              key: setting.id,
-              label: setting.label,
-              ...(setting.description ? { description: setting.description } : {}),
-            }
-          : {
-              type: "select",
-              key: setting.id,
-              label: setting.label,
-              ...(setting.description ? { description: setting.description } : {}),
-              choices: setting.options.map((option) => ({
-                value: option.value,
-                label: option.label,
-              })),
-            },
-    );
+    return readPluginOptionState(this.bridge.config).controls;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -1437,35 +1422,50 @@ class PluginAgentSession implements AgentSession {
 
   async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
-    const before = this.currentSettings();
-    // A key the plugin does not report as a setting is one it only reads when the session opens;
-    // a value equal to the one it opened with is not a change.
-    assertChangesAreLive({
-      provider: this.provider,
-      patch: options,
-      current: this.givenSettings,
-      live: Object.keys(before),
-    });
+    const before = this.currentOptions();
+    const { controls, legacySettings } = readPluginOptionState(this.bridge.config);
     const settings: Record<string, JsonValue> = {};
-    for (const [id, value] of Object.entries(options)) {
-      if (!(id in before)) continue;
-      settings[id] = toJsonValue(value, `setting '${id}'`);
+    // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01. A plugin
+    // reporting `settings` cannot refuse a key, so only its settings are sent and any other
+    // changed key is rejected here; a value equal to the one it opened with is not a change.
+    if (legacySettings) {
+      const live = controls.map((control) => control.key);
+      assertChangesAreLive({
+        provider: this.provider,
+        patch: options,
+        current: this.givenOptions,
+        live,
+      });
+      for (const [id, value] of Object.entries(options)) {
+        if (live.includes(id)) settings[id] = toJsonValue(value, `option '${id}'`);
+      }
+    } else {
+      // The plugin applies every key it is given or rejects the whole request.
+      for (const [id, value] of Object.entries(options)) {
+        settings[id] = toJsonValue(value, `option '${id}'`);
+      }
     }
     if (Object.keys(settings).length === 0) return {};
     this.applyingOptions = true;
     try {
-      await this.bridge.configure({ settings });
+      // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01.
+      await this.bridge.configure({
+        providerOptions: settings,
+        ...(legacySettings ? { settings } : {}),
+      });
     } catch (error) {
       // Nothing is stored for a refused patch, so what the plugin moved is reported once the
       // call has ended.
       this.applyingOptions = false;
-      for (const event of this.reportSettingChanges()) this.publish(event);
+      for (const event of this.reportOptionChanges()) this.publish(event);
       throw error;
     } finally {
       this.applyingOptions = false;
     }
-    const ended = this.settingDifferences({ ...before, ...settings });
-    this.knownSettings = this.currentSettings();
+    // A requested key is a request, not a report: only a key the plugin reported before can be
+    // one it has now dropped.
+    const ended = this.optionChanges({ ...before, ...settings }, before);
+    this.commitOptions(settings);
     return ended;
   }
 
@@ -1648,28 +1648,58 @@ class PluginAgentSession implements AgentSession {
     };
   }
 
-  private currentSettings(): Record<string, JsonValue> {
-    return Object.fromEntries(
-      this.bridge.config.settings.map((setting) => [setting.id, setting.value]),
-    );
+  private currentOptions(): Record<string, JsonValue> {
+    return readPluginOptionState(this.bridge.config).options;
   }
 
-  /** Settings whose value differs from `known`: the plugin's own change or its opening state. */
-  private settingDifferences(
-    known: Readonly<Record<string, JsonValue>>,
-  ): Record<string, JsonValue> {
+  /** Options whose value differs from `known`: the plugin's own change or its opening state. */
+  private optionDifferences(known: Readonly<Record<string, JsonValue>>): Record<string, JsonValue> {
     const patch: Record<string, JsonValue> = {};
-    for (const [id, value] of Object.entries(this.currentSettings())) {
+    for (const [id, value] of Object.entries(this.currentOptions())) {
       if (!isDeepStrictEqual(known[id], value)) patch[id] = value;
     }
     return patch;
   }
 
-  private reportSettingChanges(): AgentStreamEvent[] {
+  /**
+   * Settle the options a reopened session starts with: what is committed, then the request the
+   * plugin accepted, then what it reported back. A key it reported before and no longer reports
+   * was reset.
+   */
+  private commitOptions(accepted: Readonly<Record<string, JsonValue>> = {}): void {
+    for (const [id, value] of Object.entries(accepted)) {
+      if (value === null) delete this.committedOptions[id];
+      else this.committedOptions[id] = value;
+    }
+    const current = this.currentOptions();
+    for (const id of Object.keys(this.knownOptions)) {
+      if (!(id in current)) delete this.committedOptions[id];
+    }
+    Object.assign(this.committedOptions, current);
+    this.knownOptions = current;
+  }
+
+  /**
+   * What changed against the options `known` to be set: values that differ, and `null` for a key
+   * in `reported` that the plugin no longer reports, which went back to its default.
+   */
+  private optionChanges(
+    known: Readonly<Record<string, JsonValue>>,
+    reported: Readonly<Record<string, JsonValue>>,
+  ): Record<string, JsonValue> {
+    const patch = this.optionDifferences(known);
+    const current = this.currentOptions();
+    for (const id of Object.keys(reported)) {
+      if (known[id] !== null && !(id in current)) patch[id] = null;
+    }
+    return patch;
+  }
+
+  private reportOptionChanges(): AgentStreamEvent[] {
     if (this.applyingOptions) return [];
-    const patch = this.settingDifferences(this.knownSettings);
+    const patch = this.optionChanges(this.knownOptions, this.knownOptions);
     if (Object.keys(patch).length === 0) return [];
-    this.knownSettings = this.currentSettings();
+    this.commitOptions();
     return [{ type: "options_changed", provider: this.provider, patch }];
   }
 
@@ -1677,7 +1707,7 @@ class PluginAgentSession implements AgentSession {
     event: Extract<ProviderEvent, { type: "session.config" }>,
   ): AgentStreamEvent[] {
     return [
-      ...this.reportSettingChanges(),
+      ...this.reportOptionChanges(),
       {
         type: "mode_changed",
         provider: this.provider,
@@ -1828,7 +1858,7 @@ class PluginAgentSession implements AgentSession {
       await this.bridge.close();
       replay.closed = true;
     }
-    const bridge = await this.reopen(replay.persistence, replay.config);
+    const bridge = await this.reopen(replay.persistence, replay.config, this.committedOptions);
     this.bridge = bridge;
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);

@@ -203,14 +203,14 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 
 **`agent.create.before.config`** 使用 `AgentSessionConfig`：
 
-| 字段                                          | 约束                                                     |
-| --------------------------------------------- | -------------------------------------------------------- |
-| `provider`, `model`                           | 独立的字段；修改 Provider 可能需要同时修改模型/模式/选项 |
-| `modeId`, `thinkingOptionId`, `featureValues` | 特定于 Provider 的选择                                   |
-| `title`, `systemPrompt`                       | Agent 配置                                               |
-| `providerOptions`                             | 不透明的、特定于 Provider 的选项                         |
-| `mcpServers`, `toolPolicy`                    | MCP 配置和精确的工具预批准                               |
-| `cwd`                                         | 不能修改                                                 |
+| 字段                         | 约束                                                     |
+| ---------------------------- | -------------------------------------------------------- |
+| `provider`, `model`          | 独立的字段；修改 Provider 可能需要同时修改模型/模式/选项 |
+| `modeId`, `thinkingOptionId` | 特定于 Provider 的选择                                   |
+| `title`, `systemPrompt`      | Agent 配置                                               |
+| `providerOptions`            | Provider 选项，包括速度和自动批准的选择                  |
+| `mcpServers`, `toolPolicy`   | MCP 配置和精确的工具预批准                               |
+| `cwd`                        | 不能修改                                                 |
 
 ### 修改已保存的配置 {#change-saved-configuration}
 
