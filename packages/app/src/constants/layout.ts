@@ -11,10 +11,11 @@ export const HEADER_INNER_HEIGHT_MOBILE = 56;
 export const WORKSPACE_SECONDARY_HEADER_HEIGHT = 36;
 export const HEADER_TOP_PADDING_MOBILE = 8;
 
-export const COMPACT_FORM_FACTOR_WIDTH = 500;
+// Measured composer width; independent of the window's compact/wide breakpoint.
+export const COMPACT_CONTENT_WIDTH = 500;
 
-// Settings uses the canonical desktop list + detail layout. Its sidebar and
-// detail target must fit together before it can share width with app navigation.
+// Settings navigation can shrink below its preferred width to preserve the detail
+// minimum. Both targets must fit before Settings shares width with app navigation.
 export const SETTINGS_DESKTOP_SIDEBAR_WIDTH = 320;
 export const SETTINGS_DESKTOP_DETAIL_MIN_WIDTH = 400;
 export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
@@ -33,7 +34,7 @@ export {
   getIsElectronMac as getIsElectronRuntimeMac,
 } from "./platform";
 
-/** Below 600 points, sidebars overlay the workspace. Medium and wider layouts dock them. */
+/** Below md (600 points), sidebars overlay the workspace; wider layouts can dock them. */
 export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
   return breakpoint === "xs" || breakpoint === "sm";
 }

@@ -72,6 +72,10 @@ steps:
 
 `github.pull_request_created` 只在有人创建 PR 时触发。
 
+若要等草稿完成后再开始审查，将上例的 `on` 改为 `github.pull_request_ready_for_review`。只有将草稿 PR 标记为可审查时才会触发；创建 PR、后续 push 和转回草稿都不会触发。`from_users` 匹配执行此操作的用户。
+
+PR webhook 的上下文通过 `github.pull_request.draft` 和 `github.pull_request.head_sha` 提供投递时的草稿状态和 head commit。其他事件（包括 PR 会话评论）的此字段为 `null`。审查前及发布结果前，通过 `gh pr view` 重新获取 PR；如果它已成为草稿或 head 与已审查的 SHA 不同，就结束运行而不发布结果。转回草稿不会取消已启动的 Hub 运行，workflow 应自行检查状态。
+
 ## 回复新评论 {#respond-to-new-comments}
 
 `.paseo/workflows/respond-to-issue-comment.yml`：
@@ -175,14 +179,15 @@ steps:
 
 ## 选择事件 {#choose-the-event}
 
-| `on`                                  | 触发时机               |
-| ------------------------------------- | ---------------------- |
-| `github.issue_created`                | 创建 issue。           |
-| `github.pull_request_created`         | 创建 PR。              |
-| `github.issue_comment_created`        | 在 issue 上创建评论。  |
-| `github.pull_request_comment_created` | 在 PR 上创建对话评论。 |
-| `github.issue_label_added`            | 为 issue 添加标签。    |
-| `github.pull_request_label_added`     | 为 PR 添加标签。       |
+| `on`                                   | 触发时机                 |
+| -------------------------------------- | ------------------------ |
+| `github.issue_created`                 | 创建 issue。             |
+| `github.pull_request_created`          | 创建 PR。                |
+| `github.pull_request_ready_for_review` | 草稿 PR 被标记为可审查。 |
+| `github.issue_comment_created`         | 在 issue 上创建评论。    |
+| `github.pull_request_comment_created`  | 在 PR 上创建对话评论。   |
+| `github.issue_label_added`             | 为 issue 添加标签。      |
+| `github.pull_request_label_added`      | 为 PR 添加标签。         |
 
 issue 上的评论选择 `github.issue_comment_created`，PR 上的对话评论选择 `github.pull_request_comment_created`。GitHub 把两者都作为 issue 评论投递；Hub 会替你区分它们。针对某一行改动的评论属于 diff 评论，由旧的 `github.pull_request_review_comment` 事件处理。
 

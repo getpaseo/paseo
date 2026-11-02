@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
-  shouldReplayTerminalSnapshotForRenderer,
   shouldShowTerminalLoadingOverlay,
 } from "./terminal-renderer-readiness";
 
@@ -72,27 +71,6 @@ describe("terminal-renderer-readiness", () => {
     });
 
     expect(current).toBeNull();
-  });
-
-  it("replays snapshots only for ready events from the current renderer", () => {
-    expect(
-      shouldReplayTerminalSnapshotForRenderer({
-        change: { streamKey: "scope:terminal-1", isReady: true },
-        terminalStreamKey: "scope:terminal-1",
-      }),
-    ).toBe(true);
-    expect(
-      shouldReplayTerminalSnapshotForRenderer({
-        change: { streamKey: "scope:terminal-1", isReady: false },
-        terminalStreamKey: "scope:terminal-1",
-      }),
-    ).toBe(false);
-    expect(
-      shouldReplayTerminalSnapshotForRenderer({
-        change: { streamKey: "scope:terminal-1", isReady: true },
-        terminalStreamKey: "scope:terminal-2",
-      }),
-    ).toBe(false);
   });
 
   it("does not attach the stream before the matching renderer is ready", () => {

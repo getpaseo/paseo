@@ -46,8 +46,8 @@ export function UsageMeter({
 
 const styles = StyleSheet.create((theme) => ({
   track: {
-    height: 4,
-    borderRadius: 2,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: theme.colors.surface3,
     overflow: "hidden",
   },

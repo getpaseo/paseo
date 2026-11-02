@@ -4846,15 +4846,6 @@ class OpenCodeAgentSession implements AgentSession {
             ...item,
             status: "failed",
             error,
-            detail:
-              item.detail.type === "sub_agent"
-                ? {
-                    ...item.detail,
-                    log: [item.detail.log, error.message]
-                      .filter((entry) => entry.trim().length > 0)
-                      .join("\n"),
-                  }
-                : item.detail,
           },
         },
         turnId,

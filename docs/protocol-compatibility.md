@@ -2,7 +2,7 @@
 
 The app and the daemon are separate products that ship separately. A user updates the app from an app store or a desktop auto-update; they update the daemon when they feel like it. Every combination happens in the wild: new app against an old daemon, old app against a new daemon, and both sides months apart.
 
-In development both sides are always the same version, which is why this is the constraint contributors miss most often.
+Development can have the same version drift: an app reload picks up new code while a long-running daemon keeps its loaded version. Check the connected daemon version when diagnosing behavior that crosses this boundary.
 
 Two contracts follow from it.
 
@@ -38,7 +38,7 @@ The app checks for the capability and either runs the feature or tells the user 
 - **No defensive branches spread through the feature.** Detection happens in one place, and everything downstream reads a clean shape.
 - Capability flags live in `features` on the `server_info` message (`packages/protocol/src/messages.ts`, the `server_info` schema).
 
-Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
+Existing functionality keeps working across versions. Never gate an established request on a new enhancement: negotiate the optional enhancement at the client boundary and preserve the existing request for older hosts. Whole-turn pagination can require a capability; reading conversation history cannot.
 
 ## Client capability ownership
 
@@ -51,6 +51,47 @@ its delivery semantics.
 On capable daemons, connecting creates no timeline or event demand. Client subscriptions own their network membership,
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
+
+## Terminal ANSI replay
+
+Terminal replay intentionally drops JSON-era apps, an exception to the general cross-version policy:
+use app v0.1.81 or newer. Earlier apps omit `restore` and reject ANSI Restore (`0x05`), so they show
+only subsequent live output, without the existing screen or history.
+
+`terminal_chunked_replay` is SDK-owned delivery behavior. The daemon sends new binary opcodes only to a source
+advertising the capability. The SDK keeps the established subscribe request against older
+ANSI hosts and normalizes their single Restore frame into begin/data/end. `observeTerminal` defaults
+to an explicit full snapshot: omitting restore on an ANSI-era host selects its discarded JSON path.
+Explicit caller restore modes and history counts pass through unchanged. JSON snapshot
+wire declarations remain accepted, but JSON snapshot frames have no rendering runtime.
+Terminals require `terminal-restore-modes`; older hosts show an update message without attaching.
+
+## Binary chunking
+
+`binary_chunking_v1` in hello and optional `server_info.features.binaryChunkingV1`
+negotiate connection-scoped framing. Application serializers and routed envelopes use
+the same boundary. Small messages and handshakes keep their existing representation.
+Older peers retain existing frame limits.
+
+The reserved binary opcode `0x31` is followed by version `1`, original kind
+(`0` text, `1` binary), and START/END flag bits `0`/`1`. Remaining bytes are an
+unchanged slice. There is no total length or chunk count; a future receiver can
+consume slices incrementally. Today the receiver buffers up to the existing
+100 MiB logical limit and decodes UTF-8 only after END. Transfers cannot interleave.
+Disconnect clears partial state and negotiation.
+
+The lower transport supplies its plaintext frame budget, including encryption
+overhead. The sender waits for drain between chunks while ordinary messages keep
+the existing delivery path. Slow-client protections count messages queued behind
+an active transfer as well as bytes already in the socket.
+The framing module never selects an encryption construction.
+
+Native uploads retain the platform's existing queue limits. React Native's
+WebSocket does not report its queued bytes, so the client cannot wait for native
+drain. Android's installed OkHttp transport closes when a send would put more
+than 16 MiB in its queue. The native transport disables outbound chunking, including
+on routed channels, and retains its existing single-frame admission errors.
+Inbound chunking remains enabled; daemon-to-native responses use the daemon's paced writes.
 
 ## Owned observations
 

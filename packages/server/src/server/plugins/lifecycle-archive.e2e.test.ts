@@ -8,8 +8,11 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 test("closing and archiving agents publish their distinct lifecycle hooks once", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-archive-hooks-"));
-  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.14.0-beta.1" });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.14.0-beta.1",
+  });
   try {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
@@ -39,7 +42,7 @@ test("closing and archiving agents publish their distinct lifecycle hooks once",
       .poll(async () => {
         const logs = await client.getPluginLogs("lifecycle-logger");
         return logs
-          .filter((entry) => entry.message.startsWith('{"hook":"agent.closed"'))
+          .filter((entry) => entry.message.startsWith('{"hook":"agent.close.after"'))
           .map((entry) => JSON.parse(entry.message).data.agent.id);
       })
       .toEqual([closed.id]);
@@ -49,7 +52,7 @@ test("closing and archiving agents publish their distinct lifecycle hooks once",
         const logs = await client.getPluginLogs("lifecycle-logger");
         return logs
           .filter((entry) => {
-            return entry.message.startsWith('{"hook":"agent.archived"');
+            return entry.message.startsWith('{"hook":"agent.archive.after"');
           })
           .map((entry) => {
             return JSON.parse(entry.message).data.agent.id;
@@ -61,7 +64,7 @@ test("closing and archiving agents publish their distinct lifecycle hooks once",
       .poll(async () => {
         const logs = await client.getPluginLogs("lifecycle-logger");
         return logs
-          .filter((entry) => entry.message.startsWith('{"hook":"agent.closed"'))
+          .filter((entry) => entry.message.startsWith('{"hook":"agent.close.after"'))
           .map((entry) => JSON.parse(entry.message).data.agent.id)
           .sort();
       })
@@ -75,20 +78,23 @@ test("closing and archiving agents publish their distinct lifecycle hooks once",
 
 test("daemon shutdown lets agent close hooks finish before stopping plugins", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-close-hook-shutdown-"));
-  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.14.0-beta.1" });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.14.0-beta.1",
+  });
   const completedFile = path.join(directory, "closed.txt");
   try {
     await writeFile(
       path.join(directory, "paseo-plugin.json"),
-      JSON.stringify({ id: "close-hook-shutdown", requirements: { paseo: ">=0.8.0" } }),
+      JSON.stringify({ id: "close-hook-shutdown", requirements: { paseo: ">=0.14.0-beta.1" } }),
     );
     await writeFile(
       path.join(directory, "index.server.ts"),
       `import { writeFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
 export default function contribute(server) {
-  server.on("agent.closed", async (event, context) => {
+  server.addHook("agent.close.after", async (event, context) => {
     await setTimeout(200, undefined, { signal: context.signal });
     await writeFile(${JSON.stringify(completedFile)}, event.agent.id);
   });

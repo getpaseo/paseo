@@ -1692,7 +1692,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   emptyState: {
-    paddingVertical: theme.spacing[4],
+    padding: theme.spacing[4],
     alignItems: "center",
     gap: theme.spacing[2],
   },

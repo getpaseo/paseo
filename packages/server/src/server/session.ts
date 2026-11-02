@@ -50,6 +50,11 @@ import type {
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import {
+  encodePluginEventFrame,
+  encodePluginOutputFrame,
+  PluginFrameOpcode,
+} from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { matchesAgentHistoryQuery } from "./agent-history-search.js";
@@ -81,7 +86,6 @@ import {
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
@@ -486,6 +490,7 @@ export interface SessionOptions {
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
   pluginRuntime?: {
+    wait: import("./plugins/lifecycle/index.js").PluginLifecycle["wait"];
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
     listPlugins(): Promise<import("@getpaseo/protocol/messages").PluginListItem[]>;
@@ -519,8 +524,13 @@ export interface SessionOptions {
     removePlugin(pluginId: string): Promise<void>;
     subscribe(listener: (pluginId: string) => void): () => void;
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
-    catalog(): Array<{ id: string; clientBundle: string }>;
+    catalog(): Array<{ id: string; clientBundle: string; clientBundleHash?: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    subscribePluginRpc(
+      pluginId: string,
+      method: string,
+      input: unknown,
+    ): import("./plugins/runtime-subscription.js").PluginRuntimeSubscription;
     listUsageReports(options?: {
       forceRefresh?: boolean;
       reportIds?: string[];
@@ -577,12 +587,14 @@ export type SessionLifecycleIntent =
       clientId: string;
       requestId: string;
       reason: string;
+      keepTerminals: boolean;
     }
   | {
       type: "restart";
       clientId: string;
       requestId: string;
       reason: string;
+      keepTerminals: boolean;
     };
 
 function parseClientCapabilities(
@@ -924,7 +936,7 @@ export class Session {
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
-        emitBinary: (frame, source) => this.emitBinaryForFileTransfer(frame, source),
+        emitBinary: (frame, source) => this.emitBinaryReply(frame, source),
         hasBinaryChannel: () => this.onBinaryMessage !== null,
       },
       downloadTokenStore,
@@ -1040,6 +1052,7 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.usageSession = new UsageSession({
+      isEnabled: () => daemonConfigStore.get().usage?.enabled !== false,
       emit: (msg) => this.emit(msg),
       runtime: pluginRuntime,
       logger: this.sessionLogger,
@@ -1105,6 +1118,7 @@ export class Session {
         "Terminal output": this.terminalController.getMetrics().streamSubscriptionCount,
       }),
       listProviderAvailability: () => this.agentManager.listProviderAvailability(),
+      getTerminalsUnavailable: () => terminalManager?.getUnavailableError?.()?.message ?? null,
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),
       listWorkspaces: () => this.workspaceRegistry.list(),
@@ -1126,11 +1140,11 @@ export class Session {
       terminalManager,
       emit: (msg) => this.emit(msg),
       hasBinaryChannel: () => this.onBinaryMessage !== null,
+      supportsChunkedReplay: (source) =>
+        this.supportsForSource(CLIENT_CAPS.terminalChunkedReplay, source),
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
-      clientSupportsWrapReflow: (source) =>
-        this.supportsForSource(CLIENT_CAPS.terminalReflowableSnapshot, source),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({
@@ -1232,7 +1246,7 @@ export class Session {
       spawnWorkspaceScript,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
-      globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,
+      getGlobalServicePorts: () => this.daemonConfigStore.readServicePorts(),
     });
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
@@ -1989,6 +2003,24 @@ export class Session {
           return;
         }
 
+        if (event.type === "agent_removed") {
+          if (event.internal) return;
+          void this.agentUpdates
+            .removeAgent(event.agentId)
+            .then(() => {
+              if (event.workspaceId)
+                return this.emitWorkspaceUpdateForWorkspaceId(event.workspaceId);
+              return undefined;
+            })
+            .catch((error) => {
+              this.sessionLogger.error(
+                { err: error, agentId: event.agentId },
+                "Failed to emit agent removal",
+              );
+            });
+          return;
+        }
+
         if (event.type === "agent_state") {
           this.sessionLogger.trace(
             {
@@ -2199,13 +2231,15 @@ export class Session {
       this.peakInflightRequests = this.inflightRequests;
     }
     try {
-      this.sessionLogger.trace(
-        {
-          messageType: msg.type,
-          payloadBytes: JSON.stringify(msg).length,
-        },
-        "agent.session.inbound",
-      );
+      // Stringifying a binary plugin input costs its size; test logger stubs lack isLevelEnabled.
+      if (this.sessionLogger.isLevelEnabled?.("trace"))
+        this.sessionLogger.trace(
+          {
+            messageType: msg.type,
+            payloadBytes: JSON.stringify(msg).length,
+          },
+          "agent.session.inbound",
+        );
       if (!this.authorization.allowsInbound(msg)) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
@@ -2268,6 +2302,17 @@ export class Session {
         .releaseFamily("browser-host")
         .catch((error) =>
           this.sessionLogger.error({ err: error }, "Failed to release revoked browser hosting"),
+        );
+    }
+    // Binary plugin events skip the outbound permission check, so revocation ends the streams.
+    if (!this.authorization.allowsPermission("daemon.manage")) {
+      void this.delivery
+        .releaseFamily("plugin-rpc")
+        .catch((error) =>
+          this.sessionLogger.error(
+            { err: error },
+            "Failed to release revoked plugin subscriptions",
+          ),
         );
     }
   }
@@ -2432,6 +2477,7 @@ export class Session {
       this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
+      this.dispatchPluginRpcMessage(msg) ??
       this.dispatchHostServiceMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
@@ -2585,28 +2631,110 @@ export class Session {
       });
     }
     if (msg.type === "plugin.catalog.get.request") {
+      const cached = new Map(
+        msg.cachedClientBundles?.map((entry) => [entry.id, entry.clientBundleHash]),
+      );
+      const plugins = (this.pluginRuntime?.catalog() ?? []).map(({ clientBundle, ...plugin }) =>
+        plugin.clientBundleHash !== undefined && cached.get(plugin.id) === plugin.clientBundleHash
+          ? plugin
+          : Object.assign(plugin, { clientBundle }),
+      );
       this.emit({
         type: "plugin.catalog.get.response",
-        payload: {
-          requestId: msg.requestId,
-          plugins: this.pluginRuntime?.catalog() ?? [],
-        },
+        payload: { requestId: msg.requestId, plugins },
       });
       return undefined;
     }
+    return undefined;
+  }
+
+  private dispatchPluginRpcMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "plugin.rpc.invoke.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
       return this.pluginRuntime
         .invokePluginRpc(msg.pluginId, msg.method, msg.input)
-        .then((output) => {
-          this.emit({
-            type: "plugin.rpc.invoke.response",
-            payload: { requestId: msg.requestId, output },
-          });
-          return undefined;
-        });
+        .then((output) => this.replyPluginRpc(msg, output));
     }
+    if (msg.type === "plugin.rpc.subscribe.request") return this.subscribePluginRpc(msg);
     return undefined;
+  }
+
+  /** A `Uint8Array` output is the binary form of `plugin.rpc.invoke.response`. */
+  private async replyPluginRpc(
+    request: Extract<SessionInboundMessage, { type: "plugin.rpc.invoke.request" }>,
+    output: unknown,
+  ): Promise<void> {
+    const response: SessionOutboundMessage = {
+      type: "plugin.rpc.invoke.response",
+      payload: { requestId: request.requestId, output },
+    };
+    if (!(output instanceof Uint8Array)) {
+      this.emit(response);
+      return;
+    }
+    // The frame is the binary form of the response, so it needs the response's permission.
+    if (!this.authorization.allowsOutbound(response)) return;
+    if (!this.supports(CLIENT_CAPS.pluginBinaryPayloads) || this.onBinaryMessage === null)
+      throw new Error(
+        `Update Paseo to receive the binary output of plugin RPC ${request.pluginId}.${request.method}`,
+      );
+    await this.emitBinaryReply(
+      encodePluginOutputFrame(request.requestId, output),
+      this.delivery.currentSource,
+    );
+  }
+
+  private async subscribePluginRpc(
+    request: Extract<SessionInboundMessage, { type: "plugin.rpc.subscribe.request" }>,
+  ): Promise<void> {
+    if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+    const subscription = this.pluginRuntime.subscribePluginRpc(
+      request.pluginId,
+      request.method,
+      request.input,
+    );
+    const owner = this.delivery.begin("plugin-rpc", undefined, () => subscription.release());
+    try {
+      await subscription.ready;
+    } catch (error) {
+      await owner.release();
+      throw error;
+    }
+    if (owner.signal.aborted) return;
+    this.emit({
+      type: "plugin.rpc.subscribe.response",
+      payload: { requestId: request.requestId, subscriptionId: owner.responseId },
+    });
+    const close = (reason?: string) => {
+      owner.emit({
+        type: "plugin.rpc.closed",
+        payload: {
+          subscriptionId: owner.responseId,
+          ...(reason === undefined ? {} : { error: reason }),
+        },
+      });
+      void owner.release().catch(() => undefined);
+    };
+    subscription.attach({
+      event: (event) => {
+        const message: SessionOutboundMessage = {
+          type: "plugin.rpc.event",
+          payload: { subscriptionId: owner.responseId, event },
+        };
+        if (!(event instanceof Uint8Array)) {
+          owner.emit(message);
+          return;
+        }
+        if (!this.authorization.allowsOutbound(message)) return;
+        if (this.onBinaryMessage === null) {
+          subscription.release();
+          close("This connection cannot carry binary plugin events");
+          return;
+        }
+        owner.emitBinary(encodePluginEventFrame(owner.responseId, event));
+      },
+      closed: close,
+    });
   }
 
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -2723,9 +2851,13 @@ export class Session {
       case "dictation_stream_cancel":
         return this.voiceSessions.handleMessage(msg);
       case "restart_server_request":
-        return this.handleRestartServerRequest(msg.requestId, msg.reason);
+        return this.handleRestartServerRequest(msg.requestId, msg.reason, {
+          keepTerminals: msg.killTerminals !== true,
+        });
       case "shutdown_server_request":
-        return this.handleShutdownServerRequest(msg.requestId);
+        return this.handleShutdownServerRequest(msg.requestId, {
+          keepTerminals: msg.keepTerminals === true,
+        });
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
         return undefined;
@@ -2927,8 +3059,7 @@ export class Session {
       case "daemon.get_pairing_offer.request":
         return this.daemonSession.handleGetPairingOfferRequest(msg);
       case "daemon.config.reload.request":
-        this.daemonSession.handleConfigReloadRequest(msg);
-        return undefined;
+        return this.daemonSession.handleConfigReloadRequest(msg);
       case "hub.management.daemon.connect.request":
       case "hub.management.daemon.get_status.request":
       case "hub.management.daemon.disconnect.request":
@@ -2939,14 +3070,15 @@ export class Session {
       case "daemon.update.request":
         return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
-        this.emit({
-          type: "set_daemon_config_response",
-          payload: {
-            requestId: msg.requestId,
-            config: this.daemonConfigStore.patch(msg.config),
-          },
+        return this.daemonConfigStore.patch(msg.config).then((config) => {
+          return this.emit({
+            type: "set_daemon_config_response",
+            payload: {
+              requestId: msg.requestId,
+              config,
+            },
+          });
         });
-        return undefined;
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
@@ -2964,7 +3096,7 @@ export class Session {
       case "checkout.commits.list.request":
         return this.checkoutSession.handleCommitsListRequest(msg);
       case "checkout.commits.file_diff.request":
-        return this.checkoutSession.handleCommitFileDiffRequest(msg);
+        return this.checkoutSession.handleCommitFileDiffRequest(msg, this.delivery.requestSignal);
       case "validate_branch_request":
         return this.checkoutSession.handleValidateBranchRequest(msg);
       case "branch_suggestions_request":
@@ -3241,6 +3373,22 @@ export class Session {
       this.connectedHostSession?.binary(binaryFrame.frame, source);
       return;
     }
+    if (binaryFrame.kind === "plugin") {
+      const frame = binaryFrame.frame;
+      // The binary form of plugin.rpc.invoke.request; it authorizes and replies like the JSON form.
+      if (frame.opcode !== PluginFrameOpcode.Input) return;
+      await this.handleMessage(
+        {
+          type: "plugin.rpc.invoke.request",
+          requestId: frame.requestId,
+          pluginId: frame.pluginId,
+          method: frame.method,
+          input: frame.payload,
+        },
+        source,
+      );
+      return;
+    }
     if (!this.authorization.allowsPermission("workspace.write")) {
       return;
     }
@@ -3251,7 +3399,11 @@ export class Session {
     this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
   }
 
-  private async handleRestartServerRequest(requestId: string, reason?: string): Promise<void> {
+  private async handleRestartServerRequest(
+    requestId: string,
+    reason: string | undefined,
+    options: { keepTerminals: boolean },
+  ): Promise<void> {
     const lifecycleReason = normalizeClientRestartRpcReason(reason);
     const payload: { status: string } & Record<string, unknown> = {
       status: "restart_requested",
@@ -3262,7 +3414,10 @@ export class Session {
     }
     payload.requestId = requestId;
 
-    this.sessionLogger.warn({ reason: lifecycleReason }, "Restart requested via websocket");
+    this.sessionLogger.warn(
+      { reason: lifecycleReason, keepTerminals: options.keepTerminals },
+      "Restart requested via websocket",
+    );
     this.emit({
       type: "status",
       payload,
@@ -3273,12 +3428,19 @@ export class Session {
       clientId: this.clientId,
       requestId,
       reason: lifecycleReason,
+      keepTerminals: options.keepTerminals,
     });
   }
 
-  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+  private async handleShutdownServerRequest(
+    requestId: string,
+    options: { keepTerminals: boolean },
+  ): Promise<void> {
     const reason = CLIENT_SHUTDOWN_RPC_REASON;
-    this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
+    this.sessionLogger.warn(
+      { reason, keepTerminals: options.keepTerminals },
+      "Shutdown requested via websocket",
+    );
     this.emit({
       type: "status",
       payload: {
@@ -3293,6 +3455,7 @@ export class Session {
       clientId: this.clientId,
       requestId,
       reason,
+      keepTerminals: options.keepTerminals,
     });
   }
 
@@ -3310,10 +3473,8 @@ export class Session {
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
 
-    const knownWorkspaceId =
-      this.agentManager.getAgent(agentId)?.workspaceId ??
-      (await this.agentStorage.get(agentId))?.workspaceId ??
-      null;
+    const knownAgent =
+      this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
 
     // File-backed storage still needs an early delete fence before closeAgent().
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
@@ -3334,6 +3495,8 @@ export class Session {
     try {
       await this.agentStorage.remove(agentId);
       await this.agentManager.deleteAgentState(agentId);
+      // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
+      if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
     }
@@ -3345,12 +3508,6 @@ export class Session {
         requestId,
       },
     });
-
-    await this.agentUpdates.removeAgent(agentId);
-
-    if (knownWorkspaceId) {
-      await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
-    }
   }
 
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
@@ -4472,7 +4629,10 @@ export class Session {
         },
       );
       createdAgentId = snapshot.id;
-      await this.agentUpdates.forwardLiveAgent(snapshot);
+      // `snapshot` predates the initial prompt; subscribers keep the last state they receive.
+      await this.agentUpdates.forwardLiveAgent(
+        this.agentManager.getAgent(snapshot.id) ?? liveSnapshot,
+      );
       if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
@@ -5670,7 +5830,7 @@ export class Session {
       activityAt: null,
       createdAt: workspace.createdAt,
       diffStat,
-      scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
+      scripts: await this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
@@ -5983,6 +6143,7 @@ export class Session {
     },
   ): Promise<CreatePaseoWorktreeResult> {
     const result = await createPaseoWorktree(input, {
+      lifecycle: this.pluginRuntime,
       github: this.github,
       ...(options?.resolveDefaultBranch
         ? { resolveDefaultBranch: options.resolveDefaultBranch }
@@ -6791,7 +6952,7 @@ export class Session {
     // and must not rerun hooks or compare their potentially changing output.
     if (this.pluginRuntime) {
       const { type, requestId, ...input } = request;
-      const transformed = await this.pluginRuntime.before("workspace.create", input);
+      const transformed = await this.pluginRuntime.before("workspace.create.before", input);
       creationRequest = { ...transformed, type, requestId };
     }
     return creationRequest.source.kind === "directory"
@@ -7263,7 +7424,7 @@ export class Session {
   private buildWorkspaceScriptPayloadSnapshot(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord | null,
-  ): WorkspaceDescriptorPayload["scripts"] {
+  ): Promise<WorkspaceDescriptorPayload["scripts"]> {
     return this.workspaceScripts.buildSnapshot(workspace, project);
   }
 
@@ -7787,8 +7948,6 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection = "projected" as const;
-    const requestedLimit = msg.limit;
-    const pageLimit = requestedLimit ?? (direction === "after" ? 0 : 200);
     const cursor: AgentTimelineCursor | undefined = msg.cursor
       ? {
           epoch: msg.cursor.epoch,
@@ -7807,7 +7966,8 @@ export class Session {
       const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
-        limit: pageLimit,
+        limit: msg.limit,
+        wholeTurns: msg.wholeTurns,
       });
       const selectedTimeline = {
         timeline: fetchedControlTimeline,
@@ -8275,7 +8435,7 @@ export class Session {
             },
             activeTurnBehavior: msg.activeTurnBehavior ?? "steer",
             sessionMode: msg.sessionMode,
-            clearPendingPermissions: true,
+            clearPendingPermissions: false,
           });
           deliveryStatus = "queued";
           queued();
@@ -8647,9 +8807,9 @@ export class Session {
     }
   }
 
-  private async emitBinaryForFileTransfer(frame: Uint8Array, source?: object): Promise<void> {
+  private async emitBinaryReply(frame: Uint8Array, source?: object): Promise<void> {
     if (source && this.onBinaryMessageToSource) {
-      this.delivery.authorizeFileReply(frame, source);
+      this.delivery.authorizeBinaryReply(frame, source);
       await this.onBinaryMessageToSource(source, frame);
       return;
     }

@@ -1,8 +1,5 @@
-import { readPaseoConfigJson } from "./paseo-config-file.js";
-import {
-  PaseoConfigSchema,
-  type PaseoMetadataGeneration,
-} from "@getpaseo/protocol/paseo-config-schema";
+import { readPaseoConfig } from "./paseo-config-file.js";
+import { type PaseoMetadataGeneration } from "@getpaseo/protocol/paseo-config-schema";
 
 export type MetadataConfigKey = "title" | "branchName" | "commitMessage" | "pullRequest";
 
@@ -52,8 +49,8 @@ async function readProjectMetadataOverrides(
   }
   try {
     const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
-    const json = readPaseoConfigJson(repoRoot);
-    return PaseoConfigSchema.parse(json).metadataGeneration;
+    const result = await readPaseoConfig(repoRoot);
+    return result.ok ? result.config?.metadataGeneration : undefined;
   } catch {
     return undefined;
   }

@@ -997,7 +997,9 @@ class AcpRuntime {
   ): string {
     if (messageId) {
       this.fallbackChunkIds.delete(kind);
-      return messageId;
+      // Native IDs identify a message within its chunk kind. Timeline IDs must
+      // also distinguish reasoning from replies and from generated fallback IDs.
+      return JSON.stringify([kind, messageId]);
     }
     let id = this.fallbackChunkIds.get(kind);
     if (!id) {

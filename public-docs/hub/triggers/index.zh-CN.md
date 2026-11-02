@@ -85,17 +85,18 @@ Hub 在每段提示词中都包含一个 `executionId`。使用持续的 Agent �
 
 ## 事件 {#events}
 
-| `on`                                  | 触发时机                        |
-| ------------------------------------- | ------------------------------- |
-| `github.issue_created`                | 有 issue 被创建。               |
-| `github.pull_request_created`         | 有 Pull Request 被创建。        |
-| `github.issue_comment_created`        | issue 上新增了评论。            |
-| `github.pull_request_comment_created` | Pull Request 上新增了对话评论。 |
-| `github.issue_label_added`            | issue 被添加了标签。            |
-| `github.pull_request_label_added`     | Pull Request 被添加了标签。     |
-| `slack.mention`                       | 机器人在频道中被提及。          |
-| `discord.mention`                     | 机器人在服务器中被提及。        |
-| `manual.run`                          | 通过 API 发起了一次运行。       |
+| `on`                                   | 触发时机                        |
+| -------------------------------------- | ------------------------------- |
+| `github.issue_created`                 | 有 issue 被创建。               |
+| `github.pull_request_created`          | 有 Pull Request 被创建。        |
+| `github.pull_request_ready_for_review` | 草稿 PR 被标记为可审查。        |
+| `github.issue_comment_created`         | issue 上新增了评论。            |
+| `github.pull_request_comment_created`  | Pull Request 上新增了对话评论。 |
+| `github.issue_label_added`             | issue 被添加了标签。            |
+| `github.pull_request_label_added`      | Pull Request 被添加了标签。     |
+| `slack.mention`                        | 机器人在频道中被提及。          |
+| `discord.mention`                      | 机器人在服务器中被提及。        |
+| `manual.run`                           | 通过 API 发起了一次运行。       |
 
 新的 GitHub workflow 应使用语义化事件。五个旧版事件仍然兼容：`github.issues`、`github.issue_comment`、`github.pull_request_review`、`github.pull_request_review_comment` 和 `github.push`。完整的 workflow 以及何时使用哪个事件，见 [GitHub 触发器](/docs/hub/triggers/github)。
 

@@ -128,7 +128,9 @@ function exactModelKey(input: Omit<BuildDiffDocumentModelInput, "reuseFrom">): s
   const materializationWindow = input.materializationWindow
     ? [input.materializationWindow.top, input.materializationWindow.height]
     : null;
-  return JSON.stringify([collapsedFilePaths, reviewGeometry, materializationWindow]);
+  const anchor = input.materializationAnchor;
+  const anchoredRow = anchor?.kind === "text" ? [anchor.path, anchor.sourceIdentity] : null;
+  return JSON.stringify([collapsedFilePaths, reviewGeometry, materializationWindow, anchoredRow]);
 }
 
 function typographyKey(typography: DiffTypography): string {
