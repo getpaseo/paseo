@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { TextReplacement } from "@/composer/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
@@ -27,6 +28,7 @@ import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { isWeb } from "@/constants/platform";
+import { applyMetadataPatch } from "@/composer/draft/metadata";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -36,6 +38,8 @@ interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
   initialProviderOptions?: Record<string, unknown>;
+  /** Which composer a plugin's `useComposer()` reports. */
+  context?: "draft" | "new-workspace";
   isVisible?: boolean;
   lockedWorkingDir?: string;
 }
@@ -51,6 +55,8 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   providerOptions: Record<string, unknown> | undefined;
+  /** What plugins set on the agent this draft creates. */
+  metadata: Record<string, JsonValue>;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -191,10 +197,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [saveDraft],
   );
 
+  const [metadata, setMetadataState] = useState<Record<string, JsonValue>>({});
+  const setMetadata = useCallback(
+    (patch: Record<string, JsonValue>) =>
+      setMetadataState((current) => applyMetadataPatch(current, patch)),
+    [],
+  );
+
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
       textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
+      if (lifecycle === "sent") setMetadataState({});
     },
     [draftKey, textPublication],
   );
@@ -319,10 +333,14 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModelId,
       effectiveThinkingOptionId,
       providerOptions: draftOptions,
+      metadata,
       agentControls: buildDraftAgentControls({
         formState,
         optionControls: draftOptionControls,
         onApplyAgentProfile: applyDraftAgentProfile,
+        context: composerOptions.context ?? "draft",
+        metadata,
+        onSetMetadata: setMetadata,
       }),
       commandDraft,
     };
@@ -336,6 +354,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     draftOptions,
     applyDraftAgentProfile,
     formState,
+    metadata,
+    setMetadata,
     workingDir,
   ]);
 

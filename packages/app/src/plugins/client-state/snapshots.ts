@@ -49,6 +49,7 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     attentionReason: agent.attentionReason ?? null,
     parentAgentId: agent.parentAgentId,
     labels: Object.freeze({ ...agent.labels }),
+    metadata: Object.freeze({ ...agent.metadata }),
   });
   const byWorkspace = agentSnapshots.get(agent) ?? new Map<string, PluginAgentSnapshot>();
   byWorkspace.set(workspaceId, snapshot);

@@ -1,3 +1,4 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
@@ -23,8 +24,19 @@ export function buildDraftAgentControls(input: {
   optionControls?: DraftAgentControlsProps["optionControls"];
   onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
+  context: NonNullable<DraftAgentControlsProps["context"]>;
+  metadata: Record<string, JsonValue>;
+  onSetMetadata: (patch: Record<string, JsonValue>) => void;
 }): DraftAgentControlsProps {
-  const { formState, optionControls, onApplyAgentProfile, onDropdownClose } = input;
+  const {
+    formState,
+    optionControls,
+    onApplyAgentProfile,
+    onDropdownClose,
+    context,
+    metadata,
+    onSetMetadata,
+  } = input;
   return {
     providerDefinitions: formState.providerDefinitions,
     selectedProvider: formState.selectedProvider,
@@ -48,6 +60,9 @@ export function buildDraftAgentControls(input: {
     onRetryModelProvider: formState.refreshProviderModels,
     isRetryingModelProvider: formState.isProviderModelsRefreshing,
     modelSelectorServerId: formState.selectedServerId,
+    context,
+    metadata,
+    onSetMetadata,
   };
 }
 

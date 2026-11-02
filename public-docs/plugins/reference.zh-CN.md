@@ -1600,6 +1600,65 @@ review.remove();
 贡献移入一个共享的溢出菜单。在手机和较窄的窗口中，标题栏没有空间放置插件按钮，因此每个按钮都会成为工作区
 菜单（`···`）中的一行，显示它的图标和标题；它的菜单和弹出框以该底部面板中的页面打开。位置和溢出由宿主决定。
 
+## Composer 项 {#composer-items}
+
+`client.addComposerItem({ id, Component })` 把一个组件放进 composer：Agent composer、为新 Agent 准备的草稿 composer，以及新建工作区界面上的 composer。`useComposer()` 读取并修改 composer 所配置的内容，`@getpaseo/plugin/client/ui` 中的 `Toggle`、`Select` 和 `Action` 负责绘制控件。
+
+```tsx
+import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={(next) => composer.setMetadata({ "review.needsReview": next ? true : null })}
+    />
+  );
+}
+
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={() => composer.insertText("- [ ] Tests\n- [ ] Docs\n")}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
+}
+```
+
+`useComposer()` 返回该项所在的 composer：
+
+| 字段或命令                                          | 含义                                                                                                                             |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                           |
+| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                |
+| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                           |
+| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                     |
+| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。                                                                                           |
+| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                          |
+| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型，在 `context: "agent"` 下会被拒绝：运行中的 Agent 保持其 Provider。 |
+| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                           |
+
+同一个调用在每个 composer 中行为一致，插件不需要选择 composer 的实现。在运行中的 Agent 上调用 `setMetadata` 需要支持元数据的主机；主机过旧时，Promise 会以 “Update the host to use metadata.” 拒绝。
+
+`Toggle` 接收 `value` 和 `onValueChange`。`Select` 接收 `value`、`options`（`{ value, label, description? }`）和 `onValueChange`。`Action` 接收 `onPress`。三者都接收 `title`、`icon`（[Lucide 名称、SVG 或组件](#icons)）和 `disabled`。控件的位置由 Paseo 决定：composer 空间足够时显示在工具栏中，不够时（手机上始终如此）成为 composer 溢出面板中的一行。`Select` 会就地打开列表，而不是替换面板中的行。`Component` 如果渲染这些控件以外的内容，会在其所在位置绘制；在溢出面板中，该位置就是面板。
+
+在 Paseo 知道渲染结果之前，composer 项就已计入可容纳的数量。不渲染任何内容的项仍可能在窄 composer 上留下空的溢出面板，所以请始终渲染一个控件。
+
+[Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、一个 `Toggle` 和一个 `Action`。
+
 ## Composer 胶囊 {#composer-pills}
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` 使用同样的[按钮描述符](#button-descriptor)，

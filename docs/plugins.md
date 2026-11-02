@@ -665,6 +665,25 @@ Mounted surfaces and command invocations have shorter API lifetimes.
 Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
 work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
 
+## Contribute composer items
+
+`addComposerItem` mounts a plugin component in the agent, draft and New workspace composers. The
+public contract is the [composer items reference](../public-docs/plugins/reference.md#composer-items).
+
+The composer is two contexts, provided by two owners (`packages/app/src/composer/session.tsx`).
+`Composer` provides `ComposerInput` (prompt and attachments). `AgentControls` and
+`DraftAgentControls` provide `ComposerAgent` (provider, model, mode, thinking, options, metadata and
+their commands). `toPluginComposer` (`packages/app/src/plugins/composer-items/`) joins them into the
+`PluginComposer` an item reads, so a plugin cannot tell which composer a command reaches. Add a
+capability to `ComposerAgent` and both implementations; never branch on `context` in the model.
+
+Plugin `Toggle`, `Select` and `Action`, the thinking select and provider option controls all
+render through `ComposerControl` (`packages/app/src/composer/agent-controls/composer-control.tsx`),
+a toolbar icon or a row in the overflow sheet. Model and mode stay specialized but share its trigger,
+density and overflow. Plugin items count in the density presence in `layout.ts`, so a composer
+condenses to make room for them. A custom component renders wherever its item is placed, and an
+item that renders nothing still counts for density; there is no registration for either.
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and

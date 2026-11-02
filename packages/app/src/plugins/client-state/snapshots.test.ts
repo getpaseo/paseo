@@ -53,6 +53,7 @@ const agent: Agent = {
   attentionReason: "permission",
   parentAgentId: null,
   labels: { phase: "implementation" },
+  metadata: { "linear.issue": { id: "ENG-1" } },
 };
 
 describe("plugin context snapshots", () => {
@@ -107,6 +108,7 @@ describe("plugin context snapshots", () => {
       attentionReason: "permission",
       parentAgentId: null,
       labels: { phase: "implementation" },
+      metadata: { "linear.issue": { id: "ENG-1" } },
     });
     expect(snapshot.labels).not.toBe(agent.labels);
     expect(Object.isFrozen(snapshot)).toBe(true);

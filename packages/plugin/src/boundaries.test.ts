@@ -213,6 +213,43 @@ describe("plugin panel SDK boundary", () => {
   });
 });
 
+describe("plugin composer SDK boundary", () => {
+  it("lets a composer item read and change the composer through typed commands and controls", () => {
+    expect(
+      typeErrors(`
+      import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+      import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+      function Item() {
+        const composer = useComposer();
+        const context: "agent" | "draft" | "new-workspace" = composer.context;
+        const provider: string | null = composer.agent.provider;
+        const flag: boolean = composer.agent.metadata.flag === true;
+        // @ts-expect-error reads are not writable
+        composer.agent.model = "other";
+        composer.setProvider("codex").then(() => composer.setModel("gpt"));
+        composer.setOptions({ effort: null });
+        composer.setMetadata({ flag: true, stale: null });
+        composer.insertText("text");
+        composer.addAttachment({ sourceId: "issues", item: { id: "1", identifier: "1", title: "t", url: "https://e.com", text: "t", resourceType: "issue" } });
+        // @ts-expect-error commands take JSON values
+        composer.setMetadata({ fn: () => {} });
+        return (
+          <>
+            <Toggle title="Flag" icon="Flag" value={flag} onValueChange={(next: boolean) => composer.setMetadata({ flag: next })} />
+            <Select title="Size" icon="Gauge" value="a" options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} onValueChange={(next: "a" | "b") => {}} />
+            <Action title="Insert" icon="Plus" onPress={() => composer.setPrompt("")} />
+          </>
+        );
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addComposerItem({ id: "item", Component: Item });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
 describe("plugin agent tools SDK boundary", () => {
   it("lets a session hook attach typed tools without exposing their transport", () => {
     expect(

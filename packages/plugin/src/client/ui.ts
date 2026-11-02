@@ -185,3 +185,30 @@ export interface MarkdownProps {
 
 /** Renders Markdown using Paseo’s theme, selection, and link behavior. */
 export declare const Markdown: ComponentType<MarkdownProps>;
+
+export interface ComposerControlProps {
+  /** The control's label and tooltip. */
+  title: string;
+  /** A Lucide icon name, inline SVG, or a component. */
+  icon: PluginIcon;
+  disabled?: boolean;
+}
+export interface ToggleProps extends ComposerControlProps {
+  value: boolean;
+  onValueChange(value: boolean): void;
+}
+export interface SelectProps<Value extends string = string> extends ComposerControlProps {
+  value: Value;
+  options: readonly { value: Value; label: string; description?: string }[];
+  onValueChange(value: Value): void;
+}
+export interface ActionProps extends ComposerControlProps {
+  onPress(): void;
+}
+/**
+ * Composer controls. Render them from a composer item's `Component`. Paseo draws them inline when
+ * the composer has room and as rows in its overflow sheet when it does not.
+ */
+export declare const Toggle: ComponentType<ToggleProps>;
+export declare function Select<Value extends string>(props: SelectProps<Value>): ReactNode;
+export declare const Action: ComponentType<ActionProps>;

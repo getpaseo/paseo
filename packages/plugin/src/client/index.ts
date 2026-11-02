@@ -71,6 +71,13 @@ export {
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
+export { useComposer } from "./composer.js";
+export type {
+  PluginComposer,
+  PluginComposerAttachment,
+  PluginComposerItemContribution,
+  PluginComposerItemProps,
+} from "./composer.js";
 export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
 export type {
   PluginSubscribeOptions,

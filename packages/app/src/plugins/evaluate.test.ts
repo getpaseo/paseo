@@ -531,6 +531,38 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it("collects composer items and releases an id on removal", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function Item() { return null; }
+        const remove = plugin.addComposerItem({ id: "flag", Component: Item });
+        remove();
+        plugin.addComposerItem({ id: "flag", Component: Item });
+      `),
+    );
+    expect(plugin.composerItems.map((item) => item.id)).toEqual(["flag"]);
+  });
+
+  it("rejects duplicate and non-component composer items", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function Item() { return null; }
+          plugin.addComposerItem({ id: "flag", Component: Item });
+          plugin.addComposerItem({ id: "flag", Component: Item });
+        `),
+      ),
+    ).toThrow("Duplicate composer item: flag");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`plugin.addComposerItem({ id: "flag", Component: "nope" })`),
+      ),
+    ).toThrow("Composer item flag is not a component");
+  });
+
   it("runs the client entry with the full runtime context", () => {
     const plugin = evaluatePluginClientBundle(
       "review",

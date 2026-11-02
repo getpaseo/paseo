@@ -5,6 +5,8 @@ export interface ComposerControlPresence {
   hasThinking: boolean;
   hasMode: boolean;
   features: readonly ComposerFeatureControlPresence[];
+  /** Plugin composer items. Each is budgeted like a select with a short label. */
+  pluginItems: number;
   fontScale: number;
 }
 
@@ -26,6 +28,7 @@ export const COMPOSER_TOOLBAR_GEOMETRY = {
 } as const;
 
 const DENSITY_HYSTERESIS = 12;
+const PLUGIN_ITEM_LABEL = "Plugin item";
 
 function normalizedFontScale(fontScale: number): number {
   return Number.isFinite(fontScale) ? Math.max(1, fontScale) : 1;
@@ -62,7 +65,9 @@ function resolveCondensedFloor(controls: ComposerControlPresence): number {
   if (controls.hasModel) widths.push(36 + 60 * fontScale);
   if (controls.hasThinking) widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
   if (controls.hasMode) widths.push(36 + 96 * fontScale);
-  if (controls.features.length > 0) widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
+  if (controls.features.length > 0 || controls.pluginItems > 0) {
+    widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
+  }
   return sumControlWidths(widths);
 }
 
@@ -74,6 +79,11 @@ function resolveFullFloor(controls: ComposerControlPresence): number {
   if (controls.hasMode) widths.push(54 + 96 * fontScale);
   for (const feature of controls.features) {
     widths.push(resolveFeatureControlWidth(feature, fontScale));
+  }
+  for (let index = 0; index < controls.pluginItems; index++) {
+    widths.push(
+      resolveFeatureControlWidth({ type: "select", label: PLUGIN_ITEM_LABEL }, fontScale),
+    );
   }
   return sumControlWidths(widths);
 }

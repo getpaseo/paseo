@@ -34,6 +34,7 @@ describe("composer control layout", () => {
       hasThinking: true,
       hasMode: true,
       features: [{ type: "toggle" as const }],
+      pluginItems: 0,
       fontScale: 1,
     };
 
@@ -95,6 +96,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }],
+          pluginItems: 0,
           fontScale: 1,
         },
       }),
@@ -107,6 +109,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }, { type: "select", label: "Tools" }],
+          pluginItems: 0,
           fontScale: 1,
         },
       }),
@@ -119,6 +122,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }],
+          pluginItems: 0,
           fontScale: 1.25,
         },
       }),
@@ -133,6 +137,7 @@ describe("composer control layout", () => {
         hasModel: true,
         hasThinking: true,
         hasMode: true,
+        pluginItems: 0,
         fontScale: 1,
       },
     };
@@ -152,6 +157,34 @@ describe("composer control layout", () => {
         },
       }),
     ).toBe("condensed");
+  });
+
+  it("condenses to make room for plugin items and keeps them in the overflow", () => {
+    const base = {
+      availableWidth: 430,
+      currentDensity: "full" as const,
+      controls: {
+        hasModel: true,
+        hasThinking: true,
+        hasMode: true,
+        features: [],
+        fontScale: 1,
+      },
+    };
+
+    expect(
+      resolveComposerControlDensity({ ...base, controls: { ...base.controls, pluginItems: 0 } }),
+    ).toBe("full");
+    expect(
+      resolveComposerControlDensity({ ...base, controls: { ...base.controls, pluginItems: 2 } }),
+    ).toBe("condensed");
+    expect(
+      resolveComposerControlDensity({
+        ...base,
+        availableWidth: 250,
+        controls: { ...base.controls, pluginItems: 2 },
+      }),
+    ).toBe("tight");
   });
 
   it("gives every toolbar control one shell and one platform glyph envelope", () => {

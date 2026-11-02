@@ -52,6 +52,8 @@ export interface PluginAgentSnapshot {
   readonly attentionReason: "finished" | "error" | "permission" | null;
   readonly parentAgentId: string | null;
   readonly labels: Readonly<Record<string, string>>;
+  /** Structured data plugins store on the agent. */
+  readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
 export interface PluginThemeColors {

@@ -1897,6 +1897,79 @@ header has no room for plugin buttons, so each one is a row of the workspace men
 icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
 decisions.
 
+## Composer items
+
+`client.addComposerItem({ id, Component })` puts a component in the composer: the agent composer,
+the draft composer for a new agent, and the composer on the New workspace screen. `useComposer()`
+reads and changes what the composer configures, and `Toggle`, `Select` and `Action` from
+`@getpaseo/plugin/client/ui` draw the controls.
+
+```tsx
+import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={(next) => composer.setMetadata({ "review.needsReview": next ? true : null })}
+    />
+  );
+}
+
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={() => composer.insertText("- [ ] Tests\n- [ ] Docs\n")}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
+}
+```
+
+`useComposer()` returns the composer the item sits in:
+
+| Field or command                                    | Meaning                                                                                                                                          |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context`                                           | `"agent"` for a running agent, `"draft"` for a new agent in a workspace, `"new-workspace"` for the New workspace screen.                         |
+| `prompt`, `setPrompt(text)`, `insertText(text)`     | The prompt. `insertText` replaces the selection or inserts at the cursor.                                                                        |
+| `attachments`, `addAttachment`, `removeAttachment`  | Items from [your own attachment sources](#add-a-composer-attachment-source). Attachments from other plugins and Paseo's own are not listed.      |
+| `agent.provider`, `model`, `mode`, `thinking`       | What the agent runs with, or what the draft will create.                                                                                         |
+| `agent.options`                                     | The provider options in effect, defaults included.                                                                                               |
+| `agent.metadata`                                    | The agent's [metadata](/docs/plugins/hooks#metadata). In New workspace, the first agent's.                                                       |
+| `setProvider`, `setModel`, `setMode`, `setThinking` | Return promises. `setProvider` resets the model like the provider picker, and rejects on `context: "agent"`: a running agent keeps its provider. |
+| `setOptions(patch)`, `setMetadata(patch)`           | Top-level keys replace; `null` removes the key. Metadata set in a draft is sent when the agent is created and cleared once the prompt is sent.   |
+
+The same call does the same thing in every composer; a plugin does not choose a composer's
+implementation. `setMetadata` on a running agent needs a host that supports metadata. On an older
+host the promise rejects with "Update the host to use metadata."
+
+`Toggle` takes `value` and `onValueChange`. `Select` takes `value`, `options` (`{ value, label,
+description? }`) and `onValueChange`. `Action` takes `onPress`. All three take `title`, `icon` (a
+[Lucide name, SVG or component](#icons)) and `disabled`. Paseo owns where each control sits: inline
+in the toolbar when the composer has room, and a row in the composer's overflow sheet when it does
+not, which is always the case on a phone. A `Select` opens its list in place of the sheet row. A
+`Component` that renders something other than these controls draws it where its item is placed; in
+the overflow sheet that is the sheet.
+
+A composer item counts toward how much fits before Paseo knows what it renders. An item that
+renders nothing can still leave an empty overflow sheet on a narrow composer, so always render a
+control.
+
+The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
+registers a `Select`, a `Toggle` and an `Action`.
+
 ## Composer pills
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)

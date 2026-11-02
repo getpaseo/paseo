@@ -27,6 +27,7 @@ import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
   AgentOptionControl,
+  JsonValue,
   ProviderOptions,
   AgentProvider,
   AgentMode,
@@ -103,6 +104,7 @@ export interface Agent {
   background?: boolean;
   parentAgentId: string | null;
   labels: Record<string, string>;
+  metadata?: Record<string, JsonValue>;
   projectPlacement?: ProjectPlacementPayload | null;
 }
 
