@@ -1565,9 +1565,168 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = createService({ subscribe });
     const subscription = await service.requestWorkingTreeWatch(REPO_CWD, vi.fn());
 
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(2);
 
     subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("a watcher that fails to start is retried and replaces the polling fallback", async () => {
+    const watchCallbacks: Array<
+      (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+    > = [];
+    const recoveredSubscription = createAsyncSubscription();
+    const subscribe = vi
+      .fn(async (_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return recoveredSubscription;
+      })
+      .mockRejectedValueOnce(new Error("watcher unavailable"));
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscription = await service.requestWorkingTreeWatch(REPO_CWD, listener);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    const notificationsAfterRecovery = listener.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+    expect(subscribe).toHaveBeenCalledTimes(2);
+
+    watchCallbacks[0]?.(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery + 1);
+
+    subscription.unsubscribe();
+    expect(recoveredSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  test("a watcher that keeps failing to start backs off its retries while polling continues", async () => {
+    const subscribe = vi.fn(async () => {
+      throw new Error("watcher unavailable");
+    });
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscription = await service.requestWorkingTreeWatch(REPO_CWD, listener);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+    });
+    const pollsAfterFirstRetry = listener.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(subscribe).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(35_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(2);
+    });
+    expect(listener.mock.calls.length).toBeGreaterThan(pollsAfterFirstRetry);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("a watcher attempt that expired cannot tear down the recovered watcher", async () => {
+    const watchCallbacks: Array<
+      (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+    > = [];
+    const recoveredSubscription = createAsyncSubscription();
+    const subscribe = vi
+      .fn((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return Promise.resolve(recoveredSubscription);
+      })
+      .mockImplementationOnce((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+      });
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscriptionPromise = service.requestWorkingTreeWatch(REPO_CWD, listener);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+    const subscription = await subscriptionPromise;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    const notificationsAfterRecovery = listener.mock.calls.length;
+
+    watchCallbacks[0]?.(new Error("expired watcher stopped"), []);
+    watchCallbacks[0]?.(null, [{ path: join(REPO_CWD, "stale.ts"), type: "update" }]);
+    expect(recoveredSubscription.unsubscribe).not.toHaveBeenCalled();
+    expect(service.getMetrics().watcherErrorCallbackCount).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+    watchCallbacks[1]?.(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery + 1);
+
+    subscription.unsubscribe();
+    expect(recoveredSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  test("a watcher attempt that resolves after recovery is closed without touching the recovered watcher", async () => {
+    const watchCallbacks: Array<
+      (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+    > = [];
+    const lateAttempt = createDeferred<ReturnType<typeof createAsyncSubscription>>();
+    const lateSubscription = createAsyncSubscription();
+    const recoveredSubscription = createAsyncSubscription();
+    const subscribe = vi
+      .fn((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return Promise.resolve(recoveredSubscription);
+      })
+      .mockImplementationOnce((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return lateAttempt.promise;
+      });
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscriptionPromise = service.requestWorkingTreeWatch(REPO_CWD, listener);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+    const subscription = await subscriptionPromise;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    const notificationsAfterRecovery = listener.mock.calls.length;
+
+    lateAttempt.resolve(lateSubscription);
+    await vi.waitFor(() => {
+      expect(lateSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    });
+    watchCallbacks[0]?.(new Error("late watcher stopped"), []);
+    expect(recoveredSubscription.unsubscribe).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+
+    watchCallbacks[1]?.(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery + 1);
+
+    subscription.unsubscribe();
+    expect(recoveredSubscription.unsubscribe).toHaveBeenCalledTimes(1);
     service.dispose();
   });
 
