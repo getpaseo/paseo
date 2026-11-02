@@ -135,9 +135,8 @@ export function createPluginWorker(options: {
     handler: (input: unknown, context: never) => unknown,
   ) => {
     if ("event" in contract) {
-      registerSubscription(contract, (input, context) =>
-        handler(contract.input.parse(input), context as never),
-      );
+      // The subscription handlers parse the input once and pass the result here.
+      registerSubscription(contract, handler as PluginSubscriptionHandler);
       return;
     }
     register(contract, (input, context) => handler(contract.input.parse(input), context as never));

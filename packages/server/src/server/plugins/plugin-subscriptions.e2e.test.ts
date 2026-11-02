@@ -34,6 +34,11 @@ const nestedPush = defineSubscription({
   input: z.object({}),
   event: z.object({ data: z.instanceof(Uint8Array) }),
 });
+const repeated = defineSubscription({
+  name: "repeated",
+  input: z.object({ times: z.string().transform(Number) }),
+  event: z.string().transform((text) => text.length),
+});
 const watchers = defineRpc({
   name: "watchers",
   input: z.object({}),
@@ -72,6 +77,9 @@ export default function contribute(server: PluginServerContext) {
     void push({ data: new Uint8Array(1) }).catch((error) => {
       console.error("nested push", error.message);
     });
+  });
+  server.handle(repeated, async ({ times }, { push }) => {
+    await push(typeof times === "number" ? "x".repeat(times) : "input arrived untransformed");
   });
   server.handle(watchers, () => ({ starts, active }));
   server.handle(thumbnail, ({ size }) => Buffer.alloc(size, 7));
@@ -195,6 +203,19 @@ test("a subscription delivers JSON and binary events in order and release aborts
     await expect(watcherCount(client)).resolves.toEqual({ starts: 2, active: 1 });
     await binary.release();
     await expect(watcherCount(client)).resolves.toEqual({ starts: 2, active: 0 });
+  } finally {
+    await harness.close();
+  }
+}, 60_000);
+
+test("a schema transform runs once: the handler gets the parsed input and the wire carries the pushed event", async () => {
+  const harness = await startHarness();
+  try {
+    const subscription = harness.client.observePluginRpc(PLUGIN_ID, "repeated", { times: "2" });
+    const received = collect(subscription);
+    await subscription.ready;
+    // The client parses "xx" into 2; parsing it on the plugin side too would reject it.
+    await expect.poll(() => received).toEqual([{ type: "event", event: "xx" }, { type: "closed" }]);
   } finally {
     await harness.close();
   }
