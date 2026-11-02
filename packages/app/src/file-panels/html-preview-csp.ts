@@ -28,29 +28,6 @@ const POLICY = [
 
 const META = `<meta http-equiv="Content-Security-Policy" content="${POLICY}">`;
 
-// Native WebViews already handle fragments; only srcdoc inherits the app's base URL.
-const FRAGMENT_NAVIGATION = `<script>
-if (location.href === "about:srcdoc") {
-  document.addEventListener("click", function (event) {
-    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
-    const fragment = anchor && anchor.getAttribute("href");
-    if (!fragment || !fragment.startsWith("#")) return;
-    event.preventDefault();
-    let id = fragment.slice(1);
-    try { id = decodeURIComponent(id); } catch { return; }
-    const target = document.getElementById(id) || Array.from(document.getElementsByName(id)).find(function (element) { return element.tagName === "A"; });
-    if (id && !target) return;
-    const previousHash = location.hash;
-    location.hash = fragment;
-    if (location.hash === previousHash) {
-      if (target) target.scrollIntoView();
-      else window.scrollTo(0, 0);
-    }
-  });
-}
-</script>`;
-
 // The policy must reach the parser before any markup the document declares, and it
 // only counts if it lands in `<head>` — once the parser has moved on to `<body>`, a
 // meta http-equiv CSP is ignored outright.
@@ -68,7 +45,7 @@ if (location.href === "about:srcdoc") {
 // the parser ignores wherever it appears. Standards mode is guaranteed, the policy
 // is always the first element and therefore always in the head, and no part of the
 // document has to be parsed to place it.
-const PROLOGUE = `<!doctype html>${META}${FRAGMENT_NAVIGATION}`;
+const PROLOGUE = `<!doctype html>${META}`;
 
 // Left where it is, a BOM would sit mid-document and render as a zero-width space.
 const BOM = "\uFEFF";
