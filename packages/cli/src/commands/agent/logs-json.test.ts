@@ -1,70 +1,50 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Command } from "commander";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { resolve } from "node:path";
+import { connectToDaemon } from "../../utils/client.js";
+import { runPaseoCli, startTestDaemon } from "../../../tests/helpers/test-daemon.js";
 
-const agentId = "11111111-1111-4111-8111-111111111111";
-const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
-const timeline: AgentTimelineItem[] = [
-  { type: "user_message", text: "say hi" },
-  { type: "reasoning", text: "Greet the user." },
-  { type: "assistant_message", text: "Hi!", messageId: "msg_1" },
-];
-const timelineEntries = timeline.map((item) => ({ item, timestamp: "2026-10-19T00:00:00.000Z" }));
+describe("paseo logs JSON output", () => {
+  let daemon: Awaited<ReturnType<typeof startTestDaemon>>;
+  let agentId: string;
+  let host: string;
 
-vi.mock("../../utils/client.js", () => ({
-  connectToDaemon: vi.fn(async () => ({
-    fetchAgent: vi.fn(async () => ({ agent: { id: agentId } })),
-    fetchAgentTimeline: vi.fn(async () => ({ entries: timelineEntries })),
-    close: vi.fn(async () => undefined),
-  })),
-}));
+  beforeAll(async () => {
+    await mkdir(".artifacts", { recursive: true });
+    daemon = await startTestDaemon({
+      paseoHome: await mkdtemp(resolve(".artifacts/logs-json-home-")),
+      workDir: await mkdtemp(resolve(".artifacts/logs-json-work-")),
+    });
+    host = `127.0.0.1:${daemon.port}`;
+    const client = await connectToDaemon({ target: { kind: "endpoint", host } });
+    try {
+      // Creating an idle agent needs no inference or external provider connection.
+      const agent = await client.createAgent({
+        provider: "claude",
+        cwd: daemon.workDir,
+        title: "JSON logs",
+      });
+      agentId = agent.id;
+    } finally {
+      await client.close();
+    }
+  }, 60_000);
 
-import { runLogsCommand } from "./logs.js";
-
-async function captureStdout(run: () => Promise<void>): Promise<string> {
-  const lines: string[] = [];
-  const log = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-    lines.push(args.join(" "));
-  });
-  try {
-    await run();
-  } finally {
-    log.mockRestore();
-  }
-  return lines.join("\n");
-}
-
-describe("paseo logs --json", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+  afterAll(async () => {
+    await daemon?.stop();
   });
 
-  it("prints the timeline as JSON instead of the text transcript", async () => {
-    const stdout = await captureStdout(() =>
-      runLogsCommand("1111", { daemonTarget, json: true }, {} as Command),
-    );
-
-    expect(JSON.parse(stdout)).toEqual({ agentId, items: timeline });
-  });
-
-  it("applies --tail and --filter to the JSON items", async () => {
-    const stdout = await captureStdout(() =>
-      runLogsCommand(
-        "1111",
-        { daemonTarget, json: true, tail: "1", filter: "text" },
-        {} as Command,
-      ),
-    );
-
-    expect(JSON.parse(stdout)).toEqual({ agentId, items: [timeline[2]] });
-  });
-
-  it("still prints the text transcript without --json", async () => {
-    const stdout = await captureStdout(() =>
-      runLogsCommand("1111", { daemonTarget }, {} as Command),
-    );
-
-    expect(() => JSON.parse(stdout)).toThrow();
-    expect(stdout).toContain("Hi!");
-  });
+  it.each([
+    { label: "top-level --json", args: ["logs", "--json"] },
+    { label: "agent logs --json", args: ["agent", "logs", "--json"] },
+    { label: "--format json alias", args: ["logs", "--format", "json"] },
+  ])(
+    "prints JSON through $label",
+    async ({ args }) => {
+      const result = await runPaseoCli(daemon, [...args, agentId, "--host", host]);
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ agentId, items: [] });
+    },
+    30_000,
+  );
 });

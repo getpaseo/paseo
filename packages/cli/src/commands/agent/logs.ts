@@ -74,7 +74,7 @@ export function formatAgentActivityTranscript(
  * Picks the items `--tail` keeps, the same way the transcript does: the last n
  * timeline items, before any of them are dropped from the curated view.
  */
-export function selectTailItems(
+function selectTailItems(
   timelineItems: AgentTimelineItem[],
   tailCount?: number,
 ): AgentTimelineItem[] {
@@ -87,12 +87,16 @@ export function selectTailItems(
   return timelineItems.slice(-tailCount);
 }
 
-export function formatAgentLogsJson(
+function formatAgentLogsJson(
   agentId: string,
   timelineItems: AgentTimelineItem[],
   tailCount?: number,
 ): string {
   return JSON.stringify({ agentId, items: selectTailItems(timelineItems, tailCount) }, null, 2);
+}
+
+function usesJsonOutput(options: AgentLogsOptions): boolean {
+  return options.json === true || options.format?.trim().toLowerCase() === "json";
 }
 
 type StreamingTextType = "assistant_message" | "reasoning";
@@ -346,7 +350,7 @@ export async function runLogsCommand(
 
     await client.close();
 
-    if (options.json) {
+    if (usesJsonOutput(options)) {
       console.log(formatAgentLogsJson(resolvedId, timelineItems, tailCount));
       return;
     }
@@ -395,7 +399,7 @@ async function runFollowMode({
     existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
   }
 
-  const json = options.json === true;
+  const json = usesJsonOutput(options);
 
   // Print existing transcript (tail-like behavior)
   if (json) {
