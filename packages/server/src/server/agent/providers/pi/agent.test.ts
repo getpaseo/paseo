@@ -145,16 +145,6 @@ function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
   return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
 }
 
-// Pi's context path: the entries from the root to the leaf.
-function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const branch: PiSessionEntry[] = [];
-  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
-    branch.unshift(entry);
-  }
-  return branch;
-}
-
 function parseEntryCapture(notification: string): unknown {
   const prefix = "PASEO_ENTRY_CAPTURE ";
   expect(notification.startsWith(prefix)).toBe(true);
@@ -1018,7 +1008,7 @@ describe("PiRpcAgentSession", () => {
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
     fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
-    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1670,7 +1660,7 @@ describe("PiRpcAgentSession", () => {
   test("closes a history-only Pi runtime when replay fails", async () => {
     const pi = new FakePi();
     pi.queueSessionSetup((runtimeSession) => {
-      runtimeSession.getMessagesError = new Error("History unavailable");
+      runtimeSession.getHistoryError = new Error("History unavailable");
     });
     const session = await createClient(pi).resumeSession(
       {
@@ -1858,7 +1848,7 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
-  test("captures the session's user entries apart from the ones on the current branch", async () => {
+  test("captures all session user entries as rewind targets, including abandoned branches", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
@@ -1876,7 +1866,6 @@ describe("PiRpcAgentSession", () => {
     const context = {
       sessionManager: {
         getEntries: () => entries,
-        buildContextEntries: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
@@ -1889,10 +1878,6 @@ describe("PiRpcAgentSession", () => {
         treeEntries: [
           { id: "one", parentId: null, text: "first" },
           { id: "abandoned", parentId: "one-reply", text: "rewound away" },
-          { id: "two", parentId: "one-reply", text: "second" },
-        ],
-        contextEntries: [
-          { id: "one", parentId: null, text: "first" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
       },
@@ -3369,7 +3354,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
+    pi.latestSession().historyUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -3393,7 +3378,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    fakeSession.contextUserEntries = [
+    fakeSession.historyUserEntries = [
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
 
