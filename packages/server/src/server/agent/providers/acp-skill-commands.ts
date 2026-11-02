@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { AgentSlashCommand } from "../agent-sdk-types.js";
+import type { AgentPromptInput, AgentSlashCommand } from "../agent-sdk-types.js";
 
 /**
  * Skills an ACP agent advertised itself. The agent expands `/name` into the
@@ -136,6 +136,61 @@ export async function discoverACPSkills(
   }
 
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Offer skills the agent cannot expand itself alongside its advertised
+ * commands. A name the agent already advertises wins: the agent will expand
+ * that one, so Paseo must not duplicate it.
+ */
+export function mergeSkillCommands(
+  agentCommands: readonly AgentSlashCommand[],
+  skills: readonly DiscoveredACPSkill[],
+): AgentSlashCommand[] {
+  const agentNames = new Set(agentCommands.map((command) => command.name));
+  const extraSkills = skills.filter((skill) => !agentNames.has(skill.name)).map(toSlashCommand);
+  if (extraSkills.length === 0) {
+    return [...agentCommands];
+  }
+  return [...agentCommands, ...extraSkills].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Expand a leading `/name` that names a skill Paseo discovered but the agent
+ * did not advertise. The agent expands its own advertised commands, so only
+ * skills missing from `advertisedNames` are rewritten here; anything else
+ * reaches the agent unchanged and it decides what to do with it.
+ */
+export function expandSkillPrompt(
+  prompt: AgentPromptInput,
+  skills: readonly DiscoveredACPSkill[],
+  advertisedNames: ReadonlySet<string>,
+): AgentPromptInput {
+  const candidates = skills.filter((skill) => !advertisedNames.has(skill.name));
+  if (candidates.length === 0) {
+    return prompt;
+  }
+
+  if (typeof prompt === "string") {
+    const invocation = parseACPSkillInvocation(prompt, candidates);
+    return invocation ? renderACPSkillInvocation(invocation) : prompt;
+  }
+
+  const index = prompt.findIndex((block) => block.type === "text" && block.text.trim().length > 0);
+  if (index === -1) {
+    return prompt;
+  }
+  const block = prompt[index]!;
+  if (block.type !== "text") {
+    return prompt;
+  }
+  const invocation = parseACPSkillInvocation(block.text, candidates);
+  if (!invocation) {
+    return prompt;
+  }
+  const expanded = [...prompt];
+  expanded[index] = { ...block, text: renderACPSkillInvocation(invocation) };
+  return expanded;
 }
 
 export function toSlashCommand(skill: DiscoveredACPSkill): AgentSlashCommand {

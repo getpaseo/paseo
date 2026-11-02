@@ -1,10 +1,9 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import {
   discoverACPSkills,
-  parseACPSkillInvocation,
-  renderACPSkillInvocation,
+  expandSkillPrompt,
+  mergeSkillCommands,
   type DiscoveredACPSkill,
-  toSlashCommand,
 } from "./acp-skill-commands.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -2041,37 +2040,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   /**
    * Expand a leading `/name` that names a skill Paseo discovered but the agent
-   * did not advertise. The agent expands its own advertised commands, so only
-   * skills missing from `cachedCommands` are rewritten here; anything else
-   * reaches the agent unchanged and it decides what to do with it.
+   * did not advertise. See `expandSkillPrompt` in acp-skill-commands for the
+   * shared rules; the agent expands its own advertised commands itself.
    */
   private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
     await this.ensureSkillsDiscovered();
     const advertisedNames = new Set(this.cachedCommands.map((command) => command.name));
-    const skills = this.discoveredSkills.filter((skill) => !advertisedNames.has(skill.name));
-
-    if (typeof prompt === "string") {
-      const invocation = parseACPSkillInvocation(prompt, skills);
-      return invocation ? renderACPSkillInvocation(invocation) : prompt;
-    }
-
-    const index = prompt.findIndex(
-      (block) => block.type === "text" && block.text.trim().length > 0,
-    );
-    if (index === -1) {
-      return prompt;
-    }
-    const block = prompt[index]!;
-    if (block.type !== "text") {
-      return prompt;
-    }
-    const invocation = parseACPSkillInvocation(block.text, skills);
-    if (!invocation) {
-      return prompt;
-    }
-    const expanded = [...prompt];
-    expanded[index] = { ...block, text: renderACPSkillInvocation(invocation) };
-    return expanded;
+    return expandSkillPrompt(prompt, this.discoveredSkills, advertisedNames);
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2204,14 +2179,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * that one, so Paseo must not duplicate it.
    */
   private mergeDiscoveredSkills(agentCommands: AgentSlashCommand[]): AgentSlashCommand[] {
-    const agentNames = new Set(agentCommands.map((command) => command.name));
-    const extraSkills = this.discoveredSkills
-      .filter((skill) => !agentNames.has(skill.name))
-      .map(toSlashCommand);
-    if (extraSkills.length === 0) {
-      return agentCommands;
-    }
-    return [...agentCommands, ...extraSkills].sort((a, b) => a.name.localeCompare(b.name));
+    return mergeSkillCommands(agentCommands, this.discoveredSkills);
   }
 
   async setMode(modeId: string): Promise<void> {
