@@ -29,23 +29,21 @@ export function resolveDraftSelectionSource(input: {
   const userModified = input.userModified ?? {};
   const initialValues = input.initialValues ?? {};
   const savedSelection = input.savedSelection ?? {};
-  const hasSavedModel = Boolean(savedSelection.model?.trim());
-  const hasSavedMode = Boolean(savedSelection.modeId?.trim());
-  const hasSavedThinking = Boolean(savedSelection.thinkingOptionId?.trim());
+  const resolveFlag = (
+    userTouched: boolean | undefined,
+    saved: string | null | undefined,
+    initial: string | null | undefined,
+  ): DraftSelectionSource =>
+    (userTouched ?? false) || Boolean(saved?.trim()) || Boolean(initial?.trim())
+      ? "explicit"
+      : "implicit";
   return {
-    model:
-      (userModified.model ?? false) || hasSavedModel || Boolean(initialValues.model?.trim())
-        ? "explicit"
-        : "implicit",
-    modeId:
-      (userModified.modeId ?? false) || hasSavedMode || Boolean(initialValues.modeId?.trim())
-        ? "explicit"
-        : "implicit",
-    thinkingOptionId:
-      (userModified.thinkingOptionId ?? false) ||
-      hasSavedThinking ||
-      Boolean(initialValues.thinkingOptionId?.trim())
-        ? "explicit"
-        : "implicit",
+    model: resolveFlag(userModified.model, savedSelection.model, initialValues.model),
+    modeId: resolveFlag(userModified.modeId, savedSelection.modeId, initialValues.modeId),
+    thinkingOptionId: resolveFlag(
+      userModified.thinkingOptionId,
+      savedSelection.thinkingOptionId,
+      initialValues.thinkingOptionId,
+    ),
   };
 }
