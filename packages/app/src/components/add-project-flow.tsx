@@ -1,3 +1,4 @@
+import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
 import { usePanelStore } from "@/stores/panel-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -92,7 +93,7 @@ import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
-import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 
 interface AddProjectFlowProps {
   request: AddProjectFlowRequest;
@@ -325,6 +326,7 @@ function setPageStatus(
 // The product flow is intentionally one cohesive page-stack state machine.
 // eslint-disable-next-line complexity
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
+  const addHost = useAddHost();
   const hosts = useHosts();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
@@ -615,11 +617,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: "No connected hosts",
           icon: Plus,
           testID: "add-project-flow-add-host",
-          select: () => {
-            onClose();
-            usePanelStore.getState().showMobileAgent();
-            router.push(buildSettingsAddHostRoute(Date.now()));
-          },
+          select: addHost,
         });
       }
       return choices;
@@ -717,7 +715,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     directoryPaths,
     githubQuery.data,
     host,
-    onClose,
+    addHost,
     openAddedProject,
     page,
     pathOptions,

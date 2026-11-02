@@ -1,16 +1,20 @@
 import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Link } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations, type PasswordRequiredPairing } from "@/runtime/host-runtime";
 import { parseRelayConnectionUri } from "@/utils/daemon-endpoints";
 import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer";
-import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  AdaptiveTextInput,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { getConnectionAuthFailureReason } from "@/utils/test-daemon-connection";
-import { PairingTargetTracker } from "./pair-link-credentials";
+import { PairingTargetTracker } from "@/components/pair-link-credentials";
 import { Button } from "@/components/ui/button";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
@@ -100,7 +104,6 @@ function PairLinkModalContent({
   onCancel,
   onSaved,
 }: PairLinkModalProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const daemons = useHosts();
   const { beginLinkPairing } = useHostMutations();
@@ -126,10 +129,7 @@ function PairLinkModalContent({
     resetPasswordInput();
   }, []);
 
-  const pairIcon = useMemo(
-    () => <Link size={16} color={theme.colors.accentForeground} />,
-    [theme.colors.accentForeground],
-  );
+  const pairIcon = useMemo(() => <ThemedLink size={16} />, []);
 
   const handleClose = useCallback(() => {
     if (isSaving) return;
@@ -212,7 +212,7 @@ function PairLinkModalContent({
 
       <View style={styles.field}>
         <Text style={styles.label}>{t("pairing.link.label")}</Text>
-        <AdaptiveTextInput
+        <ThemedAdaptiveTextInput
           ref={inputRef}
           initialValue={initialUrl}
           testID="pair-link-input"
@@ -220,7 +220,6 @@ function PairLinkModalContent({
           accessibilityLabel={t("pairing.link.label")}
           onChangeText={handleChangeOfferUrl}
           placeholder="https://app.paseo.sh/#offer=..."
-          placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
           autoFocus
           autoCapitalize="none"
@@ -235,7 +234,7 @@ function PairLinkModalContent({
           <Text style={styles.label}>
             {t("pairing.hostPassword.title", { host: parsedHostLabel(offerUrlRef.current) })}
           </Text>
-          <AdaptiveTextInput
+          <ThemedAdaptiveTextInput
             testID="pair-link-password-input"
             resetKey={`pair-link-password-${passwordResetKey}`}
             accessibilityLabel={t("pairing.hostPassword.label")}
@@ -274,3 +273,9 @@ function PairLinkModalContent({
     </AdaptiveModalSheet>
   );
 }
+
+const ThemedLink = withUnistyles(Link, (theme) => ({ color: theme.colors.accentForeground }));
+
+const ThemedAdaptiveTextInput = withUnistyles(AdaptiveTextInput, (theme) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+}));
