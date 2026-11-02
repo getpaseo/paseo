@@ -18,3 +18,46 @@ for (const layout of [
     });
   });
 }
+
+test("a branch chosen while Local applies once the user switches to a new worktree", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(page, { compact: false }, async (screen) => {
+    await screen.chooseIssue("PAS-101 Slow sidebar");
+    await screen.chooseWorktree();
+    const created = await screen.createWorkspace({ prompt: "" });
+    expect(created.branch).toBe("pas-101-slow-sidebar");
+    expect(created.metadata).toEqual({ "new-workspace-issues.issue": "PAS-101" });
+  });
+});
+
+test("a plugin's branch applies when the project has no default base to branch off", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(
+    page,
+    { compact: false, detachedHead: true },
+    async (screen) => {
+      await screen.chooseWorktree();
+      await screen.chooseIssue("PAS-101 Slow sidebar");
+      const created = await screen.createWorkspace();
+      expect(created.branch).toBe("pas-101-slow-sidebar");
+    },
+  );
+});
+
+test("an item can set the branch and metadata from its mount effect", async ({ page }) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(
+    page,
+    { compact: false, setsOnMount: true },
+    async (screen) => {
+      await screen.chooseWorktree();
+      const created = await screen.createWorkspace();
+      expect(created.branch).toBe("set-on-mount");
+      expect(created.metadata).toEqual({ "new-workspace-issues.issue": "ON-MOUNT" });
+    },
+  );
+});

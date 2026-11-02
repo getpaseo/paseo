@@ -1,23 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { PickerItem } from "../new-workspace-picker-item";
-import { createNewWorkspaceSetup, type SetupFacts } from "./setup-model";
+import { createNewWorkspaceSetup, type SetupInputs } from "./setup-model";
 
-function readyFacts(overrides: Partial<SetupFacts> = {}): SetupFacts {
-  return {
-    locked: false,
-    project: { id: "p1", name: "repo" },
-    canCreateWorktree: true,
-    supportsMetadata: true,
-    chooseIsolation: () => {},
-    chooseBase: () => {},
-    ...overrides,
-  };
-}
+const READY: SetupInputs = {
+  locked: false,
+  project: { id: "p1", name: "repo" },
+  canCreateWorktree: true,
+  supportsMetadata: true,
+};
 
 describe("New workspace setup commands", () => {
+  it("accepts commands from the first moment, before the screen has committed", async () => {
+    const setup = createNewWorkspaceSetup(READY);
+
+    await setup.commands.setBranch("pas-101");
+
+    expect(setup.getSnapshot().branch).toBe("pas-101");
+  });
+
   it("applies commands that run back to back without waiting for a render", async () => {
-    const setup = createNewWorkspaceSetup();
-    setup.report(readyFacts());
+    const setup = createNewWorkspaceSetup(READY);
 
     void setup.commands.setBranch("pas-101");
     void setup.commands.setMetadata({ issue: "PAS-101", keep: true });
@@ -27,27 +29,35 @@ describe("New workspace setup commands", () => {
     expect(setup.getSnapshot().metadata).toEqual({ issue: "PAS-101" });
   });
 
-  it("passes a base branch and an isolation choice to the picker's own handlers", async () => {
-    const setup = createNewWorkspaceSetup();
+  it("changes the model and tells the screen, for a base branch and an isolation choice", async () => {
+    const setup = createNewWorkspaceSetup(READY);
     const chosen: PickerItem[] = [];
     const isolations: string[] = [];
-    setup.report(
-      readyFacts({
-        chooseBase: (item) => chosen.push(item),
-        chooseIsolation: (isolation) => isolations.push(isolation),
-      }),
-    );
+    setup.onBaseChosen((item) => chosen.push(item));
+    setup.onIsolationChosen((isolation) => isolations.push(isolation));
 
     await setup.commands.setBaseRef({ type: "branch", name: " release " });
     await setup.commands.setIsolation("worktree");
 
     expect(chosen).toMatchObject([{ kind: "branch", name: "release", refName: "release" }]);
+    expect(setup.getSnapshot().pickerSelection.selectedItem).toEqual(chosen[0]);
     expect(isolations).toEqual(["worktree"]);
+    expect(setup.getSnapshot().manualIsolation).toBe("worktree");
+  });
+
+  it("shows a base ref's short name and keeps the exact ref for creation", async () => {
+    const setup = createNewWorkspaceSetup(READY);
+
+    await setup.commands.setBaseRef({ type: "branch", name: "refs/remotes/origin/release" });
+
+    expect(setup.getSnapshot().pickerSelection.selectedItem).toMatchObject({
+      name: "release",
+      refName: "refs/remotes/origin/release",
+    });
   });
 
   it("rejects every command while the screen is locked, as the pickers do", async () => {
-    const setup = createNewWorkspaceSetup();
-    setup.report(readyFacts({ locked: true }));
+    const setup = createNewWorkspaceSetup({ ...READY, locked: true });
 
     const results = await Promise.allSettled([
       setup.commands.setBranch("x"),
@@ -61,20 +71,21 @@ describe("New workspace setup commands", () => {
     expect(setup.getSnapshot().metadata).toEqual({});
   });
 
-  it("reads the facts when a command runs, so a project change after render is seen", async () => {
-    const setup = createNewWorkspaceSetup();
-    setup.report(readyFacts());
-    const pending = setup.commands.setBaseRef({ type: "branch", name: "main" });
-    setup.report(readyFacts({ project: null }));
-    await pending;
+  it("reads the inputs when a command runs, so a project change after render is seen", async () => {
+    const setup = createNewWorkspaceSetup(READY);
+    setup.syncInputs({ ...READY, project: null });
+
     await expect(setup.commands.setBaseRef({ type: "branch", name: "main" })).rejects.toThrow(
       "Choose a project first.",
     );
   });
 
   it("rejects what the project or host cannot do", async () => {
-    const setup = createNewWorkspaceSetup();
-    setup.report(readyFacts({ canCreateWorktree: false, supportsMetadata: false }));
+    const setup = createNewWorkspaceSetup({
+      ...READY,
+      canCreateWorktree: false,
+      supportsMetadata: false,
+    });
 
     await expect(setup.commands.setIsolation("worktree")).rejects.toThrow(
       "cannot create worktrees",

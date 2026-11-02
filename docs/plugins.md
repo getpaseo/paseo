@@ -706,16 +706,21 @@ the plugin commands write to it, so a command sees what an earlier command left.
 stay in the screen's hooks (`useNewWorkspaceHostSelector` reconciles them against each other), and
 they are read-only to plugins; a command that switched them would unmount the item that called it.
 
-The screen reports what it derives from those hooks (the lock, the project, whether the project
-can make worktrees, whether the host supports metadata, and the pickers' own handlers) to the store
-with `setup.report` on every render. Commands read it when they run, never from the render that
-built them. `chooseIsolation` and `chooseBase` are the pickers' handlers, so a plugin command has the
-effects of a pick. Add a capability by extending the store and its facts; do not read screen state
-from a plugin component.
+The store is built in the render that creates the screen, with what the screen derives from its
+hooks (the lock, the project, whether the project can make worktrees, whether the host supports
+metadata), so a command is valid from a child's first effect, which runs before the screen's own
+effects. `syncInputs` refreshes those inputs in a layout effect on every commit, and commands read
+them when they run, never from the render that built them. The pickers and the commands pick
+through the same `chooseBase` and `chooseIsolation`, so a plugin command has the effects of a
+pick; the screen supplies those effects (syncing the picker's PR attachment, remembering the
+isolation) with `onBaseChosen` and `onIsolationChosen`. Add a capability by extending the store;
+do not read screen state from a plugin component.
 
-`ensureWorkspace` sends the store's `branch` as `source.branchName` only for a branch-off worktree
-(`checkoutRequest.action === "branch-off"`), and its `metadata` on `workspace.create` when it is
-not empty. The server uses `branchName ?? worktreeSlug` as the new branch.
+`ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a
+new branch (`startsNewBranch`, which mirrors the daemon: anything but a checkout, including no base
+at all on a detached HEAD), and its `metadata` on `workspace.create` when it is not empty. The
+server uses `branchName ?? worktreeSlug` as the new branch. `baseRef.name` is the exact ref
+creation uses; `branchNameFromRef` is for labels only.
 
 Items render through `ComposerControl` with `surface="field"`: a `FieldTrigger` (a badge on
 desktop, a full-width field when compact) and the same pending state, error toast and list as the

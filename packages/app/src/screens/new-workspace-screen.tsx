@@ -6,7 +6,7 @@ import type {
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -90,9 +90,9 @@ import {
   defaultBasePickerItem,
   pickerItemLabel,
   pickerItemToCheckoutRequest,
+  startsNewBranch,
   type BranchPickerDetail,
   type PickerCheckoutRequest,
-  type PickerItem,
   type PickerOptionData,
 } from "./new-workspace-picker-item";
 import {
@@ -107,7 +107,6 @@ import {
   createNewWorkspaceSetup,
   useNewWorkspaceSetupState,
   type NewWorkspaceSetup,
-  type SetupFacts,
 } from "./new-workspace/setup-model";
 import {
   resolveNewWorkspaceAutomaticServerId,
@@ -200,31 +199,30 @@ interface WorkspaceIsolationState {
 // Preserve the user's worktree choice while route metadata is provisional. Once
 // the authoritative placement arrives, unsupported projects fall back to local.
 function useWorkspaceIsolation(input: {
+  setup: NewWorkspaceSetup;
   supportsMultiplicity: boolean;
-  worktreeSupport: "supported" | "unsupported" | "unknown";
-  manualIsolation: "local" | "worktree" | null;
-  setManualIsolation: (value: "local" | "worktree") => void;
+  canCreateWorktree: boolean;
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, worktreeSupport, manualIsolation, setManualIsolation } = input;
+  const { setup, supportsMultiplicity, canCreateWorktree } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
+  const { manualIsolation } = useNewWorkspaceSetupState(setup);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
 
-  const setIsolation = useCallback(
-    (value: "local" | "worktree") => {
-      setManualIsolation(value);
-      void updatePreferences({ isolation: value });
-    },
-    [setManualIsolation, updatePreferences],
+  useEffect(
+    () =>
+      setup.onIsolationChosen((value) => {
+        void updatePreferences({ isolation: value });
+      }),
+    [setup, updatePreferences],
   );
 
   return {
     isolation,
-    setIsolation,
+    setIsolation: setup.chooseIsolation,
     effectiveIsolation: isWorktree ? "worktree" : "local",
     canCreateWorktree,
     showRefPicker: !supportsMultiplicity || isWorktree,
@@ -330,7 +328,7 @@ async function createMultiplicityWorkspace(input: {
           projectId,
           worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
-          ...(input.branchName && input.checkoutRequest?.action === "branch-off"
+          ...(input.branchName && startsNewBranch(input.checkoutRequest)
             ? { branchName: input.branchName }
             : {}),
         }
@@ -1018,10 +1016,15 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
-  const [setup] = useState(createNewWorkspaceSetup);
-  const setupState = useNewWorkspaceSetupState(setup);
+  const { setup, pluginProject, canCreateWorktree, isPending } = usePluginSetup({
+    serverId: selectedServerId,
+    project: selectedProject,
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    pendingAction,
+    isDraftHandoffActive,
+  });
   const dispatchPickerSelection = setup.dispatchPicker;
-  const selectedItem = setupState.pickerSelection.selectedItem;
+  const selectedItem = useNewWorkspaceSetupState(setup).pickerSelection.selectedItem;
 
   const handleForgeChangeRequestDetected = useCallback(() => {
     dispatchPickerSelection({ type: "pr-detected" });
@@ -1054,17 +1057,11 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const worktreeSupport = selectedProject
-    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
-    : "unsupported";
-  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
-  const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
-    useWorkspaceIsolation({
-      supportsMultiplicity: supportsWorkspaceMultiplicity,
-      worktreeSupport,
-      manualIsolation: setupState.manualIsolation,
-      setManualIsolation: setup.setManualIsolation,
-    });
+  const { effectiveIsolation, setIsolation, showRefPicker } = useWorkspaceIsolation({
+    setup,
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    canCreateWorktree,
+  });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1126,31 +1123,21 @@ export function NewWorkspaceScreen({
     const displayItem = itemById.get(selectedOptionId);
     return displayItem ? pickerItemLabel(displayItem) : "main";
   }, [itemById, selectedOptionId]);
-  const selectPickerItem = useCallback(
-    (item: PickerItem) => {
-      const nextAttachments = syncPickerPrAttachment({
-        attachments: chatDraft.attachments,
-        item,
-      });
-
-      dispatchPickerSelection({ type: "picker-selected", item });
-      chatDraft.setAttachments(nextAttachments);
-      setPickerOpen(false);
-    },
-    [chatDraft, dispatchPickerSelection],
+  const selectPickerItem = setup.chooseBase;
+  const setDraftAttachments = chatDraft.setAttachments;
+  useEffect(
+    () =>
+      setup.onBaseChosen((item) => {
+        setDraftAttachments((attachments) => syncPickerPrAttachment({ attachments, item }));
+        setPickerOpen(false);
+      }),
+    [setDraftAttachments, setup],
   );
 
-  const pluginScreen = usePluginSetup({
-    setup,
-    serverId: selectedServerId,
-    project: selectedProject,
-    baseItem,
-    isolation: effectiveIsolation,
-    canCreateWorktree,
-    locked: isPending,
-    chooseIsolation: setIsolation,
-    chooseBase: selectPickerItem,
-  });
+  const pluginScreen = useMemo<NewWorkspaceItemsScreen>(
+    () => ({ project: pluginProject, isolation: effectiveIsolation, baseItem, locked: isPending }),
+    [baseItem, effectiveIsolation, isPending, pluginProject],
+  );
 
   const handleSelectOption = useCallback(
     (id: string) => {
@@ -1638,46 +1625,37 @@ export function NewWorkspaceScreen({
   );
 }
 
-/** Terminal and chat launches edit in separate sessions; the screen follows the mounted one. */
-/** Reports the screen's current facts to the setup model, which plugin commands read when they run. */
+/**
+ * The setup model, built with what the screen has this render so a plugin item's mount effect can
+ * already run commands, and kept current on every commit.
+ */
 function usePluginSetup(input: {
-  setup: NewWorkspaceSetup;
-  serverId: string | null;
+  serverId: string;
   project: Parameters<typeof getHostProjectId>[0] | null;
-  baseItem: PickerItem | null;
-  isolation: NewWorkspaceItemsScreen["isolation"];
-  canCreateWorktree: boolean;
-  locked: boolean;
-  chooseIsolation: SetupFacts["chooseIsolation"];
-  chooseBase: SetupFacts["chooseBase"];
-}): NewWorkspaceItemsScreen {
-  const { setup, serverId, project, baseItem, isolation, locked } = input;
-  const { canCreateWorktree, chooseIsolation, chooseBase } = input;
+  supportsMultiplicity: boolean;
+  pendingAction: Parameters<typeof isNewWorkspacePending>[0]["pendingAction"];
+  isDraftHandoffActive: boolean;
+}) {
+  const { serverId, project, supportsMultiplicity, pendingAction, isDraftHandoffActive } = input;
+  const worktreeSupport = project
+    ? getWorktreeSupportForHostProject({ project, serverId })
+    : "unsupported";
+  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
+  const locked = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const supportsMetadata = useHostFeature(serverId, "entityMetadata");
-  const projectId = project && serverId ? getHostProjectId(project, serverId) : null;
+  const projectId = project ? getHostProjectId(project, serverId) : null;
   const projectName = project?.projectName ?? null;
-  const screen = useMemo<NewWorkspaceItemsScreen>(
-    () => ({
-      project: projectId && projectName ? { id: projectId, name: projectName } : null,
-      isolation,
-      baseItem,
-      locked,
-    }),
-    [baseItem, isolation, locked, projectId, projectName],
+  const pluginProject = useMemo(
+    () => (projectId && projectName ? { id: projectId, name: projectName } : null),
+    [projectId, projectName],
   );
-  useEffect(() => {
-    setup.report({
-      locked: screen.locked,
-      project: screen.project,
-      canCreateWorktree,
-      supportsMetadata,
-      chooseIsolation,
-      chooseBase,
-    });
-  }, [canCreateWorktree, chooseBase, chooseIsolation, screen, setup, supportsMetadata]);
-  return screen;
+  const inputs = { locked, project: pluginProject, canCreateWorktree, supportsMetadata };
+  const [setup] = useState(() => createNewWorkspaceSetup(inputs));
+  useLayoutEffect(() => setup.syncInputs(inputs));
+  return { setup, pluginProject, canCreateWorktree, isPending: locked };
 }
 
+/** Terminal and chat launches edit in separate sessions; the screen follows the mounted one. */
 function useNewWorkspaceComposerEditing() {
   const terminal = useComposerEditingSession("terminal");
   const chat = useComposerEditingSession("chat");

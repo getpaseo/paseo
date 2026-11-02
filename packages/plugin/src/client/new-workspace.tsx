@@ -12,22 +12,31 @@ export interface PluginNewWorkspace {
   readonly project: { readonly id: string; readonly name: string } | null;
   /** What the screen will create. A project that cannot make worktrees reads `"local"`. */
   readonly isolation: "local" | "worktree";
-  /** What a new worktree starts from; `null` until the project's default is known. */
+  /**
+   * What a new worktree starts from; `null` until the project's default is known. A branch's
+   * `name` is the exact ref creation uses, such as `refs/remotes/origin/main`, so
+   * `setBaseRef(newWorkspace.baseRef)` changes nothing.
+   */
   readonly baseRef:
     | { readonly type: "branch"; readonly name: string }
     | { readonly type: "change-request"; readonly number: number }
     | null;
   /**
    * The name of the branch a new worktree is created on; `null` lets Paseo pick one. It is kept
-   * while isolation is local or the base is a change request, and applies only to a worktree
-   * created from a branch.
+   * while isolation is local or the base is a change request. It names the new branch of any
+   * worktree that cuts one, from the default base or a chosen branch, and does not apply to a
+   * worktree that checks out an existing branch or change request.
    */
   readonly branch: string | null;
   /** The workspace's metadata, not the first agent's. */
   readonly metadata: Readonly<Record<string, JsonValue>>;
   /** Rejects `"worktree"` for a project that cannot make worktrees. */
   setIsolation(isolation: "local" | "worktree"): Promise<void>;
-  /** Starts the workspace from a branch. Rejects while no project is chosen. */
+  /**
+   * Starts the workspace from a branch. `name` is any ref the Base picker offers, such as
+   * `refs/remotes/origin/main`, or a bare branch name, which Paseo resolves the way it does for
+   * a branch name it is given anywhere else. Rejects while no project is chosen.
+   */
   setBaseRef(ref: { type: "branch"; name: string }): Promise<void>;
   setBranch(name: string | null): Promise<void>;
   /** Top-level keys replace; `null` removes the key. Rejects on a host without metadata support. */

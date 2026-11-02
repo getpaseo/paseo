@@ -210,6 +210,17 @@ export function pickerItemToCheckoutRequest(
   }
 }
 
+/**
+ * Whether creating a worktree from this request cuts a new branch, which is what the daemon does
+ * for anything but a checkout. No request at all (a detached HEAD gives the screen no default
+ * base) cuts one from the repository's default branch.
+ */
+export function startsNewBranch(request: PickerCheckoutRequest | undefined): boolean {
+  if (!request) return true;
+  if (request.action === "checkout") return false;
+  return !request.checkoutSource && request.githubPrNumber === undefined;
+}
+
 export function prPickerOptionId(number: number): string {
   return `${PR_OPTION_PREFIX}${number}`;
 }

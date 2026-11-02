@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
-import type { PickerItem } from "../new-workspace-picker-item";
+import { branchNameFromRef, type PickerItem } from "../new-workspace-picker-item";
 import {
   initialPickerSelectionState,
   reducePickerSelection,
@@ -22,17 +22,14 @@ interface SetupState {
 }
 
 /**
- * What the screen derives from its hooks and reports on every render, so a command reads it at the
- * moment it runs rather than from the render that built the command.
+ * What the screen derives from its hooks, given at construction and kept current on every
+ * commit, so a command reads it at the moment it runs rather than from the render that built it.
  */
-export interface SetupFacts {
+export interface SetupInputs {
   locked: boolean;
   project: { id: string; name: string } | null;
   canCreateWorktree: boolean;
   supportsMetadata: boolean;
-  /** The picker's own handlers, so a command has the effects a pick has. */
-  chooseIsolation(isolation: Isolation): void;
-  chooseBase(item: PickerItem): void;
 }
 
 export interface SetupCommands {
@@ -45,9 +42,16 @@ export interface SetupCommands {
 export interface NewWorkspaceSetup {
   subscribe(listener: () => void): () => void;
   getSnapshot(): SetupState;
+  /** Events other than a pick: a detected change request, a target change. */
   dispatchPicker(event: PickerSelectionEvent): void;
-  setManualIsolation(isolation: Isolation): void;
-  report(facts: SetupFacts): void;
+  /** The base picker's entry, and the one `setBaseRef` takes. */
+  chooseBase(item: PickerItem): void;
+  /** The isolation picker's entry, and the one `setIsolation` takes. */
+  chooseIsolation(isolation: Isolation): void;
+  /** What the screen does beyond changing the model when a pick lands; returns the remover. */
+  onBaseChosen(listener: (item: PickerItem) => void): () => void;
+  onIsolationChosen(listener: (isolation: Isolation) => void): () => void;
+  syncInputs(inputs: SetupInputs): void;
   commands: SetupCommands;
 }
 
@@ -55,26 +59,38 @@ const LOCKED_MESSAGE = "The New workspace screen is locked while the workspace i
 
 /**
  * The New workspace screen's choices as one plain model. The pickers and the plugin commands
- * write to it, so a command sees what an earlier command or pick left, and applies the same rules
- * as the picker it stands in for.
+ * write to it through the same entries, so a command sees what an earlier command or pick left,
+ * has the effects of a pick, and applies the same rules as the picker it stands in for. It is
+ * built with its inputs, so a command is valid from the first render.
  */
-export function createNewWorkspaceSetup(): NewWorkspaceSetup {
+export function createNewWorkspaceSetup(initial: SetupInputs): NewWorkspaceSetup {
   let state: SetupState = {
     pickerSelection: initialPickerSelectionState,
     manualIsolation: null,
     branch: null,
     metadata: {},
   };
-  let facts: SetupFacts | null = null;
+  let inputs = initial;
+  let baseChosen: (item: PickerItem) => void = () => {};
+  let isolationChosen: (isolation: Isolation) => void = () => {};
   const listeners = new Set<() => void>();
   const update = (patch: Partial<SetupState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
   };
-  const unlocked = (): SetupFacts => {
-    if (!facts) throw new Error("The New workspace screen is not ready.");
-    if (facts.locked) throw new Error(LOCKED_MESSAGE);
-    return facts;
+  const unlocked = (): SetupInputs => {
+    if (inputs.locked) throw new Error(LOCKED_MESSAGE);
+    return inputs;
+  };
+  const dispatchPicker = (event: PickerSelectionEvent) =>
+    update({ pickerSelection: reducePickerSelection(state.pickerSelection, event) });
+  const chooseBase = (item: PickerItem) => {
+    dispatchPicker({ type: "picker-selected", item });
+    baseChosen(item);
+  };
+  const chooseIsolation = (isolation: Isolation) => {
+    update({ manualIsolation: isolation });
+    isolationChosen(isolation);
   };
   return {
     subscribe(listener) {
@@ -82,11 +98,23 @@ export function createNewWorkspaceSetup(): NewWorkspaceSetup {
       return () => listeners.delete(listener);
     },
     getSnapshot: () => state,
-    dispatchPicker: (event) =>
-      update({ pickerSelection: reducePickerSelection(state.pickerSelection, event) }),
-    setManualIsolation: (manualIsolation) => update({ manualIsolation }),
-    report: (next) => {
-      facts = next;
+    dispatchPicker,
+    chooseBase,
+    chooseIsolation,
+    onBaseChosen(listener) {
+      baseChosen = listener;
+      return () => {
+        baseChosen = () => {};
+      };
+    },
+    onIsolationChosen(listener) {
+      isolationChosen = listener;
+      return () => {
+        isolationChosen = () => {};
+      };
+    },
+    syncInputs: (next) => {
+      inputs = next;
     },
     commands: {
       async setIsolation(isolation) {
@@ -94,18 +122,18 @@ export function createNewWorkspaceSetup(): NewWorkspaceSetup {
         if (isolation === "worktree" && !current.canCreateWorktree) {
           throw new Error("This project cannot create worktrees.");
         }
-        current.chooseIsolation(isolation);
+        chooseIsolation(isolation);
       },
       async setBaseRef({ name }) {
         const current = unlocked();
         const refName = name.trim();
         if (!current.project) throw new Error("Choose a project first.");
         if (!refName) throw new Error("A base branch needs a name.");
-        current.chooseBase({
+        chooseBase({
           kind: "branch",
-          name: refName,
+          name: branchNameFromRef(refName),
           refName,
-          accessibilityLabel: `${refName}, branch`,
+          accessibilityLabel: `${branchNameFromRef(refName)}, branch`,
         });
       },
       async setBranch(name) {
