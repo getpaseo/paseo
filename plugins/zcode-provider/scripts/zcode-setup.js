@@ -38,10 +38,12 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import {
   accessSync,
+  chmodSync,
   constants as fsConstants,
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -77,26 +79,81 @@ function firstOnPath(names) {
   return undefined;
 }
 
-function desktopBundleCandidates() {
+/**
+ * The names a `zcode` executable can have on this platform.
+ *
+ * Windows resolves an executable through PATHEXT, so a bare `zcode` search
+ * never finds `zcode.exe`.
+ */
+function zcodeExecutableNames() {
+  if (process.platform !== "win32") return ["zcode"];
+  return ["zcode.exe", "zcode.cmd", "zcode.bat", "zcode"];
+}
+
+/**
+ * The directories a ZCode desktop app can be installed in.
+ *
+ * These are the same roots the provider searches, so `doctor` describes
+ * whether Paseo can actually find the installed runtime.
+ */
+function desktopAppRoots() {
   const home = homedir();
-  const roots = [];
   if (process.platform === "darwin") {
-    roots.push("/Applications/ZCode.app", join(home, "Applications", "ZCode.app"));
-  } else if (process.platform === "win32") {
+    return ["/Applications", join(home, "Applications")];
+  }
+  if (process.platform === "win32") {
     const local = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
-    roots.push(join(local, "Programs", "ZCode"));
+    const roots = [join(local, "Programs")];
     // The app is also installable outside %LOCALAPPDATA%\Programs, so the
     // drives applications are installed to are searched too.
     for (const drive of ["C:", "D:", "E:", "F:"]) {
-      roots.push(join(`${drive}\\`, "Programs", "ZCode"));
+      roots.push(join(`${drive}\\`, "Programs"));
     }
-  } else {
-    roots.push("/opt/ZCode", join(home, ".local", "share", "ZCode"));
+    return roots;
   }
-  return roots.flatMap((root) => [
-    join(root, "Contents", "Resources", "glm", "zcode.cjs"),
-    join(root, "resources", "glm", "zcode.cjs"),
-  ]);
+  return ["/opt", "/usr/share", join(home, ".local", "share")];
+}
+
+/** The app directories that hold a ZCode installation. */
+function desktopAppDirectories() {
+  const found = [];
+  for (const root of desktopAppRoots()) {
+    let entries;
+    try {
+      entries = readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.toLowerCase().startsWith("zcode")) found.push(join(root, entry));
+    }
+  }
+  return found;
+}
+
+function desktopBundleCandidates() {
+  const candidates = [];
+  for (const root of desktopAppDirectories()) {
+    candidates.push(
+      join(root, "Contents", "Resources", "glm", "zcode.cjs"),
+      join(root, "resources", "glm", "zcode.cjs"),
+    );
+  }
+  return candidates;
+}
+
+/**
+ * The native runtime a desktop app can ship instead of the JavaScript bundle.
+ */
+function desktopNativeCandidates() {
+  const candidates = [];
+  for (const root of desktopAppDirectories()) {
+    candidates.push(
+      join(root, "Contents", "Resources", "glm", "zcode-agent"),
+      join(root, "resources", "glm", "zcode-agent"),
+    );
+  }
+  return candidates;
 }
 
 /**
@@ -116,8 +173,11 @@ function bundledProviderConfigEnv(bundlePath) {
 
 /** Returns { command, args, env } for `zcode app-server --stdio`, or null. */
 function resolveZCodeLaunch() {
-  const onPath = firstOnPath(["zcode"]);
+  const onPath = firstOnPath(zcodeExecutableNames());
   if (onPath) return { command: onPath, args: ["app-server", "--stdio"], env: {} };
+
+  const native = desktopNativeCandidates().find((candidate) => isExecutable(candidate));
+  if (native) return { command: native, args: ["app-server", "--stdio"], env: {} };
 
   const bundle = desktopBundleCandidates().find((candidate) => existsSync(candidate));
   if (bundle) {
@@ -129,8 +189,20 @@ function resolveZCodeLaunch() {
   }
 
   const fromEnv = process.env.GLM_BINARY_PATH?.trim();
-  if (fromEnv && isExecutable(fromEnv)) {
-    return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
+  if (fromEnv) {
+    // A JavaScript entry cannot be launched directly: Windows refuses a
+    // CommonJS file as an executable, and a POSIX build is not executable
+    // either. It runs through Node, the same way the desktop bundle does.
+    if (/\.(c|m)?js$/i.test(fromEnv)) {
+      return {
+        command: process.execPath,
+        args: [fromEnv, "app-server", "--stdio"],
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      };
+    }
+    if (isExecutable(fromEnv)) {
+      return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
+    }
   }
   return null;
 }
@@ -138,6 +210,22 @@ function resolveZCodeLaunch() {
 // ---------------------------------------------------------------------------
 // provider_config.json handling (shared with the ZCode desktop app — merge only)
 // ---------------------------------------------------------------------------
+
+/**
+ * Restricts a file to its owner.
+ *
+ * The config carries a billing key. Windows has no POSIX modes, so there is
+ * nothing to restrict there and the ACL is the user's own by default.
+ */
+function restrictToOwner(path) {
+  if (process.platform === "win32") return;
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // A file on a filesystem that does not support modes keeps the mode it
+    // was created with. Failing here would block a working setup.
+  }
+}
 
 function defaultConfigFile() {
   const baseDir = process.env.ZCODE_DATA_BASE_DIR?.trim() || homedir();
@@ -183,7 +271,10 @@ function cmdDoctor() {
   }
   console.log(`✓ ZCode runtime: ${launch.command} ${launch.args.join(" ")}`);
   // The version check runs the same runtime the app-server would, so the
-  // bundle path and the environment have to be passed the same way.
+  // bundle path and the environment have to be passed the same way. The
+  // launcher prefix is the command and everything before the app-server
+  // arguments, so dropping it would run `node --version` instead of the
+  // runtime's own version.
   const versionArgs = launch.args.slice(0, -2).concat(["--version"]);
   const child = spawn(launch.command, versionArgs, {
     env: { ...process.env, ...launch.env },
@@ -193,8 +284,19 @@ function cmdDoctor() {
   let err = "";
   child.stdout.on("data", (chunk) => (out += chunk));
   child.stderr.on("data", (chunk) => (err += chunk));
+  child.on("error", (error) => {
+    console.error(`✗ Could not run the ZCode runtime: ${error.message}`);
+    process.exitCode = 1;
+  });
   child.on("exit", (code) => {
     const detail = out.trim() || err.trim() || `(exit ${code})`;
+    // A failing version check means the runtime is not usable, so it must not
+    // be reported as a healthy install.
+    if (code !== 0) {
+      console.error(`✗ zcode version check failed: ${detail}`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`✓ zcode version: ${detail}`);
     console.log("Next: node scripts/zcode-setup.js probe");
   });
@@ -402,9 +504,14 @@ function cmdAddProvider(args) {
   if (existsSync(configFile)) {
     const backup = `${configFile}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     copyFileSync(configFile, backup);
+    restrictToOwner(backup);
     console.log(`Backup written: ${backup}`);
   }
-  writeFileSync(configFile, `${JSON.stringify(config, null, 1)}\n`);
+  // The file carries a billing key, so it must not be readable by other local
+  // users. Writing it without a mode leaves it at the process umask, which is
+  // world-readable under the common 022 umask.
+  writeFileSync(configFile, `${JSON.stringify(config, null, 1)}\n`, { mode: 0o600 });
+  restrictToOwner(configFile);
   console.log(`✓ Provider registered in ${configFile}`);
   console.log(`  providerId: ${providerId}`);
   console.log(`  models:     ${models.join(", ")}`);

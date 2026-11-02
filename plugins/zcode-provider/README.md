@@ -109,7 +109,9 @@ Notes:
 - **Launch resolution** (first match wins): `agents.providers.zcode.command`
   override → `zcode` on `PATH` → the desktop app's bundled runtime under
   `resources/glm/` → `GLM_BINARY_PATH`. The bundled JavaScript runtime runs as
-  `{node} zcode.cjs app-server --stdio` with `ELECTRON_RUN_AS_NODE=1`.
+  `{node} zcode.cjs app-server --stdio` with `ELECTRON_RUN_AS_NODE=1`, and so
+  does a `GLM_BINARY_PATH` that points at a `.cjs`/`.js` file: those cannot be
+  launched directly.
 - **Built-in provider config**: the bundled runtime also needs the path of the
   desktop app's built-in provider config, which lives under `resources/config/`
   rather than next to the bundle. The provider passes it as
@@ -129,6 +131,9 @@ Notes:
 - **Model catalog**: read from the session snapshot's `settings.model.available`
   (provider label, context window, reasoning levels) and cached per
   executable + workspace.
+- **Billing keys**: the provider config carries the API key, so the setup
+  script writes it with owner-only permissions (`0600`) and restricts the
+  backups it takes to the same.
 
 ## Troubleshooting
 

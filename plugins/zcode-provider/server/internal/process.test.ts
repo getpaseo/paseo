@@ -13,7 +13,11 @@ describe("ZCode process lifecycle", () => {
       args: [fakeServer],
       env: { ...process.env, FAKE_ZCODE_MODE: "ok" },
     });
-    await expect(zcode.rpc.call("session/read", { sessionId: "s1" })).resolves.toEqual({});
+    // The fake answers a session read with the settings the catalog is
+    // projected from.
+    await expect(zcode.rpc.call("session/read", { sessionId: "s1" })).resolves.toMatchObject({
+      settings: { mode: { current: "plan" } },
+    });
     await zcode.exit();
   });
 

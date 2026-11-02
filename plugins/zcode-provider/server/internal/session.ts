@@ -1,9 +1,10 @@
 import type {
+  ProviderConfigChanges,
   ProviderEvent,
   ProviderPrompt,
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
-import { toolDetailFor } from "./timeline.js";
+import { mapEventToTimelineItems, toolDetailFor } from "./timeline.js";
 import type { ZCodeEvent, ZCodeTransport } from "./transport.js";
 
 export type TurnPhase = "idle" | "running" | "stopping" | "settled";
@@ -43,6 +44,11 @@ export class ZCodeSession {
     this.unsubscribe = options.transport.onEvent((event) => this.handleEvent(event));
   }
 
+  /** The Paseo session id this session answers to. */
+  get id(): string {
+    return this.options.id;
+  }
+
   async open(input: { cwd: string }): Promise<string> {
     const handle = await this.options.transport.createSession({
       workspace: { workspacePath: input.cwd, workspaceKey: input.cwd },
@@ -65,6 +71,61 @@ export class ZCodeSession {
     });
     this.options.emit({ type: "session.ready", sessionId: this.options.id });
     return handle.sessionId;
+  }
+
+  /**
+   * Reattach to a session ZCode already knows.
+   *
+   * The persistence handle carries the ZCode session id, so a restored agent
+   * continues in the conversation it left instead of starting a new one.
+   */
+  async resume(input: { cwd: string; nativeSessionId: string }): Promise<string> {
+    const handle = await this.options.transport.resumeSession({
+      sessionId: input.nativeSessionId,
+      workspace: { workspacePath: input.cwd, workspaceKey: input.cwd },
+    });
+    this.nativeSessionId = handle.sessionId;
+    this.options.emit({
+      type: "session.opened",
+      sessionId: this.options.id,
+      capabilities: this.options.transport.capabilities,
+      restoration: "core",
+      cwd: input.cwd,
+      persistence: {
+        version: 1,
+        data: {
+          nativeSessionId: handle.sessionId,
+          workspaceKey: handle.workspace.workspaceKey,
+          workspacePath: handle.workspace.workspacePath,
+        },
+      },
+    });
+    this.options.emit({ type: "session.ready", sessionId: this.options.id });
+    return handle.sessionId;
+  }
+
+  /**
+   * Apply a model, mode or thought-level change to the running session.
+   *
+   * ZCode keeps these on the session, so a change has to reach it before the
+   * next turn, otherwise the agent answers with the old setting.
+   */
+  async configure(changes: ProviderConfigChanges): Promise<void> {
+    if (changes.model) {
+      await this.options.transport.setModel({
+        sessionId: this.nativeSessionId,
+        model: changes.model,
+      });
+    }
+    if (changes.mode) {
+      await this.options.transport.setMode({ sessionId: this.nativeSessionId, mode: changes.mode });
+    }
+    if (changes.thinkingOption) {
+      await this.options.transport.setThoughtLevel({
+        sessionId: this.nativeSessionId,
+        thoughtLevel: changes.thinkingOption,
+      });
+    }
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
@@ -171,9 +232,45 @@ export class ZCodeSession {
       this.handleTurnStarted(event);
       return;
     }
+    if (event.type === "turn.completed") {
+      // The usage has to be read before the turn ends: the terminal branch
+      // clears the native turn id this one needs to name the turn.
+      this.reportUsage(event);
+    }
     if (event.type === "turn.completed" || event.type === "turn.failed") {
       this.handleTurnFinished(event);
+      return;
     }
+    this.publishTimelineItems(event);
+  }
+
+  /**
+   * Publish the timeline items a ZCode event carries.
+   *
+   * The turn events are handled by the turn state machine instead: they carry
+   * no timeline item, and the terminal ones name the turn.
+   */
+  private publishTimelineItems(event: ZCodeEvent): void {
+    for (const item of mapEventToTimelineItems(event, { toolDetails: this.toolDetails })) {
+      this.options.emit({ type: "timeline.item", sessionId: this.options.id, item });
+    }
+  }
+
+  /**
+   * Report the token count of a finished turn.
+   *
+   * ZCode counts the whole turn's tokens on the completion event.
+   */
+  private reportUsage(event: ZCodeEvent): void {
+    const payload = event.payload as { tokenCount?: number } | undefined;
+    const turnId =
+      (event.turnId ? this.nativeTurnIds.get(event.turnId) : undefined) ?? this.activeTurnId;
+    this.options.emit({
+      type: "session.usage",
+      sessionId: this.options.id,
+      ...(turnId ? { turnId } : {}),
+      usage: { inputTokens: payload?.tokenCount, outputTokens: 0 },
+    });
   }
 
   /**

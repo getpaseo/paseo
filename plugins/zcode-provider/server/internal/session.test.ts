@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ZCodeSession } from "./session.js";
-import type {
-  ProviderEvent,
-  ProviderPrompt,
-  ProviderToolCallDetail,
-} from "@getpaseo/plugin/server/provider";
+import type { ProviderEvent, ProviderPrompt } from "@getpaseo/plugin/server/provider";
 import type { ZCodeEvent, ZCodeTransport } from "./transport.js";
 
 /**
@@ -185,14 +181,82 @@ describe("ZCode session turn state", () => {
     expect(completed[0]!.turnId).toBe(started[0]!.turnId);
   });
 
-  test("remembers a scheduled tool call's detail for the later variants", () => {
+  test("ignores a terminal that arrives after the turn was canceled", async () => {
     const harness = fakeTransport();
+    const events: ProviderEvent[] = [];
     const session = new ZCodeSession({
       id: "paseo-1",
       transport: harness.transport,
-      emit: () => undefined,
+      emit: (event) => events.push(event),
+    });
+    await session.open({ cwd: "/w" });
+    await session.prompt(textPrompt("m1", "first"));
+    harness.emit({
+      type: "turn.started",
+      sessionId: "zcode-1",
+      turnId: "native-1",
+      seq: 1,
+      payload: { inputId: "paseo-input-m1" },
+    });
+    await session.interrupt();
+
+    // ZCode may still send a terminal for the stopped turn.
+    harness.emit({
+      type: "turn.completed",
+      sessionId: "zcode-1",
+      turnId: "native-1",
+      seq: 2,
+      payload: {},
     });
 
+    const turns = events.filter((event) => event.type === "session.turn");
+    const terminal = turns.filter(
+      (event) => event.state === "canceled" || event.state === "completed",
+    );
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]!.state).toBe("canceled");
+  });
+
+  test("does not attribute a late terminal to the next turn", async () => {
+    const harness = fakeTransport();
+    const events: ProviderEvent[] = [];
+    const session = new ZCodeSession({
+      id: "paseo-1",
+      transport: harness.transport,
+      emit: (event) => events.push(event),
+    });
+    await session.open({ cwd: "/w" });
+    await session.prompt(textPrompt("m1", "first"));
+    await session.interrupt();
+    await session.prompt(textPrompt("m2", "second"));
+
+    // A terminal for the stopped turn, whose ZCode turn id this session never
+    // mapped because ZCode never announced that turn.
+    harness.emit({
+      type: "turn.completed",
+      sessionId: "zcode-1",
+      turnId: "native-unknown",
+      seq: 1,
+      payload: {},
+    });
+
+    const turns = events.filter((event) => event.type === "session.turn");
+    expect(turns.filter((event) => event.state === "completed")).toHaveLength(0);
+  });
+
+  test("publishes a tool call with the detail of its scheduled variant", async () => {
+    const harness = fakeTransport();
+    const events: ProviderEvent[] = [];
+    const session = new ZCodeSession({
+      id: "paseo-1",
+      transport: harness.transport,
+      emit: (event) => events.push(event),
+    });
+    expect(session).toBeInstanceOf(ZCodeSession);
+
+    // ZCode carries a tool call's input only on the scheduled variant. The
+    // later result variant describes the same call without it, so the item
+    // the caller receives has to keep the detail.
     harness.emit({
       type: "tool.updated",
       sessionId: "zcode-1",
@@ -204,10 +268,29 @@ describe("ZCode session turn state", () => {
         input: { path: "/a" },
       },
     });
+    harness.emit({
+      type: "tool.updated",
+      sessionId: "zcode-1",
+      seq: 2,
+      payload: {
+        toolCallId: "t1",
+        toolName: "read_file",
+        kind: "result",
+      },
+    });
 
-    // The map is the session's own state, and the timeline mapper reads it.
-    const details = (session as unknown as { toolDetails: Map<string, ProviderToolCallDetail> })
-      .toolDetails;
-    expect(details.get("t1")).toEqual({ type: "read", filePath: "/a" });
+    const items = events
+      .filter((event) => event.type === "timeline.item")
+      .map((event) => (event as Extract<ProviderEvent, { type: "timeline.item" }>).item);
+    const completed = items.find(
+      (item) => item.type === "tool_call" && item.status === "completed",
+    );
+    expect(completed).toMatchObject({
+      type: "tool_call",
+      callId: "t1",
+      name: "read_file",
+      status: "completed",
+      detail: { type: "read", filePath: "/a" },
+    });
   });
 });

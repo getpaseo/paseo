@@ -17,6 +17,8 @@ export interface ZCodeDiscoveryOptions {
   desktopRoots: readonly string[];
   /** Runtime used to execute a bundled JavaScript entry. Defaults to this process. */
   execPath?: string;
+  /** Platform the discovery runs on. Defaults to this process. */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -51,10 +53,16 @@ async function isFile(path: string): Promise<boolean> {
 async function findOnPath(
   name: string,
   pathEntries: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string | undefined> {
+  // Windows resolves an executable through PATHEXT, so `access()` alone never
+  // finds `zcode.exe` when the search uses the bare name.
+  const names = platform === "win32" ? [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name] : [name];
   for (const entry of pathEntries) {
-    const candidate = join(entry, name);
-    if (await isExecutable(candidate)) return candidate;
+    for (const candidate of names) {
+      const path = join(entry, candidate);
+      if (await isExecutable(path)) return path;
+    }
   }
   return undefined;
 }
@@ -120,7 +128,7 @@ export async function resolveZCodeCommand(
 export async function resolveZCodeLaunch(
   options: ZCodeDiscoveryOptions,
 ): Promise<ZCodeLaunch | undefined> {
-  const onPath = await findOnPath("zcode", options.pathEntries);
+  const onPath = await findOnPath("zcode", options.pathEntries, options.platform);
   if (onPath) {
     return { command: onPath, args: ["app-server", "--stdio"], env: {} };
   }
@@ -141,11 +149,30 @@ export async function resolveZCodeLaunch(
   }
 
   const fromEnv = options.env.GLM_BINARY_PATH?.trim();
-  if (fromEnv && (await isExecutable(fromEnv))) {
-    return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
+  if (fromEnv) {
+    // A JavaScript entry cannot be launched directly: Windows refuses a
+    // CommonJS file as an executable, and a POSIX build is not executable
+    // either. It runs through Node, the same way the desktop bundle does.
+    if (isJavaScriptEntry(fromEnv)) {
+      return {
+        command: options.execPath ?? process.execPath,
+        args: [fromEnv, "app-server", "--stdio"],
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      };
+    }
+    if (await isExecutable(fromEnv)) {
+      return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
+    }
   }
 
   return undefined;
+}
+
+/**
+ * Whether the path names a JavaScript entry point rather than an executable.
+ */
+function isJavaScriptEntry(path: string): boolean {
+  return /\.(c|m)?js$/i.test(path);
 }
 
 export function defaultDesktopRoots(): readonly string[] {
