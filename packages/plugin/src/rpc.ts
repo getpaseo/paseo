@@ -109,14 +109,15 @@ export function subscribePluginRpc<InputSchema extends ZodType, EventSchema exte
   onEvent: (event: ZodOutput<EventSchema>) => void,
   options: PluginSubscribeOptions = {},
 ): PluginSubscriptionHandle {
-  const parsedInput = contract.input.parse(input);
+  // The plugin parses the input into the schema's output, so it receives the input as given.
+  contract.input.parse(input);
   let closed = false;
   function close(error?: Error) {
     if (closed) return;
     closed = true;
     options.onClosed?.(error ? { error } : {});
   }
-  const handle = subscribe(contract.name, parsedInput, {
+  const handle = subscribe(contract.name, input, {
     event(event) {
       if (closed) return;
       const parsed = contract.event.safeParse(event);

@@ -77,12 +77,13 @@ export class PluginSubscriptionHandlers {
     });
     const push = async (event: unknown): Promise<void> => {
       if (signal.aborted) return;
-      const value: unknown = registered.contract.event.parse(event);
-      assertPluginWireValue(value, "event");
+      // The receiver parses into the schema's output; sending that output would parse it twice.
+      registered.contract.event.parse(event);
+      assertPluginWireValue(event, "event");
       // Events pushed while the handler runs follow the acknowledgement.
       await acknowledged;
       if (signal.aborted) return;
-      await this.channel.sendAndWait({ type: "subscription.event", subscriptionId, event: value });
+      await this.channel.sendAndWait({ type: "subscription.event", subscriptionId, event });
     };
     this.active.set(subscriptionId, { controller });
     let result: unknown;
