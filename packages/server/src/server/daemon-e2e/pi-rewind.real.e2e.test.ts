@@ -498,8 +498,13 @@ test("seeded compacted Pi history survives daemon reload, native rewind and Fork
     await client.refreshAgent(imported.id);
     const restored = await fetchTimelineItems(client, imported.id);
     expectTimeline(restored, expected);
-    expect(restored.filter((item) => item.type === "tool_call")).toHaveLength(1);
-    expect(JSON.stringify(restored)).toContain("saved tool output");
+    const tools = restored.filter((item) => item.type === "tool_call");
+    expect(tools).toHaveLength(1);
+    expect(tools[0].detail).toEqual({
+      type: "read",
+      filePath: "readme.txt",
+      content: "saved tool output",
+    });
     expect(
       restored.filter((item) => item.type === "user_message").map((item) => item.messageId),
     ).toEqual(["u1", "u2"]);
