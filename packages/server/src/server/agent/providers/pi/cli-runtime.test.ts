@@ -215,6 +215,89 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("launches the resolved binary instead of the bare default command", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["pi"],
+      resolveDefaultCommand: async () => "/resolved/npm/pi.cmd",
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["/resolved/npm/pi.cmd", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
+  test("keeps an explicitly configured command over the resolved binary", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    let resolveCalls = 0;
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["pi"],
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: ["custom-pi"],
+        },
+      },
+      resolveDefaultCommand: async () => {
+        resolveCalls += 1;
+        return "/resolved/npm/pi.cmd";
+      },
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["custom-pi", "--mode", "rpc"],
+      }),
+    ]);
+    expect(resolveCalls).toBe(0);
+  });
+
+  test("falls back to the configured default command when the binary does not resolve", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["pi"],
+      resolveDefaultCommand: async () => null,
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["pi", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
   test("does not append rpc mode when the configured command already includes a mode flag", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

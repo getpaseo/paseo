@@ -2,7 +2,10 @@ import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import {
+  resolveProviderCommandPrefix,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -38,22 +41,32 @@ export interface PiCliRuntimeOptions {
   commandsRpcName?: string;
   requestTimeoutMs?: number;
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  /**
+   * Resolves the binary to launch when the provider can name one. A bare name only
+   * works if the spawned shell searches the same PATH the diagnostic did, which is
+   * not guaranteed for a daemon child (#6235). Consulted only when the configured
+   * command is not a `replace` override, whose argv always wins. A rejected
+   * resolver aborts the session start.
+   */
+  resolveDefaultCommand?: () => Promise<string | null>;
 }
 
 export class PiCliRuntime implements PiRuntime {
   private readonly command: [string, ...string[]];
   private readonly commandsRpcName: string;
   private readonly spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  private readonly resolveDefaultCommand?: () => Promise<string | null>;
 
   constructor(private readonly options: PiCliRuntimeOptions) {
     this.command = options.command ?? DEFAULT_PI_COMMAND;
     this.commandsRpcName = options.commandsRpcName ?? DEFAULT_COMMANDS_RPC_NAME;
     this.spawnProcess = options.spawnProcess;
+    this.resolveDefaultCommand = options.resolveDefaultCommand;
   }
 
   async startSession(input: PiStartSessionInput): Promise<PiRuntimeSession> {
     const launch = buildPiLaunch({
-      command: this.command,
+      command: await this.resolveCommand(),
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
@@ -79,6 +92,18 @@ export class PiCliRuntime implements PiRuntime {
       input.signal.throwIfAborted();
     }
     return new PiCliRuntimeSession(process, this.commandsRpcName, launch.env);
+  }
+
+  /** Launch the resolved binary when the provider can name one. */
+  private async resolveCommand(): Promise<[string, ...string[]]> {
+    const prefix = await resolveProviderCommandPrefix(
+      this.options.runtimeSettings?.command,
+      async () => {
+        const resolved = await this.resolveDefaultCommand?.();
+        return resolved ?? this.command[0];
+      },
+    );
+    return [prefix.command, ...this.command.slice(1)];
   }
 }
 
