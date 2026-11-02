@@ -270,6 +270,15 @@ that starts or accepts them. Received messages retain sender attribution, while 
 notifications remain visible events. Collapse, timing and locally mounted history share
 these boundaries.
 
+Hosts advertising `features.agentTurnTiming` include `turnTimings` in root timeline pages.
+These records measure daemon-observed accepted start through completion, failure, or cancellation;
+they do not require a human prompt. Each page includes only timings referenced by its canonical
+turn IDs or assistant message IDs. The agent record persists the timings separately from provider
+history, and stable provider message IDs associate replies after history rehydration. Providers
+without stable message IDs retain that association only while the canonical turn IDs survive.
+An unobserved start, an interrupted daemon, or a turn predating recording has no completed timing;
+clients must not substitute message timestamps or the previous prompt.
+
 Agent-message XML belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
 provenance; acceptance, provider echoes, import, and replay share its projection. The delivery ID is
 also the projected call ID, so a provider echo cannot create a second row. Sender IDs are opaque and

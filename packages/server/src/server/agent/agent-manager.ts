@@ -24,6 +24,7 @@ import type { Logger } from "pino";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
+import type { AgentTurnTiming } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 import {
@@ -405,6 +406,13 @@ interface StreamEventFlags {
 
 type ActiveTurnTerminalDisposition = "closed_current" | "stale" | "untracked";
 
+interface ApplyActiveTurnTerminalInput {
+  agent: ActiveManagedAgent;
+  turnId?: string;
+  fromHistory?: boolean;
+  status?: AgentTurnTiming["status"];
+}
+
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
@@ -601,7 +609,9 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
-function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+function isTurnTerminalEvent(
+  event: AgentStreamEvent,
+): event is Extract<AgentStreamEvent, { type: AgentTurnTiming["status"] }> {
   return (
     event.type === "turn_completed" ||
     event.type === "turn_failed" ||
@@ -757,6 +767,7 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore: InMemoryAgentTimelineStore;
+  private readonly turnMessageIds = new Map<string, Set<string>>();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
@@ -2922,7 +2933,7 @@ export class AgentManager {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
     }
     mutableAgent.activeForegroundTurnId = null;
-    this.applyActiveTurnTerminal(mutableAgent, turnId);
+    this.applyActiveTurnTerminal({ agent: mutableAgent, turnId });
     const terminalError = mutableAgent.lastError;
     const shouldHoldBusyForReplacement = mutableAgent.pendingReplacement && !terminalError;
     let nextLifecycle: "running" | "error" | "idle";
@@ -2964,20 +2975,38 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    if (agent.activeTurnId === turnId) return;
+    this.turnMessageIds.set(agent.id, new Set());
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
 
   private applyActiveTurnTerminal(
-    agent: ActiveManagedAgent,
-    turnId?: string,
-    fromHistory = false,
+    params: ApplyActiveTurnTerminalInput,
   ): ActiveTurnTerminalDisposition {
+    const { agent, turnId, fromHistory, status } = params;
     if (fromHistory) return "stale";
     if (!agent.activeTurnId) return "untracked";
     if (turnId && agent.activeTurnId !== turnId) return "stale";
+    if (status && agent.activeTurnStartedAt && this.registry && !agent.internal) {
+      const timing: AgentTurnTiming = {
+        turnId: agent.activeTurnId,
+        startedAt: agent.activeTurnStartedAt.toISOString(),
+        completedAt: new Date().toISOString(),
+        status,
+        messageIds: Array.from(this.turnMessageIds.get(agent.id) ?? []),
+      };
+      const persist = this.registry.recordTurnTiming({ agentId: agent.id, timing }).catch((err) => {
+        this.logger.error(
+          { err, agentId: agent.id, turnId: timing.turnId },
+          "Failed to persist turn timing",
+        );
+      });
+      this.trackBackgroundTask(persist);
+    }
     agent.activeTurnId = null;
     agent.activeTurnStartedAt = null;
+    this.turnMessageIds.delete(agent.id);
     return "closed_current";
   }
 
@@ -4053,6 +4082,7 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    this.turnMessageIds.delete(agent.id);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -4557,11 +4587,12 @@ export class AgentManager {
 
     let terminalDisposition: ActiveTurnTerminalDisposition = "untracked";
     if (isTurnTerminalEvent(event)) {
-      terminalDisposition = this.applyActiveTurnTerminal(
+      terminalDisposition = this.applyActiveTurnTerminal({
         agent,
-        eventTurnId,
-        options?.fromHistory === true,
-      );
+        turnId: eventTurnId,
+        fromHistory: options?.fromHistory === true,
+        status: event.type,
+      });
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
@@ -5012,6 +5043,9 @@ export class AgentManager {
     turnId?: string,
     options?: { providerMessageId?: string },
   ): AgentStreamEvent {
+    const isActiveReply =
+      item.type === "assistant_message" && turnId === this.agents.get(agentId)?.activeTurnId;
+    if (isActiveReply && item.messageId) this.turnMessageIds.get(agentId)?.add(item.messageId);
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
       type: "timeline",

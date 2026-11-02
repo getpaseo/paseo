@@ -40,7 +40,7 @@ function assistantReply(uuid: string): Record<string, unknown> {
     type: "assistant",
     uuid,
     session_id: SESSION_ID,
-    message: { id: uuid, role: "assistant", content: [{ type: "text", text: "ok" }] },
+    message: { id: `provider-${uuid}`, role: "assistant", content: [{ type: "text", text: "ok" }] },
   };
 }
 
@@ -55,7 +55,11 @@ function subagentReply(uuid: string): Record<string, unknown> {
     uuid,
     session_id: SESSION_ID,
     parent_tool_use_id: "toolu_subagent_1",
-    message: { id: uuid, role: "assistant", content: [{ type: "text", text: "subagent work" }] },
+    message: {
+      id: `provider-${uuid}`,
+      role: "assistant",
+      content: [{ type: "text", text: "subagent work" }],
+    },
   };
 }
 
@@ -233,7 +237,7 @@ describe("Claude rewind across a turn that produced no response", () => {
     expect(rewindSdk.recordedForks).toEqual([]);
   });
 
-  test("still forks at the previous turn when every turn produced a response", async () => {
+  test("forks at the transcript UUID when the API message ID differs", async () => {
     const conversation = createConversation([
       { assistantMessageId: "assistant-1" },
       { assistantMessageId: "assistant-2" },

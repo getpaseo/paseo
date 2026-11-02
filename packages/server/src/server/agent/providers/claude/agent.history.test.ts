@@ -1,6 +1,46 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
-import { extractUserMessageText } from "./agent.js";
+import { convertClaudeHistoryEntry, extractUserMessageText } from "./agent.js";
+import type { AgentTimelineItem } from "../../agent-sdk-types.js";
+
+describe("Claude assistant history identity", () => {
+  test.each([
+    { withTool: false, asyncConversion: false },
+    { withTool: true, asyncConversion: false },
+    { withTool: false, asyncConversion: true },
+    { withTool: true, asyncConversion: true },
+  ])(
+    "preserves the live message ID with tool=$withTool and async=$asyncConversion",
+    async ({ withTool, asyncConversion }) => {
+      const content = [{ type: "text", text: "reply" }];
+      const blocks = withTool
+        ? [...content, { type: "tool_use", id: "tool-1", name: "Read", input: {} }]
+        : content;
+      const mapped: AgentTimelineItem[] = [{ type: "assistant_message", text: "reply" }];
+      const mapBlocks = vi.fn(() => (asyncConversion ? Promise.resolve(mapped) : mapped));
+      expect(
+        await convertClaudeHistoryEntry(
+          {
+            type: "assistant",
+            uuid: "transcript-id",
+            message: { id: "provider-id", content: blocks },
+          },
+          mapBlocks,
+        ),
+      ).toEqual([{ type: "assistant_message", text: "reply", messageId: "provider-id" }]);
+      expect(mapBlocks).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("retains UUID identity for transcript entries without an API message ID", async () => {
+    expect(
+      await convertClaudeHistoryEntry(
+        { type: "assistant", uuid: "transcript-only-id", message: { content: "reply" } },
+        async () => [{ type: "assistant_message", text: "reply" }],
+      ),
+    ).toEqual([{ type: "assistant_message", text: "reply", messageId: "transcript-only-id" }]);
+  });
+});
 
 describe("extractUserMessageText", () => {
   test("returns trimmed string content", () => {

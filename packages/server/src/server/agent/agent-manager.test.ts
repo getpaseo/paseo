@@ -7166,6 +7166,87 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   unsubscribe();
 });
 
+test.each([
+  { type: "turn_completed", provider: "codex", turnId: "timed-turn" },
+  { type: "turn_failed", provider: "codex", turnId: "timed-turn", error: "failure" },
+  { type: "turn_canceled", provider: "codex", turnId: "timed-turn", reason: "interrupt" },
+] satisfies AgentStreamEvent[])(
+  "persists autonomous timing for $type without a user prompt",
+  async (terminal) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-timing-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+    class LiveEventClient extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new LiveEventClient() },
+      registry: storage,
+      logger,
+    });
+    let agentId: string | null = null;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "timed-turn" });
+      await vi.waitFor(() => expect(manager.getAgent(agent.id)?.activeTurnId).toBe("timed-turn"));
+      const startedAt = manager.getAgent(agent.id)!.activeTurnStartedAt!.toISOString();
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "timed-turn" });
+      const terminalSeen = new Promise<void>((resolve) => {
+        const unsubscribe = manager.subscribe(
+          (event) => {
+            if (
+              event.type === "agent_stream" &&
+              event.agentId === agent.id &&
+              event.event.type === terminal.type
+            ) {
+              unsubscribe();
+              resolve();
+            }
+          },
+          { agentId: agent.id, replayState: false },
+        );
+      });
+      session.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        turnId: "timed-turn",
+        item: { type: "assistant_message", text: "automatic response", messageId: "reply-id" },
+      });
+      const beforeTerminal = Date.now();
+      session.pushEvent(terminal);
+      await terminalSeen;
+      await manager.flush();
+      const record = await new AgentStorage(storagePath, logger).get(agent.id);
+      expect(record?.turnTimings).toEqual([
+        {
+          turnId: "timed-turn",
+          startedAt,
+          completedAt: expect.any(String),
+          status: terminal.type,
+          messageIds: ["reply-id"],
+        },
+      ]);
+      expect(Date.parse(record!.turnTimings![0]!.completedAt)).toBeGreaterThanOrEqual(
+        beforeTerminal,
+      );
+      expect(Date.parse(record!.turnTimings![0]!.completedAt)).toBeLessThanOrEqual(Date.now());
+      expect(manager.getTimeline(agent.id).some((item) => item.type === "user_message")).toBe(
+        false,
+      );
+    } finally {
+      if (agentId) await manager.closeAgent(agentId);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("applies live autonomous events and preserves usage omitted from completion", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-events-"));
   const storagePath = join(workdir, "agents");
@@ -7363,6 +7444,8 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
     expect(stillRunning?.lastUsage).toEqual({ inputTokens: 7 });
     expect(stillRunning?.pendingPermissions.has("turn-b-permission")).toBe(true);
     expect(manager.getTimeline(snapshot.id)).toEqual(timelineBeforeStaleTerminals);
+    await manager.flush();
+    expect((await storage.get(snapshot.id))?.turnTimings).toBeUndefined();
   }
 
   capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-b" });
@@ -7371,6 +7454,8 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
     expect(settled?.lifecycle).toBe("idle");
     expect(settled ? toAgentPayload(settled).activeTurn : null).toBeNull();
   });
+  await manager.flush();
+  expect((await storage.get(snapshot.id))?.turnTimings).toMatchObject([{ turnId: "turn-b" }]);
 });
 
 test("preserves terminal fallback when no active turn identity was observed", async () => {
