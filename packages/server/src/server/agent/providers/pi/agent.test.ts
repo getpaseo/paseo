@@ -1615,13 +1615,14 @@ describe("PiRpcAgentSession", () => {
         provider: "pi",
         sessionId: "pi-session-1",
         nativeHandle: "/tmp/native-pi-session",
-        metadata: { cwd: "/workspace/project" },
+        metadata: { cwd: tmpdir() },
       },
       {},
       undefined,
       { purpose: "history" },
     );
 
+    onTestFinished(() => session.close());
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) history.push(event);
 
@@ -1638,6 +1639,57 @@ describe("PiRpcAgentSession", () => {
 
     await session.close();
     expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test.each(["stopped", "failed"] as const)(
+    "closes a history-only Pi runtime when replay is %s",
+    async (outcome) => {
+      const pi = new FakePi();
+      pi.queueSessionSetup((runtimeSession) => {
+        runtimeSession.messages = [
+          { role: "user", content: "Old question" },
+          { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+        ];
+        if (outcome === "failed")
+          runtimeSession.getMessagesError = new Error("History unavailable");
+      });
+      const session = await createClient(pi).resumeSession(
+        {
+          provider: "pi",
+          sessionId: "pi-session-1",
+          nativeHandle: "/tmp/native-pi-session",
+          metadata: { cwd: tmpdir() },
+        },
+        {},
+        undefined,
+        { purpose: "history" },
+      );
+      onTestFinished(() => session.close());
+      const history = session.streamHistory();
+      if (outcome === "failed") {
+        await expect(history.next()).rejects.toThrow("History unavailable");
+      } else {
+        expect((await history.next()).done).toBe(false);
+        await history.return();
+      }
+      expect(pi.latestSession().closeCalls).toBe(1);
+    },
+  );
+
+  test("keeps an interactive Pi runtime open after replaying history", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: tmpdir() },
+    });
+    onTestFinished(() => session.close());
+    for await (const _event of session.streamHistory()) {
+      // Hydrate the session before its next interactive prompt.
+    }
+    expect(pi.latestSession().closeCalls).toBe(0);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ provider: "pi" });
   });
 
   test("resumes a session whose model was removed on the model Pi falls back to", async () => {
@@ -3780,14 +3832,17 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     },
   );
 
-  test("a history resume of an agent whose folder is gone removes its session copy on close and leaves the original unchanged", async () => {
+  test("a history resume of an agent whose folder is gone removes its session copy after replay and leaves the original unchanged", async () => {
     const archived = writeArchivedSession(createDeletedFolder());
     const pi = new FakePi();
 
     const session = await resumeArchived(createClient(pi), archived, "history");
     const sessionCopy = pi.recordedLaunches[0]!.session!;
     expect(existsSync(sessionCopy)).toBe(true);
-    await session.close();
+    for await (const _event of session.streamHistory()) {
+      // Completion releases both the runtime and its temporary session copy.
+    }
+    expect(pi.latestSession().closeCalls).toBe(1);
 
     expect(existsSync(path.dirname(sessionCopy))).toBe(false);
     expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);

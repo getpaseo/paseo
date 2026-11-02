@@ -26,7 +26,6 @@ import {
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
-  type AgentResumeSessionOptions,
   type AgentSelectOption,
   type AgentSession,
   type AgentSessionConfig,

@@ -162,6 +162,7 @@ export class FakePiSession implements PiRuntimeSession {
   setModelResult: PiModel | null = null;
   models: PiModel[] = [];
   messages: PiAgentMessage[] = [];
+  getMessagesError: Error | null = null;
   stats: PiSessionStats = {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
@@ -304,6 +305,7 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   async getMessages(): Promise<PiAgentMessage[]> {
+    if (this.getMessagesError) throw this.getMessagesError;
     return this.messages;
   }
 
