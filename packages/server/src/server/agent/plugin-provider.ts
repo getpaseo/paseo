@@ -1718,6 +1718,7 @@ class PluginAgentSession implements AgentSession {
     this.history.clear();
     this.timelineSnapshots.clear();
     this.childSnapshots.clear();
+    this.childTurnOutcomes.clear();
     this.revertTokens.clear();
     this.pendingPermissions.clear();
     this.permissionResponses.clear();

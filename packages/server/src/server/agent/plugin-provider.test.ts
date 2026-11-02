@@ -488,6 +488,58 @@ async function pluginMessages(session: Awaited<ReturnType<AgentClient["createSes
   );
 }
 
+test("plugin rewind discards child outcomes from the withdrawn branch", async () => {
+  await withPluginRewindSession(
+    {
+      async handleInput(input, emit) {
+        if (input.type !== "session.open" || input.history !== "replay") return false;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: CAPABILITIES,
+          restoration: "core",
+          persistence: input.persistence,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.opened",
+          sessionId: "rewound-child",
+          parentSessionId: input.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: input.config.cwd,
+        });
+        emit({ type: "session.closed", sessionId: "rewound-child" });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      harness.emit({
+        type: "session.opened",
+        sessionId: "rewound-child",
+        parentSessionId: open.sessionId,
+        capabilities: [],
+        restoration: "parent",
+        cwd: tmpdir(),
+      });
+      harness.emit({
+        type: "session.turn",
+        sessionId: "rewound-child",
+        turnId: "withdrawn-turn",
+        state: "failed",
+      });
+      await session.revertConversation!({ messageId: "user-B" });
+      const history = await Array.fromAsync(session.streamHistory());
+      expect(history.findLast((event) => event.type === "provider_subagent")).toMatchObject({
+        event: { type: "upsert", id: "rewound-child", status: "completed" },
+      });
+    },
+  );
+});
+
 test("combined plugin rewind replays the retained native branch", async () => {
   await withPluginRewindSession({}, async (session) => {
     await session.revertBoth!({ messageId: "user-B" });
@@ -1234,6 +1286,11 @@ describe("PluginAgentClientRegistry", () => {
         expect(manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: outcome },
         ]);
+        harness.emit({ type: "session.closed", sessionId: "reusable-child" });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: outcome },
+        ]);
       } finally {
         await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
         await plugins.shutdown();
@@ -1268,6 +1325,7 @@ describe("PluginAgentClientRegistry", () => {
               turnId: "second-turn",
               state,
             });
+            emit({ type: "session.closed", sessionId: "reusable-child" });
           }
         },
       });
@@ -1343,6 +1401,51 @@ describe("PluginAgentClientRegistry", () => {
       registry.replace([]);
     }
   });
+
+  test.each([
+    { turns: [], error: false, expected: "completed" },
+    { turns: ["canceled", "started"], error: false, expected: "completed" },
+    { turns: ["failed", "started", "completed"], error: false, expected: "completed" },
+    { turns: ["canceled"], error: true, expected: "failed" },
+  ] as const)(
+    "closes a plugin child using its latest turn: $turns, error=$error",
+    async ({ turns, error, expected }) => {
+      const harness = createProviderHarness();
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([harness.registration]);
+      try {
+        const session = await registry.clients()[harness.registration.id]!.createSession({
+          provider: harness.registration.id,
+          cwd: tmpdir(),
+        });
+        const events: AgentStreamEvent[] = [];
+        session.subscribe((event) => events.push(event));
+        const open = harness.inputs.find((input) => input.type === "session.open")!;
+        harness.emit({
+          type: "session.opened",
+          sessionId: "close-control",
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: tmpdir(),
+        });
+        for (const state of turns) {
+          harness.emit({ type: "session.turn", sessionId: "close-control", turnId: "turn", state });
+        }
+        harness.emit({
+          type: "session.closed",
+          sessionId: "close-control",
+          ...(error ? { error: { message: "Provider failed to close" } } : {}),
+        });
+        expect(events.at(-1)).toMatchObject({
+          type: "provider_subagent",
+          event: { type: "upsert", id: "close-control", status: expected },
+        });
+      } finally {
+        await registry.shutdown();
+      }
+    },
+  );
 
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
