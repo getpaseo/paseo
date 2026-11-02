@@ -1368,6 +1368,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       </div>
       {scrollEnabled && !isMobileBreakpoint ? (
         <DomOverlayScrollbar
+          autoHide
           scrollContainerRef={scrollContainerRef}
           onUserScrollUp={stopFollowingOutputFromUserIntent}
         />

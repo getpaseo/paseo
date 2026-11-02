@@ -28,6 +28,54 @@ async function expectChatAtBottom(page: Page): Promise<void> {
     .toBeLessThanOrEqual(72);
 }
 
+test("timeline scrollbar appears while scrolling and stays visible during a drag", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const longChat = await seedLongMockAgentTimeline({ turns: 30 });
+
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openAgentTimeline(page, longChat);
+    await expectTimelinePromptVisible(page, longChat.newestPrompt);
+    const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+    const viewport = scroll.locator("..");
+    const thumb = viewport.getByTestId("workspace-overlay-scrollbar-grab");
+    await expect(thumb).toBeHidden();
+    const idleWidth = await scroll.evaluate((element) => element.clientWidth);
+    await page.screenshot({ path: testInfo.outputPath("timeline-idle.png") });
+
+    await scroll.hover();
+    await page.mouse.wheel(0, -400);
+    await expect(thumb).toBeVisible();
+    expect(await scroll.evaluate((element) => element.clientWidth)).toBe(idleWidth);
+    await page.screenshot({ path: testInfo.outputPath("timeline-scrolling.png") });
+    await expect(thumb).toBeHidden();
+    // Hover alone must not reveal the scrollbar or leave an invisible grab target.
+    await scroll.hover();
+    await expect(thumb).toBeHidden();
+
+    await page.mouse.wheel(0, -200);
+    await expect(thumb).toBeVisible();
+    const bounds = await thumb.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.down();
+    // Holding the thumb must outlast the idle timeout, even without pointer movement.
+    await page.waitForTimeout(1_100);
+    await expect(thumb).toBeVisible();
+    const beforeDrag = (await readScrollMetrics(page)).offsetY;
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2 - 20);
+    await expect.poll(async () => (await readScrollMetrics(page)).offsetY).toBeLessThan(beforeDrag);
+    await page.mouse.up();
+    await expect(thumb).toBeHidden();
+    expect(await scroll.evaluate((element) => element.clientWidth)).toBe(idleWidth);
+  } finally {
+    await page.mouse.up();
+    await longChat.cleanup();
+  }
+});
+
 async function openCompactWorkspace(
   page: Page,
   workspace: Pick<MockAgentWorkspace, "workspaceId">,
