@@ -1,3 +1,8 @@
+import {
+  openGlobalNewWorkspaceComposer,
+  fillNewWorkspaceDraft,
+  expectNewWorkspaceDraft,
+} from "../support/helpers/new-workspace";
 import { readFile, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -273,3 +278,71 @@ test("restart recovery host controls persist the opt-out and custom prompt", asy
   await expectRestartRecoveryPrompt(page, "Continue the interrupted work.");
   await editRestartRecoveryPrompt(page, "Resume working.");
 });
+
+test("sidebar Add host preserves its caller and stays closed after theme changes", async ({
+  page,
+}) => {
+  await gotoAppShell(page);
+  await expect(page).toHaveURL(/\/open-project$/);
+  const originalUrl = page.url();
+  await openSidebarAddHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await closeAddHostAndChangeTheme(page);
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeHidden();
+  await expect(page).toHaveURL(originalUrl);
+});
+
+async function openSidebarAddHost(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+  await page.getByRole("button", { name: "Add host", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeVisible();
+}
+
+async function closeAddHostAndChangeTheme(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeHidden();
+  await page.keyboard.press("Control+Alt+t");
+}
+
+test("sidebar Add host completes without navigating", async ({ page }) => {
+  await gotoAppShell(page);
+  await expect(page).toHaveURL(/\/open-project$/);
+  const originalUrl = page.url();
+  await openSidebarAddHost(page);
+  await connectToTestHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await expect(page.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();
+});
+
+test("Settings Add host opens the saved host Overview", async ({ page }) => {
+  await gotoAppShell(page);
+  await openSettings(page);
+  await addDirectHostFromSettings(page, { host: "127.0.0.1", port: Number(getE2EDaemonPort()) });
+  await expectSettingsHeader(page, "Overview");
+  await expect(page).toHaveURL(new RegExp(`/settings/hosts/${getServerId()}/host$`));
+});
+
+test("New workspace Add host preserves the prompt after connecting", async ({ page }) => {
+  await gotoAppShell(page);
+  await openGlobalNewWorkspaceComposer(page);
+  await fillNewWorkspaceDraft(page, "Keep this unfinished prompt while I add a host.");
+  const originalUrl = page.url();
+  await openNewWorkspaceAddHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await connectToTestHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await expectNewWorkspaceDraft(page, "Keep this unfinished prompt while I add a host.");
+});
+
+async function openNewWorkspaceAddHost(page: import("@playwright/test").Page) {
+  await page.getByTestId("host-picker-trigger").click();
+  await page.getByRole("button", { name: "Add host", exact: true }).click();
+}
+
+async function connectToTestHost(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Direct connection", exact: true }).click();
+  await page.getByRole("textbox", { name: "Host", exact: true }).fill("127.0.0.1");
+  await page.getByRole("textbox", { name: "Port", exact: true }).fill(String(getE2EDaemonPort()));
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByTestId("add-host-modal")).toBeHidden({ timeout: 30_000 });
+}

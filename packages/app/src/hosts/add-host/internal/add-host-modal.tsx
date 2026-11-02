@@ -1,17 +1,22 @@
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Pressable, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Alert, Text, View } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Link2 } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import { parseConnectionUri, serializeConnectionUri } from "@/utils/daemon-endpoints";
-import { buildConnectionFailureCopy } from "./connection-failure-copy";
-import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
+import { buildConnectionFailureCopy } from "@/components/connection-failure-copy";
+import {
+  AdaptiveModalSheet,
+  AdaptiveTextInput,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { PairingTargetTracker } from "./pair-link-credentials";
-import { buildDirectConnectionUri } from "./direct-connection-host";
+import { PairingTargetTracker } from "@/components/pair-link-credentials";
+import { buildDirectConnectionUri } from "@/components/direct-connection-host";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
@@ -188,7 +193,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
 }
 
 function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const daemons = useHosts();
   const { probeAndUpsertDirectConnection, beginLinkPairing } = useHostMutations();
@@ -207,10 +211,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
   const advancedTarget = useRef(new PairingTargetTracker("", true));
 
-  const connectIcon = useMemo(
-    () => <Link2 size={16} color={theme.colors.accentForeground} />,
-    [theme.colors.accentForeground],
-  );
+  const connectIcon = useMemo(() => <ThemedLink2 size={16} />, []);
   const hostFieldStyle = useMemo(() => [styles.field, styles.hostField], []);
   const portFieldStyle = useMemo(() => [styles.field, styles.portField], []);
   const checkboxStyle = useMemo(
@@ -415,8 +416,8 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
     setIsAdvancedOpen(false);
   }, [advancedUri, directConnectionLabels, host, isAdvancedOpen, password, port, useTls]);
 
-  const AdvancedIcon = isAdvancedOpen ? ChevronDown : ChevronRight;
-  const PasswordIcon = isPasswordVisible ? EyeOff : Eye;
+  const AdvancedIcon = isAdvancedOpen ? ThemedChevronDown : ThemedChevronRight;
+  const PasswordIcon = isPasswordVisible ? ThemedEyeOff : ThemedEye;
 
   return (
     <AdaptiveModalSheet
@@ -430,7 +431,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
       <View style={styles.portRow}>
         <View style={hostFieldStyle}>
           <Text style={styles.label}>{t("pairing.direct.fields.host")}</Text>
-          <AdaptiveTextInput
+          <ThemedAdaptiveTextInput
             testID="direct-host-input"
             nativeID="direct-host-input"
             accessibilityLabel={t("pairing.direct.fields.host")}
@@ -438,7 +439,6 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             resetKey={`direct-host-${inputResetKey}`}
             onChangeText={setHost}
             placeholder="localhost"
-            placeholderTextColor={theme.colors.foregroundMuted}
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
@@ -449,7 +449,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         </View>
         <View style={portFieldStyle}>
           <Text style={styles.label}>{t("pairing.direct.fields.port")}</Text>
-          <AdaptiveTextInput
+          <ThemedAdaptiveTextInput
             testID="direct-port-input"
             nativeID="direct-port-input"
             accessibilityLabel={t("pairing.direct.fields.port")}
@@ -457,7 +457,6 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             resetKey={`direct-port-${inputResetKey}`}
             onChangeText={setPort}
             placeholder="6767"
-            placeholderTextColor={theme.colors.foregroundMuted}
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
@@ -469,7 +468,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         </View>
       </View>
 
-      <Pressable
+      <PressHighlight
         style={styles.checkboxRow}
         onPress={handleToggleUseTls}
         disabled={isSaving}
@@ -482,17 +481,17 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         <View style={checkboxStyle}>
           {useTls ? (
             <View testID="direct-ssl-toggle-checked">
-              <Check size={14} color={theme.colors.accentForeground} />
+              <ThemedCheck size={14} />
             </View>
           ) : null}
         </View>
         <Text style={styles.label}>{t("pairing.direct.fields.useSsl")}</Text>
-      </Pressable>
+      </PressHighlight>
 
       <View style={styles.field}>
         <Text style={styles.label}>{t("pairing.direct.fields.password")}</Text>
         <View style={styles.passwordRow}>
-          <AdaptiveTextInput
+          <ThemedAdaptiveTextInput
             testID="direct-password-input"
             nativeID="direct-password-input"
             accessibilityLabel={t("pairing.direct.fields.password")}
@@ -500,7 +499,6 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             resetKey={`direct-password-${inputResetKey}`}
             onChangeText={setPassword}
             placeholder={t("pairing.direct.fields.optional")}
-            placeholderTextColor={theme.colors.foregroundMuted}
             style={passwordInputStyle}
             autoCapitalize="none"
             autoCorrect={false}
@@ -509,7 +507,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             returnKeyType="done"
             onSubmitEditing={handleSubmitEditing}
           />
-          <Pressable
+          <PressHighlight
             style={styles.iconButton}
             onPress={handleTogglePasswordVisibility}
             disabled={isSaving}
@@ -521,13 +519,13 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             }
             testID="direct-password-visibility-toggle"
           >
-            <PasswordIcon size={18} color={theme.colors.foregroundMuted} />
-          </Pressable>
+            <PasswordIcon size={18} />
+          </PressHighlight>
         </View>
       </View>
 
       <View style={styles.field}>
-        <Pressable
+        <PressHighlight
           style={styles.advancedToggle}
           onPress={handleToggleAdvanced}
           disabled={isSaving}
@@ -537,11 +535,11 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
           }
           testID="direct-host-advanced-toggle"
         >
-          <AdvancedIcon size={16} color={theme.colors.foregroundMuted} />
+          <AdvancedIcon size={16} />
           <Text style={styles.advancedText}>{t("pairing.direct.advanced.label")}</Text>
-        </Pressable>
+        </PressHighlight>
         {isAdvancedOpen ? (
-          <AdaptiveTextInput
+          <ThemedAdaptiveTextInput
             testID="direct-host-uri-input"
             nativeID="direct-host-uri-input"
             accessibilityLabel={t("pairing.direct.fields.connectionUri")}
@@ -549,7 +547,6 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
             resetKey={`direct-host-uri-${inputResetKey}`}
             onChangeText={handleChangeAdvancedUri}
             placeholder="tcp://localhost:6767?ssl=true"
-            placeholderTextColor={theme.colors.foregroundMuted}
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
@@ -585,3 +582,23 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
     </AdaptiveModalSheet>
   );
 }
+
+const ThemedLink2 = withUnistyles(Link2, (theme) => ({ color: theme.colors.accentForeground }));
+
+const ThemedCheck = withUnistyles(Check, (theme) => ({ color: theme.colors.accentForeground }));
+
+const ThemedChevronDown = withUnistyles(ChevronDown, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+
+const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+
+const ThemedEye = withUnistyles(Eye, (theme) => ({ color: theme.colors.foregroundMuted }));
+
+const ThemedEyeOff = withUnistyles(EyeOff, (theme) => ({ color: theme.colors.foregroundMuted }));
+
+const ThemedAdaptiveTextInput = withUnistyles(AdaptiveTextInput, (theme) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+}));
