@@ -1091,6 +1091,13 @@ export const ja: TranslationResources = {
       providerEmpty: "プロバイダーが見つかりません",
       testCommandLabel: "テストコマンド",
       testCommandHint: "マージのたびに実行され、失敗するとマージは却下されます",
+      isolationLabel: "エージェントの作業場所",
+      isolation: { auto: "自動", worktree: "Worktree", workspace: "自分のチェックアウト" },
+      isolationHints: {
+        auto: "タスクは自分のチェックアウトで1つずつ実行されます。GitButler のリポジトリではホストがこちらを選びます",
+        worktree: "タスクごとに専用の git worktree を作ります",
+        workspace: "自分のチェックアウトで1つずつ実行します。GitButler に必要です",
+      },
       optional: "任意",
       styleLabel: "スタイル",
       presets: {

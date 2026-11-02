@@ -1107,6 +1107,13 @@ export const ru: TranslationResources = {
       providerEmpty: "Провайдеры не найдены",
       testCommandLabel: "Команда тестов",
       testCommandHint: "Запускается после каждого слияния; при сбое слияние отклоняется",
+      isolationLabel: "Где работают агенты",
+      isolation: { auto: "Авто", worktree: "Worktree", workspace: "Моя копия" },
+      isolationHints: {
+        auto: "Задачи выполняются по одной в вашей рабочей копии. Для репозиториев GitButler хост выбирает это сам",
+        worktree: "Каждая задача получает собственный git worktree",
+        workspace: "Ваша рабочая копия, по одной задаче. Нужно для GitButler",
+      },
       optional: "Необязательно",
       styleLabel: "Стиль",
       presets: {

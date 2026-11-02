@@ -78,6 +78,8 @@ export function buildFollowUpPrefill(goal: Goal, copy: FollowUpCopy): GoalFormPr
     reviewThinking: config.reviewThinking ?? "",
     verifyThinking: config.verifyThinking ?? "",
     testCommand: edit.testCommand,
+    // A goal recorded before the setting ran in worktrees.
+    isolation: config.isolation ?? "worktree",
     allowedProviders: [...(config.allowedProviders ?? [])],
     settings: edit.settings,
     budget: edit.budget,

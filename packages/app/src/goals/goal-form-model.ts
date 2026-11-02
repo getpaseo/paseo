@@ -1,4 +1,4 @@
-import type { GoalConfig } from "@getpaseo/protocol/goal/types";
+import type { GoalConfig, GoalIsolation } from "@getpaseo/protocol/goal/types";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { deriveGoalTitle } from "./goal-chat-prefill";
 import { prefillFromGoalFormMemory, type GoalFormMemory } from "./goal-form-memory";
@@ -57,6 +57,8 @@ export interface GoalFormValues {
   reviewThinking: string;
   verifyThinking: string;
   testCommand: string;
+  /** Where agents work. "auto" sends nothing and lets the host choose (the checkout for GitButler). */
+  isolation: GoalIsolation;
   /** Empty means any registered provider. */
   allowedProviders: string[];
   settings: GoalSettings;
@@ -95,6 +97,7 @@ export interface GoalFormPrefill {
   reviewThinking?: string;
   verifyThinking?: string;
   testCommand?: string;
+  isolation?: GoalIsolation;
   allowedProviders?: string[];
   /** Starts from a preset; wins over `settings`. */
   preset?: GoalPresetId;
@@ -193,6 +196,7 @@ export const EMPTY_GOAL_FORM_VALUES: GoalFormValues = {
   reviewThinking: "",
   verifyThinking: "",
   testCommand: "",
+  isolation: "auto",
   allowedProviders: [],
   settings: DAEMON_GOAL_SETTINGS,
   budget: NO_GOAL_BUDGET,
@@ -298,6 +302,7 @@ function buildGoalConfig(input: {
     ...(hasLimits ? { limits } : {}),
     ...(reviewProvider ? { reviewProvider } : {}),
     ...(testCommand ? { testCommand } : {}),
+    ...(values.isolation !== "auto" ? { isolation: values.isolation } : {}),
     ...(values.allowedProviders.length > 0
       ? { allowedProviders: [...values.allowedProviders] }
       : {}),
@@ -750,6 +755,7 @@ function valuesFromPrefill(prefill: GoalFormPrefill, settings: GoalSettings): Go
     reviewThinking: prefill.reviewThinking ?? "",
     verifyThinking: prefill.verifyThinking ?? "",
     testCommand: prefill.testCommand ?? "",
+    isolation: prefill.isolation ?? "auto",
     allowedProviders: prefill.allowedProviders ?? [],
     settings,
     budget: prefill.budget ?? NO_GOAL_BUDGET,

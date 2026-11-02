@@ -1083,6 +1083,13 @@ export const en = {
       providerEmpty: "No providers found",
       testCommandLabel: "Test command",
       testCommandHint: "Runs after each merge; a failure rejects the merge",
+      isolationLabel: "Where agents work",
+      isolation: { auto: "Auto", worktree: "Worktrees", workspace: "My checkout" },
+      isolationHints: {
+        auto: "Tasks run one at a time in your checkout. The host picks this for GitButler repositories",
+        worktree: "Each task gets its own git worktree",
+        workspace: "Your checkout, one task at a time. Needed for GitButler",
+      },
       optional: "Optional",
       styleLabel: "Style",
       presets: {

@@ -56,6 +56,10 @@ export function createGoalCommand(): Command {
         "Default provider for tasks, optionally with a model (required with --cwd)",
       )
       .option("--max-parallel <n>", "Tasks to run at once (1-8, default 2)")
+      .option(
+        "--isolation <auto|worktree|workspace>",
+        "Where agents work: a worktree each, or your checkout one task at a time. auto (default) uses the checkout for a GitButler repository",
+      )
       .option("--max-attempts <n>", "Attempts per task before it fails for good (1-5, default 2)")
       .option("--auto-approve", "Run the Lead's plan without waiting for approval")
       .option("--no-notify-lead", "Do not message the Lead about failures or completion")

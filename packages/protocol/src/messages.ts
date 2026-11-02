@@ -4009,6 +4009,10 @@ export const ServerInfoStatusPayloadSchema = z
         // failed, stalled or nearly timed-out tasks (intervention.* events). An older daemon
         // drops the setting silently.
         goalLeadInterventions: z.boolean().optional(),
+        // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02.
+        // The goal setting isolation ("auto", "worktree" or "workspace"). An older daemon drops
+        // the setting silently and cuts a worktree for every agent.
+        goalIsolation: z.boolean().optional(),
         // COMPAT(goalRecovery): added in v0.13.13, remove gate after 2027-10-28.
         // Recovering a failed goal through its Lead (recovery.* events) and guidance for the
         // goal's workers on goal.retry. An older daemon refuses the recovery RPCs and drops

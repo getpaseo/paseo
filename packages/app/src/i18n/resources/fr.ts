@@ -1102,6 +1102,13 @@ export const fr: TranslationResources = {
       providerEmpty: "Aucun fournisseur trouvé",
       testCommandLabel: "Commande de test",
       testCommandHint: "S'exécute après chaque fusion ; un échec rejette la fusion",
+      isolationLabel: "Où travaillent les agents",
+      isolation: { auto: "Auto", worktree: "Worktrees", workspace: "Ma copie de travail" },
+      isolationHints: {
+        auto: "Les tâches s'exécutent une par une dans votre copie de travail. L'hôte le choisit pour les dépôts GitButler",
+        worktree: "Chaque tâche a son propre git worktree",
+        workspace: "Votre copie de travail, une tâche à la fois. Nécessaire pour GitButler",
+      },
       optional: "Facultatif",
       styleLabel: "Style",
       presets: {

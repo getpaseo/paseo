@@ -1064,6 +1064,13 @@ export const zhCN: TranslationResources = {
       providerEmpty: "未找到 Provider",
       testCommandLabel: "测试命令",
       testCommandHint: "每次合并后运行；失败则拒绝该合并",
+      isolationLabel: "代理的工作位置",
+      isolation: { auto: "自动", worktree: "Worktree", workspace: "我的检出目录" },
+      isolationHints: {
+        auto: "任务在你的检出目录中逐个运行。对 GitButler 仓库，主机会选择此方式",
+        worktree: "每个任务使用独立的 git worktree",
+        workspace: "在你的检出目录中逐个运行任务。GitButler 需要此方式",
+      },
       optional: "可选",
       styleLabel: "风格",
       presets: {

@@ -1,6 +1,12 @@
 import type { ChangedFile } from "@getpaseo/protocol/goal/types";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { spawnProcess } from "../../utils/spawn.js";
+import {
+  commitWorkspaceChanges,
+  snapshotWorkspace,
+  type WorkspaceCommitResult,
+  type WorkspaceSnapshot,
+} from "./workspace-commit.js";
 
 export interface CapturedChange {
   branch: string;
@@ -66,6 +72,18 @@ export interface GitPort {
    * failure or the time limit gives a line saying the summary is unavailable.
    */
   workSummary(input: { cwd: string; baseCommit?: string; timeoutMs?: number }): Promise<string>;
+  /**
+   * Goals that run in a GitButler checkout: note what is uncommitted before a task starts, and
+   * afterwards commit what the task changed to a GitButler branch. Absent in tests that do not
+   * exercise it; a goal then leaves the work uncommitted.
+   */
+  snapshotWorkspace?(cwd: string): Promise<WorkspaceSnapshot>;
+  commitWorkspaceChanges?(input: {
+    cwd: string;
+    before: WorkspaceSnapshot;
+    branch: string;
+    message: string;
+  }): Promise<WorkspaceCommitResult | null>;
 }
 
 const OUTPUT_TAIL_CHARS = 4000;
@@ -178,6 +196,8 @@ const OUTPUT_DRAIN_MS = 100;
 export function createGitPort(): GitPort {
   const running_ = new Map<string, Set<() => void>>();
   return {
+    snapshotWorkspace,
+    commitWorkspaceChanges,
     async capture({ cwd, integrationCommit, message }) {
       const dirty = (await git(cwd, ["status", "--porcelain"])).stdout.trim().length > 0;
       if (dirty) {

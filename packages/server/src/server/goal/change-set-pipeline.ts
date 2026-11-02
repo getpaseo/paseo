@@ -28,6 +28,8 @@ import {
 } from "@getpaseo/protocol/goal/failure-wording";
 import { goalRoleThinking } from "@getpaseo/protocol/goal/thinking";
 import type { GitPort } from "./git-ops.js";
+import { isolationOf } from "./isolation.js";
+import type { WorkspaceSnapshot } from "./workspace-commit.js";
 import { reworkReasonFor } from "./goal-reducer.js";
 import { thinkingInput } from "./goal-thinking.js";
 import type {
@@ -243,10 +245,40 @@ export class ChangeSetPipeline {
     runId: string;
     workspaceId: string;
     cwd: string;
+    /** Workspace mode only: what was uncommitted before the task started. */
+    snapshot?: WorkspaceSnapshot;
   }): Promise<void> {
     const { goalId, task, runId } = input;
     const goal = this.store.get(goalId);
     if (!goal?.config) return;
+    if (goal.config.isolation === "workspace") {
+      // The work is already in the checkout. An integration worktree would break repositories
+      // that cannot take one (GitButler), so nothing is captured or merged. When GitButler
+      // manages the checkout, the task's files go to a branch of their own for you to review.
+      if (input.snapshot && this.git.commitWorkspaceChanges) {
+        const prefix = goal.config.branchPrefix ?? DEFAULT_GOAL_BRANCH_PREFIX;
+        const committed = await this.git.commitWorkspaceChanges({
+          cwd: input.cwd,
+          before: input.snapshot,
+          branch: `${prefix}/${goalId}-${task.id}`,
+          message: `Task ${task.id}: ${task.title}`,
+        });
+        if (committed) {
+          this.logger.info(
+            { goalId, taskId: task.id, branch: committed.branch, files: committed.files.length },
+            "Committed a workspace task to its own branch",
+          );
+        }
+      }
+      await this.host.dispatch(goalId, {
+        id: `${runId}:capture-skipped`,
+        goalId,
+        type: "capture.skipped",
+        taskId: task.id,
+        runId,
+      });
+      return;
+    }
     const integration = await this.ensureIntegration(goalId);
     const captured = await this.git.capture({
       cwd: input.cwd,
@@ -818,11 +850,11 @@ export class ChangeSetPipeline {
     }
     const scratch = await this.workspaces.create({
       cwd: config.cwd,
-      isolation: "worktree",
+      isolation: isolationOf(goal),
       title: `${goal.title} (verify)`,
       ...(config.baseCommit ? { baseRef: config.baseCommit } : {}),
     });
-    const scratchBase = await this.git.head(scratch.cwd);
+    const scratchBase = isolationOf(goal) === "worktree" ? await this.git.head(scratch.cwd) : null;
     return { scratch, scratchBase, workspace: scratch };
   }
 

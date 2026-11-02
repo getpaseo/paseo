@@ -6681,21 +6681,7 @@ export class DaemonClient {
   }): Promise<GoalMutationPayload> {
     this.requireGoals();
     if (options.priority) this.requireGoalManagement();
-    const config = options.config;
-    if (
-      config &&
-      (config.leadThinking ||
-        config.workerThinking ||
-        config.reviewThinking ||
-        config.verifyThinking) &&
-      this.lastServerInfoMessage?.features?.goalThinking !== true
-    ) {
-      // An older daemon would drop the thinking settings and run on model defaults.
-      throw new Error("Update the host to choose a thinking level per goal role.");
-    }
-    if (config?.onPermissionRequest === "auto") this.requireGoalConfigEdit();
-    if (config?.leadInterventions) this.requireGoalLeadInterventions();
-    if (config?.limits?.userWaitMinutes !== undefined) this.requireGoalUserWait();
+    this.requireGoalConfigFeatures(options.config);
     return this.sendNamespacedCorrelatedSessionRequest<"goal.create.response">({
       requestId: options.requestId,
       message: {
@@ -6971,6 +6957,36 @@ export class DaemonClient {
   /** The goal setting leadInterventions, and the intervention.* events. */
   supportsGoalLeadInterventions(): boolean {
     return this.lastServerInfoMessage?.features?.goalLeadInterventions === true;
+  }
+
+  /** Throws when the host lacks a feature a goal's config asks for; an older daemon would drop it. */
+  private requireGoalConfigFeatures(config: GoalConfig | undefined): void {
+    if (!config) return;
+    const thinking =
+      config.leadThinking ||
+      config.workerThinking ||
+      config.reviewThinking ||
+      config.verifyThinking;
+    if (thinking && this.lastServerInfoMessage?.features?.goalThinking !== true) {
+      // An older daemon would drop the thinking settings and run on model defaults.
+      throw new Error("Update the host to choose a thinking level per goal role.");
+    }
+    if (config.onPermissionRequest === "auto") this.requireGoalConfigEdit();
+    if (config.leadInterventions) this.requireGoalLeadInterventions();
+    if (config.isolation) this.requireGoalIsolation();
+    if (config.limits?.userWaitMinutes !== undefined) this.requireGoalUserWait();
+  }
+
+  /** The goal setting isolation: run in the checkout instead of a worktree per agent. */
+  supportsGoalIsolation(): boolean {
+    return this.lastServerInfoMessage?.features?.goalIsolation === true;
+  }
+
+  private requireGoalIsolation(): void {
+    if (!this.supportsGoalIsolation()) {
+      // An older daemon would drop the setting and cut worktrees, which break GitButler.
+      throw new Error("Update the host to choose where a goal's agents work.");
+    }
   }
 
   private requireGoalLeadInterventions(): void {

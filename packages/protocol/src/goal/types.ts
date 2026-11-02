@@ -12,6 +12,9 @@ function boundedInt(bound: GoalNumberBound) {
   return z.number().int().min(bound.min).max(bound.max);
 }
 
+export const GoalIsolationSchema = z.enum(["auto", "worktree", "workspace"]);
+export type GoalIsolation = z.infer<typeof GoalIsolationSchema>;
+
 export const GoalPermissionPolicySchema = z.enum(GOAL_PERMISSION_POLICIES);
 
 export const GoalStatusSchema = z.enum([
@@ -84,6 +87,11 @@ export const GoalConfigSchema = z.object({
   // The commit checked out in `cwd` when the goal was created. Every worktree starts from
   // it, so the goal builds on the branch you were on, not on the repository's default.
   baseCommit: z.string().trim().min(1).optional(),
+  // Where agents work. "worktree" gives every task its own git worktree (what a goal recorded
+  // before this field uses). Omitted on creation means "auto". "workspace" runs tasks one at a time in `cwd` itself, for
+  // repositories that cannot take extra worktrees, such as ones managed by GitButler. "auto"
+  // is accepted on creation and stored as the mode it resolved to.
+  isolation: GoalIsolationSchema.optional(),
   leadProvider: AgentProviderSchema,
   // Used for tasks that do not name a provider.
   defaultProvider: AgentProviderSchema,

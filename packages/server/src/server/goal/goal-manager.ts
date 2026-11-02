@@ -67,6 +67,8 @@ import {
 import type { GoalStore } from "./goal-store.js";
 import { ChangeSetPipeline } from "./change-set-pipeline.js";
 import type { GitPort } from "./git-ops.js";
+import { isolationOf } from "./isolation.js";
+import type { WorkspaceSnapshot } from "./workspace-commit.js";
 import {
   PlanParseError,
   extractPlan,
@@ -302,6 +304,8 @@ interface LiveRun {
   policy?: GoalPermissionPolicy;
   /** The commit its worktree started from, for the work summary a Lead wake-up shows. */
   baseRef?: string;
+  /** Uncommitted files before a workspace-mode task started; see GitPort.snapshotWorkspace. */
+  snapshot?: WorkspaceSnapshot | undefined;
   /** Aborted when the Lead stops the run from a check-in; `stoppedBy` holds its reason. */
   leadStop: AbortController;
   stoppedBy?: string;
@@ -1734,8 +1738,9 @@ export class GoalManager {
       }
       const workspace = await this.workspaces.create({
         cwd: config.cwd,
-        // The Lead reads the repository in its own worktree, so no agent works in your checkout.
-        isolation: "worktree",
+        // The Lead reads the repository in its own worktree, so no agent works in your checkout,
+        // unless the goal runs in the workspace itself (see GoalConfig.isolation).
+        isolation: isolationOf(goal),
         title: `${goal.title} (lead)`,
         ...(config.baseCommit ? { baseRef: config.baseCommit } : {}),
       });
@@ -2012,6 +2017,7 @@ export class GoalManager {
       live.workspaceId = workspace.workspaceId;
       live.cwd = workspace.cwd;
       if (workspace.baseRef) live.baseRef = workspace.baseRef;
+      live.snapshot = await this.snapshotWorkspace(goal, task, workspace.cwd);
       if (!alive()) return await this.abandon(live, this.stopped);
 
       live.policy = goalPermissionPolicy(goal.config);
@@ -2123,7 +2129,7 @@ export class GoalManager {
     // branch name, which Paseo may rename.
     const created = await this.workspaces.create({
       cwd: goal.config?.cwd ?? "",
-      isolation: "worktree",
+      isolation: isolationOf(goal),
       title: task.title,
       ...baseRefFor(goal),
     });
@@ -2176,6 +2182,7 @@ export class GoalManager {
           runId,
           workspaceId: live.workspaceId,
           cwd,
+          ...(live.snapshot ? { snapshot: live.snapshot } : {}),
         });
       }
     } catch (error) {
@@ -2187,6 +2194,26 @@ export class GoalManager {
       }
     } finally {
       this.pipeline.endCapture(goalId, task.id);
+    }
+  }
+
+  /** Null when the checkout is not a GitButler one: the task's work is then left uncommitted. */
+  private async snapshotWorkspace(
+    goal: Goal,
+    task: Task,
+    cwd: string,
+  ): Promise<WorkspaceSnapshot | undefined> {
+    const goalId = goal.id;
+    if (goal.config?.isolation !== "workspace" || task.kind !== "implement") return undefined;
+    if (!this.git.snapshotWorkspace) return undefined;
+    try {
+      return await this.git.snapshotWorkspace(cwd);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, goalId },
+        "Could not read the checkout with GitButler; this task's work will stay uncommitted",
+      );
+      return undefined;
     }
   }
 

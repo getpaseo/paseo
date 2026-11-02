@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { isolationOf } from "./isolation.js";
 import type pino from "pino";
 import { goalPermissionPolicy } from "@getpaseo/protocol/goal/config-bounds";
 import {
@@ -336,7 +337,7 @@ export class GoalRecoveries {
     const baseRef = goal.integration?.headCommit ?? config.baseCommit;
     const workspace = await this.host.workspaces.create({
       cwd: config.cwd,
-      isolation: "worktree",
+      isolation: isolationOf(goal),
       title: `${goal.title} (recovery lead)`,
       ...(baseRef ? { baseRef } : {}),
     });

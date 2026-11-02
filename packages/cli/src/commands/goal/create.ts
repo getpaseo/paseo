@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Command } from "commander";
 import { GOAL_CONFIG_BOUNDS } from "@getpaseo/protocol/goal/config-bounds";
 import {
+  GoalIsolationSchema,
   GoalPermissionPolicySchema,
   GoalPrioritySchema,
   type GoalConfig,
@@ -24,6 +25,7 @@ export interface GoalCreateOptions extends GoalCommandOptions {
   lead?: string;
   provider?: string;
   maxParallel?: string;
+  isolation?: string;
   maxAttempts?: string;
   autoApprove?: boolean;
   notifyLead?: boolean;
@@ -82,6 +84,12 @@ function buildLimits(options: GoalCreateOptions): GoalConfig["limits"] {
   return Object.keys(set).length > 0 ? set : undefined;
 }
 
+function isolationOption(options: GoalCreateOptions): Pick<GoalConfig, "isolation"> {
+  return options.isolation
+    ? { isolation: parseEnum(GoalIsolationSchema, options.isolation, "--isolation") }
+    : {};
+}
+
 // A goal runs under the Manager only when --cwd is given; without it the goal is
 // manual and only records plans and state.
 function buildConfig(options: GoalCreateOptions): GoalConfig | undefined {
@@ -97,6 +105,8 @@ function buildConfig(options: GoalCreateOptions): GoalConfig | undefined {
       intOption(options.maxParallel, "--max-parallel") ?? GOAL_CONFIG_BOUNDS.maxParallel.default,
     maxAttempts:
       intOption(options.maxAttempts, "--max-attempts") ?? GOAL_CONFIG_BOUNDS.maxAttempts.default,
+    // Undefined is not sent, and the daemon picks: the checkout for a GitButler repository.
+    ...isolationOption(options),
     autoApprovePlan: options.autoApprove === true,
     notifyLead: options.notifyLead !== false,
     // Undefined is not sent, and the daemon turns it on for a new goal.

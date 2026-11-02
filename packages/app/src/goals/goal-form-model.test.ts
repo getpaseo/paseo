@@ -65,6 +65,23 @@ describe("buildGoalCreateInput", () => {
     });
   });
 
+  it("sends isolation only when it is not auto, so the host keeps choosing for GitButler", () => {
+    expect(buildGoalCreateInput(values(MANAGED))?.config).not.toHaveProperty("isolation");
+    expect(
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "auto" }))?.config,
+    ).not.toHaveProperty("isolation");
+    expect(
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "workspace" }))?.config,
+    ).toMatchObject({
+      isolation: "workspace",
+    });
+    expect(
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "worktree" }))?.config,
+    ).toMatchObject({
+      isolation: "worktree",
+    });
+  });
+
   it("builds the required config and omits every optional left at the daemon default", () => {
     expect(buildGoalCreateInput(values(MANAGED))).toEqual({
       title: "Rate limiting",

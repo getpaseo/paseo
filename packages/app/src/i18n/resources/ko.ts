@@ -1082,6 +1082,13 @@ export const ko: TranslationResources = {
       providerEmpty: "프로바이더가 없습니다",
       testCommandLabel: "테스트 명령",
       testCommandHint: "병합할 때마다 실행되며, 실패하면 병합이 거부됩니다",
+      isolationLabel: "에이전트 작업 위치",
+      isolation: { auto: "자동", worktree: "Worktree", workspace: "내 체크아웃" },
+      isolationHints: {
+        auto: "작업이 내 체크아웃에서 한 번에 하나씩 실행됩니다. GitButler 저장소에서는 호스트가 이 방식을 고릅니다",
+        worktree: "작업마다 별도의 git worktree를 만듭니다",
+        workspace: "내 체크아웃에서 한 번에 하나씩 실행합니다. GitButler에 필요합니다",
+      },
       optional: "선택 사항",
       styleLabel: "스타일",
       presets: {

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import type { Goal } from "@getpaseo/protocol/goal/types";
+import type { Goal, GoalIsolation } from "@getpaseo/protocol/goal/types";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import type { FieldControlSize } from "@/components/ui/control-geometry";
@@ -373,6 +373,7 @@ function ManagedGoalFields({
           autoCorrect={false}
         />
       </Field>
+      <IsolationPicker model={model} state={state} size={size} />
       <StylePicker model={model} state={state} size={size} />
       <View style={styles.disclosure}>
         <Button
@@ -481,6 +482,53 @@ function StylePicker({
         onValueChange={handleChange}
         size={size}
         testID="goal-preset"
+      />
+    </Field>
+  );
+}
+
+const ISOLATION_CHOICES: GoalIsolation[] = ["auto", "worktree", "workspace"];
+
+function IsolationPicker({
+  model,
+  state,
+  size,
+}: {
+  model: GoalFormModel;
+  state: GoalFormState;
+  size: FieldControlSize;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02. An older daemon would
+  // drop the setting and cut worktrees, so the choice appears only on a host that has it.
+  const supported = useHostFeature(state.serverId, "goalIsolation");
+  const options = useMemo<SegmentedControlOption<GoalIsolation>[]>(
+    () =>
+      ISOLATION_CHOICES.map((choice) => ({
+        value: choice,
+        label: t(`goals.form.isolation.${choice}`),
+        testID: `goal-isolation-${choice}`,
+      })),
+    [t],
+  );
+  const handleChange = useCallback(
+    (choice: GoalIsolation) => model.setValue("isolation", choice),
+    [model],
+  );
+  if (!supported) {
+    return null;
+  }
+  return (
+    <Field
+      label={t("goals.form.isolationLabel")}
+      hint={t(`goals.form.isolationHints.${state.values.isolation}`)}
+    >
+      <SegmentedControl
+        options={options}
+        value={state.values.isolation}
+        onValueChange={handleChange}
+        size={size}
+        testID="goal-isolation"
       />
     </Field>
   );

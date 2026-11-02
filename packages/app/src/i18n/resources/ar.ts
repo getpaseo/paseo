@@ -1104,6 +1104,13 @@ export const ar: TranslationResources = {
       providerEmpty: "لم يتم العثور على مزوّدين",
       testCommandLabel: "أمر الاختبار",
       testCommandHint: "يعمل بعد كل دمج؛ ويؤدي الفشل إلى رفض الدمج",
+      isolationLabel: "مكان عمل الوكلاء",
+      isolation: { auto: "تلقائي", worktree: "Worktrees", workspace: "نسختي" },
+      isolationHints: {
+        auto: "تعمل المهام واحدة تلو الأخرى في نسختك. يختار المضيف هذا لمستودعات GitButler",
+        worktree: "تحصل كل مهمة على git worktree خاص بها",
+        workspace: "نسختك، مهمة واحدة في كل مرة. مطلوب لـ GitButler",
+      },
       optional: "اختياري",
       styleLabel: "النمط",
       presets: {

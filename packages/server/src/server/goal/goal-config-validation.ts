@@ -2,6 +2,7 @@ import { goalPermissionPolicy } from "@getpaseo/protocol/goal/config-bounds";
 import type { GoalConfig } from "@getpaseo/protocol/goal/types";
 import { goalRoleProvider } from "@getpaseo/protocol/goal/thinking";
 import type { GitPort } from "./git-ops.js";
+import { detectGitButler, type GitButlerDetection } from "./gitbutler.js";
 import { assertThinkingOption, type GoalModelCatalog } from "./goal-thinking.js";
 
 /** Returns the config to store: the one given, with the base commit filled in. */
@@ -39,6 +40,8 @@ export function goalAutoModeId(provider: string, modes: GoalMode[]): string | un
 
 export interface ConfigValidationDeps {
   git: Pick<GitPort, "head" | "resolveCommit">;
+  /** Reports whether GitButler manages the repository; injected so tests need no `but` CLI. */
+  detectGitButler?: (cwd: string) => Promise<GitButlerDetection>;
   /** Provider ids the daemon has registered. */
   knownProviders: () => string[];
   /**
@@ -117,8 +120,28 @@ export function createGoalConfigValidator(deps: ConfigValidationDeps): GoalConfi
       });
     }
     await assertAutoPolicy(config, deps);
-    return { ...config, baseCommit };
+    const isolation = await resolveIsolation(config, deps);
+    // One checkout cannot take two agents at once.
+    const maxParallel = isolation === "workspace" ? 1 : config.maxParallel;
+    return { ...config, baseCommit, isolation, maxParallel };
   };
+}
+
+/**
+ * `auto` picks the checkout itself for a repository GitButler manages, because extra
+ * worktrees break its setup, and a worktree for every other repository. A stated mode is
+ * kept: a person who asks for worktrees in a GitButler repository gets them.
+ */
+async function resolveIsolation(
+  config: GoalConfig,
+  deps: Pick<ConfigValidationDeps, "detectGitButler">,
+): Promise<"worktree" | "workspace"> {
+  if (config.isolation === "worktree" || config.isolation === "workspace") {
+    return config.isolation;
+  }
+  const detect = deps.detectGitButler ?? detectGitButler;
+  const found = await detect(config.cwd);
+  return found.repositoryManaged && found.cliInstalled ? "workspace" : "worktree";
 }
 
 /**

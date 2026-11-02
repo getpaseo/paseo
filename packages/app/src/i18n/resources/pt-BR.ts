@@ -1097,6 +1097,13 @@ export const ptBR: TranslationResources = {
       providerEmpty: "Nenhum provedor encontrado",
       testCommandLabel: "Comando de teste",
       testCommandHint: "Roda após cada mesclagem; uma falha rejeita a mesclagem",
+      isolationLabel: "Onde os agentes trabalham",
+      isolation: { auto: "Automático", worktree: "Worktrees", workspace: "Meu checkout" },
+      isolationHints: {
+        auto: "As tarefas rodam uma por vez no seu checkout. O host escolhe isso para repositórios GitButler",
+        worktree: "Cada tarefa usa seu próprio git worktree",
+        workspace: "Seu checkout, uma tarefa por vez. Necessário para o GitButler",
+      },
       optional: "Opcional",
       styleLabel: "Estilo",
       presets: {
