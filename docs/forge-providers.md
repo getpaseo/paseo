@@ -202,6 +202,15 @@ are stale, run `npm run build:server`.
 - A blocked Gitea Actions task is not necessarily manual: only add the
   `action_required` trait when the matching run metadata reports
   `need_approval`.
+- Gitea/Forgejo PR JSON carries no auto-merge flag. State comes from the issue
+  timeline instead: the latest `pull_scheduled_merge` / `pull_cancel_scheduled_merge`
+  event wins. `tea api` exits 0 on HTTP errors too, so auto-merge calls pass
+  `-i` and check the status line themselves.
+- A schedule stays armed when checks fail, so settled CI does not mean there is
+  nothing to cancel. The timeline lookup runs on any cache miss, and a lookup
+  that could not settle the question (transport failure, or the schedule event
+  sitting outside the page window) reports unscheduled without caching it, so
+  the next poll retries rather than hiding a live schedule for the whole TTL.
 - Brand icons are bundled React components, so they cannot come from protocol
   manifest data.
 - Source URL grammars are app-side because blob/tree path syntax is
