@@ -320,6 +320,9 @@ test.describe("Terminal protocol queries", () => {
       await pasteImage(page, pngBytes(8));
       await upload.waitUntilHeld();
 
+      // Widen the replay window to expose typed input being discarded during reconnect.
+      const browser = await page.context().newCDPSession(page);
+      await browser.send("Emulation.setCPUThrottlingRate", { rate: 6 });
       await upload.disconnect();
       await expect(page.getByTestId("app-toast-message")).toHaveText(
         "Failed to paste file: Host is not connected",
