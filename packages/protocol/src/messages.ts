@@ -1603,7 +1603,7 @@ export const PluginRpcInvokeRequestSchema = z.object({
   requestId: z.string(),
   pluginId: PluginIdSchema,
   method: z.string().min(1),
-  input: z.unknown(),
+  input: z.unknown().optional(),
 });
 
 export const PluginRpcSubscribeRequestSchema = z.object({
