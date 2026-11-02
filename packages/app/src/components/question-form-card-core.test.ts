@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  buildQuestionFormAnswerInput,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -9,6 +10,79 @@ import {
 } from "./question-form-card-core";
 
 describe("question form card core", () => {
+  test("keeps the existing answer contract for unmarked question requests", () => {
+    const input = {
+      questions: [
+        { question: "Colors?", header: "Colors", options: [{ label: "Red" }], multiSelect: false },
+      ],
+    };
+    const questions = parseQuestionFormQuestions(input);
+    if (!questions) throw new Error("questions did not parse");
+    expect(
+      buildQuestionFormAnswerInput({
+        input,
+        questions,
+        selections: { 0: new Set([0]) },
+        otherTexts: {},
+      }),
+    ).toEqual({
+      ...input,
+      answers: { Colors: "Red" },
+    });
+  });
+
+  test.each([true, false])(
+    "preserves option IDs and separate text for structured multiSelect=%s",
+    (multiSelect) => {
+      const input = {
+        answerFormat: "structured",
+        questions: [
+          {
+            question: "Colors?",
+            header: "Colors",
+            multiSelect,
+            allowOther: true,
+            options: [
+              { id: "combined", label: "Red, Blue" },
+              { id: "red", label: "Red" },
+              { id: "blue", label: "Blue" },
+              { id: "red-duplicate", label: "Red" },
+            ],
+          },
+        ],
+      };
+      const questions = parseQuestionFormQuestions(input);
+      if (!questions) throw new Error("questions did not parse");
+      const selections = { 0: new Set(multiSelect ? [1, 2, 3] : [3]) };
+      expect(
+        buildQuestionFormAnswerInput({ input, questions, selections, otherTexts: {} }),
+      ).toEqual({
+        ...input,
+        questionAnswers: {
+          Colors: {
+            selectedOptionIds: multiSelect ? ["red", "blue", "red-duplicate"] : ["red-duplicate"],
+          },
+        },
+      });
+      expect(
+        buildQuestionFormAnswerInput({
+          input,
+          questions,
+          selections,
+          otherTexts: { 0: " Red, Blue " },
+        }),
+      ).toEqual({
+        ...input,
+        questionAnswers: {
+          Colors: {
+            selectedOptionIds: multiSelect ? ["red", "blue", "red-duplicate"] : [],
+            otherText: "Red, Blue",
+          },
+        },
+      });
+    },
+  );
+
   test("treats optional input prompts as skippable empty answers", () => {
     const questions = parseQuestionFormQuestions({
       questions: [
