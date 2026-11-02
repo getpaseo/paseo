@@ -3521,7 +3521,21 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/normalizeMar
 diff --git a/node_modules/react-native-enriched-markdown/src/web/styles.ts b/node_modules/react-native-enriched-markdown/src/web/styles.ts
 --- a/node_modules/react-native-enriched-markdown/src/web/styles.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/styles.ts
-@@ -290,7 +290,7 @@
+@@ -260,9 +260,12 @@ function videoStyle(style: MarkdownStyleInternal): CSSProperties {
+ 
+ function inlineImageStyle(style: MarkdownStyleInternal): CSSProperties {
+   const size = style.inlineImage.size;
++  // Inline images match the line height and keep their aspect ratio, so wide
++  // badges stay legible instead of shrinking into a square.
+   return {
+-    width: size,
++    width: 'auto',
+     height: size,
++    maxWidth: '100%',
+     verticalAlign: 'middle',
+     display: 'inline',
+   };
+@@ -290,7 +293,7 @@ function codeStyle(style: MarkdownStyleInternal): CSSProperties {
    const code = style.code;
    return {
      fontFamily: normalizeFontFamily(code.fontFamily),
@@ -3533,7 +3547,21 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/styles.ts b/nod
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
-@@ -271,7 +271,7 @@
+@@ -243,9 +243,12 @@ function videoStyle(style) {
+ }
+ function inlineImageStyle(style) {
+   const size = style.inlineImage.size;
++  // Inline images match the line height and keep their aspect ratio, so wide
++  // badges stay legible instead of shrinking into a square.
+   return {
+-    width: size,
++    width: 'auto',
+     height: size,
++    maxWidth: '100%',
+     verticalAlign: 'middle',
+     display: 'inline'
+   };
+@@ -271,7 +274,7 @@ function codeStyle(style) {
    const code = style.code;
    return {
      fontFamily: normalizeFontFamily(code.fontFamily),
@@ -3884,3 +3912,87 @@ diff --git a/node_modules/react-native-enriched-markdown/android/generated/jni/r
    }
    auto tmp_color = map.find("color");
    if (tmp_color != map.end()) {
+diff --git a/node_modules/react-native-enriched-markdown/src/web/utils.ts b/node_modules/react-native-enriched-markdown/src/web/utils.ts
+--- a/node_modules/react-native-enriched-markdown/src/web/utils.ts
++++ b/node_modules/react-native-enriched-markdown/src/web/utils.ts
+@@ -34,20 +34,32 @@ export function indexTaskItems(node: ASTNode, counter = { value: 0 }): void {
+  * Stamps Image nodes with `isInline` when they appear inside a paragraph
+  * that also contains other content (text, links, etc.).
+  * Matches native behavior: sole-child images are block-level, mixed are inline.
++ * A link wrapping only an image counts as an image, so `[![badge](x)](y) text`
++ * stamps the nested image inline while a lone `[![x](y)](z)` stays a block.
+  * Mutates the AST in-place (safe: called once on the freshly-parsed result).
+  */
+ export function markInlineImages(node: ASTNode): void {
+   if (node.type === 'Paragraph' && node.children) {
+-    const hasNonImageChild = node.children.some(
+-      (child) => child.type !== 'Image'
+-    );
+-    if (hasNonImageChild) {
+-      for (const child of node.children) {
+-        if (child.type === 'Image') {
+-          child.attributes = { ...child.attributes, isInline: true };
+-        }
+-      }
++    if (!node.children.every(isImageLike)) {
++      node.children.forEach(stampInlineImages);
+     }
+   }
+   node.children?.forEach(markInlineImages);
+ }
++
++function isImageLike(node: ASTNode): boolean {
++  if (node.type === 'Image') return true;
++  return (
++    node.type === 'Link' &&
++    node.children?.length === 1 &&
++    isImageLike(node.children[0]!)
++  );
++}
++
++function stampInlineImages(node: ASTNode): void {
++  if (node.type === 'Image') {
++    node.attributes = { ...node.attributes, isInline: true };
++    return;
++  }
++  node.children?.forEach(stampInlineImages);
++}
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/utils.js b/node_modules/react-native-enriched-markdown/lib/module/web/utils.js
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/utils.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/utils.js
+@@ -40,18 +40,24 @@ export function indexTaskItems(node, counter = {
+  */
+ export function markInlineImages(node) {
+   if (node.type === 'Paragraph' && node.children) {
+-    const hasNonImageChild = node.children.some(child => child.type !== 'Image');
+-    if (hasNonImageChild) {
+-      for (const child of node.children) {
+-        if (child.type === 'Image') {
+-          child.attributes = {
+-            ...child.attributes,
+-            isInline: true
+-          };
+-        }
+-      }
++    if (!node.children.every(isImageLike)) {
++      node.children.forEach(stampInlineImages);
+     }
+   }
+   node.children?.forEach(markInlineImages);
+ }
++function isImageLike(node) {
++  if (node.type === 'Image') return true;
++  return node.type === 'Link' && node.children?.length === 1 && isImageLike(node.children[0]);
++}
++function stampInlineImages(node) {
++  if (node.type === 'Image') {
++    node.attributes = {
++      ...node.attributes,
++      isInline: true
++    };
++    return;
++  }
++  node.children?.forEach(stampInlineImages);
++}
+ //# sourceMappingURL=utils.js.map
+\ No newline at end of file
