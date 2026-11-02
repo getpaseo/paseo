@@ -21,6 +21,8 @@ interface HeaderToggleButtonProps extends Omit<PressableProps, "style" | "onPres
   tooltipKeys: ShortcutKey[];
   tooltipSide: "left" | "right" | "top" | "bottom";
   tooltipDelayDuration?: number;
+  /** Keeps the highlight on, as for a toggled-on control. */
+  active?: boolean;
   style?: StyleProp<ViewStyle>;
   children: ReactNode | ((state: HeaderToggleButtonState) => ReactNode);
 }
@@ -31,6 +33,7 @@ export function HeaderToggleButton({
   tooltipKeys,
   tooltipSide,
   tooltipDelayDuration = 0,
+  active,
   style,
   disabled,
   children,
@@ -49,6 +52,7 @@ export function HeaderToggleButton({
   const combinedStyle = useIconButtonChromeStyle({
     size: "large",
     disabled: Boolean(disabled),
+    active,
     style,
   });
 

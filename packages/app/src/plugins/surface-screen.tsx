@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useMemo, useState, type ComponentType } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
@@ -35,6 +35,12 @@ import {
   type PluginSurfaceContributionIdentity,
 } from "./surface-contribution";
 import { resolvePluginPlatform } from "./platform";
+import {
+  ScreenHeaderActionsOutlet,
+  ScreenHeaderSlotProvider,
+  createScreenHeaderSlot,
+  useScreenHeaderActionsPresent,
+} from "./react-native/screen-header";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -163,6 +169,9 @@ export function PluginSurfaceScreen() {
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
   }, [serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+  // What the screen renders in `ScreenHeaderActions`, drawn in the header below.
+  const [headerSlot] = useState(createScreenHeaderSlot);
+  const hasHeaderActions = useScreenHeaderActionsPresent(headerSlot);
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const headerLeft = useMemo(
     () => (
@@ -190,9 +199,24 @@ export function PluginSurfaceScreen() {
       ) : null,
     [filterHosts, identity, params, pluginId, serverId],
   );
+  const headerActions = useMemo(
+    () => (hasHeaderActions ? <ScreenHeaderActionsOutlet slot={headerSlot} /> : null),
+    [hasHeaderActions, headerSlot],
+  );
+  const compactActions = useMemo(
+    () =>
+      headerActions || hostFilter ? (
+        <>
+          {headerActions}
+          {hostFilter}
+        </>
+      ) : null,
+    [headerActions, hostFilter],
+  );
   const headerRight = useMemo(
     () => (
       <>
+        {headerActions}
         {hostFilter}
         <HeaderToggleButton
           accessibilityLabel="Close plugin"
@@ -206,7 +230,7 @@ export function PluginSurfaceScreen() {
         </HeaderToggleButton>
       </>
     ),
-    [close, hostFilter],
+    [close, headerActions, hostFilter],
   );
 
   return (
@@ -217,7 +241,7 @@ export function PluginSurfaceScreen() {
           onBack={close}
           title={title}
           titleTestID="plugin-surface-title"
-          actions={hostFilter}
+          actions={compactActions}
         />
       ) : (
         <ScreenHeader left={headerLeft} right={headerRight} />
@@ -229,14 +253,16 @@ export function PluginSurfaceScreen() {
             installation={plugin}
             Surface={surface.Component}
           >
-            <ThemedSurfaceRenderer
-              Surface={surface.Component}
-              plugin={plugin}
-              host={host}
-              layout={layout}
-              params={params}
-              uniProps={pluginThemeMapping}
-            />
+            <ScreenHeaderSlotProvider value={headerSlot}>
+              <ThemedSurfaceRenderer
+                Surface={surface.Component}
+                plugin={plugin}
+                host={host}
+                layout={layout}
+                params={params}
+                uniProps={pluginThemeMapping}
+              />
+            </ScreenHeaderSlotProvider>
           </SurfaceErrorBoundary>
         ) : (
           <Text style={styles.errorText}>
