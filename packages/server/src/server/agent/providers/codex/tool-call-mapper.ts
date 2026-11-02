@@ -4,6 +4,7 @@ import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import {
   extractCodexShellOutput,
   normalizeToolCallStatus,
+  TOOL_CALL_DIFF_MAX_CHARS,
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
@@ -847,7 +848,7 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
   return asEditTextFields(file.diff);
 }
 
-export function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
+function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   const { unifiedDiff, newString } = resolveFileChangeTextFields(file);
   if (!unifiedDiff && !newString) {
     return "";
@@ -871,6 +872,21 @@ export function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
     lines.push(...contentLines.map((line) => `+${line}`));
   }
   return lines.join("\n");
+}
+
+export function fileChangesToUnifiedDiff(files: CodexFileChangeEntry[]): string {
+  const diffs = files.map(fileChangeToUnifiedDiff).filter(Boolean);
+  const combined = diffs.join("\n\n");
+  if (combined.length <= TOOL_CALL_DIFF_MAX_CHARS) return combined;
+
+  // Share the existing detail budget so a large first file cannot hide later files.
+  const budget = Math.floor((TOOL_CALL_DIFF_MAX_CHARS - 2 * (diffs.length - 1)) / diffs.length);
+  const marker = "\n...[truncated]";
+  return diffs
+    .map((diff) =>
+      diff.length <= budget ? diff : diff.slice(0, Math.max(0, budget - marker.length)) + marker,
+    )
+    .join("\n\n");
 }
 
 function mapFileChangeItem(
@@ -909,7 +925,7 @@ function mapFileChangeItem(
   const firstFile = files[0];
   const textFields =
     files.length > 1
-      ? { unifiedDiff: files.map(fileChangeToUnifiedDiff).filter(Boolean).join("\n\n") }
+      ? { unifiedDiff: fileChangesToUnifiedDiff(files) }
       : resolveFileChangeTextFields(firstFile);
   const hasTextFields = Boolean(textFields.unifiedDiff || textFields.newString);
   const input = toNullableObject({

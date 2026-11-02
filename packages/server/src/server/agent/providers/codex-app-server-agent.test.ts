@@ -7960,3 +7960,30 @@ test("publishes a materialized image before dispatching the following turn compl
     await session.close();
   }
 });
+
+describe("legacy multi-file diff budget", () => {
+  test.each([true, false])(
+    "retains later file diffs when a large patch is running: %s",
+    (running) => {
+      const item = mapCodexPatchNotificationToToolCall({
+        callId: "large-legacy-patch",
+        cwd: "/repo",
+        running,
+        success: true,
+        changes: [
+          {
+            path: "/repo/alpha.txt",
+            kind: "modify",
+            unified_diff: "@@ -1 +1 @@\n-old\n+" + "a".repeat(14000),
+          },
+          { path: "/repo/beta.txt", kind: "modify", unified_diff: "@@ -1 +1 @@\n-small\n+large\n" },
+        ],
+      });
+      expect(item?.detail.type).toBe("edit");
+      if (item?.detail.type !== "edit") throw new Error("Expected edit detail");
+      expect(item.detail.unifiedDiff).toContain("diff --git a/beta.txt b/beta.txt");
+      expect(item.detail.unifiedDiff).toContain("+large");
+      expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
+    },
+  );
+});

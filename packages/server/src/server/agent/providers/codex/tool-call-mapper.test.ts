@@ -1299,3 +1299,30 @@ describe("codex tool-call mapper", () => {
     `);
   });
 });
+
+describe("multi-file diff budget", () => {
+  it("retains a labeled diff for later files when the first diff exceeds the detail limit", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "large-multi-file",
+        status: "completed",
+        changes: [
+          {
+            path: "/repo/alpha.txt",
+            kind: "modify",
+            diff: "@@ -1 +1 @@\n-old\n+" + "a".repeat(14000),
+          },
+          { path: "/repo/beta.txt", kind: "modify", diff: "@@ -1 +1 @@\n-small\n+large\n" },
+        ],
+      },
+      { cwd: "/repo" },
+    );
+    expect(item?.detail.type).toBe("edit");
+    if (item?.detail.type !== "edit") throw new Error("Expected edit detail");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/alpha.txt b/alpha.txt");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/beta.txt b/beta.txt");
+    expect(item.detail.unifiedDiff).toContain("+large");
+    expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
+  });
+});

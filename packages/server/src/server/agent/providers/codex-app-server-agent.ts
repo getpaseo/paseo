@@ -55,7 +55,7 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
-  fileChangeToUnifiedDiff,
+  fileChangesToUnifiedDiff,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
@@ -1698,15 +1698,13 @@ export function mapCodexPatchNotificationToToolCall(params: {
     .find((value): value is string => typeof value === "string" && value.length > 0);
   const patchText =
     files.length > 1
-      ? files
-          .map((file) =>
-            fileChangeToUnifiedDiff({
-              path: normalizeCodexFilePath(file.path, params.cwd) ?? file.path,
-              kind: file.kind,
-              diff: file.content,
-            }),
-          )
-          .join("\n\n")
+      ? fileChangesToUnifiedDiff(
+          files.map((file) => ({
+            path: normalizeCodexFilePath(file.path, params.cwd) ?? file.path,
+            kind: file.kind,
+            diff: file.content,
+          })),
+        )
       : firstPatchText;
   const patchFields = codexPatchTextFields(patchText);
   const mapped = mapCodexToolCallEnvelope({
