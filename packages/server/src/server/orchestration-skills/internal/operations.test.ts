@@ -514,6 +514,59 @@ describe("installSkills / updateSkills", () => {
     ).toBe("paseo-v1");
   });
 
+  async function linkSkillToCheckout(name: string, content: string): Promise<string> {
+    const checkout = path.join(sandbox.root, "checkout", name);
+    await writeFiles(checkout, { "SKILL.md": content });
+    for (const root of [sandbox.targets.agentsDir, sandbox.targets.claudeDir]) {
+      await fs.rm(path.join(root, name), { recursive: true, force: true });
+      await fs.symlink(checkout, path.join(root, name), "dir");
+    }
+    return checkout;
+  }
+
+  it("auto-update leaves a skill directory linked from the user's own checkout", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await installSkills(sandbox.targets, ALL_SKILLS);
+    const checkout = await linkSkillToCheckout("paseo", "my edited paseo");
+    await writeBundleSkill(sandbox.targets.sourceDir, "paseo-loop", { "SKILL.md": "loop-v2" });
+
+    const status = await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS);
+
+    expect(await fs.readFile(path.join(checkout, "SKILL.md"), "utf8")).toBe("my edited paseo");
+    expect(await pathExists(path.join(checkout, ".paseo-managed-files.json"))).toBe(false);
+    // An unlinked skill is still repaired in the same run.
+    expect(
+      await fs.readFile(path.join(sandbox.targets.agentsDir, "paseo-loop", "SKILL.md"), "utf8"),
+    ).toBe("loop-v2");
+    // The linked skill stays reported as drift for an explicit update to settle.
+    expect(status.ops).toEqual([{ kind: "update", name: "paseo" }]);
+  });
+
+  it("an explicit update still writes through a linked skill directory", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await installSkills(sandbox.targets, ALL_SKILLS);
+    const checkout = await linkSkillToCheckout("paseo", "my edited paseo");
+
+    const status = await updateSkills(sandbox.targets, ALL_SKILLS);
+
+    expect(status.state).toBe("up-to-date");
+    expect(await fs.readFile(path.join(checkout, "SKILL.md"), "utf8")).toBe("paseo-v1");
+  });
+
+  it("auto-update still repairs a skill directory linked between skill roots", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await installSkills(sandbox.targets, ALL_SKILLS);
+    const claudeCopy = path.join(sandbox.targets.claudeDir, "paseo");
+    await fs.rm(claudeCopy, { recursive: true, force: true });
+    await fs.symlink(path.join(sandbox.targets.agentsDir, "paseo"), claudeCopy, "dir");
+    await writeBundleSkill(sandbox.targets.sourceDir, "paseo", { "SKILL.md": "paseo-v2" });
+
+    const status = await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS);
+
+    expect(status.state).toBe("up-to-date");
+    expect(await fs.readFile(path.join(claudeCopy, "SKILL.md"), "utf8")).toBe("paseo-v2");
+  });
+
   it("repairs missing and edited skills without deleting a legacy directory", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     await writeOnDiskSkill(sandbox.targets.agentsDir, "paseo", { "SKILL.md": "stale" });

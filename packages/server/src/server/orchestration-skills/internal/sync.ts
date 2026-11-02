@@ -208,6 +208,36 @@ export async function isLegacyCodexCopy(
   return true;
 }
 
+function isInsideDirectory(candidate: string, dir: string): boolean {
+  const rel = path.relative(dir, candidate);
+  return !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${path.sep}`);
+}
+
+/**
+ * Whether the shared or Claude skill directory is a symlink that resolves outside
+ * every skill root, such as a user's own checkout linked into ~/.claude/skills.
+ * Paseo did not create that directory, and writing to it edits the user's files.
+ * A link between Paseo's own roots, or a dangling link, does not count.
+ */
+export async function isLinkedFromOutsideSkillRoots(
+  skillName: string,
+  targets: RemoveSkillTargets,
+): Promise<boolean> {
+  const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
+  const realRoots = await Promise.all(
+    roots.map((root) => fs.realpath(root).catch(() => path.resolve(root))),
+  );
+  for (const root of [targets.agentsDir, targets.claudeDir]) {
+    const skillDir = path.join(root, skillName);
+    const info = await fs.lstat(skillDir).catch(() => null);
+    if (!info?.isSymbolicLink()) continue;
+    const real = await fs.realpath(skillDir).catch(() => null);
+    if (real === null) continue;
+    if (!realRoots.some((realRoot) => isInsideDirectory(real, realRoot))) return true;
+  }
+  return false;
+}
+
 async function retireManagedSkill(dstDir: string): Promise<number> {
   const info = await fs.lstat(dstDir).catch(() => null);
   if (!info?.isDirectory()) return 0;
