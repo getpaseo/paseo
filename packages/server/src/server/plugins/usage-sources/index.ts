@@ -33,6 +33,7 @@ interface KnownReport {
 
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
+  hasStoredAgent?(id: string): Promise<boolean>;
   usageSession(id: string): AgentUsageSession | null;
 }
 
@@ -97,11 +98,7 @@ export class UsageSourceRegistry {
     const revision =
       agentId === undefined ? undefined : usageRevision(this.agents.usageSession(agentId));
     const assertCurrent = () => {
-      if (
-        agentId !== undefined &&
-        (!this.agents.hasAgent(agentId) ||
-          usageRevision(this.agents.usageSession(agentId)) !== revision)
-      ) {
+      if (agentId !== undefined && usageRevision(this.agents.usageSession(agentId)) !== revision) {
         throw new Error("Agent usage attribution changed. Request its reports again.");
       }
     };
@@ -144,7 +141,8 @@ export class UsageSourceRegistry {
   }
 
   private async discoverAgent(agentId: string): Promise<string[]> {
-    if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
+    if (!this.agents.hasAgent(agentId) && !(await this.agents.hasStoredAgent?.(agentId)))
+      throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
     if (!session) {
       this.byAgent.delete(agentId);

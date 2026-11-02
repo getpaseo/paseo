@@ -2702,8 +2702,10 @@ test("reload releases the original writer before resuming the same session", asy
   const client = new ExclusiveWriterClient();
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
   const revisions: Array<string | null | undefined> = [];
+  const reloadEvents: AgentManagerEvent[] = [];
   manager.subscribe(
     (event) => {
+      reloadEvents.push(event);
       if (event.type === "agent_state") revisions.push(toAgentPayload(event.agent).usageRevision);
     },
     { replayState: false },
@@ -2715,12 +2717,17 @@ test("reload releases the original writer before resuming the same session", asy
     for (let i = 0; i < 3; i++) {
       const previousRevision = revisions.at(-1);
       revisions.length = 0;
+      reloadEvents.length = 0;
       const reloaded = await manager.reloadAgentSession(created.id, undefined, {
         rehydrateFromDisk: true,
       });
       expect(reloaded.id).toBe(created.id);
       expect(reloaded.persistence?.sessionId).toBe(created.persistence?.sessionId);
-      expect(revisions[0]).toBeNull();
+      expect(reloadEvents[0]).toMatchObject({
+        type: "agent_usage_invalidated",
+        agent: { id: created.id, lifecycle: "idle" },
+      });
+      expect(revisions).not.toContain(null);
       expect(revisions.at(-1)).toEqual(expect.any(String));
       expect(revisions.at(-1)).not.toBe(previousRevision);
     }

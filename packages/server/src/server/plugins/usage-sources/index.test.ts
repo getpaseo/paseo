@@ -420,6 +420,36 @@ test("session discovery reuses accounts, separates launches, and retains live ag
   await expect(registry.listReports({ agentId: "one", reportIds: [] })).rejects.toThrow("agentId");
 });
 
+test("stored closed agents return no usage without discovering or reopening a session", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    hasStoredAgent: async (id) => id === "closed",
+    usageSession: () => null,
+  });
+  let discoveries = 0;
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: async () => {
+      discoveries++;
+      return [{ key: "host", input: {} }];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  const revisions: Array<string | null> = [];
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["codex:host"]);
+  discoveries = 0;
+  expect(
+    await registry.listReports({
+      agentId: "closed",
+      onRevision: (revision) => revisions.push(revision),
+    }),
+  ).toEqual([]);
+  expect(revisions).toEqual([null]);
+  expect(discoveries).toBe(0);
+  await expect(registry.listReports({ agentId: "unknown" })).rejects.toThrow("Unknown agent");
+});
+
 test("agent revisions follow account switches and closed sessions never fall back to host usage", async () => {
   let session: { provider: string; sessionKey: string; env: Record<string, string> } | null = {
     provider: "codex",
@@ -454,10 +484,18 @@ test("agent revisions follow account switches and closed sessions never fall bac
   expect(revisions).toEqual([first, second, null]);
 });
 
-test.each(["discover", "fetch"])(
-  "rejects account switches during %s and suppresses late reports",
-  async (stage) => {
-    let session = { provider: "codex", sessionKey: "launch-a", env: {} };
+test.each([
+  ["discover", "launch-b"],
+  ["fetch", "launch-b"],
+  ["fetch", null],
+] as const)(
+  "rejects attribution changes during %s to %s and suppresses late reports",
+  async (stage, nextLaunch) => {
+    let session: { provider: string; sessionKey: string; env: Record<string, string> } | null = {
+      provider: "codex",
+      sessionKey: "launch-a",
+      env: {},
+    };
     let resume!: () => void;
     let started!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -467,7 +505,8 @@ test.each(["discover", "fetch"])(
       started = resolve;
     });
     const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-      hasAgent: () => true,
+      hasAgent: () => session !== null,
+      hasStoredAgent: async () => true,
       usageSession: () => session,
     });
     registry.register({
@@ -494,7 +533,7 @@ test.each(["discover", "fetch"])(
       onReport: (entry) => emitted.push(entry.id),
     });
     await entered;
-    session = { ...session, sessionKey: "launch-b" };
+    session = nextLaunch === null ? null : { ...session, sessionKey: nextLaunch };
     resume();
     await expect(pending).rejects.toThrow("Agent usage attribution changed");
     expect(emitted).toEqual([]);

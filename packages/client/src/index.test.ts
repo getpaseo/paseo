@@ -125,6 +125,22 @@ test("agent usage rejects reports fetched across a launch change", async () => {
     const pending = client.agents.ref("agent-a").listUsageReports({ requestId: "changed" });
     ws.message(
       sessionMessage({
+        type: "usage.list_reports.update",
+        payload: {
+          requestId: "changed",
+          report: {
+            id: "codex:old-account",
+            sourceId: "codex",
+            sourceLabel: "Codex",
+            account: { label: "Old account" },
+            fetchedAt: "2026-01-01T00:00:00.000Z",
+            report: { status: "available", windows: [] },
+          },
+        },
+      }),
+    );
+    ws.message(
+      sessionMessage({
         type: "usage.list_reports.response",
         payload: {
           requestId: "changed",
