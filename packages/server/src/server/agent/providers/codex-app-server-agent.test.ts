@@ -228,7 +228,7 @@ function deferred<T>() {
 }
 
 describe("Codex file-change approvals", () => {
-  test("file-change approval includes the matching started patch", async () => {
+  test("file-change approval includes the matching patch when notifications are still queued", async () => {
     const appServer = createFakeCodexAppServer();
     const { session } = await startPublicSteeringSession(appServer);
     try {
@@ -236,7 +236,6 @@ describe("Codex file-change approvals", () => {
         ["file-alpha", "/workspace/project/alpha.txt", "@@ -1 +1 @@\n-blue\n+green\n"],
         ["file-beta", "/workspace/project/beta.txt", "@@ -1 +1 @@\n-small\n+large\n"],
       ]) {
-        const started = waitForTimelineToolCall(session, id);
         appServer.child.stdout.write(
           `${JSON.stringify({
             method: "item/started",
@@ -252,7 +251,6 @@ describe("Codex file-change approvals", () => {
             },
           })}\n`,
         );
-        await started;
       }
       const permission = waitForNextPermission(session);
       appServer.requestFileChangeApproval({

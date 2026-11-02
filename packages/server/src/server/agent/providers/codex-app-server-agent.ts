@@ -7262,7 +7262,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+  private async handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+    await this.pendingNotifications;
     const parsed = z
       .object({
         itemId: z.string(),
