@@ -1,6 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { areSkillsInstalled, useAgentSkills, type AgentSkillsController } from "@/agent-skills";
+import {
+  areSkillsInstalled,
+  hasSelectedSkills,
+  useAgentSkills,
+  type AgentSkillsController,
+} from "@/agent-skills";
 import { useToast } from "@/contexts/toast-context";
 import { useCliInstall } from "@/desktop/hooks/use-install-status";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -35,7 +40,13 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const skills = useAgentSkills(serverId);
   const cli = useCliInstall();
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const [choices, setChoices] = useState<Choices>(ALL_ON);
+  const [chosen, setChosen] = useState<Choices>(ALL_ON);
+  // With nothing picked there is nothing to install, so skills read as off, as they do in Settings.
+  const skillsSelected = skills.status === null || hasSelectedSkills(skills.status);
+  const choices = useMemo<Choices>(
+    () => ({ ...chosen, skills: chosen.skills && skillsSelected }),
+    [chosen, skillsSelected],
+  );
   const [isApplying, setIsApplying] = useState(false);
   const offered: Choices = {
     tools: true,
@@ -44,7 +55,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   };
 
   const setChoice = useCallback((choice: OrchestrationChoice, on: boolean) => {
-    setChoices((current) => ({ ...current, [choice]: on }));
+    setChosen((current) => ({ ...current, [choice]: on }));
   }, []);
 
   // What the host and this computer have now, or null while it is still being read. A choice is

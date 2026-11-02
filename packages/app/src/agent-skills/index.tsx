@@ -38,7 +38,8 @@ export function areSkillsInstalled(status: AgentSkillsStatus | null): boolean {
   return status !== null && status.state !== "not-installed";
 }
 
-function hasSelectedSkills(status: AgentSkillsStatus | null): boolean {
+/** Whether the saved selection names any skill there is to install. */
+export function hasSelectedSkills(status: AgentSkillsStatus | null): boolean {
   if (!status) return false;
   if (status.selection.mode === "all") return status.available.length > 0;
   return status.selection.skills.some((name) => status.available.includes(name));

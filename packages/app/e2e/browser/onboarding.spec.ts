@@ -23,6 +23,11 @@ import {
   skipSetup,
   startSetupHost,
 } from "../support/helpers/onboarding";
+import {
+  chooseCustomSkills,
+  openSkillSelection,
+  saveSkillSelection,
+} from "../support/helpers/agent-skills";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { enableRelayAndExpectOffer } from "../support/helpers/pair-device";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -231,6 +236,31 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await expect(paseoToolsSwitch(page)).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("7-settings-agents.png") });
     });
+  } finally {
+    await host.close();
+  }
+});
+
+test("with no skills picked, skills read as off and Continue moves on", async ({ page }) => {
+  const host = await startSetupHost("no-skills");
+
+  try {
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+    await goToSetupStep(page, "Orchestration");
+    await expectSetupStep(page, "Let agents use Paseo");
+
+    await openSkillSelection(page);
+    await chooseCustomSkills(page, []);
+    await saveSkillSelection(page);
+    const skillsSwitch = setupModal(page).getByRole("switch", {
+      name: "Orchestration skills",
+      exact: true,
+    });
+    await expect(skillsSwitch).not.toBeChecked();
+
+    await continueSetup(page);
+    await expectSetupStep(page, "Take your agents with you");
   } finally {
     await host.close();
   }
