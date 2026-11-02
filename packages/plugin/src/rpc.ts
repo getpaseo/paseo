@@ -39,8 +39,7 @@ export async function callPluginRpc<InputSchema extends ZodType, OutputSchema ex
   invoke: (method: string, input: unknown) => Promise<unknown>,
   input: PluginWireInput<ZodInput<InputSchema>>,
 ): Promise<ZodOutput<OutputSchema>> {
-  const parsedInput = await contract.input.parseAsync(input);
-  const output = await invoke(contract.name, parsedInput);
+  const output = await invoke(contract.name, input);
   return contract.output.parseAsync(output);
 }
 

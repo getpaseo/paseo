@@ -139,7 +139,7 @@ export function createPluginWorker(options: {
       registerSubscription(contract, handler as PluginSubscriptionHandler);
       return;
     }
-    register(contract, (input, context) => handler(contract.input.parse(input), context as never));
+    register(contract, (input, context) => handler(input, context as never));
   }) as PluginServerContext["handle"];
 
   function register(contract: PluginRpcContract, handler: RpcHandler): void {
@@ -593,7 +593,6 @@ export function createPluginWorker(options: {
         if (!paseo) throw new Error("Plugin Paseo API is unavailable");
         return registered.handler(input, { paseo });
       })
-      .then((output) => registered.contract.output.parseAsync(output))
       .then((output: unknown) => {
         assertPluginWireValue(output, "output");
         return output;
