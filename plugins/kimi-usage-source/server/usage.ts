@@ -331,9 +331,10 @@ export async function discover(): Promise<UsageAccount[]> {
     join(homedir(), ".kimi"),
   ];
   // A login to another deployment leaves the old slot behind with a dead token.
-  // The CLI keeps refreshing the slot it uses, so the latest expiry wins.
-  let found: { input: UsageInput; expiresAt: number } | undefined;
+  // Within each home, prefer the latest expiry. Keep the configured home ahead
+  // of the legacy fallback, even if that fallback holds a newer token.
   for (const home of homes) {
+    let found: { input: UsageInput; expiresAt: number } | undefined;
     for (const deployment of KIMI_CODE_DEPLOYMENTS) {
       const input: UsageInput = {
         store: "file",
@@ -345,6 +346,7 @@ export async function discover(): Promise<UsageAccount[]> {
       const expiresAt = credentials.expires_at ?? Number.POSITIVE_INFINITY;
       if (!found || expiresAt > found.expiresAt) found = { input, expiresAt };
     }
+    if (found) return [{ key: "default", input: found.input }];
   }
-  return found ? [{ key: "default", input: found.input }] : [];
+  return [];
 }

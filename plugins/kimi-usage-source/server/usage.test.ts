@@ -215,6 +215,52 @@ describe("kimi usage source", () => {
     ]);
   });
 
+  it("fetches global usage when an expired default-deployment login remains", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "expired_default", { expires_at: 1_700_000_000 });
+    writeKimiCredentials(kimiHome, "live_global", { expires_at: 2_000_000_000 }, GLOBAL_SLOT);
+    const [account] = await discover();
+    if (!account) throw new Error("No configured Kimi account");
+    const requests: string[] = [];
+
+    const report = await fetchUsage(
+      account.input as Parameters<typeof fetchUsage>[0],
+      async (url, init) => {
+        requests.push(url.toString());
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer live_global");
+        return jsonResponse({ usage: { limit: "100", remaining: "60" } });
+      },
+    );
+
+    expect(requests).toEqual(["https://api.kimi.ai/coding/v1/usages"]);
+    expect(report).toMatchObject({ status: "available", windows: [{ usedPct: 40 }] });
+  });
+
+  it("keeps KIMI_CODE_HOME ahead of a newer legacy-home login", async () => {
+    const selectedHome = join(homeDir, "selected-kimi");
+    process.env.KIMI_CODE_HOME = selectedHome;
+    writeKimiCredentials(
+      selectedHome,
+      "selected_global_token",
+      { expires_at: 2_000_000_000 },
+      GLOBAL_SLOT,
+    );
+    writeKimiCredentials(join(homeDir, ".kimi"), "legacy_token", { expires_at: 2_000_000_100 });
+
+    const accounts = await discover();
+
+    expect(accounts).toEqual([
+      {
+        key: "default",
+        input: {
+          store: "file",
+          locator: kimiCredentialPath(selectedHome, GLOBAL_SLOT),
+          baseUrl: "https://api.kimi.ai/coding/v1",
+        },
+      },
+    ]);
+  });
+
   it("asks the user to run kimi when the CLI token has expired", async () => {
     writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_cli_token", {
       expires_at: 1_700_000_000,
