@@ -2,6 +2,8 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
+import { matchCommandLink } from "@/agent-commands";
+
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
@@ -12,6 +14,28 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
+
+it("recognizes complete known commands in inline code", () => {
+  const names = new Set(["code-review", "review:fast"]);
+  const prepared = prepareMarkdownSource("`/code-review` `/unknown`", undefined, {
+    commandNames: names,
+  });
+  expect(prepared.linkRecognition.inlineCode.test("/code-review")).toBe(true);
+  expect(prepared.linkRecognition.inlineCode.test("/unknown")).toBe(
+    prepareMarkdownSource("`/unknown`").linkRecognition.inlineCode.test("/unknown"),
+  );
+  const nonPath = prepareMarkdownSource("`/review:fast`", undefined, { commandNames: names });
+  expect(nonPath.linkRecognition.inlineCode.test("/review:fast")).toBe(true);
+  expect(matchCommandLink("/code-review", "inline-code", names)).toBe("/code-review");
+});
+
+it("resolves authored root-relative links only when the target is a known command", () => {
+  const names = new Set(["code-review"]);
+  expect(matchCommandLink("/code-review", "markdown", names)).toBe("/code-review");
+  expect(matchCommandLink("/code-review/file", "markdown", names)).toBeNull();
+  expect(matchCommandLink("/code-review", "text", names)).toBeNull();
+  expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
+});
 
 describe("shared Markdown source adaptation", () => {
   it("keeps paragraphs, fences and quotes together for the library", () => {

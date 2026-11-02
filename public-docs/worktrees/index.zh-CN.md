@@ -82,16 +82,7 @@ paseo workspace create \
 
 ## 使用 .worktreeinclude 复制本地文件 {#copy-local-files-with-worktreeinclude}
 
-在源检出的根目录创建 `.worktreeinclude`，将选定的 Git 忽略文件复制到新的 worktree：
-
-```gitignore
-.env
-config/*.local.json
-```
-
-模式使用 gitignore 语法。只有同时匹配 `.worktreeinclude` 且被 Git 忽略的文件才会复制。已跟踪的文件不会被复制，目标中已存在的文件不会被覆盖。没有 `.worktreeinclude` 时，不会复制任何本地文件。包含路径中的符号链接目录和嵌套仓库会导致复制失败，并中止 worktree 创建。
-
-内置的 `worktree-include` 插件从你创建 worktree 时所选的检出复制文件，即使源检出本身也是 worktree。复制会在 setup、终端和第一个 Agent 运行之前完成。复制失败会中止创建并删除新的 worktree。支持时会在 APFS 和 btrfs 上使用写时复制克隆，否则执行普通复制。
+使用 [`.worktreeinclude`](/docs/worktrees/worktreeinclude)，在 setup 运行前将 `.env` 等选定的 Git 忽略文件从源检出复制到新 worktree。
 
 ## paseo.json {#paseojson}
 

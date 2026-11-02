@@ -90,6 +90,7 @@ import {
   createFakeCodexAppServer,
   fakeCodexThreadHistory,
   type FakeCodexAppServer,
+  waitForNextEvent,
   waitForNextPermission,
   waitForNextTimelineItem,
   waitForProviderSubagent,
@@ -1287,6 +1288,9 @@ describe("Codex app-server provider", () => {
     );
     await firstSession.startTurn("first turn");
     await expect(beforeRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
+    const saved = waitForNextEvent(firstSession, "thread_started");
+    beforeRestart.startsTurn({ threadId: "thread-1" });
+    await saved;
     const handle = firstSession.describePersistence()!;
     await firstSession.close();
 
@@ -1319,8 +1323,60 @@ describe("Codex app-server provider", () => {
     try {
       await session.startTurn("persist the configured session");
       await appServer.waitForTurnStart();
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await saved;
       const handle = session.describePersistence()!;
       expect(handle.metadata).not.toHaveProperty("providerOptions");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a new thread only after Codex announces its first turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(createConfig());
+    try {
+      // Codex has started the thread but writes its rollout at the first turn, so another
+      // app-server could not resume it yet.
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: null });
+      expect(session.describePersistence()).toBeNull();
+      expect(
+        appServer.requests().filter((request) => request.method === "thread/start"),
+      ).toHaveLength(1);
+
+      await session.startTurn("first prompt");
+      await appServer.waitForTurnStart();
+      expect(session.describePersistence()).toBeNull();
+
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await expect(saved).resolves.toMatchObject({
+        type: "thread_started",
+        provider: "codex",
+        sessionId: "thread-1",
+      });
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "thread-1",
+        nativeHandle: "thread-1",
+      });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a resumed thread before its next turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).resumeSession(
+      { provider: "codex", sessionId: "saved-thread" },
+      createConfig(),
+    );
+    try {
+      expect(session.describePersistence()).toMatchObject({ sessionId: "saved-thread" });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "saved-thread" });
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -2604,7 +2660,12 @@ describe("Codex app-server provider", () => {
         clientMessageId: "client-message",
       },
     });
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
+    // The first turn of a new thread also reports the thread, now that Codex has saved it.
+    expect(events.slice(0, 3).map((event) => event.type)).toEqual([
+      "thread_started",
+      "turn_started",
+      "timeline",
+    ]);
     appServer.completeTurn();
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
