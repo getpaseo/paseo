@@ -62,6 +62,69 @@ describe("OMP history mapper", () => {
     );
   });
 
+  test.each([
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Command aborted" }],
+      isError: true,
+      status: "canceled",
+      error: null,
+    },
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Command exited with code 1" }],
+      isError: true,
+      status: "failed",
+      error: "Command exited with code 1",
+    },
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Output contains Command aborted" }],
+      isError: true,
+      status: "failed",
+      error: "Output contains Command aborted",
+    },
+    {
+      toolName: "read",
+      content: [{ type: "text", text: "Command aborted" }],
+      isError: true,
+      status: "failed",
+      error: "Command aborted",
+    },
+  ] satisfies Array<{
+    toolName: string;
+    content: Extract<OmpAgentMessage, { role: "toolResult" }>["content"];
+    isError: boolean;
+    status: string;
+    error: string | null;
+  }>)(
+    "replays $toolName result $content with isError=$isError as $status",
+    async ({ toolName, content, isError, status, error }) => {
+      const events = await collectHistory([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "shell-result",
+              name: toolName,
+              arguments: { command: "sleep 90", path: "example.txt" },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "shell-result",
+          toolName,
+          content,
+          details: {},
+          isError,
+        },
+      ]);
+      expect(events.at(-1)?.item).toMatchObject({ type: "tool_call", status, error });
+    },
+  );
+
   test("replays a web search details error as failed when OMP sets isError false", async () => {
     const events = await collectHistory([
       {
