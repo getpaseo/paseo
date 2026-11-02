@@ -38,6 +38,17 @@ export {
 import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
 import { z } from "zod";
+import {
+  OrderTargetsSetRequestSchema,
+  OrderDeviceForgetRequestSchema,
+  OrderListRequestSchema,
+  OrderSetRequestSchema,
+  OrderTargetsSetResponseSchema,
+  OrderDeviceForgetResponseSchema,
+  OrderListResponseSchema,
+  OrderSetResponseSchema,
+  OrderUpdateSchema,
+} from "./ordering.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -3306,6 +3317,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  OrderTargetsSetRequestSchema,
+  OrderDeviceForgetRequestSchema,
+  OrderListRequestSchema,
+  OrderSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3687,6 +3702,10 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(sharedOrdering): added in v0.11.x, remove optional parsing after 2027-04-12.
+        sharedOrdering: z.boolean().optional(),
+        // COMPAT(sharedOrderingTargets): added in v0.11.x, remove optional parsing after 2027-04-17.
+        sharedOrderingTargets: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -7058,6 +7077,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  OrderTargetsSetResponseSchema,
+  OrderDeviceForgetResponseSchema,
+  OrderListResponseSchema,
+  OrderSetResponseSchema,
+  OrderUpdateSchema,
   WorkspaceLabelListResponseSchema,
   WorkspaceLabelUpdateSchema,
   WorkspaceLabelAssignmentSetResponseSchema,
