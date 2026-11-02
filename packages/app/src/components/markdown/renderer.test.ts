@@ -1,4 +1,7 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { build } from "esbuild";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
@@ -9,7 +12,7 @@ import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
@@ -35,6 +38,64 @@ it("resolves authored root-relative links only when the target is a known comman
   expect(matchCommandLink("/code-review/file", "markdown", names)).toBeNull();
   expect(matchCommandLink("/code-review", "text", names)).toBeNull();
   expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
+});
+
+describe("HTML normalization parse work", () => {
+  let bundle: string;
+
+  // Observe the installed parser through a bundle so counting does not replace parsing
+  // or add a test-only parameter to the source adapter.
+  beforeAll(async () => {
+    const result = await build({
+      entryPoints: [join(import.meta.dirname, "html.ts")],
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      write: false,
+      plugins: [
+        {
+          name: "observe-markdown-parses",
+          setup(builder) {
+            builder.onResolve({ filter: /^mdast-util-from-markdown$/ }, (args) => {
+              if (args.namespace === "observed-parser") return;
+              return { path: args.path, namespace: "observed-parser" };
+            });
+            builder.onLoad({ filter: /.*/, namespace: "observed-parser" }, () => ({
+              contents: `import { fromMarkdown as parse } from "mdast-util-from-markdown";
+              export function fromMarkdown(...args) {
+                globalThis.markdownParseCalls += 1;
+                return parse(...args);
+              }`,
+              resolveDir: import.meta.dirname,
+            }));
+          },
+        },
+      ],
+    });
+    bundle = result.outputFiles[0].text;
+  });
+
+  it.each([
+    [
+      "fenced comparisons",
+      "```ts\nif (index < count) return index;\n```",
+      0,
+      "```ts\nif (index < count) return index;\n```",
+    ],
+    ["fenced JSX", "```tsx\nconst view = <Panel/>;\n```", 1, "```tsx\nconst view = <Panel/>;\n```"],
+    ["HTML", "<b>bold</b>", 2, "**bold**"],
+  ])("only parses %s when normalization needs its tree", (_name, source, calls, output) => {
+    const observed = JSON.parse(
+      execFileSync(process.execPath, ["-"], {
+        encoding: "utf8",
+        input: `globalThis.markdownParseCalls = 0;
+        (function () { ${bundle} })();
+        const output = module.exports.normalizeMarkdownHtml(${JSON.stringify(source)});
+        console.log(JSON.stringify({output, calls: globalThis.markdownParseCalls}));`,
+      }),
+    );
+    expect(observed).toEqual({ output, calls });
+  });
 });
 
 describe("shared Markdown source adaptation", () => {
