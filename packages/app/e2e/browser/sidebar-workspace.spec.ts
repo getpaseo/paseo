@@ -1,4 +1,5 @@
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import type { Page, TestInfo } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -294,6 +295,80 @@ async function expectRecoveredWorkspacesAfterReload(
 }
 
 test.describe("Sidebar workspace list", () => {
+  test("agent status replaces diff stats on project and workspace rows", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "sidebar-agent-status-" });
+    try {
+      await seeded.client.createAgent({
+        provider: "mock",
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "Done",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+      });
+      const running = await seeded.client.createAgent({
+        provider: "mock",
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "Running",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+        initialPrompt: "Keep working",
+      });
+      await seeded.client.waitForAgentUpsert(
+        running.id,
+        (snapshot) => snapshot.status === "running",
+        15_000,
+      );
+      const second = await seeded.client.createWorkspace({
+        source: { kind: "directory", path: seeded.repoPath, projectId: seeded.projectId },
+        title: "Second",
+      });
+      if (!second.workspace) throw new Error(second.error ?? "Second workspace was not created");
+      await seeded.client.createAgent({
+        provider: "mock",
+        cwd: seeded.repoPath,
+        workspaceId: second.workspace.id,
+        title: "Second done",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+      });
+      await writeFile(path.join(seeded.repoPath, "status.txt"), "one\n");
+      await seeded.client.checkoutRefresh(seeded.repoPath);
+      await gotoAppShell(page);
+
+      const firstRow = await waitForSidebarWorkspace(page, seeded.workspaceId);
+      const secondRow = await waitForSidebarWorkspace(page, second.workspace.id);
+      const selectTrailing = async (choice: "diff" | "agentStatus") => {
+        await page.getByTestId("sidebar-display-preferences-menu").click();
+        await page.getByTestId("sidebar-display-show").click();
+        await page.getByTestId(`sidebar-workspace-trailing-${choice}`).click();
+        await page.keyboard.press("Escape");
+      };
+
+      await selectTrailing("diff");
+      await expect(firstRow).toContainText("+1");
+      await selectTrailing("agentStatus");
+      await expect(firstRow).not.toContainText("+1");
+      // Three numbers, zeroes hidden: the running agent is the only one we can pin down here,
+      // because whether a freshly finished agent counts as unread or read depends on whether
+      // the workspace was opened.
+      const firstCounts = firstRow.getByTestId("sidebar-workspace-agent-status-counts");
+      await expect(firstCounts).toBeVisible();
+      await expect(firstCounts).toHaveAttribute("aria-label", /1 running/);
+      await expect(secondRow.getByTestId("sidebar-workspace-agent-status-counts")).toBeVisible();
+
+      await seeded.client.waitForFinish(running.id, 30_000);
+      await expect(firstCounts).toHaveAttribute("aria-label", /0 running/);
+
+      await selectTrailing("diff");
+      await expect(firstRow).toContainText("+1");
+      await expect(firstRow.getByTestId("sidebar-workspace-agent-status-counts")).toHaveCount(0);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
   test("recovers missing workspaces from a damaged legacy cache after reload", async ({
     page,
   }, testInfo) => {

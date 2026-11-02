@@ -1199,6 +1199,8 @@ export const ar: TranslationResources = {
         labels: "التسميات",
         diff: "إحصائيات الفروق",
         timestamp: "آخر نشاط",
+        agentStatus: "حالة الوكيل",
+        agentStatusCounts: "{{unread}} غير مقروء، {{running}} قيد التشغيل، {{read}} مقروء",
       },
       checks: {
         iconAndText: "أيقونة ونص",

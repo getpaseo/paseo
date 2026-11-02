@@ -1228,6 +1228,8 @@ export const fr: TranslationResources = {
         labels: "Libellés",
         diff: "Statistiques du diff",
         timestamp: "Dernière activité",
+        agentStatus: "État de l’agent",
+        agentStatusCounts: "{{unread}} non lus, {{running}} en cours, {{read}} lus",
       },
       checks: {
         iconAndText: "Icône et texte",

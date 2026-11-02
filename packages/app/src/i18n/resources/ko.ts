@@ -1206,6 +1206,8 @@ export const ko: TranslationResources = {
         labels: "레이블",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
+        agentStatus: "에이전트 상태",
+        agentStatusCounts: "읽지 않음 {{unread}}개, 실행 중 {{running}}개, 읽음 {{read}}개",
       },
       checks: {
         iconAndText: "아이콘 및 텍스트",

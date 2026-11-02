@@ -721,6 +721,8 @@ function agent(input: {
   updatedAt?: Date;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
+  requiresAttention?: boolean;
+  attentionReason?: Agent["attentionReason"];
 }): Agent {
   return {
     serverId: "srv",
@@ -746,6 +748,8 @@ function agent(input: {
     model: null,
     parentAgentId: input.parentAgentId ?? null,
     archivedAt: input.archivedAt ?? null,
+    requiresAttention: input.requiresAttention ?? false,
+    attentionReason: input.attentionReason ?? null,
     labels: {},
   };
 }

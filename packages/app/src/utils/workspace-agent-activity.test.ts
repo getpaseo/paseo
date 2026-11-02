@@ -144,6 +144,7 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            statusCounts: { unread: 0, running: 1, read: 0 },
           },
         ],
         [
@@ -152,6 +153,7 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            statusCounts: { unread: 1, running: 0, read: 0 },
           },
         ],
       ]),
@@ -198,6 +200,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      statusCounts: { unread: 0, running: 1, read: 0 },
     });
   });
 
@@ -233,6 +236,8 @@ describe("workspace agent activity index", () => {
             agentId: "parent",
             status: "done",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            // Already-opened agent: counted as read, not as unread or running.
+            statusCounts: { unread: 0, running: 0, read: 1 },
           },
         ],
         [
@@ -241,10 +246,72 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            statusCounts: { unread: 0, running: 1, read: 0 },
           },
         ],
       ]),
     );
+  });
+
+  it("counts unread (finished but not yet opened) and running root agents without folding in other states", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "done",
+          agent({ id: "done", workspaceId: "workspace-a", updatedAt: "2026-06-01T10:00:00.000Z" }),
+        ],
+        [
+          "attention",
+          agent({
+            id: "attention",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "running",
+          agent({
+            id: "running",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:02:00.000Z",
+          }),
+        ],
+        [
+          "failed",
+          agent({
+            id: "failed",
+            workspaceId: "workspace-a",
+            status: "error",
+            updatedAt: "2026-06-01T10:03:00.000Z",
+          }),
+        ],
+        [
+          "permission",
+          agent({
+            id: "permission",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:04:00.000Z",
+            pendingPermissionCount: 1,
+          }),
+        ],
+        [
+          "initializing",
+          agent({
+            id: "initializing",
+            workspaceId: "workspace-a",
+            status: "initializing",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    // One attention agent (unread), one running, and the already-opened "done" one (read).
+    // failed / needs_input / initializing contribute to none of the three.
+    expect(index.get("workspace-a")?.statusCounts).toEqual({ unread: 1, running: 1, read: 1 });
   });
 
   it("preserves the activity index while the same agent remains in the same status", () => {
@@ -279,6 +346,51 @@ describe("workspace agent activity index", () => {
 
     expect(next).toBe(previous);
     expect(next.get("workspace-a")?.enteredAt).toEqual(new Date("2026-06-01T10:00:00.000Z"));
+  });
+
+  it("replaces the index when counts change but the latest activity does not", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+        [
+          "unread",
+          agent({
+            id: "unread",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")?.agentId).toBe("root");
+    expect(next.get("workspace-a")?.statusCounts).toEqual({ unread: 1, running: 1, read: 0 });
   });
 
   it("records a new entry time when an agent changes status", () => {
@@ -317,6 +429,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      statusCounts: { unread: 0, running: 0, read: 0 },
     });
   });
 });
