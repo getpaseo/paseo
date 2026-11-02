@@ -16,7 +16,7 @@ import {
   resolveWorkingDiffComparison,
   selectWorkingDiffComparison,
 } from "@/git/working-diff-comparison";
-import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
+import { draftAgentCommandsQueryKey } from "@/agent-commands/cache";
 import {
   applyCheckoutStatusUpdateFromEvent,
   ensureCheckoutStatus,

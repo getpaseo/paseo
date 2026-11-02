@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
   useEffect,
@@ -12,7 +13,6 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Dimensions,
-  Modal,
   Platform,
   Pressable,
   View,

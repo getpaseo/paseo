@@ -244,6 +244,7 @@ function createService(
         filterEvents: (events) => events,
         verify: vi.fn(async () => {}),
       })),
+      workspaceFolderExists: vi.fn(async () => true),
       ...overrides,
     } as never,
   });

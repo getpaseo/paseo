@@ -620,6 +620,7 @@ export const it: TranslationResources = {
     terminal: {
       hostDisconnected: "L'host non è connesso",
       updateHost: "Aggiorna l'host per usare il renderer nativo del terminale.",
+      restoreRequiresUpdate: "Aggiorna l'host per visualizzare i terminali.",
       unableToSubscribe: "Impossibile sottoscrivere gli aggiornamenti del terminale",
       fileUploaded: "File caricato",
       pasteFileFailed: "Impossibile incollare il file: {{reason}}",
@@ -2079,7 +2080,6 @@ export const it: TranslationResources = {
   toolCallDetails: {
     error: "Errore",
     empty: "Nessun altro dettaglio disponibile",
-    subAgentActivity: "Attività del sottoagente",
     input: "Input",
     output: "Output",
   },
@@ -2159,6 +2159,11 @@ export const it: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Controlla l'utilizzo",
+    checkUsageHint: "Si applica a {{host}} su tutti i dispositivi",
+    off: "Il controllo dell'utilizzo è disattivato su {{host}}.",
+    turnOn: "Attiva",
+
     options: "Impostazioni",
     refreshFailed: "Impossibile aggiornare l'utilizzo",
     noHosts: "Nessun host connesso",

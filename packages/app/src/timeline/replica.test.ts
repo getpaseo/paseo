@@ -57,7 +57,6 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
       fetchPage: async () => ({ hasNewer: false, endCursor: null }),
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
-      schedule: () => () => undefined,
     },
   });
 }
@@ -617,7 +616,6 @@ describe("create handoff lifetime", () => {
         },
         fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
         reportError: () => undefined,
-        schedule: () => () => undefined,
       },
     });
 

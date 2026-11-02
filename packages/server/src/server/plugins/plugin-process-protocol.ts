@@ -61,6 +61,14 @@ export type PluginProcessRequest =
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
+      type: "subscribe";
+      requestId: string;
+      subscriptionId: string;
+      method: string;
+      input: unknown;
+    }
+  | { type: "unsubscribe"; subscriptionId: string }
+  | {
       type: "provider.connect";
       providerId: string;
       connectionId: string;
@@ -83,6 +91,7 @@ export type PluginProcessMessage =
   | {
       type: "ready";
       methods: string[];
+      subscriptions?: string[];
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
@@ -90,6 +99,8 @@ export type PluginProcessMessage =
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
   | { type: "fatal"; error: string }
+  | { type: "subscription.event"; subscriptionId: string; event: unknown }
+  | { type: "subscription.closed"; subscriptionId: string; error?: string }
   | {
       type: "provider.connected";
       connectionId: string;
@@ -242,6 +253,16 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
+        type: z.literal("subscribe"),
+        requestId: z.string().min(1),
+        subscriptionId: z.string().min(1),
+        method: z.string().min(1),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("unsubscribe"), subscriptionId: z.string().min(1) }).strict(),
+    z
+      .object({
         type: z.literal("provider.connect"),
         providerId: z.string().min(1),
         connectionId: z.string().min(1),
@@ -272,6 +293,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
+        subscriptions: z.array(z.string()).optional(),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
@@ -284,6 +306,20 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
       .strict(),
     z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("subscription.event"),
+        subscriptionId: z.string().min(1),
+        event: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("subscription.closed"),
+        subscriptionId: z.string().min(1),
+        error: z.string().optional(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("provider.connected"),

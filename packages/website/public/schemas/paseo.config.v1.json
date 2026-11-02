@@ -70,6 +70,14 @@
           },
           "additionalProperties": {}
         },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
         "browserTools": {
           "type": "object",
           "properties": {

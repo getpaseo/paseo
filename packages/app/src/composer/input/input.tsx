@@ -1407,6 +1407,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
+    useLayoutEffect(
+      () =>
+        editingSession.attachEditor({
+          getText: () => textInputRef.current?.getText() ?? valueRef.current,
+          replaceText,
+          focus: () => textInputRef.current?.focus(),
+        }),
+      [editingSession, replaceText],
+    );
+
     useImperativeHandle(ref, () => ({
       focus: () => {
         textInputRef.current?.focus();

@@ -39,6 +39,9 @@ export function nativeWebSocketFactory(
   return new (getGlobalWebSocket())(url, options?.protocols, { headers: options?.headers });
 }
 
+// React Native leaves bufferedAmount at zero, including while native output is queued.
+nativeWebSocketFactory.supportsDrain = false;
+
 export function createWebSocketTransportFactory(factory: WebSocketFactory): DaemonTransportFactory {
   return ({ url, headers, protocols }) => {
     const ws = factory(url, { headers, protocols });
@@ -50,11 +53,28 @@ export function createWebSocketTransportFactory(factory: WebSocketFactory): Daem
       }
     }
     return {
+      supportsDrain: factory.supportsDrain !== false,
       send: (data) => {
         if (typeof ws.readyState === "number" && ws.readyState !== 1) {
           throw new Error(`WebSocket not open (readyState=${ws.readyState})`);
         }
         ws.send(data);
+        if ((ws.bufferedAmount ?? 0) > 1024 * 1024) {
+          return new Promise<void>((resolve, reject) => {
+            const drain = () => {
+              if (ws.readyState !== 1) {
+                reject(new Error("WebSocket closed while draining"));
+                return;
+              }
+              if ((ws.bufferedAmount ?? 0) <= 1024 * 1024) {
+                resolve();
+                return;
+              }
+              setTimeout(drain, 10);
+            };
+            drain();
+          });
+        }
       },
       close: (code?: number, reason?: string) => {
         // Node's `ws` may emit an `error` when a connecting socket is closed before the

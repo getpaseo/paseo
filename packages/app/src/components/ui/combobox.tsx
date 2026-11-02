@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
   useEffect,
@@ -12,7 +13,6 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
   ScrollView,
   Platform,
   StatusBar,

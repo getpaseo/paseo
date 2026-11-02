@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { addProjectCopy } from "@/i18n/add-project-copy";
+import { useAddHost } from "@/hosts/add-host";
+import { Modal } from "@/components/ui/modal";
 import { usePanelStore } from "@/stores/panel-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { router } from "expo-router";
@@ -24,14 +26,7 @@ import {
   type ComponentType,
   type RefObject,
 } from "react";
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -100,7 +95,7 @@ import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
-import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 
 interface AddProjectFlowProps {
   request: AddProjectFlowRequest;
@@ -336,6 +331,7 @@ function setPageStatus(
 // eslint-disable-next-line complexity
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   useTranslation("addProject");
+  const addHost = useAddHost();
   const hosts = useHosts();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
@@ -629,9 +625,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           icon: Plus,
           testID: "add-project-flow-add-host",
           select: () => {
+            // The native project Modal must release its window before the root sheet opens.
             onClose();
-            usePanelStore.getState().showMobileAgent();
-            router.push(buildSettingsAddHostRoute(Date.now()));
+            addHost();
           },
         });
       }

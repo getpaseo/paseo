@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import type { PiChildSessionFile, PiExtension } from "../contract.js";
 import type { ProviderSubagentInputEvent } from "../../../../provider-subagents/store.js";
 
@@ -99,7 +98,8 @@ export const edxethPiSubagents: PiExtension = {
           detail: {
             type: "sub_agent",
             description,
-            log: extractTextFromToolResult(call.result)?.trim() ?? "",
+            // COMPAT(subagent-log): remove after 2027-04-30.
+            log: "",
           },
           subagents,
           childSessions,

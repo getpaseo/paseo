@@ -137,7 +137,7 @@ describe("pi-subagents adapter", () => {
       type: "sub_agent",
       subAgentType: "reviewer",
       description: "Review the Pi mapper change",
-      log: "The mapper change preserves provider status.",
+      log: "",
     });
   });
 

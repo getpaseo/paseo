@@ -25,6 +25,7 @@ import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
+import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
@@ -48,6 +49,7 @@ interface PluginRuntimePort {
   wait?: PluginLifecycle["wait"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  startSubscription: PluginRuntime["startSubscription"];
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -230,11 +232,18 @@ export class PluginService {
       }
     });
     if (config.pluginsEnabled === true) {
-      for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
-        if (source.enabled === false) continue;
-        await this.startConfigured(pluginId);
-        this.notify(pluginId);
-      }
+      let earlierPublished: Promise<unknown> = Promise.resolve();
+      await Promise.all(
+        Object.entries(config.plugins ?? {})
+          .filter(([, source]) => source.enabled !== false)
+          .map(async ([pluginId]) => {
+            const publishTurn = earlierPublished;
+            const starting = this.startConfigured(pluginId, publishTurn);
+            earlierPublished = Promise.all([publishTurn, starting]);
+            await starting;
+            this.notify(pluginId);
+          }),
+      );
     }
     this.configStore.onFieldChange("pluginsEnabled", (value) => {
       this.handleGlobalSwitch(value === true);
@@ -532,6 +541,10 @@ export class PluginService {
     return this.runtime.invoke(pluginId, method, input);
   }
 
+  subscribePluginRpc(pluginId: string, method: string, input: unknown): PluginRuntimeSubscription {
+    return this.runtime.startSubscription(pluginId, method, input);
+  }
+
   async stopAllPlugins(): Promise<void> {
     this.globalStartsBlocked = true;
     const stopping = this.stopAll();
@@ -560,12 +573,12 @@ export class PluginService {
     }).catch((error) => this.logger.error({ err: error }, "Failed to enable plugins"));
   }
 
-  private async startConfigured(pluginId: string): Promise<void> {
+  private async startConfigured(pluginId: string, publishTurn?: Promise<unknown>): Promise<void> {
     const source = this.configStore.get().plugins?.[pluginId];
     if (!source || source.enabled === false || !this.canPublish(pluginId)) return;
     this.errors.delete(pluginId);
     try {
-      await this.startPlugin(pluginId, source.path);
+      await this.startPlugin(pluginId, source.path, publishTurn);
     } catch (error) {
       if (this.canPublish(pluginId)) this.recordFailure(pluginId, error);
     }
@@ -594,8 +607,13 @@ export class PluginService {
     );
   }
 
-  private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
+  private async startPlugin(
+    pluginId: string,
+    sourcePath: string,
+    publishTurn?: Promise<unknown>,
+  ): Promise<void> {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+    await publishTurn;
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
       this.publishUsageSources(pluginId);

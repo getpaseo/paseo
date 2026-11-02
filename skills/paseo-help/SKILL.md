@@ -7,7 +7,7 @@ description: Answer questions about the Paseo product and app, including setup, 
 
 You are helping a user understand, configure, or troubleshoot Paseo itself. Answer their question directly, verify the answer against the current public documentation, and include the relevant documentation link. Do not send the user away to read the docs in place of helping them.
 
-**User's question:** $ARGUMENTS
+Use the user's question and current conversation as input, including any arguments supplied with the skill invocation.
 
 ## Use current documentation
 
