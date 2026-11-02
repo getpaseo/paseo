@@ -1623,13 +1623,26 @@ it.each([1, 4])(
   async (version) => {
     const paseoHome = createTemporaryHome();
     const old = await leaveWorkerWithTerminal(paseoHome, version);
+    const [record] = await workerRecords(paseoHome);
+    const program = record!.terminals.find((entry) => entry.id === old.terminalId)!;
+    const inspector = createTerminalWorkerProcessInspector();
 
     manager = await startRealWorkerManager({ paseoHome });
 
-    await waitForCondition(
-      () => !isProcessAlive(old.workerPid) && !isProcessAlive(old.programPid),
-      10000,
-    );
+    expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+    // Startup launches a replacement worker after cleanup. Either old PID may already
+    // belong to another process, so verify that the recorded birth identities are gone.
+    for (const original of [{ pid: record!.pid, ...record!.identity }, program]) {
+      await expect
+        .poll(
+          async () =>
+            !isProcessAlive(original.pid) ||
+            classifyTerminalProgramProcess(original, await inspector.inspect(original.pid))
+              .status === "unrelated",
+          { timeout: 10000 },
+        )
+        .toBe(true);
+    }
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
