@@ -133,12 +133,17 @@ describe("zai usage source", () => {
   });
 
   it("reads Z.ai usage from the credentials file the glm-acp-agent CLI writes", async () => {
+    // The plugin reads the file from `XDG_CONFIG_HOME` when that is set, and
+    // from `~/.config` otherwise. A CI runner may define `XDG_CONFIG_HOME`
+    // already, so the test pins it to the home it controls: the file and the
+    // lookup then always agree.
     const configDir = join(homeDir, ".config", "glm-acp-agent");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, "credentials.json"),
       JSON.stringify({ z_ai_api_key: "zai_file_token" }),
     );
+    process.env["XDG_CONFIG_HOME"] = join(homeDir, ".config");
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
