@@ -3023,22 +3023,7 @@ export class AgentManager {
     if (!expectedTurnId || !agent.session.steerActiveTurn) {
       return { status: "unavailable" };
     }
-    const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
-      const admission = await agent.session.steerActiveTurn!(prompt, {
-        ...options,
-        expectedTurnId,
-      });
-      if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(
-          agent,
-          prompt,
-          options?.clientMessageId,
-          expectedTurnId,
-          admission.providerMessageId,
-        );
-      }
-      return admission;
-    });
+    const result = await this.admitSteer(agent, expectedTurnId, prompt, options);
     // An unavailable answer is only safe to fall back from while this admission
     // still owns the active turn. Never let an A admission replace a later B.
     if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
@@ -3061,24 +3046,7 @@ export class AgentManager {
       return { status: "inactive" };
     }
 
-    const result = agent.session.steerActiveTurn
-      ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
-          const admission = await agent.session.steerActiveTurn!(prompt, {
-            ...options,
-            expectedTurnId,
-          });
-          if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(
-              agent,
-              prompt,
-              options?.clientMessageId,
-              expectedTurnId,
-              admission.providerMessageId,
-            );
-          }
-          return admission;
-        })
-      : { status: "unavailable" as const };
+    const result = await this.admitSteer(agent, expectedTurnId, prompt, options);
     if (result.status === "accepted") {
       return { status: "steered" };
     }
@@ -3100,6 +3068,57 @@ export class AgentManager {
         stripSteerOptions(options),
       ),
     };
+  }
+
+  /**
+   * Steer `prompt` into the agent's running turn and never replace the turn: `unavailable`
+   * when the provider cannot steer or turns it down, `inactive` when no turn runs. An accepted
+   * steer is admitted and recorded as steerOrReplaceActiveTurn records one, so with a
+   * `clientMessageId` it shows in the timeline as a user message.
+   */
+  async steerActiveTurnOnly(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentSteerOptions,
+  ): Promise<{ status: "steered" | "inactive" | "unavailable" }> {
+    const agent = this.requireSessionAgent(agentId);
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId) {
+      return { status: "inactive" };
+    }
+    const result = await this.admitSteer(agent, expectedTurnId, prompt, options);
+    return { status: result.status === "accepted" ? "steered" : "unavailable" };
+  }
+
+  private async admitSteer(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    prompt: AgentPromptInput,
+    options?: AgentSteerOptions,
+  ): Promise<SteerResult> {
+    if (!agent.session.steerActiveTurn) {
+      return { status: "unavailable" };
+    }
+    return this.runSteerAdmission(agent, expectedTurnId, async () => {
+      // Read again under the lock: the session may have been replaced while this waited.
+      if (!agent.session.steerActiveTurn) {
+        return { status: "unavailable" as const };
+      }
+      const admission = await agent.session.steerActiveTurn(prompt, {
+        ...options,
+        expectedTurnId,
+      });
+      if (admission.status === "accepted") {
+        await this.recordAcceptedSteer(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+          admission.providerMessageId,
+        );
+      }
+      return admission;
+    });
   }
 
   private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {

@@ -37,11 +37,19 @@ export function modesFromV2(agents: AgentInfo[]): AgentMode[] {
     .map((agent) => ({ id: agent.id, label: agent.name, description: agent.description }));
 }
 
+// Session counts. OpenCode's input leaves cache reads and writes out; cache writes are fresh
+// input, so the totals add them back.
 export function usageFromV2(session: SessionInfo): AgentUsage {
   return {
     inputTokens: session.tokens.input,
     outputTokens: session.tokens.output,
     cachedInputTokens: session.tokens.cache.read,
     totalCostUsd: session.cost,
+    sessionTotals: {
+      inputTokens: session.tokens.input + session.tokens.cache.write,
+      cachedInputTokens: session.tokens.cache.read,
+      outputTokens: session.tokens.output,
+      costUsd: session.cost,
+    },
   };
 }

@@ -15,6 +15,7 @@ import { addImportOptions, runImportCommand } from "./import.js";
 import { runUpdateCommand } from "./update.js";
 import { runDetachCommand } from "./detach.js";
 import { addOpenOptions, runOpenCommand } from "./open.js";
+import { runTeamsCommand } from "./teams.js";
 import { withOutput } from "../../output/index.js";
 import {
   addDaemonHostOption,
@@ -70,6 +71,10 @@ export function createAgentCommand(): Command {
   );
 
   // Advanced agent commands (less common operations)
+  addJsonAndDaemonHostOptions(
+    agent.command("teams").description("List the teams defined in daemon.teams"),
+  ).action(withOutput(runTeamsCommand));
+
   addJsonAndDaemonHostOptions(
     agent
       .command("mode")

@@ -145,6 +145,17 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.workspaceSetupBlocked]: true,
   [CLIENT_CAPS.workspaceSetupObservation]: true,
   [CLIENT_CAPS.explicitEventSubscriptions]: true,
+  [CLIENT_CAPS.goalControlEvents]: true,
+  [CLIENT_CAPS.goalAcknowledgeEvents]: true,
+  [CLIENT_CAPS.goalManagementEvents]: true,
+  [CLIENT_CAPS.goalConfigEdit]: true,
+  [CLIENT_CAPS.goalUsageBreakdown]: true,
+  [CLIENT_CAPS.goalIntegrationRetry]: true,
+  [CLIENT_CAPS.goalPlanRevision]: true,
+  [CLIENT_CAPS.goalLeadInterventions]: true,
+  [CLIENT_CAPS.goalRecovery]: true,
+  [CLIENT_CAPS.goalAccept]: true,
+  [CLIENT_CAPS.goalUserWait]: true,
 } satisfies Record<Exclude<ClientCapability, typeof CLIENT_CAPS.browserHost>, true>;
 
 /** Calling releases demand; ready waits for membership, or local attachment on broadcast hosts. */

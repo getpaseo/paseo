@@ -980,6 +980,15 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("marks only the full-access mode as unattended", async () => {
+    const session = createSession({}, { autoReviewEnabled: true });
+
+    const modes = await session.getAvailableModes();
+    expect(modes.filter((mode) => mode.isUnattended === true).map((mode) => mode.id)).toEqual([
+      "full-access",
+    ]);
+  });
+
   test("getAvailableModes excludes auto-review when the Codex version is too old", async () => {
     const session = createSession({}, { autoReviewEnabled: false });
 
@@ -6850,6 +6859,61 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("reports the turn's whole usage across its model calls", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const breakdown = (input: number, cached: number, output: number) => ({
+      inputTokens: input,
+      cachedInputTokens: cached,
+      outputTokens: output,
+      totalTokens: input + output,
+    });
+    const tokenUsage = (threadId: string, total: object, last: object) =>
+      asInternals(session).handleNotification("thread/tokenUsage/updated", {
+        threadId,
+        turnId: "turn-1",
+        tokenUsage: { total, last, modelContextWindow: 200_000 },
+      });
+    const lastCompleted = () =>
+      events.findLast((event) => event.type === "turn_completed") as Extract<
+        AgentStreamEvent,
+        { type: "turn_completed" }
+      >;
+
+    await asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "turn-1" },
+    });
+    // The thread was resumed with 1,000 input tokens already counted.
+    await tokenUsage("test-thread", breakdown(1_500, 300, 60), breakdown(500, 300, 60));
+    await tokenUsage("test-thread", breakdown(2_300, 1_000, 100), breakdown(800, 700, 40));
+    await asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    // Input counts cache reads, so fresh input is input minus cached.
+    expect(lastCompleted().usage).toMatchObject({
+      inputTokens: 800,
+      cachedInputTokens: 700,
+      outputTokens: 40,
+      turnTotals: { inputTokens: 300, cachedInputTokens: 1_000, outputTokens: 100 },
+    });
+
+    await asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "turn-2" },
+    });
+    await tokenUsage("test-thread", breakdown(3_000, 1_500, 130), breakdown(700, 500, 30));
+    await asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+    expect(lastCompleted().usage?.turnTotals).toEqual({
+      inputTokens: 200,
+      cachedInputTokens: 500,
+      outputTokens: 30,
+    });
   });
 
   test("emits usage_updated on token usage updates and keeps usage on turn completion", async () => {

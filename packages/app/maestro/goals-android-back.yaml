@@ -1,0 +1,29 @@
+appId: sh.paseo.debug
+---
+# Android only: Back closes a sheet over the detail first, then returns from the detail to
+# the list instead of leaving Goals. Read packages/app/maestro/README.md#goals.
+- runFlow: flows/goals-open-detail.yaml
+- tapOn:
+    id: "goal-detail-menu"
+- tapOn:
+    id: "goal-detail-menu-edit-settings"
+- extendedWaitUntil:
+    visible:
+      id: "goal-settings-hint"
+    timeout: 10000
+- back
+- extendedWaitUntil:
+    notVisible:
+      id: "goal-settings-hint"
+    timeout: 5000
+- assertVisible:
+    id: "goal-detail-title"
+- back
+- extendedWaitUntil:
+    visible:
+      id: "goal-row-${GOAL_ID}"
+    timeout: 5000
+- assertNotVisible:
+    id: "goal-detail-title"
+- assertVisible:
+    id: "goals-list"

@@ -58,6 +58,7 @@ import {
   type AgentScreenReadySyncState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useStartGoalFromChat } from "@/hooks/use-start-goal-from-chat";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import { TimelineSyncStatus } from "@/timeline/sync-status";
@@ -1543,6 +1544,7 @@ function ActiveAgentComposer({
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
+  const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_CONTENT_WIDTH,
@@ -1578,8 +1580,18 @@ function ActiveAgentComposer({
     [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
+  const startGoalFromChat = useStartGoalFromChat(serverId);
   const handleClientSlashCommand = useCallback(
-    async (command: ClientSlashCommand) => {
+    async (command: ClientSlashCommand, args: string) => {
+      if (command.kind === "start-goal") {
+        if (!startGoalFromChat) {
+          throw new Error(t("goals.updateHost"));
+        }
+        if (!startGoalFromChat(agentId, args)) {
+          throw new Error("Agent not found");
+        }
+        return;
+      }
       const agent = resolveChatAgentFromSession(useSessionStore.getState(), serverId, agentId);
       if (!agent) {
         throw new Error("Agent not found");
@@ -1610,6 +1622,8 @@ function ActiveAgentComposer({
       hideWorkspaceAgent,
       retargetCurrentTab,
       serverId,
+      startGoalFromChat,
+      t,
       tabId,
       unpinWorkspaceAgent,
       workspaceId,

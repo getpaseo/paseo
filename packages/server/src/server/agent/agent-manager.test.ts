@@ -1288,6 +1288,76 @@ test("a steer the provider names without echoing it can be rewound to", async ()
   }
 });
 
+async function startTurnFor(
+  session: AgentSession,
+): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-only-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = manager.streamAgent(agent.id, "initial");
+  void (async () => {
+    for await (const _event of run) {
+    }
+  })();
+  await manager.waitForAgentRunStart(agent.id);
+  return { manager, agentId: agent.id, workdir };
+}
+
+test("steerActiveTurnOnly steers a supporting provider and records the message", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startTurnFor(session);
+  try {
+    await expect(
+      manager.steerActiveTurnOnly(agentId, "from the Lead", { clientMessageId: "lead-1" }),
+    ).resolves.toEqual({ status: "steered" });
+    expect(session.steerCount).toBe(1);
+    expect(session.startCount).toBe(1);
+    expect(session.interruptCount).toBe(0);
+    expect(manager.getTimeline(agentId)).toContainEqual(
+      expect.objectContaining({ type: "user_message", clientMessageId: "lead-1" }),
+    );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("steerActiveTurnOnly leaves the running turn alone when the provider cannot steer", async () => {
+  for (const session of [
+    new UnsupportedSteeringSession({ provider: "codex", cwd: process.cwd() }),
+    Object.assign(new SteeringTestSession({ provider: "codex", cwd: process.cwd() }), {
+      steerResult: "unavailable" as const,
+    }),
+  ]) {
+    const { manager, agentId, workdir } = await startTurnFor(session);
+    try {
+      await expect(
+        manager.steerActiveTurnOnly(agentId, "from the Lead", { clientMessageId: "lead-1" }),
+      ).resolves.toEqual({ status: "unavailable" });
+      expect(session.interruptCount).toBe(0);
+      expect(session.startCount).toBe(1);
+      expect(manager.getAgent(agentId)?.lifecycle).toBe("running");
+      expect(manager.getTimeline(agentId)).not.toContainEqual(
+        expect.objectContaining({ type: "user_message", clientMessageId: "lead-1" }),
+      );
+    } finally {
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("orders a concurrent replacement after a pending accepted steer", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();

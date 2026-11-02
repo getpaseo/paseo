@@ -11,6 +11,7 @@ import {
   History,
   Plus,
   Search,
+  Target,
   type LucideIcon,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -44,6 +45,7 @@ const BUILTIN_ICONS: Record<BuiltinSidebarItemId, LucideIcon> = {
   history: History,
   search: Search,
   schedules: CalendarClock,
+  goals: Target,
   usage: Gauge,
 };
 

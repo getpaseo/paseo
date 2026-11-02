@@ -5472,7 +5472,14 @@ class OpenCodeAgentSession implements AgentSession {
       }
       if (translatedEvent.type === "turn_completed") {
         if (hasNormalizedOpenCodeUsage(this.accumulatedUsage)) {
-          translatedEvent.usage = this.accumulatedUsage;
+          // The cost is the session's running total; tokens are the turn's last step.
+          translatedEvent.usage =
+            typeof this.accumulatedUsage.totalCostUsd === "number"
+              ? {
+                  ...this.accumulatedUsage,
+                  sessionTotals: { costUsd: this.accumulatedUsage.totalCostUsd },
+                }
+              : this.accumulatedUsage;
         }
         const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
         this.accumulatedUsage =

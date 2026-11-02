@@ -16,6 +16,8 @@ import {
   writePrivateFileAtomic,
   writePrivateFileAtomicSync,
 } from "./private-files.js";
+import { AgentTeamsConfigSchema } from "./agent/agent-teams.js";
+import { GOAL_DAEMON_BOUNDS } from "@getpaseo/protocol/goal/config-bounds";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "@getpaseo/protocol/agent-profile";
 import { PluginIdSchema, PluginSourceSchema } from "@getpaseo/protocol/plugin-config";
 import { TerminalProfileSchema } from "@getpaseo/protocol/terminal-profile";
@@ -278,6 +280,23 @@ export const PersistedConfigSchema = z
         appendSystemPrompt: z.string().optional(),
         terminalProfiles: z.array(TerminalProfileSchema).optional(),
         agentProfiles: z.array(AgentProfileSchema).optional(),
+        teams: AgentTeamsConfigSchema.optional().describe(
+          "Named teams of roles. Each role maps to an agent profile or a provider and model. A chat started with a team is told its roster.",
+        ),
+        goals: z
+          .object({
+            maxConcurrentRuns: z
+              .number()
+              .int()
+              .min(GOAL_DAEMON_BOUNDS.maxConcurrentRuns.min)
+              .max(GOAL_DAEMON_BOUNDS.maxConcurrentRuns.max)
+              .optional()
+              .describe(
+                `Worker runs across all goals at once (default ${GOAL_DAEMON_BOUNDS.maxConcurrentRuns.default}). Applied without a restart.`,
+              ),
+          })
+          .strict()
+          .optional(),
         cors: z
           .object({
             allowedOrigins: z.array(z.string()).optional(),

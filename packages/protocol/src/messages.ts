@@ -37,9 +37,19 @@ export {
 } from "./plugin-config.js";
 import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
+import { AgentTeamsConfigWireSchema } from "./agent-team-config.js";
+export {
+  AgentTeamsConfigWireSchema,
+  AgentTeamConfigWireSchema,
+  AgentTeamRoleConfigWireSchema,
+  type AgentTeamsConfigWire,
+  type AgentTeamConfigWire,
+  type AgentTeamRoleConfigWire,
+} from "./agent-team-config.js";
 import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
+import { GOAL_DAEMON_BOUNDS } from "./goal/config-bounds.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
@@ -62,6 +72,61 @@ import {
   ChatReadResponseSchema,
   ChatWaitResponseSchema,
 } from "./chat/rpc-schemas.js";
+import {
+  GoalCreateRequestSchema,
+  GoalListRequestSchema,
+  GoalInspectRequestSchema,
+  GoalProposePlanRequestSchema,
+  GoalApprovePlanRequestSchema,
+  GoalCancelRequestSchema,
+  GoalApproveChangeSetRequestSchema,
+  GoalApproveChangeSetResponseSchema,
+  GoalRequestChangesRequestSchema,
+  GoalRequestChangesResponseSchema,
+  GoalRejectPlanRequestSchema,
+  GoalRejectPlanResponseSchema,
+  GoalRetryRequestSchema,
+  GoalRetryResponseSchema,
+  GoalPauseRequestSchema,
+  GoalPauseResponseSchema,
+  GoalResumeRequestSchema,
+  GoalResumeResponseSchema,
+  GoalAcknowledgeRequestSchema,
+  GoalAcknowledgeResponseSchema,
+  GoalRenameRequestSchema,
+  GoalRenameResponseSchema,
+  GoalSetPriorityRequestSchema,
+  GoalSetPriorityResponseSchema,
+  GoalArchiveRequestSchema,
+  GoalArchiveResponseSchema,
+  GoalUnarchiveRequestSchema,
+  GoalUnarchiveResponseSchema,
+  GoalDeleteRequestSchema,
+  GoalDeleteResponseSchema,
+  GoalUpdateConfigRequestSchema,
+  GoalUpdateConfigResponseSchema,
+  GoalPlanReviseRequestSchema,
+  GoalPlanReviseResponseSchema,
+  GoalPlanApproveRevisionRequestSchema,
+  GoalPlanApproveRevisionResponseSchema,
+  GoalPlanRejectRevisionRequestSchema,
+  GoalPlanRejectRevisionResponseSchema,
+  GoalRecoveryStartRequestSchema,
+  GoalRecoveryStartResponseSchema,
+  GoalRecoveryDecideRequestSchema,
+  GoalRecoveryDecideResponseSchema,
+  GoalRecoveryCancelRequestSchema,
+  GoalRecoveryCancelResponseSchema,
+  GoalOutcomeAcceptRequestSchema,
+  GoalOutcomeAcceptResponseSchema,
+  GoalUpdateMessageSchema,
+  GoalCreateResponseSchema,
+  GoalListResponseSchema,
+  GoalInspectResponseSchema,
+  GoalProposePlanResponseSchema,
+  GoalApprovePlanResponseSchema,
+  GoalCancelResponseSchema,
+} from "./goal/rpc-schemas.js";
 import {
   ScheduleCreateRequestSchema,
   ScheduleListRequestSchema,
@@ -203,6 +268,18 @@ const MutableRelayConfigSchema = z
   })
   .passthrough();
 
+const MutableGoalsDaemonConfigSchema = z
+  .object({
+    // Worker runs across all goals at once. Absent means GOAL_DAEMON_BOUNDS' default.
+    maxConcurrentRuns: z
+      .number()
+      .int()
+      .min(GOAL_DAEMON_BOUNDS.maxConcurrentRuns.min)
+      .max(GOAL_DAEMON_BOUNDS.maxConcurrentRuns.max)
+      .optional(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -245,6 +322,10 @@ export const MutableDaemonConfigSchema = z
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    teams: AgentTeamsConfigWireSchema.optional(),
+    // COMPAT(goalConcurrencyConfig): added in v0.13.9, optional because older daemons omit it.
+    // Daemon-wide goal settings, applied live. See server_info.features.goalConcurrencyConfig.
+    goals: MutableGoalsDaemonConfigSchema.optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
@@ -273,6 +354,9 @@ export const MutableDaemonConfigPatchSchema = z
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    // Replaces the whole teams record.
+    teams: AgentTeamsConfigWireSchema.optional(),
+    goals: MutableGoalsDaemonConfigSchema.optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     features: SpeechSettingsPatchSchema.optional(),
@@ -1788,6 +1872,12 @@ export const CreateAgentRequestMessageSchema = z.object({
   // Workspace creation intent, rejected when selecting an existing workspace.
   background: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
+  // A team name from daemon.teams. The created agent is told the team's roster.
+  // Gate on server_info.features.agentTeams: older daemons drop the field.
+  team: z.string().min(1).optional(),
+  // Role name -> model id, replacing that role's configured model in the roster for this chat
+  // only. Requires `team`. Gated on features.agentTeams like `team`.
+  teamModelOverrides: z.record(z.string(), z.string().min(1)).optional(),
   requestId: z.string(),
 });
 
@@ -1855,6 +1945,11 @@ export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
 export const ProviderDiagnosticRequestMessageSchema = z.object({
   type: z.literal("provider_diagnostic_request"),
   provider: AgentProviderSchema,
+  requestId: z.string(),
+});
+
+export const AgentTeamsListRequestSchema = z.object({
+  type: z.literal("agent.teams.list.request"),
   requestId: z.string(),
 });
 
@@ -3237,6 +3332,9 @@ export const SessionEventSubscriptionSchema = z.enum([
   "activity_log",
   "hub.execution.agent.update",
   "hub.execution.agent.stream",
+  // COMPAT(goalUpdates): send only to daemons with server_info.features.goalUpdates;
+  // older daemons reject the subscription request.
+  "goal.update",
 ]);
 export type SessionEventSubscription = z.infer<typeof SessionEventSubscriptionSchema>;
 export const SessionEventsSetSubscriptionRequestSchema = z.object({
@@ -3362,6 +3460,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  AgentTeamsListRequestSchema,
   UsageListReportsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
@@ -3491,6 +3590,32 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  GoalCreateRequestSchema,
+  GoalListRequestSchema,
+  GoalInspectRequestSchema,
+  GoalProposePlanRequestSchema,
+  GoalApprovePlanRequestSchema,
+  GoalCancelRequestSchema,
+  GoalApproveChangeSetRequestSchema,
+  GoalRequestChangesRequestSchema,
+  GoalRejectPlanRequestSchema,
+  GoalRetryRequestSchema,
+  GoalPauseRequestSchema,
+  GoalResumeRequestSchema,
+  GoalAcknowledgeRequestSchema,
+  GoalRenameRequestSchema,
+  GoalSetPriorityRequestSchema,
+  GoalArchiveRequestSchema,
+  GoalUnarchiveRequestSchema,
+  GoalDeleteRequestSchema,
+  GoalUpdateConfigRequestSchema,
+  GoalPlanReviseRequestSchema,
+  GoalPlanApproveRevisionRequestSchema,
+  GoalPlanRejectRevisionRequestSchema,
+  GoalRecoveryStartRequestSchema,
+  GoalRecoveryDecideRequestSchema,
+  GoalRecoveryCancelRequestSchema,
+  GoalOutcomeAcceptRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -3839,6 +3964,85 @@ export const ServerInfoStatusPayloadSchema = z
         binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
+        // COMPAT(goals): added in v0.12.0, remove gate after 2027-10-21.
+        goals: z.boolean().optional(),
+        // COMPAT(goalControls): added in v0.13.0, remove gate after 2027-10-26.
+        // goal.reject_plan, goal.retry, goal.pause and goal.resume.
+        goalControls: z.boolean().optional(),
+        // COMPAT(goalBudgets): added in v0.13.0, remove gate after 2027-10-26.
+        // Honours limits.maxTotalTokens, limits.maxCostUsd and limits.deadlineAt. Older
+        // daemons drop those limits silently, so send them only when this is set.
+        goalBudgets: z.boolean().optional(),
+        // COMPAT(goalUpdates): added in v0.13.0, remove gate after 2027-10-26.
+        // Accepts "goal.update" in session.events.set_subscription and pushes goal.update.
+        goalUpdates: z.boolean().optional(),
+        // COMPAT(goalAcknowledge): added in v0.13.0, remove gate after 2027-10-26.
+        // goal.acknowledge.
+        goalAcknowledge: z.boolean().optional(),
+        // COMPAT(goalThinking): added in v0.13.1, remove gate after 2027-10-26.
+        // Honours leadThinking, workerThinking, reviewThinking, verifyThinking and a task's
+        // `thinking`. Older daemons drop them silently, so send them only when this is set.
+        goalThinking: z.boolean().optional(),
+        // COMPAT(goalManagement): added in v0.13.1, remove gate after 2027-10-26.
+        // goal.rename, goal.set_priority, goal.archive, goal.unarchive, goal.delete, the
+        // goal.list filters, `priority` on goal.create, and goal.update's `deleted`.
+        goalManagement: z.boolean().optional(),
+        // COMPAT(goalConfigEdit): added in v0.13.3, remove gate after 2027-10-27.
+        // goal.update_config, the "auto" permission policy, and goal.retry reopening a goal
+        // that failed while planning. Goals created here without a policy record "wait".
+        goalConfigEdit: z.boolean().optional(),
+        // COMPAT(goalUsageBreakdown): added in v0.13.3, remove gate after 2027-10-27.
+        // Goals carry usageByRole and usageBreakdown, usage totals count turns that reported a
+        // cost or tokens, and tokens are recorded with one meaning for every provider.
+        goalUsageBreakdown: z.boolean().optional(),
+        // COMPAT(goalIntegrationRetry): added in v0.13.10, remove gate after 2027-10-27.
+        // goal.retry also merges again a failed goal's change sets whose integration failed
+        // (ChangeSet.rejectionReason "integration_failed"), reopening the goal.
+        goalIntegrationRetry: z.boolean().optional(),
+        // COMPAT(goalPlanRevision): added in v0.13.13, remove gate after 2027-10-28.
+        // goal.plan.revise, goal.plan.approve_revision and goal.plan.reject_revision
+        // (plan.revision_* events), and a task's runTimeoutMinutes. An older daemon refuses
+        // the RPCs and drops runTimeoutMinutes silently.
+        goalPlanRevision: z.boolean().optional(),
+        // COMPAT(goalLeadInterventions): added in v0.13.13, remove gate after 2027-10-28.
+        // The goal setting leadInterventions: the Manager wakes the Lead to decide about
+        // failed, stalled or nearly timed-out tasks (intervention.* events). An older daemon
+        // drops the setting silently.
+        goalLeadInterventions: z.boolean().optional(),
+        // COMPAT(goalRecovery): added in v0.13.13, remove gate after 2027-10-28.
+        // Recovering a failed goal through its Lead (recovery.* events) and guidance for the
+        // goal's workers on goal.retry. An older daemon refuses the recovery RPCs and drops
+        // guidance silently.
+        goalRecovery: z.boolean().optional(),
+        // COMPAT(goalReworkRetry): added in v0.13.14, remove gate after 2027-10-28.
+        // goal.retry and recoveries reopen a failed goal's change sets whose rework failed
+        // (ChangeSet.rejectionReason "rework_failed"). An older daemon refuses that reopen.
+        goalReworkRetry: z.boolean().optional(),
+        // COMPAT(goalVerificationRecovery): added in v0.13.14, remove gate after 2027-10-28.
+        // A recovery of a goal that failed verification can add fix tasks; applying it clears
+        // every criterion and starts verification round `Goal.verificationRound`. Gates wording
+        // only: an older daemon refuses such a revise, and its Lead is never offered one.
+        goalVerificationRecovery: z.boolean().optional(),
+        // COMPAT(goalAccept): added in v0.13.14, remove gate after 2027-10-28.
+        // goal.outcome.accept: a person accepts a failed goal as is, completing it with its
+        // unverified criteria waived (goal.accepted, Goal.accepted, criterion `waived`). An
+        // older daemon refuses the RPC.
+        goalAccept: z.boolean().optional(),
+        // COMPAT(goalUserWait): added in v0.13.14, remove gate after 2027-10-28.
+        // limits.userWaitMinutes: the longest one permission request or question waits for a
+        // person's answer; time spent waiting does not count toward the run or goal time
+        // limit (wait.* events, Goal.waits). An older daemon drops the setting silently.
+        goalUserWait: z.boolean().optional(),
+        // COMPAT(goalTimeBase): added in v0.13.13, remove gate after 2027-10-28.
+        // goal.retry takes `timeMode` (fresh or remaining) to restart a goal's time limit,
+        // and goals carry `timeBaseAt`. An older daemon drops the field and refuses the retry
+        // once the time limit has passed. An older app ignores `timeBaseAt`, so it shows a goal
+        // retried past its time limit as overdue.
+        goalTimeBase: z.boolean().optional(),
+        // COMPAT(goalConcurrencyConfig): added in v0.13.9, remove gate after 2027-10-27.
+        // `goals.maxConcurrentRuns` in the daemon config get/patch path, applied live. An
+        // older daemon drops it from a patch silently, so the client hides the setting.
+        goalConcurrencyConfig: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
@@ -3865,6 +4069,13 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentTeams): added in v0.12.0, remove gate after 2027-10-21.
+        // Covers agent.teams.list and the create-agent `team` and `teamModelOverrides` fields.
+        agentTeams: z.boolean().optional(),
+        // COMPAT(agentTeamsConfig): added in v0.13.0, remove gate after 2027-10-26.
+        // `teams` in the daemon config get/patch path, applied live. An older daemon
+        // drops `teams` from a patch silently, so the client hides the editor.
+        agentTeamsConfig: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6431,6 +6642,29 @@ export const ProviderUsageSchema = z.object({
   error: z.string().nullable().optional(),
 });
 
+export const AgentTeamRoleSummarySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  provider: z.string(),
+  model: z.string().optional(),
+  profile: z.string().optional(),
+});
+
+export const AgentTeamSummarySchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  roles: z.array(AgentTeamRoleSummarySchema),
+});
+
+export const AgentTeamsListResponseSchema = z.object({
+  type: z.literal("agent.teams.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    teams: z.array(AgentTeamSummarySchema),
+    error: z.string().nullable(),
+  }),
+});
+
 export const ProviderUsageListResponseMessageSchema = z.object({
   type: z.literal("provider.usage.list.response"),
   payload: z.object({
@@ -7201,6 +7435,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  AgentTeamsListResponseSchema,
   UsageListReportsUpdateMessageSchema,
   UsageListReportsResponseMessageSchema,
   ListCommandsResponseSchema,
@@ -7237,6 +7472,33 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  GoalCreateResponseSchema,
+  GoalListResponseSchema,
+  GoalInspectResponseSchema,
+  GoalProposePlanResponseSchema,
+  GoalApprovePlanResponseSchema,
+  GoalCancelResponseSchema,
+  GoalApproveChangeSetResponseSchema,
+  GoalRequestChangesResponseSchema,
+  GoalRejectPlanResponseSchema,
+  GoalRetryResponseSchema,
+  GoalPauseResponseSchema,
+  GoalResumeResponseSchema,
+  GoalAcknowledgeResponseSchema,
+  GoalRenameResponseSchema,
+  GoalSetPriorityResponseSchema,
+  GoalArchiveResponseSchema,
+  GoalUnarchiveResponseSchema,
+  GoalDeleteResponseSchema,
+  GoalUpdateConfigResponseSchema,
+  GoalPlanReviseResponseSchema,
+  GoalPlanApproveRevisionResponseSchema,
+  GoalPlanRejectRevisionResponseSchema,
+  GoalRecoveryStartResponseSchema,
+  GoalRecoveryDecideResponseSchema,
+  GoalRecoveryCancelResponseSchema,
+  GoalOutcomeAcceptResponseSchema,
+  GoalUpdateMessageSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
 ]);
@@ -7393,6 +7655,8 @@ export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
 export type ProviderUsageBalance = z.infer<typeof ProviderUsageBalanceSchema>;
 export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
+export type AgentTeamsListResponse = z.infer<typeof AgentTeamsListResponseSchema>;
+export type AgentTeamSummary = z.infer<typeof AgentTeamSummarySchema>;
 export type ProviderUsageListResponseMessage = z.infer<
   typeof ProviderUsageListResponseMessageSchema
 >;
@@ -7738,6 +8002,17 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
+      [CLIENT_CAPS.goalControlEvents]: z.boolean().optional(),
+      [CLIENT_CAPS.goalAcknowledgeEvents]: z.boolean().optional(),
+      [CLIENT_CAPS.goalManagementEvents]: z.boolean().optional(),
+      [CLIENT_CAPS.goalConfigEdit]: z.boolean().optional(),
+      [CLIENT_CAPS.goalUsageBreakdown]: z.boolean().optional(),
+      [CLIENT_CAPS.goalIntegrationRetry]: z.boolean().optional(),
+      [CLIENT_CAPS.goalPlanRevision]: z.boolean().optional(),
+      [CLIENT_CAPS.goalLeadInterventions]: z.boolean().optional(),
+      [CLIENT_CAPS.goalRecovery]: z.boolean().optional(),
+      [CLIENT_CAPS.goalAccept]: z.boolean().optional(),
+      [CLIENT_CAPS.goalUserWait]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

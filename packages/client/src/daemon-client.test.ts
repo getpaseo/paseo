@@ -1108,6 +1108,17 @@ test("advertises client capabilities in hello", async () => {
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
       workspace_setup_observation: true,
+      goal_control_events: true,
+      goal_acknowledge_events: true,
+      goal_management_events: true,
+      goal_config_edit: true,
+      goal_usage_breakdown: true,
+      goal_integration_retry: true,
+      goal_plan_revision: true,
+      goal_lead_interventions: true,
+      goal_recovery: true,
+      goal_accept: true,
+      goal_user_wait: true,
       hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
@@ -1484,6 +1495,208 @@ test("waits for the daemon to acknowledge push token revocation", async () => {
   );
 
   await revocation;
+});
+
+test("a retry's time mode is sent only to a host with goalTimeBase", async () => {
+  for (const timeBase of [false, true]) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: `clsk_goal_time_base_${timeBase}`,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { goalControls: true, goalTimeBase: timeBase } });
+    await connectPromise;
+    const sentBefore = mock.sent.length;
+
+    const retry = client.goalRetry({ goalId: "g1", timeMode: "fresh" });
+    if (!timeBase) {
+      await expect(retry).rejects.toThrow(
+        "Update the host to choose how a retried goal's time limit restarts.",
+      );
+      expect(mock.sent).toHaveLength(sentBefore);
+      continue;
+    }
+    const request = parseSentFrame(mock.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "goal.retry.request",
+      goalId: "g1",
+      timeMode: "fresh",
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "goal.retry.response",
+        payload: { requestId: request.requestId, goal: null, error: "x" },
+      }),
+    );
+    await expect(retry).resolves.toMatchObject({ error: "x" });
+  }
+});
+
+test("recovery requests and a retry's guidance are sent only to a host with goalRecovery", async () => {
+  for (const recovery of [false, true]) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: `clsk_goal_recovery_${recovery}`,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({
+      features: { goalControls: true, goalTimeBase: true, goalRecovery: recovery },
+    });
+    await connectPromise;
+    expect(client.supportsGoalRecovery()).toBe(recovery);
+    const sentBefore = mock.sent.length;
+
+    const calls = [
+      () =>
+        client.goalRecoveryStart({
+          goalId: "g1",
+          timeMode: "fresh",
+          guidance: { goal: "use screenshots", tasks: { t7: null } },
+        }),
+      () => client.goalRecoveryDecide({ goalId: "g1", recoveryId: "rec-9", approve: false }),
+      () => client.goalRecoveryCancel({ goalId: "g1", recoveryId: "rec-9" }),
+      () => client.goalRetry({ goalId: "g1", guidance: { tasks: { t3: "answer yes" } } }),
+    ];
+    if (!recovery) {
+      for (const call of calls) {
+        await expect(call()).rejects.toThrow(
+          "Update the host to recover a failed goal or give its workers guidance.",
+        );
+      }
+      expect(mock.sent).toHaveLength(sentBefore);
+      continue;
+    }
+    const expected = [
+      {
+        type: "goal.recovery.start.request",
+        goalId: "g1",
+        timeMode: "fresh",
+        guidance: { goal: "use screenshots", tasks: { t7: null } },
+      },
+      { type: "goal.recovery.decide.request", goalId: "g1", recoveryId: "rec-9", approve: false },
+      { type: "goal.recovery.cancel.request", goalId: "g1", recoveryId: "rec-9" },
+      { type: "goal.retry.request", goalId: "g1", guidance: { tasks: { t3: "answer yes" } } },
+    ];
+    for (const [index, call] of calls.entries()) {
+      const pending = call();
+      const request = parseSentFrame(mock.sent.at(-1));
+      expect(request).toEqual({ ...expected[index], requestId: request.requestId });
+      const responseType = String(request.type).replace(/\.request$/, ".response");
+      mock.triggerMessage(
+        wrapSessionMessage({
+          type: responseType,
+          payload: { requestId: request.requestId, goal: null, error: "refused" },
+        }),
+      );
+      await expect(pending).resolves.toMatchObject({ error: "refused" });
+    }
+  }
+});
+
+test("userWaitMinutes is sent only to a host with goalUserWait", async () => {
+  for (const userWait of [false, true]) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: `clsk_goal_user_wait_${userWait}`,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({
+      features: { goals: true, goalConfigEdit: true, goalUserWait: userWait },
+    });
+    await connectPromise;
+    expect(client.supportsGoalUserWait()).toBe(userWait);
+    const sentBefore = mock.sent.length;
+    const created = client.goalCreate({
+      title: "T",
+      objective: "o",
+      criteria: ["c"],
+      config: {
+        cwd: "/repo",
+        leadProvider: "claude",
+        defaultProvider: "claude",
+        maxParallel: 2,
+        maxAttempts: 2,
+        autoApprovePlan: true,
+        notifyLead: false,
+        limits: { userWaitMinutes: 30 },
+      },
+    });
+    const changed = client.goalUpdateConfig({
+      goalId: "g1",
+      changes: { limits: { userWaitMinutes: null } },
+    });
+    if (!userWait) {
+      const refusal = "Update the host to limit how long a goal waits for an answer.";
+      await expect(created).rejects.toThrow(refusal);
+      await expect(changed).rejects.toThrow(refusal);
+      expect(mock.sent).toHaveLength(sentBefore);
+      continue;
+    }
+    created.catch(() => {});
+    changed.catch(() => {});
+    const types = mock.sent.slice(sentBefore).map((frame) => parseSentFrame(frame).type);
+    expect(types).toEqual(["goal.create.request", "goal.update_config.request"]);
+    expect(parseSentFrame(mock.sent.at(-1))).toMatchObject({
+      changes: { limits: { userWaitMinutes: null } },
+    });
+  }
+});
+
+test("accepting a goal as is is sent only to a host with goalAccept", async () => {
+  for (const accept of [false, true]) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: `clsk_goal_accept_${accept}`,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { goalControls: true, goalAccept: accept } });
+    await connectPromise;
+    expect(client.supportsGoalAccept()).toBe(accept);
+    const sentBefore = mock.sent.length;
+    const pending = client.goalOutcomeAccept({
+      goalId: "g1",
+      criterionIds: ["c1"],
+      note: "good enough",
+      client: "cli",
+    });
+    if (!accept) {
+      await expect(pending).rejects.toThrow("Update the host to accept a failed goal as is.");
+      expect(mock.sent).toHaveLength(sentBefore);
+      continue;
+    }
+    const request = parseSentFrame(mock.sent.at(-1));
+    expect(request).toEqual({
+      type: "goal.outcome.accept.request",
+      goalId: "g1",
+      criterionIds: ["c1"],
+      note: "good enough",
+      client: "cli",
+      requestId: request.requestId,
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "goal.outcome.accept.response",
+        payload: { requestId: request.requestId, goal: null, error: "refused" },
+      }),
+    );
+    await expect(pending).resolves.toMatchObject({ error: "refused" });
+  }
 });
 
 test("bounds the wait for push token revocation", async () => {
@@ -8498,7 +8711,6 @@ test("closes before admission when a protected-capable daemon is reached in lega
   expect(daemonReceived).toHaveLength(1);
   expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
 });
-
 test.each([
   { chunked: false, transportChunked: false },
   { chunked: true, transportChunked: false },
@@ -8923,4 +9135,68 @@ test("routed channels inherit an origin without drain support", async () => {
   )({ url: "ws://route" });
   expect(route.supportsDrain).toBe(false);
   route.close();
+});
+test("rejects team listing and team creation before sending when the host predates teams", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  expect(client.supportsAgentTeams()).toBe(false);
+  await expect(client.listAgentTeams()).rejects.toThrow("Update the host to use teams.");
+  await expect(
+    client.createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" }),
+  ).rejects.toThrow("Update the host to use teams.");
+  expect(mock.sent).toHaveLength(0);
+});
+
+test("sends agent.teams.list.request and sends the team on agent creation", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentTeams: true } });
+  await connectPromise;
+
+  const listPromise = client.listAgentTeams({ requestId: "teams-1" });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: { type: "agent.teams.list.request", requestId: "teams-1" },
+  });
+  const teams = [
+    {
+      name: "full-stack",
+      roles: [{ name: "reviewer", description: "Reviews.", provider: "claude" }],
+    },
+  ];
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.teams.list.response",
+      payload: { requestId: "teams-1", teams, error: null },
+    }),
+  );
+  await expect(listPromise).resolves.toEqual({ requestId: "teams-1", teams, error: null });
+
+  void client
+    .createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" })
+    .catch(() => undefined);
+  const created = mock.sent.map((frame) => parseSentFrame(frame)).at(-1);
+  expect(created).toMatchObject({ team: "full-stack", config: { provider: "claude" } });
+  expect(created).not.toHaveProperty("config.team");
 });

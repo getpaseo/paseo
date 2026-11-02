@@ -37,6 +37,8 @@ function reloadableConfig(
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
     terminalProfiles: daemon.terminalProfiles,
     agentProfiles: daemon.agentProfiles,
+    teams: daemon.teams,
+    goals: daemon.goals,
     cors: { allowedOrigins: [] },
     trustedProxies: ["loopback"],
     git: {
@@ -225,6 +227,128 @@ describe("DaemonConfigStore", () => {
 
     expect(store.get().agentProfiles).toEqual([{ id: "a", name: "Keep", provider: "claude" }]);
     expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toHaveLength(1);
+  });
+
+  test("patch replaces the whole teams record and persists it", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      teams: {
+        old: { roles: { solo: { description: "Does it all.", provider: "claude" } } },
+      },
+    });
+
+    await store.patch({
+      teams: {
+        " ship ": {
+          peerMessaging: true,
+          roles: {
+            implementer: {
+              description: "Writes the code.",
+              provider: "codex",
+              model: "codex-model",
+              isolation: "worktree",
+            },
+          },
+        },
+      },
+    });
+
+    const expected = {
+      ship: {
+        peerMessaging: true,
+        roles: {
+          implementer: {
+            description: "Writes the code.",
+            provider: "codex",
+            model: "codex-model",
+            isolation: "worktree",
+          },
+        },
+      },
+    };
+    expect(store.get().teams).toEqual(expected);
+    expect(loadPersistedConfig(paseoHome).daemon?.teams).toEqual(expected);
+
+    await store.patch({ teams: {} });
+    expect(store.get().teams).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).daemon?.teams).toBeUndefined();
+  });
+
+  test("patch persists the goal run cap, emits its field change and refuses one out of range", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({ version: 1, daemon: { appendSystemPrompt: "keep" } })}\n`,
+    );
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "keep",
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("goals.maxConcurrentRuns", (value) => changes.push(value));
+
+    await store.patch({ goals: { maxConcurrentRuns: 8 } });
+
+    expect(changes).toEqual([8]);
+    expect(store.get().goals).toEqual({ maxConcurrentRuns: 8 });
+    const daemon = loadPersistedConfig(paseoHome).daemon;
+    expect(daemon?.goals).toEqual({ maxConcurrentRuns: 8 });
+    expect(daemon?.appendSystemPrompt).toBe("keep");
+
+    for (const bad of [0, 33, 2.5]) {
+      await expect(store.patch({ goals: { maxConcurrentRuns: bad } })).rejects.toThrow();
+    }
+    expect(store.get().goals).toEqual({ maxConcurrentRuns: 8 });
+    expect(changes).toEqual([8]);
+  });
+
+  test("rejects teams the daemon cannot use and keeps the previous teams", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const teams = {
+      keep: { roles: { solo: { description: "Does it all.", provider: "claude" } } },
+    };
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      teams,
+    });
+
+    await expect(
+      store.patch({
+        teams: {
+          broken: {
+            roles: { both: { description: "x", provider: "claude", profile: "p" } },
+          },
+        },
+      }),
+    ).rejects.toThrow("Invalid daemon.teams");
+    await expect(store.patch({ teams: { empty: { roles: {} } } })).rejects.toThrow(
+      "Invalid daemon.teams",
+    );
+    expect(store.get().teams).toEqual(teams);
   });
 
   test("rolls back config when a field transition fails", async () => {
@@ -1107,6 +1231,44 @@ describe("DaemonConfigStore reload", () => {
     });
     expect(store.get().browserTools.enabled).toBe(true);
     expect(store.get().git).toEqual({ maxProcessesPerSecond: 12, maxProcessConcurrency: 3 });
+  });
+
+  test("reloads teams without requiring a restart", async () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    const teams = {
+      ship: { roles: { solo: { description: "Does it all.", provider: "claude" } } },
+    };
+    writeConfig(paseoHome, { ...persisted, daemon: { ...persisted.daemon, teams } });
+
+    expect(await store.reload()).toEqual({
+      appliedPaths: ["daemon.teams"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().teams).toEqual(teams);
+  });
+
+  test("reloads the goal run cap without requiring a restart", async () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    const changes: unknown[] = [];
+    store.onFieldChange("goals.maxConcurrentRuns", (value) => changes.push(value));
+    writeConfig(paseoHome, {
+      ...persisted,
+      daemon: { ...persisted.daemon, goals: { maxConcurrentRuns: 12 } },
+    });
+
+    expect(await store.reload()).toEqual({
+      appliedPaths: ["daemon.goals.maxConcurrentRuns"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().goals).toEqual({ maxConcurrentRuns: 12 });
+
+    // Removing it returns to the default.
+    writeConfig(paseoHome, persisted);
+    await store.reload();
+    expect(store.get().goals?.maxConcurrentRuns).toBeUndefined();
+    expect(changes).toEqual([12, undefined]);
   });
 
   test("reloads idle runtime cleanup in both directions without requiring a restart", async () => {
