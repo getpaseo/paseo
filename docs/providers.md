@@ -53,6 +53,14 @@ preferences and selection history. Cursor versions without that extension must b
 still probes model selections in its own shim. The initial session supplies modes and the current
 model; it does not override the model list returned by a resolver.
 
+Accepting a Cursor plan ends Cursor's planning turn. Paseo switches out of `plan`/`ask` before the
+approval resolves, then waits for that planning turn's `turn_completed` before starting the
+implementation follow-up — canceling the turn (Stop) drops the follow-up; interrupting CreatePlan
+also leaves plan todos stuck. The follow-up also tells Cursor to drive those todos with `TodoWrite`;
+without that nudge Cursor often finishes the work and never marks steps completed. If the mode
+switch fails, the approval stays pending so it can be retried. See the `cursor/*` handling in
+`ACPAgentSession` (`packages/server/src/server/agent/providers/acp-agent.ts`).
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.

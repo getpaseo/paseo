@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  buildQuestionFormSelectedOptionIndexes,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -78,6 +79,29 @@ describe("question form card core", () => {
       Fruits: "durian",
     });
     expect(buildQuestionFormAnswers(questions, {}, { 0: "durian" })).toEqual({ Fruits: "durian" });
+  });
+
+  test("reports checked option indexes per header and omits unanswered questions", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Which ship option?",
+          header: "Ship",
+          options: [{ label: "A" }, { label: "B" }, { label: "A, B" }],
+          multiSelect: true,
+        },
+        {
+          question: "Which mode?",
+          header: "Mode",
+          options: [{ label: "Fast" }, { label: "Safe" }],
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    expect(
+      buildQuestionFormSelectedOptionIndexes(questions, { 0: new Set([2, 0]), 1: new Set() }),
+    ).toEqual({ Ship: [0, 2] });
   });
 
   test("replaces the selected option with the other answer for single-select", () => {
