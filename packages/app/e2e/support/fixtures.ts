@@ -107,6 +107,8 @@ const daemonTest = metroTest.extend<
 });
 
 const test = daemonTest.extend<{
+  /** Specs start past first-run setup; onboarding specs opt out to see a fresh install. */
+  e2eOnboardingCompleted: boolean;
   paseoE2ESetup: void;
   outdatedDaemon: OutdatedDaemon;
   desktopManagedOutdatedDaemon: OutdatedDaemon;
@@ -114,8 +116,9 @@ const test = daemonTest.extend<{
   projectPickerFixture: TrackedProjectPickerFixture;
   withWorkspace: WithWorkspace;
 }>({
+  e2eOnboardingCompleted: [true, { option: true }],
   paseoE2ESetup: [
-    async ({ page }, provide, testInfo) => {
+    async ({ page, e2eOnboardingCompleted }, provide, testInfo) => {
       const daemonPort = getE2EDaemonPort();
       const metroPort = process.env.E2E_METRO_PORT;
       if (!metroPort) {
@@ -157,7 +160,7 @@ const test = daemonTest.extend<{
       const createAgentPreferences = buildCreateAgentPreferences();
 
       await page.addInitScript(
-        ({ daemon, preferences, seedNonce: nonce, extraHostsKey }) => {
+        ({ daemon, preferences, seedNonce: nonce, extraHostsKey, onboardingCompleted }) => {
           // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
           // override storage and reload; they can opt out of seeding for the *next* navigation by
           // setting this flag before the reload.
@@ -185,12 +188,20 @@ const test = daemonTest.extend<{
           if (!localStorage.getItem("@paseo:app-settings")) {
             localStorage.setItem("@paseo:app-settings", JSON.stringify({ chatDisplay: "full" }));
           }
+          // The shared daemon often has no projects, which would open first-run setup over the app.
+          if (onboardingCompleted && !localStorage.getItem("@paseo:onboarding")) {
+            localStorage.setItem(
+              "@paseo:onboarding",
+              JSON.stringify({ completedAt: new Date(0).toISOString() }),
+            );
+          }
         },
         {
           daemon: testDaemon,
           preferences: createAgentPreferences,
           seedNonce,
           extraHostsKey: EXTRA_HOSTS_KEY,
+          onboardingCompleted: e2eOnboardingCompleted,
         },
       );
 

@@ -326,12 +326,12 @@ test.describe("Settings sidebar navigation", () => {
 
     await test.step("a dropdown owns Escape", async () => {
       await openSettingsSection(page, "appearance");
-      await page.getByLabel(/Theme:/).click();
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+      await page.getByLabel(/Highlight theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toBeVisible();
 
       await page.keyboard.press("Escape");
 
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toHaveCount(0);
       await expect(page).toHaveURL(/\/settings(\/|$)/);
     });
 

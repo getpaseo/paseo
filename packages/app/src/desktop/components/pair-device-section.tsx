@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/text-input";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
+const TAILSCALE_DOCS_URL = "https://paseo.sh/docs/connectivity#tailscale";
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedShieldCheck = withUnistyles(ShieldCheck);
@@ -219,7 +220,14 @@ function RelayConsent(props: PairDeviceBodyProps) {
       </View>
       <View style={styles.directRow}>
         <ThemedNetwork size={14} style={styles.directIcon} />
-        <Text style={styles.directHint}>{t("pairing.device.directConnectionHint")}</Text>
+        <View style={styles.directContent}>
+          <Text style={styles.directHint}>{t("pairing.device.directConnectionHint")}</Text>
+          <ExternalLink
+            href={TAILSCALE_DOCS_URL}
+            label={t("pairing.device.tailscaleDocs")}
+            accessibilityLabel={t("pairing.device.tailscaleDocsAccessibility")}
+          />
+        </View>
       </View>
     </View>
   );
@@ -338,8 +346,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     marginTop: 1, // optical: seats the glyph on the hint's first text line
   },
-  directHint: {
+  directContent: {
     flex: 1,
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+  },
+  directHint: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.5,

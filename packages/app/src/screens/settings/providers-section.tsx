@@ -26,6 +26,7 @@ import {
 import { ProviderCatalogList } from "@/components/provider-catalog-list";
 import { useProviderIcon } from "@/components/provider-icons";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { SkeletonPulse, useSkeletonPulse } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
@@ -166,6 +167,36 @@ function ProviderActionsMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+const SKELETON_ROW_KEYS = [0, 1, 2, 3].map((index) => `provider-skeleton-row-${index}`);
+
+function ProviderRowsSkeleton() {
+  const { t } = useTranslation();
+  const pulse = useSkeletonPulse();
+  return (
+    <View
+      style={settingsStyles.card}
+      accessibilityLabel={t("settings.providers.loading")}
+      testID="providers-skeleton"
+    >
+      {SKELETON_ROW_KEYS.map((key, index) => (
+        <View
+          key={key}
+          style={[settingsStyles.row, index > 0 && settingsStyles.rowBorder, styles.row]}
+        >
+          <View style={styles.rowContent}>
+            <SkeletonPulse pulse={pulse} style={styles.skeletonIcon} />
+            <SkeletonPulse pulse={pulse} style={styles.skeletonTitle} />
+          </View>
+          <View style={styles.trailingControls}>
+            <SkeletonPulse pulse={pulse} style={styles.skeletonSwitch} />
+            <View style={styles.menuSlot} />
+          </View>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -439,11 +470,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
           </View>
         ) : null}
-        {hasServer && isConnected && isLoading ? (
-          <View style={[settingsStyles.card, styles.emptyCard]}>
-            <Text style={styles.emptyText}>{t("settings.providers.loading")}</Text>
-          </View>
-        ) : null}
+        {hasServer && isConnected && isLoading ? <ProviderRowsSkeleton /> : null}
         {hasServer && isConnected && !isLoading && providerDefinitions.length > 0 ? (
           <View style={settingsStyles.card}>
             {providerDefinitions.map((def, index) => {
@@ -511,6 +538,25 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 56,
   },
   rowHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonIcon: {
+    width: 20,
+    height: 20,
+    marginLeft: theme.spacing[6],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonTitle: {
+    width: 160,
+    height: 12,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonSwitch: {
+    width: 36,
+    height: 20,
+    borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface2,
   },
   rowPressed: {

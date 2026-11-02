@@ -1624,6 +1624,79 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "设置 Paseo",
+      footnote: "这里的所有选项也都在设置中",
+      stepCounter: "第 {{current}} 步，共 {{total}} 步",
+      skip: "跳过设置",
+      continue: "继续",
+      finish: "完成",
+      steps: {
+        appearance: {
+          label: "外观",
+          title: "欢迎使用 Paseo",
+          description:
+            "在这台电脑上运行 Claude Code、Codex 和其他代理，无论在桌前还是用手机。先选一个外观。",
+        },
+        providers: {
+          label: "提供方",
+          title: "你的代理",
+          description: "Paseo 使用这台电脑上已安装的代理 CLI。关闭不想在代理选择器中显示的项。",
+        },
+        projects: {
+          label: "项目",
+          title: "添加项目",
+          description: "添加你希望代理工作的文件夹。之后也可以从侧边栏添加更多。",
+          addProject: "添加项目",
+          addAnotherProject: "添加其他项目…",
+          added: "已添加",
+          suggestions: {
+            loading: "正在查找你工作过的文件夹",
+            stillReading: "仍在读取 {{providers}} 历史记录…",
+            readFailed: "无法读取 {{provider}} 历史记录",
+            empty: "未找到最近的项目",
+            sessions_one: "{{count}} 个会话",
+            sessions_other: "{{count}} 个会话",
+            addSelected_one: "添加 {{count}} 个项目",
+            addSelected_other: "添加 {{count}} 个项目",
+            adding: "正在添加…",
+            addFailed: "无法添加此文件夹",
+          },
+        },
+        orchestration: {
+          label: "编排",
+          title: "让代理使用 Paseo",
+          description:
+            "启用 Paseo 工具后，代理可以把工作交给其他代理，并自行创建工作区和计划任务。",
+          capabilities: {
+            agents: {
+              title: "启动并引导其他代理",
+              description: "启动 Codex、Claude Code 或 OpenCode 代理，向它们发送提示并等待结果。",
+            },
+            workspaces: {
+              title: "创建工作区",
+              description: "为每个任务打开一个 worktree，避免并行代理相互冲突。",
+            },
+            schedules: {
+              title: "计划任务和心跳",
+              description: "每 10 分钟检查一次 CI 并修复失败。",
+            },
+            terminals: {
+              title: "终端和脚本",
+              description: "运行工作区的开发服务器并读取输出。",
+            },
+          },
+        },
+        phone: {
+          label: "手机",
+          title: "随身带上你的代理",
+          description:
+            "iOS 和 Android 版 Paseo 会连接到这台电脑。代理继续在这里运行，手机用来查看进度、批准权限和发送提示。",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
     actions: {
@@ -1838,6 +1911,8 @@ export const zhCN: TranslationResources = {
       notNow: "暂不",
       directConnectionHint:
         "不使用中继时，请通过 TCP、Tailscale 或其他 VPN 直接连接。不会生成二维码。",
+      tailscaleDocs: "设置 Tailscale",
+      tailscaleDocsAccessibility: "了解如何通过 Tailscale 连接",
       updateRequired: "请更新主机，以便从 Paseo Desktop 启用中继。",
       unavailable: "配对 offer 不可用。",
       hint: "用手机上的 Paseo 扫描此二维码，或复制下方链接。",
@@ -2299,6 +2374,11 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      setup: {
+        label: "首次设置",
+        description: "重新设置外观、提供方、项目和手机配对",
+        action: "再次显示设置",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",

@@ -1672,6 +1672,83 @@ export const ptBR: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Configurar o Paseo",
+      footnote: "Tudo aqui também está em Configurações",
+      stepCounter: "Etapa {{current}} de {{total}}",
+      skip: "Pular configuração",
+      continue: "Continuar",
+      finish: "Concluir",
+      steps: {
+        appearance: {
+          label: "Aparência",
+          title: "Boas-vindas ao Paseo",
+          description:
+            "Execute Claude Code, Codex e outros agentes neste computador, da sua mesa ou do seu celular. Primeiro, escolha um visual.",
+        },
+        providers: {
+          label: "Provedores",
+          title: "Seus agentes",
+          description:
+            "O Paseo usa as CLIs de agentes já instaladas neste computador. Desative as que você não quer no seletor de agentes.",
+        },
+        projects: {
+          label: "Projetos",
+          title: "Adicione seus projetos",
+          description:
+            "Adicione as pastas em que os agentes devem trabalhar. Você pode adicionar mais depois pela barra lateral.",
+          addProject: "Adicionar projeto",
+          addAnotherProject: "Adicionar outro projeto…",
+          added: "Adicionado",
+          suggestions: {
+            loading: "Procurando pastas em que você trabalhou",
+            stillReading: "Ainda lendo o histórico de {{providers}}…",
+            readFailed: "Não foi possível ler o histórico de {{provider}}",
+            empty: "Nenhum projeto recente encontrado",
+            sessions_one: "{{count}} sessão",
+            sessions_other: "{{count}} sessões",
+            addSelected_one: "Adicionar {{count}} projeto",
+            addSelected_other: "Adicionar {{count}} projetos",
+            adding: "Adicionando…",
+            addFailed: "Não foi possível adicionar esta pasta",
+          },
+        },
+        orchestration: {
+          label: "Orquestração",
+          title: "Deixe os agentes usarem o Paseo",
+          description:
+            "Com as ferramentas do Paseo, um agente pode passar trabalho para outros agentes e criar seus próprios workspaces e agendamentos.",
+          capabilities: {
+            agents: {
+              title: "Iniciar e guiar outros agentes",
+              description:
+                "Inicie agentes do Codex, Claude Code ou OpenCode, envie prompts e aguarde os resultados.",
+            },
+            workspaces: {
+              title: "Criar workspaces",
+              description:
+                "Abra um worktree por tarefa para que agentes em paralelo não entrem em conflito.",
+            },
+            schedules: {
+              title: "Agendamentos e heartbeats",
+              description: "Verificar a CI a cada 10 minutos e corrigir falhas.",
+            },
+            terminals: {
+              title: "Terminais e scripts",
+              description: "Execute o servidor de desenvolvimento do workspace e leia a saída.",
+            },
+          },
+        },
+        phone: {
+          label: "Celular",
+          title: "Leve seus agentes com você",
+          description:
+            "O Paseo para iOS e Android se conecta a este computador. Os agentes continuam rodando aqui; seu celular os acompanha, aprova permissões e envia prompts.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Bem-vindo ao Paseo",
     subtitle: "Conecte seu computador para começar",
     actions: {
@@ -1892,6 +1969,8 @@ export const ptBR: TranslationResources = {
       notNow: "Agora não",
       directConnectionHint:
         "Sem relay, conecte diretamente por TCP, Tailscale ou outra VPN. Nenhum código QR é criado.",
+      tailscaleDocs: "Configurar Tailscale",
+      tailscaleDocsAccessibility: "Ler como conectar pelo Tailscale",
       updateRequired: "Atualize o host para ativar o relay pelo Paseo Desktop.",
       unavailable: "Oferta de pareamento indisponível.",
       hint: "Escaneie este QR code com o Paseo no seu celular ou copie o link abaixo.",
@@ -2355,6 +2434,11 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      setup: {
+        label: "Configuração inicial",
+        description: "Rever aparência, provedores, projetos e pareamento do celular",
+        action: "Mostrar configuração novamente",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",
