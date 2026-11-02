@@ -2309,7 +2309,10 @@ export class Session {
       void this.delivery
         .releaseFamily("plugin-rpc")
         .catch((error) =>
-          this.sessionLogger.error({ err: error }, "Failed to release revoked plugin subscriptions"),
+          this.sessionLogger.error(
+            { err: error },
+            "Failed to release revoked plugin subscriptions",
+          ),
         );
     }
   }
@@ -2661,13 +2664,16 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "plugin.rpc.invoke.request" }>,
     output: unknown,
   ): Promise<void> {
+    const response: SessionOutboundMessage = {
+      type: "plugin.rpc.invoke.response",
+      payload: { requestId: request.requestId, output },
+    };
     if (!(output instanceof Uint8Array)) {
-      this.emit({
-        type: "plugin.rpc.invoke.response",
-        payload: { requestId: request.requestId, output },
-      });
+      this.emit(response);
       return;
     }
+    // The frame is the binary form of the response, so it needs the response's permission.
+    if (!this.authorization.allowsOutbound(response)) return;
     if (!this.supports(CLIENT_CAPS.pluginBinaryPayloads) || this.onBinaryMessage === null)
       throw new Error(
         `Update Paseo to receive the binary output of plugin RPC ${request.pluginId}.${request.method}`,
@@ -2711,13 +2717,15 @@ export class Session {
     };
     subscription.attach({
       event: (event) => {
+        const message: SessionOutboundMessage = {
+          type: "plugin.rpc.event",
+          payload: { subscriptionId: owner.responseId, event },
+        };
         if (!(event instanceof Uint8Array)) {
-          owner.emit({
-            type: "plugin.rpc.event",
-            payload: { subscriptionId: owner.responseId, event },
-          });
+          owner.emit(message);
           return;
         }
+        if (!this.authorization.allowsOutbound(message)) return;
         if (this.onBinaryMessage === null) {
           subscription.release();
           close("This connection cannot carry binary plugin events");

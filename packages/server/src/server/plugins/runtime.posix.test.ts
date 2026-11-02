@@ -1424,7 +1424,9 @@ export default function contribute(server: { registerProvider(provider: Provider
       const subscription = runtime.startSubscription("slow-subscribe", "feed", {});
       const rejection = subscription.ready.catch((error: Error) => error);
       await vi.advanceTimersByTimeAsync(30_000);
-      await expect(rejection).resolves.toMatchObject({ message: expect.stringContaining("timed out") });
+      await expect(rejection).resolves.toMatchObject({
+        message: expect.stringContaining("timed out"),
+      });
       const subscribe = sent.find((message) => message.type === "subscribe");
       expect(sent).toContainEqual({
         type: "unsubscribe",
