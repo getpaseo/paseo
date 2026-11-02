@@ -694,6 +694,37 @@ The overflow sheet's content portals to the app root, away from the composer. Pa
 `useComposerSheetBridge()` as the sheet's `contextBridge`, or `useComposer()` returns nothing and
 the sheet draws no plugin rows.
 
+## Contribute New workspace items
+
+`addNewWorkspaceItem` mounts a plugin component on the New workspace screen. The public contract
+is the [New workspace items reference](../public-docs/plugins/reference.md#new-workspace-items).
+
+The screen's choices that a plugin may change live in one plain store,
+`createNewWorkspaceSetup` (`packages/app/src/screens/new-workspace/setup-model.ts`): the base
+picker selection, the manual isolation, the branch name and the workspace metadata. The pickers and
+the plugin commands write to it, so a command sees what an earlier command left. Project and host
+stay in the screen's hooks (`useNewWorkspaceHostSelector` reconciles them against each other), and
+they are read-only to plugins; a command that switched them would unmount the item that called it.
+
+The screen reports what it derives from those hooks (the lock, the project, whether the project
+can make worktrees, whether the host supports metadata, and the pickers' own handlers) to the store
+with `setup.report` on every render. Commands read it when they run, never from the render that
+built them. `chooseIsolation` and `chooseBase` are the pickers' handlers, so a plugin command has the
+effects of a pick. Add a capability by extending the store and its facts; do not read screen state
+from a plugin component.
+
+`ensureWorkspace` sends the store's `branch` as `source.branchName` only for a branch-off worktree
+(`checkoutRequest.action === "branch-off"`), and its `metadata` on `workspace.create` when it is
+not empty. The server uses `branchName ?? worktreeSlug` as the new branch.
+
+Items render through `ComposerControl` with `surface="field"`: a `FieldTrigger` (a badge on
+desktop, a full-width field when compact) and the same pending state, error toast and list as the
+composer's controls. `ComposerControlLockProvider` carries the screen's lock to them. Plugin
+`Combobox` is a `select` item with `remoteSearch`: the app `Combobox` does not filter locally, and
+`PluginCombobox` (`plugins/react-native/composer-controls.tsx`) runs `search` through
+`useFetchQuery` with `dataShape: "list"`, which keeps the previous results while a newer query runs.
+`plugins/item-host.tsx` is the host shared by composer and New workspace items.
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and

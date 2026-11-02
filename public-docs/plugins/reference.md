@@ -1984,6 +1984,77 @@ control.
 The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
 registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`.
 
+## New workspace items
+
+`client.addNewWorkspaceItem({ id, Component })` puts a field on the New workspace screen, beside
+the project, host and branch pickers. `useNewWorkspace()` reads and changes what the screen will
+create, and `Combobox`, `Select`, `Toggle` and `Action` from `@getpaseo/plugin/client/ui` draw the
+fields. On desktop an item is a badge in the setup row; on a phone it is a full-width field.
+
+```tsx
+import { useNewWorkspace, useRpc, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+import { searchIssuesRpc } from "../shared/issues";
+
+function IssueField() {
+  const newWorkspace = useNewWorkspace();
+  const searchIssues = useRpc(searchIssuesRpc);
+  const issueId = newWorkspace.metadata["issues.id"];
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={typeof issueId === "string" ? { id: issueId, label: issueId } : null}
+      search={async ({ query }) => (await searchIssues({ query })).issues}
+      onSelect={async ({ item }) => {
+        await newWorkspace.setBranch(item.branch);
+        await newWorkspace.setMetadata({ "issues.id": item.id });
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addNewWorkspaceItem({ id: "issue", Component: IssueField });
+  return () => {};
+}
+```
+
+`useNewWorkspace()` returns the setup the item sits in:
+
+| Field or command            | Meaning                                                                                                                                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`, `project`           | The user's choices, `{ id, label }` and `{ id, name } \| null`. Read-only: an item cannot switch host or project.                                                                                                               |
+| `isolation`, `setIsolation` | `"local"` or `"worktree"`. A project that cannot make worktrees reads `"local"`, and `setIsolation("worktree")` rejects.                                                                                                        |
+| `baseRef`, `setBaseRef`     | What a new worktree starts from: `{ type: "branch", name }`, `{ type: "change-request", number }`, or `null` until the default is known. `setBaseRef({ type: "branch", name })` rejects while no project is chosen.             |
+| `branch`, `setBranch`       | The name of the branch a new worktree is created on. `null` lets Paseo pick one. It is kept while isolation is local or the base is a change request, and it applies only to a worktree created from a branch.                  |
+| `metadata`, `setMetadata`   | The created workspace's [metadata](/docs/plugins/hooks#metadata), not the first agent's. Top-level keys replace; `null` removes a key. Rejects on a host that does not support metadata with "Update the host to use metadata." |
+
+Commands follow the [composer item](#composer-items) rules: each one acts on the screen's state
+when it runs, so `await newWorkspace.setBranch(name)` followed by `newWorkspace.setMetadata(patch)`
+changes both, and its promise resolves once the change has taken effect. Payloads are JSON values.
+`metadata` is a frozen copy. While the screen creates the workspace it is locked: your fields render
+disabled and every command rejects with "The New workspace screen is locked while the workspace is
+being created." A callback that returns a promise keeps the control disabled until it settles, and a
+rejection reaches the user as an error toast.
+
+`Combobox` is a field with a searchable list whose results come from your code:
+
+| Prop       | Meaning                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `value`    | `{ id, label, description? } \| null`, what the field shows. It need not be among the search results, so it can show a choice made earlier.                                           |
+| `search`   | `({ query }) => Promise<Item[]>`. Called with `""` when the list opens and again, debounced, as the user types. Each `Item` is `{ id, label, description? }` plus any fields you add. |
+| `onSelect` | `({ item }) => void \| Promise<void>`. `item` is the object `search` returned.                                                                                                        |
+
+Paseo shows "Searching…" while a search runs, "Search failed" with the error message when it
+rejects, and an empty state for no results. It keeps the previous results while a newer search runs
+and ignores a search that a newer one replaced, so `search` needs no cancellation of its own.
+`Combobox` takes the same `title`, `icon` and `disabled` as the other controls, and draws as a row
+with a list in the composer's overflow sheet too.
+
+The [New workspace issues example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/new-workspace-issues)
+searches a fixed issue list from a daemon handler and sets the branch and metadata from the choice.
+
 ## Composer pills
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)

@@ -7,24 +7,11 @@ import {
   type ComposerControlSurface,
 } from "@/composer/agent-controls/composer-control";
 import { useComposerAgent, useComposerInput } from "@/composer/session";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { useToast } from "@/contexts/toast-api-context";
-import { useHosts } from "@/runtime/host-runtime";
-import type { Theme } from "@/styles/theme";
-import { createPluginClientStateSource } from "../client-state/source";
-import { resolvePluginPlatform } from "../platform";
-import { PluginEnvironmentProvider, type PluginEnvironment } from "../popover";
+import { PluginItemList, pluginThemeMapping, usePluginItemHost } from "../item-host";
+import { PluginEnvironmentProvider } from "../popover";
 import { useInstalledPlugins } from "../registry";
-import { SurfaceErrorBoundary } from "../surface-error-boundary";
-import { toPluginTheme } from "../theme";
 import type { InstalledPlugin } from "../types";
 import { toPluginComposer } from "./model";
-
-const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-
-function renderNothing() {
-  return null;
-}
 
 function useServerPlugins(serverId: string | null): InstalledPlugin[] {
   const installed = useInstalledPlugins();
@@ -76,52 +63,23 @@ function PluginComposerItemsHost({
 }) {
   const agent = useComposerAgent();
   const composerInput = useComposerInput();
-  const toast = useToast();
-  const compact = useIsCompactFormFactor();
-  const hosts = useHosts();
-  const hostLabel =
-    hosts.find((host) => host.serverId === plugin.serverId)?.label ?? plugin.serverId;
+  const { environment, props } = usePluginItemHost(plugin, theme);
   const textSource = composerInput?.textSource;
   const prompt = useSyncExternalStore(
     textSource?.subscribe ?? subscribeNothing,
     textSource?.getSnapshot ?? emptyText,
     textSource?.getSnapshot ?? emptyText,
   );
-  const environment = useMemo<PluginEnvironment>(
-    () => ({
-      installation: plugin,
-      toast,
-      state: createPluginClientStateSource(plugin.serverId),
-    }),
-    [plugin, toast],
-  );
   const composer = useMemo(
     () =>
       agent && composerInput ? toPluginComposer({ plugin, agent, composerInput, prompt }) : null,
     [agent, composerInput, plugin, prompt],
   );
-  const props = useMemo<PluginHostProps>(
-    () => ({
-      theme,
-      host: { id: plugin.serverId, label: hostLabel },
-      layout: { compact, platform: resolvePluginPlatform() },
-    }),
-    [compact, hostLabel, plugin.serverId, theme],
-  );
   if (!composer) return null;
   return (
     <PluginEnvironmentProvider environment={environment}>
       <PluginComposerProvider composer={composer}>
-        {plugin.composerItems.map(({ id, Component }) => (
-          <SurfaceErrorBoundary
-            key={id}
-            installation={plugin}
-            Surface={Component}
-            renderError={renderNothing}
-          >
-            <Component {...props} />
-          </SurfaceErrorBoundary>
-        ))}
+        <PluginItemList plugin={plugin} items={plugin.composerItems} props={props} />
       </PluginComposerProvider>
     </PluginEnvironmentProvider>
   );

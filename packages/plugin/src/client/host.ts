@@ -2,6 +2,7 @@ import type { PluginText } from "../text.js";
 import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export { PluginComposerProvider } from "./composer.js";
+export { PluginNewWorkspaceProvider } from "./new-workspace.js";
 export {
   usePluginRuntimeContextBridge,
   type PluginRuntimeContextBridge,

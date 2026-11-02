@@ -25,6 +25,7 @@ function installed(): InstalledPlugin {
     legacySidebarItems: [],
     filePanels: [],
     composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [
       {
         id: "details",

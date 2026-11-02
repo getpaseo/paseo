@@ -1665,6 +1665,63 @@ export default function contribute(client: PluginClientContext) {
 
 [Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`。
 
+## 新建工作区项 {#new-workspace-items}
+
+`client.addNewWorkspaceItem({ id, Component })` 在新建工作区界面上放置一个字段，位于项目、主机和分支选择器旁边。`useNewWorkspace()` 读取并修改界面将要创建的内容，`@getpaseo/plugin/client/ui` 中的 `Combobox`、`Select`、`Toggle` 和 `Action` 负责绘制字段。桌面端的项是设置行中的徽章；手机上是整行宽度的字段。
+
+```tsx
+import { useNewWorkspace, useRpc, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+import { searchIssuesRpc } from "../shared/issues";
+
+function IssueField() {
+  const newWorkspace = useNewWorkspace();
+  const searchIssues = useRpc(searchIssuesRpc);
+  const issueId = newWorkspace.metadata["issues.id"];
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={typeof issueId === "string" ? { id: issueId, label: issueId } : null}
+      search={async ({ query }) => (await searchIssues({ query })).issues}
+      onSelect={async ({ item }) => {
+        await newWorkspace.setBranch(item.branch);
+        await newWorkspace.setMetadata({ "issues.id": item.id });
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addNewWorkspaceItem({ id: "issue", Component: IssueField });
+  return () => {};
+}
+```
+
+`useNewWorkspace()` 返回该项所在的设置：
+
+| 字段或命令                  | 含义                                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                     |
+| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                |
+| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。未选择项目时，`setBaseRef({ type: "branch", name })` 会被拒绝。   |
+| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它只对从分支创建的 worktree 生效。                                         |
+| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。 |
+
+命令遵循 [Composer 项](#composer-items)的规则：每个命令都按界面运行时的状态执行，所以 `await newWorkspace.setBranch(name)` 之后再调用 `newWorkspace.setMetadata(patch)` 会同时生效，命令的 Promise 在更改生效后完成。载荷是 JSON 值。`metadata` 是冻结的副本。界面创建工作区期间会被锁定：你的字段显示为禁用，所有命令都会以 "The New workspace screen is locked while the workspace is being created." 拒绝。返回 Promise 的回调在完成之前会让控件保持禁用，被拒绝时会以错误提示向用户显示。
+
+`Combobox` 是带可搜索列表的字段，结果由你的代码提供：
+
+| 属性       | 含义                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `value`    | `{ id, label, description? } \| null`，字段显示的内容。它不必出现在搜索结果中，因此可以显示之前所做的选择。                                       |
+| `search`   | `({ query }) => Promise<Item[]>`。列表打开时以 `""` 调用，之后随用户输入防抖调用。每个 `Item` 是 `{ id, label, description? }` 加上你添加的字段。 |
+| `onSelect` | `({ item }) => void \| Promise<void>`。`item` 就是 `search` 返回的对象。                                                                          |
+
+搜索进行时 Paseo 显示 “Searching…”，搜索被拒绝时显示 “Search failed” 和错误信息，没有结果时显示空状态。新搜索进行期间会保留之前的结果，并忽略已被更新搜索取代的结果，所以 `search` 不需要自己处理取消。`Combobox` 接收与其他控件相同的 `title`、`icon` 和 `disabled`。
+
+[新建工作区 Issue 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/new-workspace-issues)通过守护进程处理器搜索一个固定的 Issue 列表，并根据所选项设置分支和元数据。
+
 ## Composer 胶囊 {#composer-pills}
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` 使用同样的[按钮描述符](#button-descriptor)，

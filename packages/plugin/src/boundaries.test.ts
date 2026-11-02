@@ -250,6 +250,51 @@ describe("plugin composer SDK boundary", () => {
   });
 });
 
+describe("plugin New workspace SDK boundary", () => {
+  it("lets a New workspace item read the setup and change it through typed commands and a Combobox", () => {
+    expect(
+      typeErrors(`
+      import { useNewWorkspace, type PluginClientContext } from "@getpaseo/plugin/client";
+      import { Combobox } from "@getpaseo/plugin/client/ui";
+      interface Issue { id: string; label: string; branch: string }
+      function Item() {
+        const newWorkspace = useNewWorkspace();
+        const isolation: "local" | "worktree" = newWorkspace.isolation;
+        const branch: string | null = newWorkspace.branch;
+        const project: string | undefined = newWorkspace.project?.name;
+        const host: string = newWorkspace.host.label;
+        const base = newWorkspace.baseRef;
+        if (base?.type === "branch") { const name: string = base.name; }
+        // @ts-expect-error project is read-only
+        newWorkspace.project = null;
+        // @ts-expect-error host is read-only
+        newWorkspace.setHost("other");
+        // @ts-expect-error metadata reads are not writable
+        newWorkspace.metadata.key = "x";
+        newWorkspace.setIsolation("worktree").then(() => newWorkspace.setBaseRef({ type: "branch", name: "main" }));
+        newWorkspace.setBranch(null);
+        newWorkspace.setMetadata({ issue: "1", stale: null });
+        // @ts-expect-error commands take JSON values
+        newWorkspace.setMetadata({ fn: () => {} });
+        return (
+          <Combobox<Issue>
+            title="Issue"
+            icon="CircleDot"
+            value={{ id: "1", label: "One" }}
+            search={async ({ query }: { query: string }) => [{ id: query, label: query, branch: "b" }]}
+            onSelect={({ item }) => newWorkspace.setBranch(item.branch)}
+          />
+        );
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addNewWorkspaceItem({ id: "item", Component: Item });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
 describe("plugin agent tools SDK boundary", () => {
   it("lets a session hook attach typed tools without exposing their transport", () => {
     expect(

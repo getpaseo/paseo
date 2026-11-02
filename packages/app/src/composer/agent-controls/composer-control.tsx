@@ -1,5 +1,6 @@
 import {
   createContext,
+  forwardRef,
   useCallback,
   useContext,
   useMemo,
@@ -14,6 +15,9 @@ import { StyleSheet } from "react-native-unistyles";
 import type { AgentControlIcon } from "@/agent-controls/icons";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { FieldTrigger } from "@/screens/new-workspace/form/field-trigger";
+import { ICON_SIZE } from "@/styles/theme";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { useToast } from "@/contexts/toast-api-context";
@@ -39,8 +43,9 @@ export interface ComposerControlChoice {
 }
 
 /**
- * One control in the composer's toolbar, drawn from data. Provider option controls, thinking and
- * plugin controls all come through here, so each is an icon in the toolbar and a row in the sheet.
+ * One control, drawn from data. Provider option controls, thinking and plugin controls all come
+ * through here, so each is an icon in the composer toolbar, a row in its sheet, or, in a New
+ * workspace item, a field. The name stays from when the composer was the only place it drew.
  */
 export type ComposerControlItem =
   | (ComposerControlBase & {
@@ -52,11 +57,17 @@ export type ComposerControlItem =
       type: "select";
       value: string | null;
       choices: readonly ComposerControlChoice[];
+      /** Names a value the choices do not list, such as a pick that a search no longer returns. */
+      valueLabel?: string;
       onChange: (value: string) => void | Promise<void>;
       /** The toolbar trigger shows only the icon. */
       iconOnly?: boolean;
       showCaret?: boolean;
       searchable?: boolean;
+      /** The list answers `onSearchQueryChange` itself, so it is not filtered again. */
+      remoteSearch?: boolean;
+      onSearchQueryChange?: (query: string) => void;
+      emptyText?: string;
       desktopMinWidth?: number;
       renderOption?: (args: {
         option: ComboboxOption;
@@ -70,12 +81,21 @@ export type ComposerControlItem =
       onPress: () => void | Promise<void>;
     });
 
-export type ComposerControlSurface = "toolbar" | "sheet";
+/** `field`: a New workspace setup field, a badge on desktop and a full-width field when compact. */
+export type ComposerControlSurface = "toolbar" | "sheet" | "field";
 
 const ComposerControlSurfaceContext = createContext<ComposerControlSurface>("toolbar");
 export const ComposerControlSurfaceProvider = ComposerControlSurfaceContext.Provider;
 
-/** Where the control being drawn sits: the toolbar, or a row in the overflow sheet. */
+const ComposerControlLockContext = createContext(false);
+/** Disables every control below it, for a surface that is not a composer and has its own lock. */
+export const ComposerControlLockProvider = ComposerControlLockContext.Provider;
+
+export function useComposerControlLocked(): boolean {
+  return useContext(ComposerControlLockContext);
+}
+
+/** Where the control being drawn sits: the toolbar, a row in the overflow sheet, or a field. */
 export function useComposerControlSurface(): ComposerControlSurface {
   return useContext(ComposerControlSurfaceContext);
 }
@@ -133,7 +153,9 @@ function describeControl(
     };
   }
   const choiceLabel =
-    item.choices.find((choice) => choice.value === item.value)?.label ?? item.title;
+    item.choices.find((choice) => choice.value === item.value)?.label ??
+    item.valueLabel ??
+    item.title;
   const iconOnly = item.iconOnly === true;
   return {
     options: item.choices.map((choice) => ({
@@ -150,22 +172,24 @@ function describeControl(
   };
 }
 
-export function ComposerControl({
-  item,
-  surface,
-  disabled = false,
-  open,
-  onOpenChange,
-  onActionComplete,
-}: ComposerControlProps) {
-  const { t } = useTranslation();
-  const anchorRef = useRef<View>(null);
-  const isSheet = surface === "sheet";
-  const sheetHeader = useMemo<SheetHeader>(() => ({ title: item.title }), [item.title]);
-  const view = useMemo(() => describeControl(item, surface, t), [item, surface, t]);
+type SelectItem = Extract<ComposerControlItem, { type: "select" }>;
 
-  // A command that returns a promise keeps the control pending until it settles, and a failure
-  // reaches the user the way a built-in live control's does.
+/** The list options only a select carries; a toggle's two-choice list has none of them. */
+function listProps(select: SelectItem | null) {
+  if (!select) return { searchable: false };
+  return {
+    desktopMinWidth: select.desktopMinWidth,
+    searchable: select.searchable,
+    remoteSearch: select.remoteSearch,
+    onSearchQueryChange: select.onSearchQueryChange,
+    emptyText: select.emptyText,
+    renderOption: select.renderOption,
+  };
+}
+
+// A command that returns a promise keeps the control pending until it settles, and a failure
+// reaches the user the way a built-in live control's does.
+function usePendingRun() {
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const run = useCallback(
@@ -183,6 +207,25 @@ export function ComposerControl({
     },
     [toast],
   );
+  return { pending, run };
+}
+
+export function ComposerControl({
+  item,
+  surface,
+  disabled = false,
+  open,
+  onOpenChange,
+  onActionComplete,
+}: ComposerControlProps) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<View>(null);
+  const isSheet = surface === "sheet";
+  const isField = surface === "field";
+  const sheetHeader = useMemo<SheetHeader>(() => ({ title: item.title }), [item.title]);
+  const view = useMemo(() => describeControl(item, surface, t), [item, surface, t]);
+
+  const { pending, run } = usePendingRun();
   const handlePress = useCallback(() => {
     if (item.type === "toggle") run(() => item.onChange(!item.value));
     else if (item.type === "action") run(item.onPress);
@@ -198,7 +241,17 @@ export function ComposerControl({
   );
 
   const select = item.type === "select" ? item : null;
-  const trigger = (
+  const accessibilityLabel = item.accessibilityLabel ?? view.tooltip;
+  const trigger = isField ? (
+    <FieldControlTrigger
+      ref={anchorRef}
+      item={item}
+      view={view}
+      accessibilityLabel={accessibilityLabel}
+      disabled={disabled || pending}
+      onPress={view.opensList ? handleOpenPress : handlePress}
+    />
+  ) : (
     <AgentControlTrigger
       ref={anchorRef}
       icon={item.icon}
@@ -211,14 +264,14 @@ export function ComposerControl({
       open={view.opensList && open}
       disabled={disabled || pending}
       onPress={view.opensList ? handleOpenPress : handlePress}
-      accessibilityLabel={item.accessibilityLabel ?? view.tooltip}
+      accessibilityLabel={accessibilityLabel}
       testID={item.testID}
     />
   );
 
   return (
     <>
-      {isSheet ? (
+      {isSheet || isField ? (
         trigger
       ) : (
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -239,16 +292,58 @@ export function ComposerControl({
           onOpenChange={onOpenChange}
           anchorRef={anchorRef}
           presentation={isSheet ? "push" : undefined}
-          desktopPlacement={isSheet ? undefined : "top-start"}
-          desktopMinWidth={select?.desktopMinWidth}
-          searchable={select ? select.searchable : false}
-          renderOption={select?.renderOption}
+          desktopPlacement={DESKTOP_PLACEMENT[surface]}
+          {...listProps(select)}
           header={isSheet ? sheetHeader : undefined}
         />
       ) : null}
     </>
   );
 }
+
+/** Where a list opens on desktop; the sheet has its own presentation. */
+const DESKTOP_PLACEMENT = {
+  toolbar: "top-start",
+  sheet: undefined,
+  field: "bottom-start",
+} as const;
+
+/** What a field shows: a badge has no label, so a toggle names itself beside its state. */
+function fieldValue(item: ComposerControlItem, view: ControlView, compact: boolean): string {
+  if (item.type === "action") return item.title;
+  if (item.type === "toggle" && !compact) return `${item.title}: ${view.value}`;
+  return view.value;
+}
+
+const FieldControlTrigger = forwardRef<
+  View,
+  {
+    item: ComposerControlItem;
+    view: ControlView;
+    accessibilityLabel: string;
+    disabled: boolean;
+    onPress: () => void;
+  }
+>(function FieldControlTrigger({ item, view, accessibilityLabel, disabled, onPress }, ref) {
+  const compact = useIsCompactFormFactor();
+  const Icon = item.icon;
+  const iconColor = item.highlight ? styles[item.highlight].color : styles.fieldIcon.color;
+  const icon = useMemo(() => <Icon size={ICON_SIZE.sm} color={iconColor} />, [Icon, iconColor]);
+  return (
+    <FieldTrigger
+      ref={ref}
+      variant={compact ? "field" : "badge"}
+      label={item.title}
+      icon={icon}
+      value={fieldValue(item, view, compact)}
+      tooltip={view.tooltip}
+      accessibilityLabel={accessibilityLabel}
+      disabled={disabled}
+      onPress={onPress}
+      testID={item.testID}
+    />
+  );
+});
 
 interface ComposerControlsProps {
   items: readonly ComposerControlItem[];
@@ -296,6 +391,7 @@ function ComposerControlSlot({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  fieldIcon: { color: theme.colors.foregroundMuted },
   blue: { color: theme.colors.palette.blue[400] },
   green: { color: theme.colors.palette.green[400] },
   yellow: { color: theme.colors.palette.yellow[400] },

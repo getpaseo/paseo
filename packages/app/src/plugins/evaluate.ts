@@ -133,6 +133,7 @@ export function runPluginClientBundle(
     legacySidebarItems: [],
     filePanels: [],
     composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -149,6 +150,7 @@ export function runPluginClientBundle(
   };
   const filePanelIds = new Set<string>();
   const composerItemIds = new Set<string>();
+  const newWorkspaceItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
@@ -284,6 +286,20 @@ export function runPluginClientBundle(
         collector.composerItems,
         { id: normalizedId, Component: contribution.Component },
         () => composerItemIds.delete(normalizedId),
+      );
+    },
+    addNewWorkspaceItem(contribution) {
+      const normalizedId = requireId(contribution.id, "New workspace item id");
+      if (newWorkspaceItemIds.has(normalizedId))
+        throw new Error(`Duplicate New workspace item: ${normalizedId}`);
+      if (!isComponentType(contribution.Component)) {
+        throw new Error(`New workspace item ${normalizedId} is not a component`);
+      }
+      newWorkspaceItemIds.add(normalizedId);
+      return register(
+        collector.newWorkspaceItems,
+        { id: normalizedId, Component: contribution.Component },
+        () => newWorkspaceItemIds.delete(normalizedId),
       );
     },
     addSidebarHeaderItem(contribution: PluginSidebarItemContribution) {
@@ -603,6 +619,7 @@ export function runPluginClientBundle(
     legacySidebarItems: collector.legacySidebarItems,
     filePanels: collector.filePanels,
     composerItems: collector.composerItems,
+    newWorkspaceItems: collector.newWorkspaceItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,

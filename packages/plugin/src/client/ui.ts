@@ -210,10 +210,35 @@ export interface ActionPressEvent {}
 export interface ActionProps extends ComposerControlProps {
   onPress(event: ActionPressEvent): void | Promise<void>;
 }
+/** One result of a `Combobox` search. Extra fields ride along to `onSelect`. */
+export interface ComboboxItem {
+  id: string;
+  label: string;
+  description?: string;
+}
+export interface ComboboxSearchEvent {
+  /** Empty when the list opens. */
+  query: string;
+}
+export interface ComboboxProps<
+  Item extends ComboboxItem = ComboboxItem,
+> extends ComposerControlProps {
+  /** What the control shows. It need not be among the search results. */
+  value: ComboboxItem | null;
+  /**
+   * Called when the list opens and again, debounced, as the user types. Paseo shows the loading
+   * and error states, keeps the previous results while a search runs, and ignores a search that a
+   * newer one replaced.
+   */
+  search(event: ComboboxSearchEvent): Promise<readonly Item[]>;
+  onSelect(event: { item: Item }): void | Promise<void>;
+}
 /**
- * Composer controls. Render them from a composer item's `Component`. Paseo draws them inline when
- * the composer has room and as rows in its overflow sheet when it does not.
+ * Paseo's controls. Render them from a composer item's or a New workspace item's `Component`.
+ * Paseo draws them where the item sits: inline when the composer has room and as rows in its
+ * overflow sheet when it does not, and as a field in the New workspace setup.
  */
 export declare const Toggle: ComponentType<ToggleProps>;
 export declare function Select<Value extends string>(props: SelectProps<Value>): ReactNode;
 export declare const Action: ComponentType<ActionProps>;
+export declare function Combobox<Item extends ComboboxItem>(props: ComboboxProps<Item>): ReactNode;

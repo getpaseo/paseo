@@ -78,6 +78,12 @@ export type {
   PluginComposerItemContribution,
   PluginComposerItemProps,
 } from "./composer.js";
+export { useNewWorkspace } from "./new-workspace.js";
+export type {
+  PluginNewWorkspace,
+  PluginNewWorkspaceItemContribution,
+  PluginNewWorkspaceItemProps,
+} from "./new-workspace.js";
 export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
 export type {
   PluginSubscribeOptions,

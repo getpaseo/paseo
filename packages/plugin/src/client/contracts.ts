@@ -5,6 +5,7 @@ import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-type
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
 import type { PluginComposerItemContribution } from "./composer.js";
+import type { PluginNewWorkspaceItemContribution } from "./new-workspace.js";
 import type {
   PluginRpcContract,
   PluginSubscribeOptions,
@@ -202,6 +203,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
+  addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
