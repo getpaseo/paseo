@@ -1239,6 +1239,16 @@ class PluginAgentSession implements AgentSession {
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
+  /**
+   * Set when a turn is interrupted before its prompt reached the plugin.
+   *
+   * `startTurn` waits for the skill scan before it can send anything. A Stop
+   * during that wait has nothing to cancel at the plugin, so the request is
+   * recorded here and the turn ends without sending a prompt.
+   */
+  private pendingTurnInterrupt = false;
+  /** Whether `startTurn` is still preparing its prompt for the plugin. */
+  private preparingTurn = false;
   private closed = false;
   skillRoots: readonly string[] = [];
   private discoveredSkills: readonly DiscoveredACPSkill[] = [];
@@ -1314,10 +1324,35 @@ class PluginAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     this.assertReplayComplete();
     const clientMessageId = options.clientMessageId ?? randomUUID();
+    this.preparingTurn = true;
+    this.pendingTurnInterrupt = false;
+    let expandedPrompt: AgentPromptInput;
+    try {
+      expandedPrompt = await this.expandSkillPrompt(prompt);
+    } finally {
+      this.preparingTurn = false;
+    }
+
+    // The prompt is prepared asynchronously, so the user can stop the turn
+    // before it reaches the plugin. Sending it anyway would start work after
+    // the user asked for it to stop.
+    if (this.pendingTurnInterrupt) {
+      this.pendingTurnInterrupt = false;
+      const turnId = `interrupted-${clientMessageId}`;
+      this.publish({ type: "turn_started", provider: this.provider, turnId });
+      this.publish({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return { turnId };
+    }
+
     const result = await this.bridge.prompt({
       clientMessageId,
       delivery: "auto",
-      input: mapPromptInput(await this.expandSkillPrompt(prompt), this.bridge.commands),
+      input: mapPromptInput(expandedPrompt, this.bridge.commands),
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
@@ -1422,6 +1457,12 @@ class PluginAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    // A prompt still being prepared has not reached the plugin, so there is
+    // nothing there to cancel. Record the stop so `startTurn` does not send it
+    // after the user asked to stop.
+    if (this.preparingTurn) {
+      this.pendingTurnInterrupt = true;
+    }
     await this.bridge.interrupt();
   }
 

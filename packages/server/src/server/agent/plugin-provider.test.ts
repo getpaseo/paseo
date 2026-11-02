@@ -2177,6 +2177,30 @@ describe("plugin session skills", () => {
       });
     });
   });
+
+  test("a stop during skill discovery cancels the turn without prompting the plugin", async () => {
+    await withSkillSession(async (session, prompts) => {
+      const events: AgentStreamEvent[] = [];
+      const record = (event: AgentStreamEvent) => {
+        events.push(event);
+      };
+      const unsubscribe = session.subscribe(record);
+
+      // Discovery is filesystem work, so the turn is still preparing its prompt
+      // when the stop arrives; nothing has reached the plugin yet.
+      const turn = session.startTurn("/temp-skill do it");
+      await Promise.resolve();
+      await session.interrupt();
+      const { turnId } = await turn;
+      unsubscribe();
+
+      expect(prompts).toEqual([]);
+      expect(events).toEqual([
+        { type: "turn_started", provider: session.provider, turnId },
+        { type: "turn_canceled", provider: session.provider, turnId, reason: "Interrupted" },
+      ]);
+    });
+  });
 });
 
 async function expectMergedSkillsAndExpansion(
