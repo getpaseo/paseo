@@ -20,6 +20,37 @@ describe("schedule cron cadence", () => {
     expect(next.toISOString()).toBe("2026-01-05T09:15:00.000Z");
   });
 
+  test("matches either restricted day field", () => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 9 1 * 1" },
+      new Date("2026-10-17T00:00:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe("2026-10-19T09:00:00.000Z");
+  });
+
+  test.each([
+    ["0 9 1 * 1", "2026-10-30T10:00:00.000Z", "2026-11-01T09:00:00.000Z"],
+    ["0 9 1 * *", "2026-10-17T00:00:00.000Z", "2026-11-01T09:00:00.000Z"],
+    ["0 9 * * 1", "2026-10-17T00:00:00.000Z", "2026-10-19T09:00:00.000Z"],
+    ["0 9 */2 * 1", "2026-10-19T09:00:00.000Z", "2026-11-09T09:00:00.000Z"],
+    ["0 9 1-31 * 1", "2026-10-17T00:00:00.000Z", "2026-10-17T09:00:00.000Z"],
+    ["0 9 1,15 * 5", "2026-10-17T00:00:00.000Z", "2026-10-23T09:00:00.000Z"],
+  ])("honors day-field semantics for %s", (expression, after, expected) => {
+    const next = computeNextRunAt({ type: "cron", expression }, new Date(after));
+
+    expect(next.toISOString()).toBe(expected);
+  });
+
+  test("matches either restricted day field in the schedule's time zone", () => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 9 1 * 1", timezone: "America/New_York" },
+      new Date("2026-10-17T00:00:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe("2026-10-19T13:00:00.000Z");
+  });
+
   test("computes timezone cron matches at the requested wall-clock time", () => {
     const winter = computeNextRunAt(
       { type: "cron", expression: "0 9 * * 1-5", timezone: "America/New_York" },
