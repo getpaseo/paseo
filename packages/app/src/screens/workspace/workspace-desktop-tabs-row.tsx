@@ -1619,6 +1619,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabsScrollOverflow: {
     flex: 1,
+    // The row sits on a window drag region, so the gaps between tabs would swallow trackpad
+    // scrolls. Only while overflowing: a row that fits keeps its empty space draggable.
+    ...(isWeb ? { WebkitAppRegion: "no-drag" } : null),
   },
   tabsContent: {
     flexDirection: "row",
