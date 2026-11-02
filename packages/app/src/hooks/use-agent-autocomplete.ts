@@ -108,6 +108,10 @@ function resolveAgentAutocompleteSnapshot(input: {
   };
 }
 
+function isSameSlashCommand(a: SlashCommandRange | null, b: SlashCommandRange | null): boolean {
+  return a?.start === b?.start && a?.query === b?.query;
+}
+
 interface DirectorySuggestionEntry {
   path: string;
   kind: "file" | "directory";
@@ -571,9 +575,25 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   );
 
   const selectOptionFromKeyPress = useCallback(
-    (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) =>
-      onSelectOption(option, event?.input),
-    [onSelectOption],
+    (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) => {
+      // The cursor reaches the menu after paint, so a key can land while the options still
+      // belong to an older query. Never pick from that list. A click picks what the user sees.
+      if (
+        mode === "command" &&
+        event &&
+        !isSameSlashCommand(
+          findActiveSlashCommand({
+            text: event.input.text,
+            cursorIndex: event.input.selection.start,
+          }),
+          activeSlashCommand,
+        )
+      ) {
+        return;
+      }
+      onSelectOption(option, event?.input);
+    },
+    [activeSlashCommand, mode, onSelectOption],
   );
 
   const { selectedIndex, onKeyPress } = useAutocomplete({
