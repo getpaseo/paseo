@@ -71,12 +71,12 @@ export async function startNpmRegistry(packages: FixturePackage[]) {
     // Pack all fixtures in one npm process instead of paying startup once per package.
     const { stdout } = await execCommand(
       "npm",
-      ["pack", "--ignore-scripts", "--json", ...prepared.map(({ directory }) => directory)],
+      ["pack", "--ignore-scripts", ...prepared.map(({ directory }) => directory)],
       { cwd: root },
     );
-    const packed: Array<{ filename: string }> = JSON.parse(stdout);
+    const packed = stdout.trim().split(/\r?\n/);
     for (const { manifest, pkg, index } of prepared) {
-      const artifact = await readFile(path.join(root, packed[index].filename));
+      const artifact = await readFile(path.join(root, packed[index]));
       const artifactPath = `/artifacts/${index}.tgz`;
       artifacts.set(artifactPath, artifact);
       const published = {
