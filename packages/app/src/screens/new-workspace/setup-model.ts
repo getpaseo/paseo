@@ -26,6 +26,8 @@ interface SetupState {
  * commit, so a command reads it at the moment it runs rather than from the render that built it.
  */
 export interface SetupInputs {
+  /** The host the screen creates on; a project id alone can repeat across hosts. */
+  serverId: string;
   locked: boolean;
   project: { id: string; name: string } | null;
   canCreateWorktree: boolean;
@@ -80,7 +82,7 @@ export function createNewWorkspaceSetup(
     metadata: {},
   };
   let inputs = initial;
-  let target = initial.project?.id ?? null;
+  let target = initial.project ? `${initial.serverId}\n${initial.project.id}` : null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<SetupState>) => {
     state = { ...state, ...patch };
@@ -111,12 +113,13 @@ export function createNewWorkspaceSetup(
     chooseIsolation,
     syncInputs: (next) => {
       inputs = next;
-      // A branch and metadata are chosen for one project on one host. A project id is
-      // host-scoped, so a change of host changes it too. An absent project is a screen that is
-      // still resolving, not a switch.
+      // A branch and metadata are chosen for one project on one host. A project id can repeat
+      // across hosts (a remote repository keeps its key everywhere), so the host is part of the
+      // target. An absent project is a screen that is still resolving, not a switch.
       if (!next.project) return;
-      if (target && target !== next.project.id) update({ branch: null, metadata: {} });
-      target = next.project.id;
+      const nextTarget = `${next.serverId}\n${next.project.id}`;
+      if (target && target !== nextTarget) update({ branch: null, metadata: {} });
+      target = nextTarget;
     },
     commands: {
       async setIsolation(isolation) {

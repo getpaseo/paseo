@@ -39,6 +39,7 @@ describe("the base ref a plugin reads", () => {
     const chosen: PickerItem[] = [];
     const setup = createNewWorkspaceSetup(
       {
+        serverId: "host-a",
         locked: false,
         project: { id: "p", name: "repo" },
         canCreateWorktree: true,

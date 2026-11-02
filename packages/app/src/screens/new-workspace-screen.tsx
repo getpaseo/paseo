@@ -1651,7 +1651,7 @@ function usePluginSetup(input: {
     () => (projectId && projectName ? { id: projectId, name: projectName } : null),
     [projectId, projectName],
   );
-  const inputs = { locked, project: pluginProject, canCreateWorktree, supportsMetadata };
+  const inputs = { serverId, locked, project: pluginProject, canCreateWorktree, supportsMetadata };
   // Both are stable for the life of the screen: preferences write through the query client, and
   // the draft is keyed per mount. A command and a pick run the same effects.
   const [setup] = useState(() =>

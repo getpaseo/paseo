@@ -3,6 +3,7 @@ import type { PickerItem } from "../new-workspace-picker-item";
 import { createNewWorkspaceSetup, type SetupEffects, type SetupInputs } from "./setup-model";
 
 const READY: SetupInputs = {
+  serverId: "host-a",
   locked: false,
   project: { id: "p1", name: "repo" },
   canCreateWorktree: true,
@@ -71,6 +72,17 @@ describe("New workspace setup commands", () => {
 
     await setup.commands.setMetadata({ issue: "PAS-101" });
     setup.syncInputs({ ...READY, project: { id: "p2", name: "other" } });
+
+    expect(setup.getSnapshot().branch).toBeNull();
+    expect(setup.getSnapshot().metadata).toEqual({});
+  });
+
+  it("drops the branch and metadata when the host changes under the same project id", async () => {
+    const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
+    await setup.commands.setBranch("pas-101");
+    await setup.commands.setMetadata({ issue: "PAS-101" });
+
+    setup.syncInputs({ ...READY, serverId: "host-b" });
 
     expect(setup.getSnapshot().branch).toBeNull();
     expect(setup.getSnapshot().metadata).toEqual({});
