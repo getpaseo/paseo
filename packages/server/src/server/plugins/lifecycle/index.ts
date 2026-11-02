@@ -249,6 +249,8 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
+    // Omitted means unchanged: the next hook sees what this one was handed.
+    return { ...result, metadata: next.metadata ?? previous.metadata };
   }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);

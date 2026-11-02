@@ -283,6 +283,10 @@ describe("lifecycle hook SDK types", () => {
         server.addHook("workspace.create.before", async ({ request }) => ({ ...request, title: "Changed" }));
         server.addHook("workspace.create.before", async () => {});
         server.addHook("agent.open.before", async () => {});
+        server.addHook("agent.open.before", async ({ request }) => {
+          const { metadata, ...withoutMetadata } = request;
+          return withoutMetadata;
+        });
         server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
           // @ts-expect-error Notification payloads have no creation request.

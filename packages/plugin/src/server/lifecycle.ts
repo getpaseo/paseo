@@ -132,10 +132,17 @@ export interface PluginHookRequests {
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 
+/** What a hook may return: a field it leaves out stays as it was. */
+type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
+  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata"> & {
+    metadata?: Readonly<Record<string, JsonValue>>;
+  };
+};
+
 export type PluginHooks = {
   [Name in keyof PluginHookRequests]: {
     request: PluginHookRequests[Name];
-    result: PluginHookRequests[Name];
+    result: PluginHookRequestResults[Name];
   };
 } & { [Name in keyof PluginHookEvents]: { payload: PluginHookEvents[Name] } } & {
   "worktree.create.after": { payload: { worktree: PluginHookWorktree } };

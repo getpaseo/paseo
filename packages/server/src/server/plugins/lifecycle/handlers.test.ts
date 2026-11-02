@@ -101,6 +101,30 @@ test("session-open hooks reject changes to session identity instead of silently 
   ).rejects.toThrow("agent.open.before hooks can only change env");
 });
 
+test("a create hook that omits metadata passes on what an earlier hook added", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.create.before", async ({ request }) => ({
+    ...request,
+    metadata: { ...request.metadata, "new.plugin": { ticket: 42 } },
+  }));
+  hooks.addHook("agent.create.before", async ({ request }) => ({
+    config: request.config,
+    env: request.env,
+  }));
+  const seen: unknown[] = [];
+  hooks.addHook("agent.create.before", async ({ request }) => {
+    seen.push(request.metadata);
+  });
+  const result = await hooks.invoke(
+    "operation",
+    "agent.create.before",
+    { config: { provider: "codex", cwd: "/project" }, env: {}, metadata: { original: true } },
+    paseo,
+  );
+  expect(result).toMatchObject({ metadata: { original: true, "new.plugin": { ticket: 42 } } });
+  expect(seen).toEqual([{ original: true, "new.plugin": { ticket: 42 } }]);
+});
+
 test("a session-open hook that returns its own object without metadata leaves metadata unchanged", async () => {
   const hooks = new PluginHookHandlers(() => {});
   hooks.addHook("agent.open.before", async ({ request }) => ({
