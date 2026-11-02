@@ -48,6 +48,7 @@ const transformed = defineRpc({
   output: z.object({ n: z.string().transform(async (text) => Number(text)) }),
 });
 const defaulted = defineRpc({ name: "defaulted", input: z.string().default("x"), output: z.string() });
+const defaultedOutput = defineRpc({ name: "defaulted-output", input: z.object({}), output: z.string().default("x") });
 const watchers = defineRpc({
   name: "watchers",
   input: z.object({}),
@@ -92,6 +93,7 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(transformed, ({ when }) => ({ n: String(when.getUTCFullYear()) }));
   server.handle(defaulted, (input) => input);
+  server.handle(defaultedOutput, () => undefined);
   server.handle(watchers, () => ({ starts, active }));
   server.handle(thumbnail, ({ size }) => Buffer.alloc(size, 7));
   server.handle(nestedOutput, () => ({ data: new Uint8Array(1) }));
@@ -404,3 +406,23 @@ test("plain RPC applies a top-level input default in the plugin process", async 
     await harness.close();
   }
 });
+
+test("plain RPC applies a top-level output default on the client", async () => {
+  const contract = defineRpc({
+    name: "defaulted-output",
+    input: z.object({}),
+    output: z.string().default("x"),
+  });
+  const harness = await startHarness();
+  try {
+    await expect(
+      callPluginRpc(
+        contract,
+        (method, input) => harness.client.invokePluginRpc(PLUGIN_ID, method, input),
+        {},
+      ),
+    ).resolves.toBe("x");
+  } finally {
+    await harness.close();
+  }
+}, 30_000);
