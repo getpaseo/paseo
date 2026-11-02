@@ -56,7 +56,7 @@ import * as Clipboard from "expo-clipboard";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
-import { isWorkspaceRootPath } from "@/workspace/file-open";
+import { resolveWorkspaceFilePaths } from "@/workspace/file-open";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
@@ -1637,14 +1637,17 @@ export function ChangesSurface({
     [appSettings.monoFontFamily, codeFontSize, effectiveLayout, wrapLines],
   );
   const fileRoot = resolveChangesFileRoot(status, cwd);
-  const isRootWorkspace = isWorkspaceRootPath({ path: fileRoot, workspaceRoot: cwd });
   const resolveFilePath = useCallback(
     (path: string) => buildAbsoluteExplorerPath({ workspaceRoot: fileRoot, entryPath: path }),
     [fileRoot],
   );
   const resolveFileTargetPath = useCallback(
-    (path: string) => (isRootWorkspace ? path : resolveFilePath(path)),
-    [isRootWorkspace, resolveFilePath],
+    (path: string) => {
+      const absolutePath = resolveFilePath(path);
+      const resolved = resolveWorkspaceFilePaths({ path: absolutePath, workspaceRoot: cwd });
+      return resolved?.relativePath ?? absolutePath;
+    },
+    [cwd, resolveFilePath],
   );
   const handleOpenFile = useCallback(
     (path: string) => onOpenFile?.(resolveFileTargetPath(path)),

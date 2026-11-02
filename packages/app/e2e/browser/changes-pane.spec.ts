@@ -8,6 +8,7 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import { openFileExplorer, openFileFromExplorer } from "../support/helpers/file-explorer";
 import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
@@ -504,6 +505,44 @@ for (const { workspaceSubdirectory, filePath, content, visibleContent } of [
       contentType: "image/png",
     });
   });
+}
+
+test("Changes and Files reuse a retained file tab in a subfolder project", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ workspaceSubdirectory: "src" });
+  await openWorkspaceChanges(page, workspace);
+  await openChangedFile(page, "src/use-mounted-tab-set.ts");
+  await editAndSaveChangedFile(page, workspace);
+  await openChangesPanel(page);
+  await openFileExplorer(page);
+  await openFileFromExplorer(page, "use-mounted-tab-set.ts");
+
+  await expect(page.getByTestId(/^workspace-tab-file_/).filter({ visible: true })).toHaveCount(1);
+  await expect(page.getByTestId("workspace-tab-file_use-mounted-tab-set.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(visibleFileEditor(page)).toContainText("// retained file tab");
+});
+
+async function openChangedFile(page: Page, filePath: string): Promise<void> {
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await diffHeaderForPath(panel, filePath)
+    .getByTestId(/^diff-file-\d+-toggle$/)
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open file", exact: true }).click();
+  await expect(visibleFileEditor(page)).toContainText("interface DeriveRenderMountedTabIdsInput");
+}
+
+function visibleFileEditor(page: Page): Locator {
+  return page.getByTestId("workspace-file-pane").filter({ visible: true }).locator(".cm-content");
+}
+
+async function editAndSaveChangedFile(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  const content = "// retained file tab\n" + AFTER;
+  await visibleFileEditor(page).fill(content);
+  await expect
+    .poll(() => readFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), "utf8"))
+    .toBe(content);
 }
 
 test("canvas file headers select without toggling for context menu and long press", async ({
