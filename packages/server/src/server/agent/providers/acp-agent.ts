@@ -323,6 +323,16 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// An ACP provider answers the cancelled `session/prompt` with a `cancelled`
+// stop reason. Interruption waits for that answer so the session is really
+// free before the caller sends a replacement prompt. The budget has to stay
+// below the agent manager's interrupt rescue timeout (2s), otherwise the
+// manager gives up first and the adapter's descriptive error never reaches
+// the caller.
+const ACP_TURN_RELEASE_TIMEOUT_MS = 1_500;
+// `session/cancel` is a notification, so the write itself can block on a
+// stuck provider. Bound it instead of letting the interruption hang.
+const ACP_CANCEL_NOTIFICATION_TIMEOUT_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -649,6 +659,18 @@ interface PendingUserMessage {
   text: string;
   messageId?: string;
 }
+
+/**
+ * How the foreground turn ended from the provider's point of view.
+ *
+ * - `released`: the provider confirmed the turn is over, so the session can
+ *   take a new prompt.
+ * - `unconfirmed`: the provider never confirmed the end of the turn (it
+ *   rejected the prompt, or the transport broke without the process dying).
+ *   The session may still be busy, so an interruption must fail instead of
+ *   assuming the session is free.
+ */
+type ForegroundTurnOutcome = "released" | "unconfirmed";
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
@@ -1770,6 +1792,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  /**
+   * Tracks the foreground `session/prompt` requests so an interruption can
+   * wait for the provider to confirm that the turn ended. An ACP
+   * `session/cancel` is a notification without a response, so the cancellation
+   * request alone cannot tell us whether the provider already released the
+   * session.
+   */
+  private foregroundPrompts = new Map<
+    string,
+    {
+      turnId: string;
+      outcome: Promise<ForegroundTurnOutcome>;
+      settle: (outcome: ForegroundTurnOutcome) => void;
+    }
+  >();
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1991,12 +2028,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      })
+    const promptRequest = this.connection.prompt({
+      sessionId: this.sessionId,
+      messageId,
+      prompt: toACPContentBlocks(prompt),
+    });
+    let settleForegroundPrompt!: (outcome: ForegroundTurnOutcome) => void;
+    const outcome = new Promise<ForegroundTurnOutcome>((resolve) => {
+      settleForegroundPrompt = resolve;
+    });
+    this.foregroundPrompts.set(turnId, { turnId, outcome, settle: settleForegroundPrompt });
+    // Only an answer from the provider confirms that the turn ended. A
+    // rejected prompt leaves the session state unknown, so it must not be
+    // reported as a release.
+    promptRequest.then(
+      () => settleForegroundPrompt("released"),
+      () => settleForegroundPrompt("unconfirmed"),
+    );
+
+    void promptRequest
       .then((response) => {
         this.handlePromptResponse(response, turnId);
         return;
@@ -2541,8 +2591,109 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     this.cancelPendingPermissions();
 
+    const activeTurnId = this.activeForegroundTurnId;
+    if (!activeTurnId) {
+      return;
+    }
+
+    // Capture the pending prompt before cancelling: the provider may answer
+    // the cancelled turn and start another one while the notification is in
+    // flight, and waiting for that other turn would report a release that
+    // never happened.
+    const pending = this.foregroundPrompts.get(activeTurnId) ?? null;
+
+    try {
+      await withTimeout(
+        this.connection.cancel({ sessionId: this.sessionId }),
+        ACP_CANCEL_NOTIFICATION_TIMEOUT_MS,
+        `ACP session/cancel timed out after ${ACP_CANCEL_NOTIFICATION_TIMEOUT_MS}ms`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, turnId: activeTurnId },
+        "Failed to send the ACP session/cancel notification",
+      );
+    }
+
+    if (!pending) {
+      return;
+    }
+    await this.waitForForegroundTurnRelease(pending);
+  }
+
+  /**
+   * `session/cancel` is an ACP notification: it resolves as soon as the
+   * request is written, while the provider may still be running the turn. The
+   * AgentSession contract requires interruption to resolve only once the prior
+   * foreground turn can no longer run, so wait for the provider's answer to the
+   * original `session/prompt` instead of assuming the session is free.
+   */
+  private async waitForForegroundTurnRelease(pending: {
+    turnId: string;
+    outcome: Promise<ForegroundTurnOutcome>;
+  }): Promise<void> {
+    let outcome: ForegroundTurnOutcome;
+    try {
+      outcome = await withTimeout(
+        pending.outcome,
+        ACP_TURN_RELEASE_TIMEOUT_MS,
+        `ACP provider still owns the foreground turn after session/cancel (waited ${ACP_TURN_RELEASE_TIMEOUT_MS}ms)`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, turnId: pending.turnId },
+        "Timed out waiting for the ACP provider to release the foreground turn",
+      );
+      throw error;
+    }
+
+    if (outcome !== "released") {
+      const error = new Error(
+        `ACP provider did not confirm the end of the foreground turn (turn ${pending.turnId})`,
+      );
+      this.logger.warn(
+        { err: error, turnId: pending.turnId },
+        "ACP provider did not confirm the foreground turn ended",
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Reports how the foreground turn ended to whoever waits for the provider
+   * to release the session. The first outcome wins, so a late answer cannot
+   * overwrite an exit that already ended the turn.
+   */
+  private settleForegroundPrompt(outcome: ForegroundTurnOutcome): void {
+    for (const pending of this.foregroundPrompts.values()) {
+      pending.settle(outcome);
+    }
+    this.foregroundPrompts.clear();
+  }
+
+  /**
+   * A confirmed process exit ends the foreground turn: the provider cannot own
+   * a session anymore, so a pending interruption must not keep waiting for an
+   * answer that can no longer arrive.
+   */
+  private handleProviderExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    stderrChunks: string[],
+  ): void {
+    if (this.closed || this.historyRuntimeReleased) {
+      return;
+    }
+    this.settleForegroundPrompt("released");
     if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+      this.synthesizeCanceledToolCalls();
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+        diagnostic: stderrChunks.join("").trim() || undefined,
+        turnId: this.activeForegroundTurnId,
+      });
     }
   }
 
@@ -2563,6 +2714,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
+
+    // The session is going away, so no pending interruption may keep waiting
+    // for a provider answer that can no longer arrive.
+    this.settleForegroundPrompt("released");
 
     this.cancelPendingPermissions();
 
@@ -2904,19 +3059,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     const processError = rejectOnProcessFailure(child, stderrChunks);
     child.once("exit", (code, signal) => {
-      if (this.closed || this.historyRuntimeReleased) {
-        return;
-      }
-      if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
-          turnId: this.activeForegroundTurnId,
-        });
-      }
+      this.handleProviderExit(code, signal, stderrChunks);
     });
 
     const stream = createLoggedNdJsonStream(
@@ -3419,7 +3562,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (event.type !== "turn_completed") {
       this.cancelPendingPermissions();
     }
+    const finishedTurnId = event.turnId ?? this.activeForegroundTurnId;
     this.activeForegroundTurnId = null;
+    if (finishedTurnId) {
+      this.foregroundPrompts.delete(finishedTurnId);
+    }
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
