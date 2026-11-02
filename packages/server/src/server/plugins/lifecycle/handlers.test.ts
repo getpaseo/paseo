@@ -125,6 +125,41 @@ test("a create hook that omits metadata passes on what an earlier hook added", a
   expect(seen).toEqual([{ original: true, "new.plugin": { ticket: 42 } }]);
 });
 
+test("a workspace create hook that omits metadata passes on what an earlier hook added", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("workspace.create.before", async ({ request }) => ({
+    ...request,
+    metadata: { ...request.metadata, "new.plugin": { ticket: 42 } },
+  }));
+  hooks.addHook("workspace.create.before", async ({ request }) => ({ source: request.source }));
+  const seen: unknown[] = [];
+  hooks.addHook("workspace.create.before", async ({ request }) => {
+    seen.push(request.metadata);
+  });
+  const result = await hooks.invoke(
+    "operation",
+    "workspace.create.before",
+    { source: { kind: "directory", path: "/project" }, metadata: { original: true } },
+    paseo,
+  );
+  expect(result).toMatchObject({ metadata: { original: true, "new.plugin": { ticket: 42 } } });
+  expect(seen).toEqual([{ original: true, "new.plugin": { ticket: 42 } }]);
+
+  const replacing = new PluginHookHandlers(() => {});
+  replacing.addHook("workspace.create.before", async ({ request }) => ({
+    ...request,
+    metadata: {},
+  }));
+  await expect(
+    replacing.invoke(
+      "operation",
+      "workspace.create.before",
+      { source: { kind: "directory", path: "/project" }, metadata: { original: true } },
+      paseo,
+    ),
+  ).resolves.toMatchObject({ metadata: {} });
+});
+
 test("a session-open hook that returns its own object without metadata leaves metadata unchanged", async () => {
   const hooks = new PluginHookHandlers(() => {});
   hooks.addHook("agent.open.before", async ({ request }) => ({

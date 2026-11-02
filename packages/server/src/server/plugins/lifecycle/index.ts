@@ -252,6 +252,12 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     // Omitted means unchanged: the next hook sees what this one was handed.
     return { ...result, metadata: next.metadata ?? previous.metadata };
   }
+  if (name === "workspace.create.before") {
+    const previous = beforeSchemas["workspace.create.before"].parse(input);
+    const next = beforeSchemas["workspace.create.before"].parse(result);
+    // Omitted means unchanged; an explicit {} still replaces.
+    return { ...result, metadata: next.metadata ?? previous.metadata };
+  }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);
