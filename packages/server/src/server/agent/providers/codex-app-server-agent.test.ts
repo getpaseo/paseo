@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -100,6 +100,12 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { AgentManager } from "../agent-manager.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { sessionTurnIds } from "./test-utils/turn-ids.js";
+
+let codexTurnId = sessionTurnIds("codex");
+beforeEach(() => {
+  codexTurnId = sessionTurnIds("codex");
+});
 
 interface CollaborationModeRecord {
   name: string;
@@ -4634,7 +4640,7 @@ describe("Codex app-server provider", () => {
       await expect(child).resolves.toMatchObject({
         type: "provider_subagent",
         provider: "codex",
-        turnId: expect.stringMatching(/^codex-turn-[0-9a-f]+-0$/),
+        turnId: codexTurnId(0),
         event: {
           type: "upsert",
           id: "legacy-only-child-thread",
@@ -4644,7 +4650,7 @@ describe("Codex app-server provider", () => {
       await expect(spawn).resolves.toMatchObject({
         type: "timeline",
         provider: "codex",
-        turnId: expect.stringMatching(/^codex-turn-[0-9a-f]+-0$/),
+        turnId: codexTurnId(0),
         item: {
           type: "tool_call",
           callId: "spawn-legacy-only-child",

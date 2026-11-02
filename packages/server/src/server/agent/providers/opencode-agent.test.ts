@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +25,7 @@ import type {
   AssistantMessageTimelineItem,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+import { sessionTurnIds } from "./test-utils/turn-ids.js";
 
 // Deliberately an independent literal rather than the production constant these tests
 // guard: deriving the boundary from OPENCODE_SERVER_STARTUP_TIMEOUT_MS would keep the
@@ -32,14 +33,10 @@ import type {
 const EXPECTED_STARTUP_BUDGET_MS = 30_000;
 const EXPECTED_EVENT_READINESS_BUDGET_MS = 45_000;
 
-/** Matches the ordinal of an OpenCode turn id; the instance nonce in the middle is random. */
-function openCodeTurnId(ordinal: number) {
-  return expect.stringMatching(new RegExp(`^opencode-turn-[0-9a-f]+-${ordinal}$`));
-}
-
-function isOpenCodeTurn(turnId: string | undefined, ordinal: number): boolean {
-  return new RegExp(`^opencode-turn-[0-9a-f]+-${ordinal}$`).test(turnId ?? "");
-}
+let openCodeTurnId = sessionTurnIds("opencode");
+beforeEach(() => {
+  openCodeTurnId = sessionTurnIds("opencode");
+});
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "opencode-agent-test-"));
@@ -2896,7 +2893,8 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       );
       const autonomousCompletion = events.find(
-        (event) => event.type === "turn_completed" && isOpenCodeTurn(event.turnId, 1),
+        (event) =>
+          event.type === "turn_completed" && openCodeTurnId(1).asymmetricMatch(event.turnId),
       );
       expect(autonomousCompletion?.type).toBe("turn_completed");
       if (autonomousCompletion?.type === "turn_completed") {
