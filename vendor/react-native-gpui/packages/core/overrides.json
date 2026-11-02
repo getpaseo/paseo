@@ -1,0 +1,186 @@
+{
+  "includePatterns": [
+    "ReactCxxPlatform/**",
+    "ReactCommonOverrides/**",
+    "index.desktop.js",
+    "src-gpui/**"
+  ],
+  "baseVersion": "0.87.1",
+  "overrides": [
+    {
+      "type": "derived",
+      "file": "index.desktop.js",
+      "baseFile": "packages/react-native/index.js",
+      "baseHash": "5aa61d7bd7be95533271f158851e8398cdec478a",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Utilities/Platform.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Modal/Modal.desktop.js"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/devsupport/DevServerHelper.cpp",
+      "baseFile": "packages/react-native/ReactCxxPlatform/react/devsupport/DevServerHelper.cpp",
+      "baseHash": "f5af9cc2a109d29a6c479782f7753e5410effe3a",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/textlayoutmanager/platform/cxx/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/cxx/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
+      "baseHash": "f52700da0048f7dce129267d9edbe8e9f724f955",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/components/view/HostPlatformViewProps.h",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/components/view/platform/cxx/react/renderer/components/view/HostPlatformViewProps.h",
+      "baseHash": "9c378b43b42022f3769b9fa788a353bf387ab391",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/components/view/HostPlatformViewTraitsInitializer.h",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/components/view/platform/cxx/react/renderer/components/view/HostPlatformViewTraitsInitializer.h",
+      "baseHash": "6176ff1061b41ade659d2e7f83fa48eb273ae60e",
+      "issue": 0
+    },
+    {
+      "type": "copy",
+      "directory": "ReactCxxPlatform",
+      "baseDirectory": "packages/react-native/ReactCxxPlatform",
+      "baseHash": "1ccfa0a8780ab2c866948891dbdf0f1261d2f05a",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "src-gpui/Libraries/LogBox/UI/LogBoxButton.desktop.js",
+      "baseFile": "packages/react-native/Libraries/LogBox/UI/LogBoxButton.js",
+      "baseHash": "ec31459f5c444aa4fb155a8140297df7a7f816db",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "src-gpui/Libraries/LogBox/UI/LogBoxNotification.desktop.js",
+      "baseFile": "packages/react-native/Libraries/LogBox/UI/LogBoxNotification.js",
+      "baseHash": "70ae5dd0c89f708a88b7d359d04d3a368a76981b",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "src-gpui/Libraries/LogBox/UI/LogBoxInspectorCodeFrame.desktop.js",
+      "baseFile": "packages/react-native/Libraries/LogBox/UI/LogBoxInspectorCodeFrame.js",
+      "baseHash": "3f1f73cd47e82adc1953c6693ca202c7efbc02fd",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "src-gpui/Libraries/LogBox/UI/LogBoxInspectorHeader.desktop.js",
+      "baseFile": "packages/react-native/Libraries/LogBox/UI/LogBoxInspectorHeader.js",
+      "baseHash": "ffb9ae6a81577f35df0a7dda0546d00d7799c95e",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Alert/Alert.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Components/TextInput/TextInput.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Components/Button.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Utilities/Appearance.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Utilities/BackHandler.desktop.js"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/nativemodule/dom/NativeDOM.h",
+      "baseFile": "packages/react-native/ReactCommon/react/nativemodule/dom/NativeDOM.h",
+      "baseHash": "d6acbe5683b2cc276509305f9cafc721ad92a88c",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/nativemodule/dom/NativeDOM.cpp",
+      "baseFile": "packages/react-native/ReactCommon/react/nativemodule/dom/NativeDOM.cpp",
+      "baseHash": "190c251544809795faf1be36043d2684d49d8627",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/components/textinput/BaseTextInputShadowNode.h",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/components/textinput/BaseTextInputShadowNode.h",
+      "baseHash": "a94e72f4836e257f6cd1fe9cb21ede410169e267",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/specs/NativeGpuiDesktop.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/index.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/windowContext.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/windows.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/TitleBar.tsx"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/types.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/menu.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/contextMenu.tsx"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/perfMonitor.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/NativeComponent/BaseViewConfig.desktop.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Network/RCTNetworking.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Renderer/shims/ReactNativeViewConfigRegistry.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/navigation/useDesktopForwardNavigation.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/tray.ts"
+    }
+  ]
+}

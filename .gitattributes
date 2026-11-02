@@ -1,0 +1,3 @@
+vendor/react-native-gpui/** linguist-vendored
+packages/app/gpui/package-lock.json linguist-generated
+packages/app/gpui/desktop/Cargo.lock linguist-generated

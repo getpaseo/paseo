@@ -1,0 +1,39 @@
+{
+  "name": "@react-native-gpui/hermes",
+  "version": "0.1.1",
+  "description": "Pinned Hermes engine for react-native-gpui: public headers and prebuilt VM and compiler binaries",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui.git",
+    "directory": "packages/hermes"
+  },
+  "hermes": {
+    "repository": "https://github.com/facebook/hermes",
+    "commit": "10a40b5f1de81d007cba6afe567c4ba7a0b45f5d",
+    "buildFlags": [
+      "HERMES_ENABLE_NAPI=ON",
+      "HERMES_ENABLE_DEBUGGER=ON",
+      "HERMES_ENABLE_TEST_SUITE=OFF",
+      "HERMES_ENABLE_INTL=OFF",
+      "HERMES_ICU_RUNTIME_LOAD=ON  # Linux only; other platforms build without it",
+      "HERMES_BUILD_APPLE_FRAMEWORK=OFF"
+    ],
+    "workflow": ".github/workflows/hermes-engine.yml"
+  },
+  "files": [
+    "API",
+    "include",
+    "public",
+    "desktop",
+    "patches",
+    "scripts",
+    "react-native.config.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "fetch-binaries": "node scripts/fetch-binaries.mjs",
+    "verify-binaries": "node scripts/fetch-binaries.mjs --verify"
+  }
+}

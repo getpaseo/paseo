@@ -1,0 +1,17 @@
+{
+  // Type-checks core's own TypeScript, including `types.d.ts`, so the desktop
+  // View props (`desktopDragRegion`, `onContextMenu`) resolve inside this
+  // package too.
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "../../types/**/*.d.ts",
+    "types.d.ts",
+    "*.ts",
+    "*.tsx",
+    "src-gpui/**/*.ts",
+    "src-gpui/**/*.tsx",
+    "polyfills/**/*.ts",
+    "polyfills/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "ReactGpui"]
+}
