@@ -582,14 +582,14 @@ describe("skills controller", () => {
         harness.targets.codexDir,
       ].map((root) => path.join(root, "paseo-loop"));
       for (const live of livePaths) await chmod(live, 0o700);
-      const before = await Promise.all(livePaths.map(lstat));
+      const before = await Promise.all(livePaths.map((live) => lstat(live)));
 
       const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
         { kind: "delete", name: "paseo-loop" },
       ]);
       await transaction.rollback();
 
-      const after = await Promise.all(livePaths.map(lstat));
+      const after = await Promise.all(livePaths.map((live) => lstat(live)));
       expect(after.map((entry) => entry.ino)).toEqual(before.map((entry) => entry.ino));
       expect(after.map((entry) => entry.mode & 0o777)).toEqual([0o700, 0o700, 0o700]);
     },
