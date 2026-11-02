@@ -27,6 +27,7 @@ import {
   motion,
   AnimatePresence,
   useInView,
+  useReducedMotion,
   useScroll,
   useTransform,
   type Transition,
@@ -941,9 +942,11 @@ function DemoItem({ step, children }: { step: number; children: React.ReactNode 
 /** The ask on the left, the panel it produced on the right. */
 function SelfModifyDemo() {
   const { t } = useTranslation();
+  // Visitors who ask for reduced motion get the finished demo, with no slide or staging.
+  const reduceMotion = useReducedMotion();
   return (
     <motion.div
-      initial="hidden"
+      initial={reduceMotion ? "shown" : "hidden"}
       whileInView="shown"
       viewport={VIEWPORT_60}
       className="grid min-h-[22rem] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-xl border border-white/10 bg-black/20 md:grid-cols-[minmax(0,1fr)_17rem]"

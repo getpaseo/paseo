@@ -84,3 +84,17 @@ test("the plugin demo plays through to the panel the agent built", async ({ page
   }).toPass({ timeout: 15_000 });
   expect(await renderedOpacity(page.getByText("Review queue is in your sidebar."))).toBe(1);
 });
+
+test("the plugin demo shows its finished state when motion is reduced", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openHomepage(page);
+  const builtPanelRow = page.getByText("Add Gruvbox theme", { exact: true });
+  const panel = builtPanelRow.locator("xpath=ancestor::div[contains(@class, 'md:border-l')]");
+  const heading = page.getByRole("heading", { name: "Ask Paseo to change Paseo" });
+
+  await expect(async () => {
+    await heading.scrollIntoViewIfNeeded();
+    expect(await renderedOpacity(builtPanelRow)).toBe(1);
+  }).toPass({ timeout: 2_000 });
+  expect(await panel.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+});
