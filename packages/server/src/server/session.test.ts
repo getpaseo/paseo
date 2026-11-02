@@ -601,6 +601,29 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
+test("losing daemon.manage releases the session's plugin subscriptions", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const release = vi.fn();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribePluginRpc: () => ({ ready: Promise.resolve(), attach: () => {}, release }),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({
+    type: "plugin.rpc.subscribe.request",
+    requestId: "watch",
+    pluginId: "example",
+    method: "screen.capture",
+    input: {},
+  });
+  expect(messages.map((message) => message.type)).toContain("plugin.rpc.subscribe.response");
+  session.setPermissions(["daemon.read"]);
+
+  // Bytes have no outbound permission check, so the stream itself has to end.
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
 test("leaves out the client bundles a catalog request already holds", async () => {
   const messages: SessionOutboundMessage[] = [];
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {

@@ -2231,7 +2231,8 @@ export class Session {
       this.peakInflightRequests = this.inflightRequests;
     }
     try {
-      if (this.sessionLogger.isLevelEnabled("trace"))
+      // Stringifying a binary plugin input costs its size; test logger stubs lack isLevelEnabled.
+      if (this.sessionLogger.isLevelEnabled?.("trace"))
         this.sessionLogger.trace(
           {
             messageType: msg.type,
@@ -2301,6 +2302,14 @@ export class Session {
         .releaseFamily("browser-host")
         .catch((error) =>
           this.sessionLogger.error({ err: error }, "Failed to release revoked browser hosting"),
+        );
+    }
+    // Binary plugin events skip the outbound permission check, so revocation ends the streams.
+    if (!this.authorization.allowsPermission("daemon.manage")) {
+      void this.delivery
+        .releaseFamily("plugin-rpc")
+        .catch((error) =>
+          this.sessionLogger.error({ err: error }, "Failed to release revoked plugin subscriptions"),
         );
     }
   }

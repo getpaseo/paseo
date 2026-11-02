@@ -154,7 +154,9 @@ export class OwnedSubscriptions {
         observers.clear();
         buffered.length = 0;
         if (id) this.routes.delete(id);
-        reject(new Error("Subscription released"));
+        // A host that already accepted keeps `ready` resolved, even if released in the same tick.
+        if (snapshot) resolve(snapshot);
+        else reject(new Error("Subscription released"));
         teardown = (async () => {
           await pending;
           await releaseId();

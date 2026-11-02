@@ -2016,7 +2016,7 @@ const png = await renderThumbnail({ path, width }); // Uint8Array
 
 用 `z.instanceof(Uint8Array)` 声明字节。事件可以在每次推送时选择字节或 JSON：声明一个联合类型，并用 `event instanceof Uint8Array` 分支。嵌套在对象中的 `Uint8Array` 会在发送端校验失败，错误信息会说明这条规则；把字节作为单独的事件或 RPC 值发送，元数据作为另一个 JSON 事件发送。
 
-一个事件或 RPC 值最多 100 MiB。大载荷请按几百 KiB 分块推送；每次 `push` 都会等待上一次离开插件进程。手机上传的上限更低：一次发送超过 16 MiB 时 Android 会关闭连接，所以较大的上传请拆成多个 RPC。
+一个事件或 RPC 值最多 100 MiB（减去 65 KiB 的帧头）。大载荷请按几百 KiB 分块推送；每次 `push` 都会等待上一次离开插件进程。手机上传的上限更低：一次发送超过 16 MiB 时 Android 会关闭连接，所以较大的上传请拆成多个 RPC。
 
 ### 在一个订阅中传输多条流 {#several-streams-on-one-subscription}
 

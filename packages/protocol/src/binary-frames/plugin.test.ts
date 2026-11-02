@@ -8,6 +8,8 @@ import {
   encodePluginInputFrame,
   encodePluginOutputFrame,
   FileTransferOpcode,
+  MAX_PLUGIN_PAYLOAD_BYTES,
+  MAX_ROUTED_PAYLOAD_BYTES,
   PluginFrameOpcode,
   TerminalStreamOpcode,
 } from "./index.js";
@@ -68,6 +70,21 @@ describe("the plugin byte rule", () => {
   it("accepts JSON values and a top-level Uint8Array", () => {
     expect(() => assertPluginWireValue({ a: [1, "b", null] }, "event")).not.toThrow();
     expect(() => assertPluginWireValue(new Uint8Array(4), "event")).not.toThrow();
+  });
+
+  it("rejects bytes that would not fit in one frame with the largest header", () => {
+    const bytes = new Uint8Array(MAX_PLUGIN_PAYLOAD_BYTES + 1);
+    expect(() => assertPluginWireValue(bytes.subarray(1), "event")).not.toThrow();
+    expect(() => assertPluginWireValue(bytes, "event")).toThrow(
+      `event is ${MAX_PLUGIN_PAYLOAD_BYTES + 1} bytes; one value carries at most ${MAX_PLUGIN_PAYLOAD_BYTES} bytes`,
+    );
+    const frame = encodePluginInputFrame({
+      requestId: "r".repeat(255),
+      pluginId: "p",
+      method: "m".repeat(0xffff - 30),
+      payload: bytes.subarray(1),
+    });
+    expect(frame.byteLength).toBeLessThanOrEqual(MAX_ROUTED_PAYLOAD_BYTES);
   });
 
   it("rejects bytes nested in a value and names the rule and the path", () => {

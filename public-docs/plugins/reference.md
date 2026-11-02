@@ -2333,10 +2333,10 @@ union and branch with `event instanceof Uint8Array`. A `Uint8Array` nested in an
 validation on the sending side with an error that names the rule; send the bytes as their own
 event or RPC value and the metadata as a separate JSON event.
 
-One event or RPC value carries at most 100 MiB. Push large payloads in chunks of a few hundred
-KiB; each `push` waits for the previous one to leave the plugin process. Uploads from a phone have
-a lower limit: Android closes the connection when one send exceeds 16 MiB, so split a larger
-upload into several RPCs.
+One event or RPC value carries at most 100 MiB less 65 KiB of framing. Push large payloads in
+chunks of a few hundred KiB; each `push` waits for the previous one to leave the plugin process.
+Uploads from a phone have a lower limit: Android closes the connection when one send exceeds
+16 MiB, so split a larger upload into several RPCs.
 
 ### Several streams on one subscription
 

@@ -227,6 +227,16 @@ it("useSubscription reports a refusal, a failure after going live, and a clean c
   await act(async () => subscriptions[2].acknowledge());
   act(() => subscriptions[2].closed());
   expect(finished.result.current).toEqual({ status: "closed" });
+
+  // A handler that returns at once closes in the same tick the host accepts it.
+  const immediate = renderHook(() => useSubscription(changes, { ref: "d" }, () => undefined), {
+    wrapper: wrapper(plugin),
+  });
+  await act(async () => {
+    subscriptions[3].acknowledge();
+    subscriptions[3].closed();
+  });
+  expect(immediate.result.current).toEqual({ status: "closed" });
 });
 
 it("an event that fails the contract closes the subscription with an error", async () => {

@@ -2,7 +2,6 @@ import type { PluginSubscriptionContract } from "@getpaseo/plugin";
 import type { PluginSubscriptionContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "@getpaseo/client";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
-import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 
 export type PluginSubscriptionHandler = (
@@ -80,10 +79,6 @@ export class PluginSubscriptionHandlers {
       if (signal.aborted) return;
       const value: unknown = registered.contract.event.parse(event);
       assertPluginWireValue(value, "event");
-      if (value instanceof Uint8Array && value.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES)
-        throw new RangeError(
-          `event is ${value.byteLength} bytes; one event carries at most ${MAX_WEBSOCKET_MESSAGE_BYTES} bytes`,
-        );
       // Events pushed while the handler runs follow the acknowledgement.
       await acknowledged;
       if (signal.aborted) return;

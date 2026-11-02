@@ -767,6 +767,11 @@ export class PluginRuntime {
           if (message.type === "hook") {
             void send(child, { type: "hook.cancel", requestId }).catch(() => {});
           }
+          // The handler may still start after the daemon gave up on it.
+          if (message.type === "subscribe") {
+            const { subscriptionId } = message;
+            void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
+          }
           reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
         },
         message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,

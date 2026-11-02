@@ -1,3 +1,5 @@
+import { MAX_ROUTED_PAYLOAD_BYTES } from "./host-route.js";
+
 /**
  * Plugin values that are a `Uint8Array` travel as binary frames. Opcodes 0x20-0x2f are
  * reserved for plugin traffic. Every frame is `[opcode][id length u8][id]...` and the payload
@@ -13,6 +15,12 @@ export const PluginFrameOpcode = {
 } as const;
 
 export type PluginFrameOpcode = (typeof PluginFrameOpcode)[keyof typeof PluginFrameOpcode];
+
+/** The largest frame header: an input's opcode, ID and header JSON, each at its maximum length. */
+const MAX_PLUGIN_FRAME_HEADER_BYTES = 2 + 0xff + 2 + 0xffff;
+
+/** The largest `Uint8Array` a plugin value carries, so its frame fits in one routed message. */
+export const MAX_PLUGIN_PAYLOAD_BYTES = MAX_ROUTED_PAYLOAD_BYTES - MAX_PLUGIN_FRAME_HEADER_BYTES;
 
 export type PluginFrame =
   | { opcode: typeof PluginFrameOpcode.Event; subscriptionId: string; payload: Uint8Array }
@@ -112,7 +120,13 @@ function decodeInputHeader(bytes: Uint8Array): { pluginId: string; method: strin
  * with no `Uint8Array` inside it. Checks object structure only; never reads the bytes.
  */
 export function assertPluginWireValue(value: unknown, label: string): void {
-  if (value instanceof Uint8Array) return;
+  if (value instanceof Uint8Array) {
+    if (value.byteLength > MAX_PLUGIN_PAYLOAD_BYTES)
+      throw new RangeError(
+        `${label} is ${value.byteLength} bytes; one value carries at most ${MAX_PLUGIN_PAYLOAD_BYTES} bytes`,
+      );
+    return;
+  }
   const nested = findNestedBytes(value, label);
   if (nested)
     throw new TypeError(
