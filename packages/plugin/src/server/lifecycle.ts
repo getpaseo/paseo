@@ -132,7 +132,7 @@ export interface PluginHookRequests {
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 
-/** What a hook may return: a field it leaves out stays as it was. */
+/** What a hook may return. An omitted `metadata` stays as it was. */
 type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
   "agent.open.before": Omit<PluginSessionOpenRequest, "metadata"> & {
     metadata?: Readonly<Record<string, JsonValue>>;
