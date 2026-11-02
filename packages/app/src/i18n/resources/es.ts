@@ -1444,14 +1444,14 @@ export const es: TranslationResources = {
         pid: "PID{{pid}}",
       },
       management: {
-        title: "Administrar demonio incorporado",
-        hint: "Deje quePaseoinicie y detenga el demonio incorporado",
+        title: "Iniciar demonio automáticamente",
+        hint: "El demonio incorporado se inicia al abrir Paseo",
         pauseTitle: "Pausar el demonio incorporado",
         pauseMessage:
           "Esto detendrá el demonio incorporado inmediatamente. Se detendrán los agentes en ejecución y los terminales conectados al demonio integrado.",
         pauseAndStop: "Pausa y para",
         registrationFailed:
-          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
+          "El demonio incorporado se inició, pero Paseo no pudo guardar la conexión localhost. Inténtalo de nuevo o agrega localhost manualmente.",
         pausedStopFailed:
           "La gestión del demonio integrado se pausó, peroPaseono pudo detener el demonio.",
         updateFailed: "No se puede actualizar la gestión de demonios integrada.",

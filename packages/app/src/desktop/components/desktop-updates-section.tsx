@@ -12,12 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
-import {
-  getCliDaemonStatus,
-  shouldUseDesktopDaemon,
-  confirmAndStopDesktopDaemon,
-} from "@/desktop/daemon/desktop-daemon";
+import { getCliDaemonStatus, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { useBuiltInDaemonManagement } from "@/desktop/hooks/use-built-in-daemon-management";
+import { useManualDaemonLifecycle } from "@/desktop/hooks/use-manual-daemon-lifecycle";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings, type DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -202,6 +199,10 @@ function DaemonCliStatusModal({
 interface DaemonInfoCardProps {
   daemonStatusStateText: string;
   daemonStatusDetailText: string;
+  lifecycleButtonLabel: string;
+  isDaemonRunning: boolean;
+  handleStartDaemon: () => void;
+  handleStopDaemon: () => void;
   isDaemonManagementPaused: boolean;
   copyIcon: ReactElement;
   fileTextIcon: ReactElement;
@@ -223,6 +224,10 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
   const {
     daemonStatusStateText,
     daemonStatusDetailText,
+    lifecycleButtonLabel,
+    isDaemonRunning,
+    handleStartDaemon,
+    handleStopDaemon,
     isDaemonManagementPaused,
     copyIcon,
     fileTextIcon,
@@ -249,6 +254,14 @@ function DaemonInfoCard(props: DaemonInfoCardProps) {
         <View style={styles.statusValueGroup}>
           <Text style={styles.valueText}>{daemonStatusStateText}</Text>
           <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
+          <Button
+            variant={isDaemonRunning ? "outline" : "default"}
+            size="sm"
+            onPress={isDaemonRunning ? handleStopDaemon : handleStartDaemon}
+            testID="daemon-status-lifecycle-button"
+          >
+            {lifecycleButtonLabel}
+          </Button>
         </View>
       </View>
       <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
@@ -330,21 +343,19 @@ export function LocalDaemonSection() {
     [updateSettings],
   );
   const { data, isLoading, error: statusError, setStatus, refetch } = useDaemonStatus();
+  const {
+    isStarting,
+    isStopping,
+    start: startDaemon,
+    stop: stopDaemon,
+  } = useManualDaemonLifecycle({
+    setStatus,
+    refreshStatus: refetch,
+  });
 
   const daemonStatus = data?.status ?? null;
   const daemonLogs = data?.logs ?? null;
   const daemonVersion = daemonStatus?.version ?? null;
-  const [isStopping, setIsStopping] = useState(false);
-  const handleStop = useCallback(() => {
-    setIsStopping(true);
-    void confirmAndStopDesktopDaemon()
-      .then((status) => {
-        if (status) setStatus(status);
-        return undefined;
-      })
-      .catch((error) => Alert.alert(t("desktop.daemon.lifecycle.stopFailed"), String(error)))
-      .finally(() => setIsStopping(false));
-  }, [setStatus, t]);
 
   const daemonVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
   const daemonStatusStateText =
@@ -356,14 +367,29 @@ export function LocalDaemonSection() {
     pid: daemonStatus?.pid ? daemonStatus.pid : "—",
   });
   const isDaemonManagementPaused = !daemonSettings.manageBuiltInDaemon;
+  const isDaemonRunning = daemonStatus?.status === "running";
+
+  const handleStartDaemon = useCallback(() => {
+    void startDaemon();
+  }, [startDaemon]);
+  const handleStopDaemon = useCallback(() => {
+    stopDaemon();
+  }, [stopDaemon]);
+  const lifecycleButtonLabel = useMemo(() => {
+    if (isDaemonRunning) {
+      return isStopping
+        ? t("desktop.daemon.lifecycle.stopping")
+        : t("desktop.daemon.lifecycle.stop");
+    }
+    return isStarting
+      ? t("desktop.daemon.lifecycle.starting")
+      : t("desktop.daemon.lifecycle.start");
+  }, [isDaemonRunning, isStarting, isStopping, t]);
 
   const { isUpdating: isUpdatingDaemonManagement, toggle: handleToggleDaemonManagement } =
     useBuiltInDaemonManagement({
-      daemonStatus,
       settings: daemonSettings,
       updateSettings: updateDaemonSettings,
-      setStatus,
-      refreshStatus: refetch,
     });
   const { isUpdatingKeepRunningAfterQuit, handleToggleKeepRunningAfterQuit } =
     useKeepRunningAfterQuitToggle({
@@ -444,6 +470,10 @@ export function LocalDaemonSection() {
           <DaemonInfoCard
             daemonStatusStateText={daemonStatusStateText}
             daemonStatusDetailText={daemonStatusDetailText}
+            lifecycleButtonLabel={lifecycleButtonLabel}
+            isDaemonRunning={isDaemonRunning}
+            handleStartDaemon={handleStartDaemon}
+            handleStopDaemon={handleStopDaemon}
             isDaemonManagementPaused={isDaemonManagementPaused}
             copyIcon={copyIcon}
             fileTextIcon={fileTextIcon}
@@ -459,26 +489,6 @@ export function LocalDaemonSection() {
             handleRunCliStatus={handleRunCliStatus}
             isLoadingCliStatus={isLoadingCliStatus}
           />
-
-          {daemonStatus?.pid ? (
-            <View style={settingsStyles.card}>
-              <View style={settingsStyles.row}>
-                <View style={settingsStyles.rowContent}>
-                  <Text style={settingsStyles.rowTitle}>
-                    {daemonStatus.ownedByDesktop
-                      ? t("desktop.daemon.lifecycle.owned")
-                      : t("desktop.daemon.lifecycle.attached")}
-                  </Text>
-                  <Text style={settingsStyles.rowHint}>{daemonStatus.home}</Text>
-                </View>
-                <Button variant="outline" size="sm" onPress={handleStop} disabled={isStopping}>
-                  {isStopping
-                    ? t("desktop.daemon.lifecycle.stopping")
-                    : t("desktop.daemon.lifecycle.stop")}
-                </Button>
-              </View>
-            </View>
-          ) : null}
 
           {daemonVersionMismatch ? (
             <View style={styles.warningCard}>
