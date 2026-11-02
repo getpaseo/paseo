@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import type { Page } from "@playwright/test";
-import { closeWorkspaceAgentTab, openSessions } from "../support/helpers/archive-tab";
+import {
+  clickSessionRow,
+  closeWorkspaceAgentTab,
+  expectSessionRowArchived,
+  expectSessionRowNotArchived,
+  openSessions,
+} from "../support/helpers/archive-tab";
+import { expectComposerEditable } from "../support/helpers/composer";
 import {
   assertChatTranscript,
   cleanupRewindFlow,
@@ -39,6 +46,14 @@ async function closeAgentTab(page: Page, agentId: string): Promise<void> {
     .first()
     .hover();
   await closeWorkspaceAgentTab(page, agentId);
+}
+
+async function unarchiveOpenAgent(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Unarchive", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Unarchive", exact: true })).toHaveCount(0, {
+    timeout: 60_000,
+  });
+  await expectComposerEditable(page);
 }
 
 test.describe("archived Codex agent recovery", () => {
@@ -141,17 +156,13 @@ test.describe("archived Codex agent recovery", () => {
       ]);
       await closeAgentTab(page, handle.agentId);
       await openSessions(page);
-      const row = page.getByTestId(`agent-row-${getServerId()}-${handle.agentId}`);
-      await expect(row.getByText("Archived", { exact: true })).toBeVisible();
-      await row.click();
-      await page.getByRole("button", { name: "Unarchive", exact: true }).click();
-      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible({
-        timeout: 60_000,
-      });
+      await expectSessionRowArchived(page, "rewind-flow-codex-");
+      await clickSessionRow(page, "rewind-flow-codex-");
+      await unarchiveOpenAgent(page);
       await openSessions(page);
-      await expect(row.getByText("Archived", { exact: true })).toHaveCount(0);
-      await row.click();
-      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable();
+      await expectSessionRowNotArchived(page, "rewind-flow-codex-");
+      await clickSessionRow(page, "rewind-flow-codex-");
+      await expectComposerEditable(page);
     } finally {
       await cleanupRewindFlow({ handle, cwd });
     }
