@@ -3,11 +3,10 @@ import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 /**
- * Collapsed chat rows badge their summary with an icon whose center sits 7px into the content
- * column (`ExpandableBadge` bleeds 13px left, then 1px border, 8px padding, 22px icon). The rail
- * hangs from that center so opened rows read as children of the line that opened them.
+ * Align the rail with the expanded caret's left edge. Keep the content offset fixed so
+ * expanded tool cards stay in place, with a gap between their border and the rail.
  */
-const RAIL_LEFT = 7;
+const RAIL_LEFT = 1;
 const RAIL_WIDTH = 1;
 export const INDENT_RAIL_CONTENT_OFFSET = 21;
 

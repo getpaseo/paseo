@@ -1,0 +1,4 @@
+{
+  "id": "preview-deploys",
+  "requirements": { "paseo": ">=0.8.0" }
+}

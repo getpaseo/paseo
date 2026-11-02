@@ -19,6 +19,11 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["scripts/supervisor-entrypoint.ts", "scripts/dev-runner.ts", "scripts/supervisor.ts"],
+  "include": [
+    "scripts/supervisor-entrypoint.ts",
+    "scripts/dev-runner.ts",
+    "scripts/supervisor.ts",
+    "src/executable-resolution/which.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

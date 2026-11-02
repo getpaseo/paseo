@@ -8,6 +8,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
+import { createPluginSubscribe } from "./subscriptions";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
@@ -19,6 +20,8 @@ export class PluginRegistry {
   private snapshot: InstalledPlugin[] = [];
   private readonly disposed = new WeakSet<InstalledPlugin>();
   private readonly evaluationErrors = new Map<string, string>();
+  /** The client each host's installations were bound to; their Paseo API and RPCs call it. */
+  private readonly clientByHost = new Map<string, DaemonClient>();
 
   constructor(
     private readonly dependencies: {
@@ -49,10 +52,15 @@ export class PluginRegistry {
     },
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
+    const previousErrors = this.hostEvaluationErrors(serverId);
+    // Installations call the client they were created with, so a new client replaces them all.
+    const sameClient = this.clientByHost.get(serverId) === options.client;
+    this.clientByHost.set(serverId, options.client);
     const previousTimelineBundles = previous
       .filter((plugin) => plugin.timelineTransformers.length > 0)
       .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
     const preserved = catalog.flatMap((entry) => {
+      if (!sameClient) return [];
       const existing = previous.find(
         (plugin) =>
           plugin.id !== options.replacePluginId &&
@@ -82,12 +90,18 @@ export class PluginRegistry {
           return [existing];
         }
         const client = options.client;
+        const lifetime = new AbortController();
         installation = {
-          lifetime: new AbortController(),
+          lifetime,
           locale: this.dependencies.localeSource.getLocale(),
           i18n: new PluginTranslationRuntime(this.dependencies.localeSource),
           paseo: createPaseoApi(client),
           invoke: (method, input) => client.invokePluginRpc(entry.id, method, input),
+          subscribe: createPluginSubscribe({
+            client,
+            pluginId: entry.id,
+            lifetime: lifetime.signal,
+          }),
           id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
@@ -146,13 +160,13 @@ export class PluginRegistry {
       }
     }
     this.byHost.set(serverId, installed);
-    if (
-      installed.length !== catalog.length ||
-      installed.length !== previous.length ||
-      installed.some((plugin, index) => plugin !== previous[index])
-    ) {
-      this.publish();
-    }
+    // An unchanged catalog keeps the snapshot, so timeline projections cached against the
+    // installed transformers stay valid across a reconnect.
+    const unchanged =
+      installed.length === previous.length &&
+      installed.every((plugin, index) => plugin === previous[index]) &&
+      this.hostEvaluationErrors(serverId) === previousErrors;
+    if (!unchanged) this.publish();
     const installedTimelineBundles = installed
       .filter((plugin) => plugin.timelineTransformers.length > 0)
       .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
@@ -170,7 +184,15 @@ export class PluginRegistry {
       if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
     }
     this.byHost.delete(serverId);
+    this.clientByHost.delete(serverId);
     this.publish();
+  }
+
+  private hostEvaluationErrors(serverId: string): string {
+    const prefix = `${serverId}/`;
+    return JSON.stringify(
+      [...this.evaluationErrors].filter(([key]) => key.startsWith(prefix)).sort(),
+    );
   }
 
   private dispose(plugin: InstalledPlugin): void {

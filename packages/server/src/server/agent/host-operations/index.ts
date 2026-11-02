@@ -399,14 +399,16 @@ function remoteObservation(client: DaemonClient): HostObservation {
           // A new turn may start between the snapshot and the current-response read.
           // Bound that wait and refresh state instead of attributing the old event to it.
           const current = await client.waitForFinish(agentId, 100);
-          if (current.status === "timeout")
-            snapshot = (await client.fetchAgent(agentId))?.agent ?? null;
-          else {
-            if (!current.final && current.error && current.error !== `Agent not found: ${agentId}`)
-              throw new Error(current.error);
-            snapshot = current.final;
-            lastMessage = current.lastMessage;
+          if (current.status === "timeout") {
+            // Queued delivery can leave a closed/error snapshot visible before the new turn.
+            // A timed-out wait has not established an outcome for that queued work.
+            if (event?.type === "permission_resolved") handler(snapshot, event);
+            return;
           }
+          if (!current.final && current.error && current.error !== `Agent not found: ${agentId}`)
+            throw new Error(current.error);
+          snapshot = current.final;
+          lastMessage = current.lastMessage;
         }
         handler(snapshot, event, lastMessage);
       };

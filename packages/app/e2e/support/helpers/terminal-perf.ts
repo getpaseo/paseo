@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import type { Terminal } from "@xterm/xterm";
 import { buildHostWorkspaceRoute } from "../../../src/utils/host-routes";
 import { getServerId } from "./server-id";
 
@@ -205,4 +206,101 @@ export function computePercentile(samples: number[], p: number): number {
 
 export function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/** Observe actual cursor pixels and blink phases through xterm's public render event. */
+export async function expectTerminalCursor(
+  page: Page,
+  expected: { shape: "bar" | "underline"; blinking: boolean },
+): Promise<void> {
+  const observed = await page.evaluate(async () => {
+    const terminal = (window as Window & { __paseoTerminal?: Terminal }).__paseoTerminal;
+    if (!terminal) throw new Error("Terminal did not mount");
+    const source = Array.from(document.querySelectorAll(".xterm-screen canvas")).find(
+      (canvas): canvas is HTMLCanvasElement =>
+        canvas instanceof HTMLCanvasElement && canvas.getContext("webgl2") !== null,
+    );
+    if (!source) throw new Error("Cursor verification requires the actual WebGL renderer");
+    const copy = document.createElement("canvas");
+    const context = copy.getContext("2d");
+    if (!context) throw new Error("Cursor pixel capture is unavailable");
+    terminal.focus();
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    if (!terminal.element?.contains(document.activeElement))
+      throw new Error("Terminal did not focus");
+    const started = performance.now();
+    const frames: Array<{ time: number; width: number; height: number }> = [];
+    const rendered = terminal.onRender(() => {
+      copy.width = source.width;
+      copy.height = source.height;
+      // WebGL's default drawing buffer must be copied before this render returns.
+      context.drawImage(source, 0, 0);
+      const cellWidth = source.width / terminal.cols;
+      const cellHeight = source.height / terminal.rows;
+      const x = Math.round(terminal.buffer.active.cursorX * cellWidth);
+      const y = Math.round(terminal.buffer.active.cursorY * cellHeight);
+      const width = Math.ceil(cellWidth);
+      const height = Math.ceil(cellHeight);
+      const background = context.getImageData(x + width + 2, y, 1, 1).data;
+      const pixels = context.getImageData(x, y, width, height).data;
+      let minX = width;
+      let maxX = -1;
+      let minY = height;
+      let maxY = -1;
+      for (let row = 0; row < height; row++) {
+        for (let col = 0; col < width; col++) {
+          const offset = (row * width + col) * 4;
+          if (
+            ![0, 1, 2, 3].some(
+              (channel) => Math.abs(pixels[offset + channel]! - background[channel]!) > 20,
+            )
+          )
+            continue;
+          minX = Math.min(minX, col);
+          maxX = Math.max(maxX, col);
+          minY = Math.min(minY, row);
+          maxY = Math.max(maxY, row);
+        }
+      }
+      frames.push({
+        time: performance.now() - started,
+        width: maxX < 0 ? 0 : (maxX - minX + 1) / cellWidth,
+        height: maxY < 0 ? 0 : (maxY - minY + 1) / cellHeight,
+      });
+    });
+    try {
+      const refresh = setInterval(() => terminal.refresh(0, terminal.rows - 1), 40);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+      } finally {
+        clearInterval(refresh);
+      }
+    } finally {
+      rendered.dispose();
+    }
+    return {
+      frames,
+      focused: terminal.element?.contains(document.activeElement),
+      samples: frames.length,
+      width: Math.max(...frames.map((frame) => frame.width)),
+      height: Math.max(...frames.map((frame) => frame.height)),
+      blinking:
+        frames.filter(
+          (frame, index) => index > 0 && (frame.width === 0) !== (frames[index - 1]!.width === 0),
+        ).length >= 2,
+    };
+  });
+  expect(observed.samples).toBeGreaterThan(5);
+  expect(observed.blinking, JSON.stringify(observed)).toBe(expected.blinking);
+  if (expected.shape === "bar") {
+    expect(observed.width).toBeGreaterThan(0);
+    expect(observed.width).toBeLessThan(0.4);
+    expect(observed.height).toBeGreaterThan(0.6);
+  } else {
+    expect(observed.width).toBeGreaterThan(0.6);
+    expect(observed.height).toBeGreaterThan(0);
+    expect(observed.height).toBeLessThan(0.4);
+  }
 }

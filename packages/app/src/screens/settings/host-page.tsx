@@ -65,6 +65,7 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { useProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
+import { RestartRecoveryCard } from "./restart-recovery-card";
 import { IdleRuntimeCleanupCard } from "./idle-runtime-cleanup-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
 
@@ -292,6 +293,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <InjectPaseoToolsCard serverId={serverId} />
           <BrowserToolsOptInCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
+          <RestartRecoveryCard serverId={serverId} />
           <IdleRuntimeCleanupCard serverId={serverId} />
         </SettingsSection>
       ) : (
@@ -565,7 +567,15 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   const isConnected = useHostRuntimeIsConnected(host.serverId);
   const runtime = getHostRuntimeStore();
   const [isRestarting, setIsRestarting] = useState(false);
+  // Rendered in the card, not an Alert.alert: react-native-web's Alert is a no-op, and a failed
+  // close-terminals restart must name the processes left running until the user retries.
+  const [restartError, setRestartError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
+  const terminalsSurviveRestart = useSessionStore(
+    (state) =>
+      state.sessions[host.serverId]?.serverInfo?.features?.terminalsSurviveRestart === true,
+  );
 
   useEffect(() => {
     return () => {
@@ -578,71 +588,80 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     [host.serverId, runtime],
   );
 
-  const waitForDaemonRestart = useCallback(
-    async (request: Promise<void>) => {
-      try {
-        await request;
-      } catch (error) {
-        Alert.alert(
-          t("settings.host.daemon.restart.requestFailedTitle"),
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        if (isMountedRef.current) setIsRestarting(false);
+  const waitForDaemonRestart = useCallback(async (request: Promise<void>) => {
+    try {
+      await request;
+    } catch (error) {
+      console.error("[HostPage] Daemon restart failed", error);
+      if (isMountedRef.current) {
+        setRestartError(error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      if (isMountedRef.current) setIsRestarting(false);
+    }
+  }, []);
+
+  const startRestart = useCallback(
+    (killTerminals: boolean) => {
+      if (!daemonClient) {
+        Alert.alert(
+          t("settings.host.daemon.restart.unavailableTitle"),
+          t("settings.host.daemon.restart.unavailableMessage"),
+        );
+        return;
+      }
+      if (!isHostConnected()) {
+        Alert.alert(
+          t("settings.host.daemon.restart.offlineTitle"),
+          t("settings.host.daemon.restart.offlineMessage"),
+        );
+        return;
+      }
+
+      void confirmDialog({
+        title: t("settings.host.daemon.restart.confirmTitle", { name: host.label }),
+        message: killTerminals
+          ? t("settings.host.daemon.restart.closeTerminalsConfirmMessage")
+          : t("settings.host.daemon.restart.confirmMessage"),
+        confirmLabel: killTerminals
+          ? t("settings.host.daemon.restart.closeTerminals")
+          : t("settings.host.daemon.restart.confirm"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      })
+        .then((confirmed) => {
+          if (!confirmed) return;
+          setRestartError(null);
+          setIsRestarting(true);
+          const restartRequest = restartDaemonFromSettings(
+            host.serverId,
+            `settings_daemon_restart_${host.serverId}`,
+            {
+              restartServer: (reason, options) =>
+                daemonClient.restartServer(reason, undefined, options),
+              getStatus: async () => ({
+                ...(await daemonClient.getDaemonStatus()),
+                serverId: daemonClient.getLastServerInfoMessage()?.serverId ?? "",
+                version: daemonClient.getLastServerInfoMessage()?.version ?? null,
+              }),
+            },
+            { killTerminals },
+          );
+          void waitForDaemonRestart(restartRequest);
+          return;
+        })
+        .catch((error) => {
+          console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
+          if (isMountedRef.current) {
+            setRestartError(t("settings.host.daemon.restart.dialogFailedMessage"));
+          }
+        });
     },
-    [t],
+    [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart],
   );
 
-  const handleRestart = useCallback(() => {
-    if (!daemonClient) {
-      Alert.alert(
-        t("settings.host.daemon.restart.unavailableTitle"),
-        t("settings.host.daemon.restart.unavailableMessage"),
-      );
-      return;
-    }
-    if (!isHostConnected()) {
-      Alert.alert(
-        t("settings.host.daemon.restart.offlineTitle"),
-        t("settings.host.daemon.restart.offlineMessage"),
-      );
-      return;
-    }
-
-    void confirmDialog({
-      title: t("settings.host.daemon.restart.confirmTitle", { name: host.label }),
-      message: t("settings.host.daemon.restart.confirmMessage"),
-      confirmLabel: t("settings.host.daemon.restart.confirm"),
-      cancelLabel: t("common.actions.cancel"),
-      destructive: true,
-    })
-      .then((confirmed) => {
-        if (!confirmed) return;
-        setIsRestarting(true);
-        const restartRequest = restartDaemonFromSettings(
-          host.serverId,
-          `settings_daemon_restart_${host.serverId}`,
-          {
-            restartServer: (reason) => daemonClient.restartServer(reason),
-            getStatus: async () => ({
-              ...(await daemonClient.getDaemonStatus()),
-              serverId: daemonClient.getLastServerInfoMessage()?.serverId ?? "",
-              version: daemonClient.getLastServerInfoMessage()?.version ?? null,
-            }),
-          },
-        );
-        void waitForDaemonRestart(restartRequest);
-        return;
-      })
-      .catch((error) => {
-        console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
-        Alert.alert(
-          t("settings.host.daemon.restart.requestFailedTitle"),
-          t("settings.host.daemon.restart.dialogFailedMessage"),
-        );
-      });
-  }, [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart]);
+  const handleRestart = useCallback(() => startRestart(false), [startRestart]);
+  const handleRestartAndCloseTerminals = useCallback(() => startRestart(true), [startRestart]);
 
   return (
     <View style={settingsStyles.card} testID="host-page-restart-card">
@@ -664,6 +683,35 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             : t("settings.host.daemon.restart.confirm")}
         </Button>
       </View>
+      {terminalsSurviveRestart ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.daemon.restart.closeTerminalsHint")}
+            </Text>
+          </View>
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleRestartAndCloseTerminals}
+            disabled={isRestarting || !daemonClient || !isConnected}
+            testID="host-page-restart-close-terminals-button"
+          >
+            {t("settings.host.daemon.restart.closeTerminals")}
+          </Button>
+        </View>
+      ) : null}
+      {restartError ? (
+        <View style={styles.cardAlert}>
+          <InlineAlert
+            size="sm"
+            variant="error"
+            title={t("settings.host.daemon.restart.requestFailedTitle")}
+            description={restartError}
+            testID="host-page-restart-error"
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -848,7 +896,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
         />
       ) : null}
       {updateState.status === "failed" ? (
-        <View style={styles.updateFailure}>
+        <View style={styles.cardAlert}>
           <InlineAlert
             size="sm"
             variant="error"
@@ -1702,7 +1750,7 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
 }));
 
 const styles = StyleSheet.create((theme) => ({
-  updateFailure: {
+  cardAlert: {
     marginHorizontal: theme.spacing[4],
     marginBottom: theme.spacing[4],
   },

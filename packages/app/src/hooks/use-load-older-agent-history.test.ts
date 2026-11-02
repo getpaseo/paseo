@@ -152,6 +152,7 @@ describe("loadOlderAgentHistory", () => {
           cursor: { epoch: "epoch-1", seq: 10 },
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);

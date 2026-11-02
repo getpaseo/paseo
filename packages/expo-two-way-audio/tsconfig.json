@@ -6,7 +6,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "typeRoots": [
-      "./node_modules/expo-module-scripts/ts-declarations",
+      "../../node_modules/expo-module-scripts/ts-declarations",
       "./node_modules/@types",
       "../../node_modules/@types"
     ]

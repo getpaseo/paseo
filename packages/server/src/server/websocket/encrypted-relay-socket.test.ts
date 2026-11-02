@@ -140,3 +140,74 @@ test("encrypted sockets do not double-count bytes already buffered by the transp
 
   expect(socket.bufferedAmount).toBe(payload.byteLength + 40);
 });
+
+test("50 MiB logical text and routed binary cross encrypted relay frames in both directions", async () => {
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const { openClientSecureChannel, openDaemonSecureChannel } = await import("@getpaseo/relay/e2ee");
+  const { generateKeyPair, exportPublicKey, maxSecuredPlaintextByteLength } =
+    await import("@getpaseo/relay");
+  const { encodeHostRouteFrame, decodeHostRouteFrame } =
+    await import("@getpaseo/protocol/binary-frames/index");
+  type Transport = import("@getpaseo/relay/e2ee").Transport;
+  const limit = 32 * 1024 * 1024;
+  const wireSizes: number[] = [];
+  const endpoint = (): Transport => ({
+    send: () => {},
+    close: () => {},
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  });
+  const left = endpoint();
+  const right = endpoint();
+  const wire = (destination: Transport) => (data: string | ArrayBuffer) => {
+    const size = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+    expect(size).toBeLessThanOrEqual(limit);
+    wireSizes.push(size);
+    queueMicrotask(() => destination.onmessage?.({ data, isBinary: typeof data !== "string" }));
+  };
+  left.send = wire(right);
+  right.send = wire(left);
+  const key = generateKeyPair();
+  const delivered: (string | Uint8Array)[][] = [[], []];
+  let receivers: InstanceType<typeof ChunkedTransport>[] = [];
+  const incoming = (index: number) => (data: string | ArrayBuffer) =>
+    receivers[index]!.receive(typeof data === "string" ? data : new Uint8Array(data));
+  const daemonPromise = openDaemonSecureChannel(right, {
+    daemonKeyPair: key,
+    events: { onmessage: incoming(1) },
+  });
+  const client = await openClientSecureChannel(left, {
+    daemonPublicKeyB64: exportPublicKey(key.publicKey),
+    events: { onmessage: incoming(0) },
+  });
+  const daemon = await daemonPromise;
+  receivers = [client, daemon].map(
+    (channel, index) =>
+      new ChunkedTransport({
+        frameBytes: maxSecuredPlaintextByteLength(limit),
+        send: (frame) => channel.send(typeof frame === "string" ? frame : frame.slice().buffer),
+        deliver: (frame) => {
+          delivered[index]!.push(frame);
+        },
+      }),
+  );
+  for (const receiver of receivers) receiver.enabled = true;
+  const text = "x".repeat(50 * 1024 * 1024);
+  wireSizes.length = 0;
+  await receivers[1]!.send(text);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(delivered[0]).toEqual([text]);
+  expect(wireSizes.length).toBeGreaterThan(1);
+  const routed = encodeHostRouteFrame("route", new Uint8Array(50 * 1024 * 1024).fill(7));
+  await receivers[0]!.send(routed);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(delivered[1]).toHaveLength(1);
+  const received = decodeHostRouteFrame(delivered[1]![0] as Uint8Array)!;
+  expect(received.routeId).toBe("route");
+  expect(
+    Buffer.from(received.payload).equals(Buffer.from(new Uint8Array(50 * 1024 * 1024).fill(7))),
+  ).toBe(true);
+  client.close();
+  daemon.close();
+}, 30_000);

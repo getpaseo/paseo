@@ -5,12 +5,16 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
+  expectSubagentRowGone,
   expectSubagentRowVisible,
   openSubagentFromCompactTrack,
   seedSubagent,
 } from "../support/helpers/subagents";
 import {
+  backToList,
   closeSheet,
+  expectNoSheetOpen,
+  expectOneSheetOpen,
   expectOpenTabCount,
   openSheetAsTab,
   expectDeclinedDiscardPrompt,
@@ -52,6 +56,10 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
       { parentId: workspace.agentId, title: "Sheet child" },
     );
+    const grandchild = await seedSubagent(
+      { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
+      { parentId: child.id, title: "Sheet grandchild" },
+    );
     await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
     await expectOpenTabCount(page, 1);
 
@@ -79,12 +87,14 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await tapSheetBackdrop(page);
     });
 
-    await test.step("a subagent opens in a sheet over the subagents list", async () => {
+    await test.step("a subagent opens in place of the subagents list", async () => {
       await openSubagentFromCompactTrack(page, child.id);
 
       const childSheet = sheet(page, child.title);
       await expect(childSheet).toBeVisible();
       await expectSheetAtSnap(page, child.title);
+      await expectSubagentRowGone(page, child.id);
+      await expectOneSheetOpen(page);
       await expect(childSheet.getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
       // The composer's model, thinking, and mode stand in for it, resolved the same way. An idle
       // seeded agent has no context usage yet.
@@ -94,23 +104,51 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await expectOpenTabCount(page, 1);
     });
 
-    await test.step("closing the subagent's sheet uncovers the list", async () => {
-      await closeSheet(page, child.title);
+    await test.step("Back returns the sheet to the list", async () => {
+      await backToList(page, child.title);
       await expectSubagentRowVisible(page, child.id);
+      await expectOneSheetOpen(page);
+    });
+
+    await test.step("Close closes the list with the subagent", async () => {
+      await page.getByTestId(`subagents-track-row-${child.id}`).click();
+      await closeSheet(page, child.title);
+      await expectSubagentRowGone(page, child.id);
+      await expectNoSheetOpen(page);
     });
 
     await test.step("the parent box in a subagent's sheet closes it onto the parent", async () => {
-      await page.getByTestId(`subagents-track-row-${child.id}`).click();
+      await openSubagentFromCompactTrack(page, child.id);
       const childSheet = sheet(page, child.title);
       await expectSheetAtSnap(page, child.title);
       await expect(childSheet.getByTestId("composer-parent-agent-pill")).toHaveCount(0);
       await childSheet.getByTestId("parent-agent-callout-open").click();
       await expect(childSheet).toHaveCount(0);
+      await expectNoSheetOpen(page);
+      await expectOpenTabCount(page, 1);
+    });
+
+    await test.step("a nested subagent's parent box lands on its parent's sheet", async () => {
+      await openSubagentFromCompactTrack(page, child.id);
+      const childSheet = sheet(page, child.title);
+      await openSubagentFromCompactTrack(page, grandchild.id, childSheet);
+      const grandchildSheet = sheet(page, grandchild.title);
+      await expectSheetAtSnap(page, grandchild.title);
+      await expect(grandchildSheet.getByTestId("parent-agent-callout")).toContainText(child.title);
+
+      await grandchildSheet.getByTestId("parent-agent-callout-open").click();
+      await expect(grandchildSheet).toHaveCount(0);
+      await expect(childSheet).toBeVisible();
+      await expectOneSheetOpen(page);
+
+      await childSheet.getByTestId("parent-agent-callout-open").click();
+      await expect(childSheet).toHaveCount(0);
+      await expectNoSheetOpen(page);
       await expectOpenTabCount(page, 1);
     });
 
     await test.step("Open as tab promotes the subagent to a full tab and ends the list", async () => {
-      await page.getByTestId(`subagents-track-row-${child.id}`).click();
+      await openSubagentFromCompactTrack(page, child.id);
       await expectSheetAtSnap(page, child.title);
       await openSheetAsTab(page, child.title);
       await expect(page.getByTestId(`subagents-track-row-${child.id}`)).toHaveCount(0);
@@ -123,7 +161,7 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await expect(page.getByTestId(`subagents-track-row-${child.id}`)).toHaveCount(0);
     });
 
-    await test.step("once its tab closes, the subagent reopens in a sheet that keeps the list", async () => {
+    await test.step("once its tab closes, the subagent reopens in place of the list", async () => {
       await page
         .getByRole("button", { name: /Switch tabs/ })
         .filter({ visible: true })
@@ -141,7 +179,7 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
 
       await openSubagentFromCompactTrack(page, child.id);
       await expectSheetAtSnap(page, child.title);
-      await closeSheet(page, child.title);
+      await backToList(page, child.title);
       await expectSubagentRowVisible(page, child.id);
       await tapSheetBackdrop(page);
       await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);

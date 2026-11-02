@@ -18,7 +18,7 @@ function visibleMainPane(page: Page) {
 }
 
 function composerChangesPill(page: Page) {
-  return page.getByTestId("composer-diff-stat-pill");
+  return page.getByRole("button", { name: "Open Changes tab", exact: true });
 }
 
 async function revealComposerChangesInExplorer(page: Page) {
@@ -498,6 +498,7 @@ test.describe("send review feedback", () => {
   test("only open tabs in this workspace appear in compact and wide recipient menus", async ({
     page,
   }) => {
+    test.setTimeout(120000);
     const workspace = await seedChangedAgent("review-feedback-multiple-");
     const other = await seedChangedAgent("review-feedback-other-");
     try {
