@@ -21,6 +21,7 @@ interface Issue extends ComboboxItem {
 
 const ONE: Issue = { id: "1", label: "Slow sidebar", branch: "one" };
 const TWO: Issue = { id: "2", label: "Crash on resume", branch: "two" };
+const THREE: Issue = { id: "3", label: "Crash on launch", branch: "three" };
 
 interface Search {
   query: string;
@@ -40,7 +41,8 @@ function controlledSearch() {
     if (!found) throw new Error(`No search for "${query}" yet`);
     return found;
   };
-  return { search, forQuery, queries: () => searches.map((candidate) => candidate.query) };
+  const reject = (index: number, error: Error) => searches[index]?.reject(error);
+  return { search, forQuery, reject, queries: () => searches.map((candidate) => candidate.query) };
 }
 
 const toast = { error: vi.fn() } as unknown as ToastApi;
@@ -124,8 +126,28 @@ describe("plugin Combobox", () => {
     await waitFor(() => expect(screen.queryByText("Slow sidebar")).toBeNull());
     controlled.forQuery("c").resolve([ONE]);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.getByText("Crash on resume")).toBeTruthy();
+    // Searches settle in order, so once a later one has landed the stale one has been handled.
+    fireEvent.change(input, { target: { value: "cra" } });
+    await waitFor(() => expect(controlled.queries()).toEqual(["", "c", "cr", "cra"]));
+    controlled.forQuery("cra").resolve([THREE]);
+    await screen.findByText("Crash on launch");
+    expect(screen.queryByText("Slow sidebar")).toBeNull();
+  });
+
+  it("shows the error and not the previous results when a reopened list fails to refresh", async () => {
+    const controlled = controlledSearch();
+    renderCombobox({ search: controlled.search });
+    await waitFor(() => expect(controlled.queries()).toEqual([""]));
+    controlled.forQuery("").resolve([ONE]);
+    await screen.findByText("Slow sidebar");
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Issue" }));
+    await waitFor(() => expect(controlled.queries()).toEqual(["", ""]));
+    controlled.reject(1, new Error("tracker is down"));
+
+    expect(await screen.findByText("Search failed: tracker is down")).toBeTruthy();
     expect(screen.queryByText("Slow sidebar")).toBeNull();
   });
 

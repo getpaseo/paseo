@@ -148,7 +148,8 @@ export function Combobox<Item extends ComboboxItem>({
     gcTime: 0,
     retry: false,
   });
-  const items: readonly Item[] = results.data ?? NO_RESULTS;
+  // A failed search shows its error, not the results of an earlier one.
+  const items: readonly Item[] = results.isError ? NO_RESULTS : (results.data ?? NO_RESULTS);
   const item = useMemo<ComposerControlItem>(() => {
     const choices = items.map(({ id, label, description }) => ({ value: id, label, description }));
     return {
