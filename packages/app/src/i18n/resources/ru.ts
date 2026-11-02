@@ -102,6 +102,7 @@ export const ru: TranslationResources = {
       home: "Главная",
       groupByProject: "Группировать по проекту",
       groupByStatus: "Группировать по статусу",
+      groupByDay: "Группировать по дню активности",
       modelGroupLabel: "Модель",
       modelSearchKeywords: "Сменить, изменить, выбрать или установить модель",
       thinkingGroupLabel: "Мышление",
@@ -1183,6 +1184,11 @@ export const ru: TranslationResources = {
       working: "В работе",
       done: "Готово",
     },
+    dayBucket: {
+      today: "Сегодня",
+      yesterday: "Вчера",
+      older: "Ранее",
+    },
     display: {
       showBackground: "Показать фоновые пространства",
       trigger: "Настройки отображения",
@@ -1198,6 +1204,7 @@ export const ru: TranslationResources = {
         label: "Группировка",
         project: "Проект",
         status: "Статус",
+        day: "День активности",
         labels: "Метки",
       },
       titleSource: {
