@@ -39,23 +39,33 @@ jobs:
 
       - name: Find newest upstream stable tag
         id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git remote add upstream https://github.com/getpaseo/paseo.git
-          git fetch upstream --tags --force
-          # Prereleases (v0.14.0-beta.1) and fork build tags (v0.13.0-af.*) all
-          # contain a dash; a stable release never does.
-          latest=$(git tag -l 'v*' | grep -vE -- '-' | sort -V | tail -1)
-          if [[ -z "$latest" ]]; then
-            echo "No stable tags found upstream."
+          latest=$(gh release view --repo getpaseo/paseo --json tagName --jq .tagName)
+          if [[ ! "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Upstream latest release is not a stable version: $latest"
             exit 1
           fi
+          base=$(node -p "require('./package.json').version")
+          if [[ ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Moy releases require a stable upstream base, not $base."
+            exit 1
+          fi
+          git fetch --no-tags https://github.com/getpaseo/paseo.git \
+            "+refs/heads/main:refs/remotes/upstream/main" \
+            "refs/tags/v${base}:refs/paseo/upstream/stable/v${base}" \
+            "refs/tags/${latest}:refs/paseo/upstream/latest"
           echo "tag=$latest" >> "$GITHUB_OUTPUT"
           echo "Newest upstream stable tag: $latest"
+
+      - name: Verify current stable baseline
+        run: node scripts/check-fork-release.mjs
 
       - name: Skip if tag already merged
         id: check
         run: |
-          if git merge-base --is-ancestor "${{ steps.tag.outputs.tag }}" HEAD; then
+          if git merge-base --is-ancestor refs/paseo/upstream/latest HEAD; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "${{ steps.tag.outputs.tag }} is already merged."
           else
@@ -65,7 +75,7 @@ jobs:
       - name: Merge stable tag
         id: merge
         if: steps.check.outputs.changed == 'true'
-        run: git merge "${{ steps.tag.outputs.tag }}" --no-edit
+        run: git merge refs/paseo/upstream/latest --no-edit
 
       - name: Open issue on conflict
         if: failure() && steps.merge.outcome == 'failure'
@@ -88,7 +98,12 @@ jobs:
 
       - name: Push
         if: steps.check.outputs.changed == 'true'
-        run: git push origin HEAD:refs/heads/local/all-feats
+        run: |
+          base=$(node -p "require('./package.json').version")
+          git fetch --no-tags https://github.com/getpaseo/paseo.git \
+            "refs/tags/v${base}:refs/paseo/upstream/stable/v${base}"
+          node scripts/check-fork-release.mjs
+          git push origin HEAD:refs/heads/local/all-feats
 
       - name: Trigger build
         if: steps.check.outputs.changed == 'true'
