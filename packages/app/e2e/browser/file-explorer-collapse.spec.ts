@@ -1,4 +1,6 @@
-import { test } from "../support/fixtures";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { expect, test } from "../support/fixtures";
 import {
   collapseFolder,
   expandFolder,
@@ -49,3 +51,33 @@ test.describe("File explorer collapse", () => {
     await expectExplorerEntryVisible(page, "guide.md");
   });
 });
+
+test("Files Refresh reveals new files when a cached collapsed folder is reopened", async ({
+  page,
+}) => {
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await expandFolder(page, "docs");
+  await expectExplorerEntryVisible(page, "guide.md");
+  await collapseFolder(page, "docs");
+  await expectExplorerEntryHidden(page, "guide.md");
+  await createFileOutsidePaseo("docs/NEW.md");
+  await refreshFiles(page);
+  await expandFolder(page, "docs");
+  await expectExplorerEntryVisible(page, "guide.md");
+  await expectExplorerEntryVisible(page, "NEW.md");
+
+  await createFileOutsidePaseo("docs/NEXT.md");
+  await refreshFiles(page);
+  await expectExplorerEntryVisible(page, "NEXT.md");
+});
+
+async function refreshFiles(page: import("@playwright/test").Page): Promise<void> {
+  const refresh = page.getByRole("button", { name: "Refresh files", exact: true });
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+}
+
+async function createFileOutsidePaseo(filePath: string): Promise<void> {
+  await writeFile(path.join(workspace.repoPath, filePath), "# New output\n");
+}
