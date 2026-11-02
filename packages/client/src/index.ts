@@ -21,6 +21,7 @@ import type {
   ListProviderFeaturesRequestMessage,
   ListProviderFeaturesResponseMessage,
   ListProviderModelsResponseMessage,
+  ProjectIconGetResponse,
   ProjectListRequestMessage,
   ProjectListResponseMessage,
   ListProviderModesResponseMessage,
@@ -63,6 +64,7 @@ import type {
   FetchAgentTimelineProjection,
   SendMessageOptions,
   WaitForFinishResult,
+  WorkspaceLabelListPayload,
 } from "./daemon-client.js";
 
 /**
@@ -122,6 +124,7 @@ export type PaseoProjectUpdate = Extract<
   { type: "project.update" }
 >["payload"];
 export type PaseoProjectUpdateHandler = (update: PaseoProjectUpdate) => void;
+export type PaseoProjectIconResult = ProjectIconGetResponse["payload"];
 
 export interface PaseoAgentListResult {
   subscription?: OwnedSubscription<PaseoAgentListResult>;
@@ -199,8 +202,21 @@ export interface PaseoWorkspaceHandle {
   subscribe(handler: (update: PaseoWorkspaceUpdate) => void): () => void;
 }
 
+/** A host-wide label definition. Workspace descriptors list assigned names in `labels`. */
+export type PaseoWorkspaceLabel = WorkspaceLabelListPayload["labels"][number];
+export type PaseoWorkspaceLabelListResult = WorkspaceLabelListPayload;
+export interface PaseoWorkspaceLabelListOptions {
+  requestId?: string;
+}
+
 export interface PaseoProjectActions {
   list(options?: PaseoProjectListOptions): Promise<PaseoProjectListResult>;
+  /**
+   * Reads the icon the app shows for a project: a custom icon when one is set, otherwise the
+   * one detected in the project root. `icon` is null when the project has none; `error`
+   * reports a failed read. Cache by the project's `projectIconRevision`.
+   */
+  icon(projectId: string, requestId?: string): Promise<PaseoProjectIconResult>;
   subscribe(handler: PaseoProjectUpdateHandler): () => void;
 }
 
@@ -222,6 +238,18 @@ export interface PaseoWorkspaceActions {
     workspace: string | PaseoWorkspaceHandle,
     requestId?: string,
   ): Promise<PaseoWorkspaceArchiveResult>;
+  /**
+   * Lists the host's workspace label definitions, each a name and a color. Pass `subscribe: {}`
+   * to keep the list live: observe the returned `subscription` for `workspace.label.update`
+   * messages, and release it when done.
+   */
+  listLabels(options: PaseoWorkspaceLabelListOptions & { subscribe: {} }): Promise<
+    PaseoWorkspaceLabelListResult & {
+      subscriptionId: string;
+      subscription: OwnedSubscription<PaseoWorkspaceLabelListResult>;
+    }
+  >;
+  listLabels(options?: PaseoWorkspaceLabelListOptions): Promise<PaseoWorkspaceLabelListResult>;
   /**
    * Local event subscription over the low-level driver's workspace_update stream.
    * The returned function only removes this SDK listener.
@@ -698,6 +726,30 @@ export function createPaseoApi(
     return { ...(await subscription.ready), subscription };
   }
 
+  function listWorkspaceLabels(
+    options: PaseoWorkspaceLabelListOptions & { subscribe: {} },
+  ): Promise<
+    PaseoWorkspaceLabelListResult & {
+      subscriptionId: string;
+      subscription: OwnedSubscription<PaseoWorkspaceLabelListResult>;
+    }
+  >;
+  function listWorkspaceLabels(
+    options?: PaseoWorkspaceLabelListOptions,
+  ): Promise<PaseoWorkspaceLabelListResult>;
+  async function listWorkspaceLabels(
+    options?: PaseoWorkspaceLabelListOptions & { subscribe?: {} },
+  ): Promise<
+    PaseoWorkspaceLabelListResult & {
+      subscription?: OwnedSubscription<PaseoWorkspaceLabelListResult>;
+    }
+  > {
+    if (!options?.subscribe)
+      return daemonClient.listWorkspaceLabels({ requestId: options?.requestId });
+    const subscription = own(() => daemonClient.observeWorkspaceLabels());
+    return { ...(await subscription.ready), subscription };
+  }
+
   function listAgents(options: PaseoAgentListOptions & { subscribe: {} }): Promise<
     PaseoAgentListResult & {
       subscriptionId: string;
@@ -727,6 +779,7 @@ export function createPaseoApi(
     terminals,
     projects: {
       list: (options) => daemonClient.listProjects(options),
+      icon: (projectId, requestId) => daemonClient.getProjectIcon(projectId, requestId),
       subscribe: (handler) => {
         return subscribeEvent("project.update", (message) => {
           if (message.type === "project.update") handler(message.payload);
@@ -761,6 +814,7 @@ export function createPaseoApi(
       },
       archive: (workspace, requestId) =>
         daemonClient.archiveWorkspace(resolveWorkspaceId(workspace), requestId),
+      listLabels: listWorkspaceLabels,
       subscribe: listenWorkspaces,
     },
     agents: {
