@@ -5,8 +5,6 @@ import { Portal, PortalHost } from "@gorhom/portal";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { EdgeFade } from "@/components/ui/edge-fade";
 
-import { FLOATING_HEADER_FADE_OVERHANG, floatingHeaderOverlayClearance } from "./clearance";
-
 const OverlayClearanceContext = createContext(0);
 const OverlayHostContext = createContext<string | null>(null);
 
@@ -24,7 +22,7 @@ export function useFloatingHeaderOverlayClearance(): number {
 }
 
 /** How far the fade runs past the header's bottom edge, so content dissolves instead of clipping. */
-const FADE_OVERHANG = FLOATING_HEADER_FADE_OVERHANG;
+const FADE_OVERHANG = 48;
 /** Share of the fade that stays opaque, so the header's title and icons keep contrast. */
 const FADE_SOLID_FRACTION = 0.57;
 
@@ -46,7 +44,7 @@ export function FloatingHeaderLayout({ header, floating, children }: FloatingHea
     setHeaderHeight(Math.round(event.nativeEvent.layout.height));
   }, []);
 
-  const overlayClearance = floatingHeaderOverlayClearance(floating, headerHeight);
+  const overlayClearance = floating ? headerHeight : 0;
 
   return (
     <View style={styles.root}>
@@ -66,7 +64,12 @@ export function FloatingHeaderLayout({ header, floating, children }: FloatingHea
             backdrop="surfaceWorkspace"
             style={styles.fade}
           />
-          <View pointerEvents="box-none" onLayout={handleHeaderLayout}>
+          <View
+            testID="floating-header"
+            collapsable={false}
+            pointerEvents="box-none"
+            onLayout={handleHeaderLayout}
+          >
             {header}
           </View>
         </View>
