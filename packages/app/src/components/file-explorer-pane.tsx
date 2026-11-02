@@ -64,6 +64,10 @@ import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import {
+  DIRECTORY_LISTING_INVALIDATED,
+  type DirectoryListingResult,
+} from "@/file-explorer/directory-listings";
 import { isHiddenExplorerPath } from "@/file-explorer/visibility";
 import {
   flattenExplorerTree,
@@ -1428,7 +1432,7 @@ function toggleDirectory({
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
-  ) => Promise<ExplorerDirectory | null>;
+  ) => Promise<DirectoryListingResult>;
   setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: ExpandedPathsUpdate) => void;
 }): void {
   if (!workspaceStateKey) {
@@ -1565,7 +1569,7 @@ async function initializeExplorer({
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
-  ) => Promise<ExplorerDirectory | null>;
+  ) => Promise<DirectoryListingResult>;
   setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: ExpandedPathsUpdate) => void;
 }): Promise<void> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
@@ -1576,6 +1580,7 @@ async function initializeExplorer({
     recordHistory: false,
     setCurrentPath: false,
   });
+  if (rootDirectory === DIRECTORY_LISTING_INVALIDATED) return;
   if (!rootDirectory) {
     hasInitializedRef.current = false;
     return;
@@ -1597,7 +1602,10 @@ async function initializeExplorer({
   const hiddenPersistedPaths = showHiddenFiles
     ? []
     : Array.from(persistedExpandedPaths).filter(isHiddenExplorerPath);
-  const restoredPathsWithHidden = [...restoredPaths, ...hiddenPersistedPaths];
+  const restoredPathsWithHidden =
+    restoredPaths === DIRECTORY_LISTING_INVALIDATED
+      ? DIRECTORY_LISTING_INVALIDATED
+      : [...restoredPaths, ...hiddenPersistedPaths];
   setExpandedPathsForWorkspace(workspaceStateKey, (currentPaths) =>
     reconcileRestoredExpandedPaths({
       persistedExpandedPaths,

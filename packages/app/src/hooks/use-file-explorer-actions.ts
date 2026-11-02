@@ -1,14 +1,11 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  useSessionStore,
-  type AgentFileExplorerState,
-  type ExplorerDirectory,
-} from "@/stores/session-store";
+import { useSessionStore, type AgentFileExplorerState } from "@/stores/session-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { revealExplorerDirectory } from "@/file-explorer/tree";
 import {
   loadExplorerDirectory,
+  type DirectoryListingResult,
   invalidateExplorerDirectoryListings,
 } from "@/file-explorer/directory-listings";
 import { parentExplorerPath } from "@/utils/explorer-paths";
@@ -94,7 +91,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     async (
       path: string,
       options?: { recordHistory?: boolean; setCurrentPath?: boolean },
-    ): Promise<ExplorerDirectory | null> => {
+    ): Promise<DirectoryListingResult> => {
       if (!workspaceStateKey) {
         return null;
       }

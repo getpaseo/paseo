@@ -98,3 +98,20 @@ test("Files Refresh ignores an old reply for a folder collapsed while loading", 
   await expandFolder(page, "docs");
   await expectExplorerEntryVisible(page, "DELAYED.md");
 });
+
+test("Files Refresh preserves expanded folders while their saved view is restoring", async ({
+  page,
+}) => {
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await expandFolder(page, "docs");
+  await expectExplorerEntryVisible(page, "guide.md");
+  const reply = await delayDirectoryListingResponse(page, "docs");
+  await page.reload();
+  await openFileExplorer(page);
+  await reply.waitUntilHeld();
+  await refreshFiles(page);
+  await expectExplorerEntryVisible(page, "guide.md");
+  await reply.release();
+  await expectExplorerEntryVisible(page, "guide.md");
+});

@@ -1,5 +1,11 @@
 import type { AgentFileExplorerState, ExplorerDirectory } from "@/stores/session-store";
 
+export const DIRECTORY_LISTING_INVALIDATED = Symbol("directory-listing-invalidated");
+export type DirectoryListingResult =
+  | ExplorerDirectory
+  | null
+  | typeof DIRECTORY_LISTING_INVALIDATED;
+
 type UpdateExplorerState = (
   update: (state: AgentFileExplorerState) => AgentFileExplorerState,
 ) => AgentFileExplorerState | null;
@@ -21,7 +27,7 @@ export async function loadExplorerDirectory({
   updateState: UpdateExplorerState;
   listDirectory: () => Promise<ExplorerDirectory>;
   fallbackError: string;
-}): Promise<ExplorerDirectory | null> {
+}): Promise<DirectoryListingResult> {
   const shouldSetCurrentPath = options?.setCurrentPath ?? true;
   const shouldRecordHistory = options?.recordHistory ?? shouldSetCurrentPath;
   const initial = updateState((state) => ({
@@ -49,19 +55,22 @@ export async function loadExplorerDirectory({
       directories.set(directory.path, directory);
       return { ...state, directories, isLoading: false, lastError: null, pendingRequest: null };
     });
-    return accepted ? directory : null;
+    return accepted ? directory : DIRECTORY_LISTING_INVALIDATED;
   } catch (error) {
-    updateState((state) =>
-      state.listingGeneration !== generation
-        ? state
-        : {
-            ...state,
-            isLoading: false,
-            lastError: error instanceof Error ? error.message : fallbackError,
-            pendingRequest: null,
-          },
-    );
-    return null;
+    let invalidated = false;
+    updateState((state) => {
+      if (state.listingGeneration !== generation) {
+        invalidated = true;
+        return state;
+      }
+      return {
+        ...state,
+        isLoading: false,
+        lastError: error instanceof Error ? error.message : fallbackError,
+        pendingRequest: null,
+      };
+    });
+    return invalidated ? DIRECTORY_LISTING_INVALIDATED : null;
   }
 }
 

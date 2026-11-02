@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { AgentFileExplorerState, ExplorerDirectory } from "@/stores/session-store";
-import { invalidateExplorerDirectoryListings, loadExplorerDirectory } from "./directory-listings";
+import {
+  refreshExplorerDirectories,
+  restoreExpandedDirectories,
+  showHiddenFilesAndRestoreExpandedDirectories,
+  reconcileRestoredExpandedPaths,
+} from "./tree";
+import {
+  DIRECTORY_LISTING_INVALIDATED,
+  invalidateExplorerDirectoryListings,
+  loadExplorerDirectory,
+} from "./directory-listings";
 
 function directory(path: string, names: string[]): ExplorerDirectory {
   return {
@@ -51,7 +61,8 @@ function explorer() {
         fallbackError: "Directory listing failed",
         options: { recordHistory: false, setCurrentPath: false },
       }),
-    refresh: (retained: string[]) => invalidateExplorerDirectoryListings(updateState, retained),
+    refresh: (retained: readonly string[]) =>
+      invalidateExplorerDirectoryListings(updateState, retained),
   };
 }
 
@@ -65,7 +76,7 @@ describe("directory listings across Refresh", () => {
     const freshLoad = model.load(".", fresh.promise);
     old.resolve(directory("docs", ["OLD.md"]));
 
-    await expect(oldLoad).resolves.toBeNull();
+    await expect(oldLoad).resolves.toBe(DIRECTORY_LISTING_INVALIDATED);
     expect(model.state().directories.has("docs")).toBe(false);
     expect(model.state().isLoading).toBe(true);
     expect(model.state().pendingRequest?.path).toBe(".");
@@ -86,7 +97,7 @@ describe("directory listings across Refresh", () => {
     await model.load("docs", Promise.resolve(fresh));
     old.resolve(directory("docs", ["OLD.md"]));
 
-    await expect(oldLoad).resolves.toBeNull();
+    await expect(oldLoad).resolves.toBe(DIRECTORY_LISTING_INVALIDATED);
     expect(model.state().directories.get("docs")).toEqual(fresh);
   });
 
@@ -99,7 +110,7 @@ describe("directory listings across Refresh", () => {
     const freshLoad = model.load(".", fresh.promise);
     old.reject(new Error("Old request failed"));
 
-    await expect(oldLoad).resolves.toBeNull();
+    await expect(oldLoad).resolves.toBe(DIRECTORY_LISTING_INVALIDATED);
     expect(model.state().lastError).toBeNull();
     expect(model.state().isLoading).toBe(true);
     fresh.resolve(directory(".", ["docs"]));
@@ -119,3 +130,51 @@ describe("directory listings across Refresh", () => {
     expect(model.state().history).toEqual(["."]);
   });
 });
+
+it.each([false, true])(
+  "preserves saved expansion when Refresh invalidates restoration (hidden: %s)",
+  async (hidden) => {
+    const model = explorer();
+    const folder = hidden ? ".hidden" : "docs";
+    const root: ExplorerDirectory = {
+      path: ".",
+      entries: [
+        {
+          name: folder,
+          path: folder,
+          kind: "directory",
+          size: 0,
+          modifiedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const saved = new Set([".", folder]);
+    const pending = deferred<ExplorerDirectory>();
+    const input = {
+      rootDirectory: root,
+      persistedExpandedPaths: saved,
+      requestDirectoryListing: (path: string) => model.load(path, pending.promise),
+    };
+    const restoration = hidden
+      ? showHiddenFilesAndRestoreExpandedDirectories({ ...input, showHiddenFiles: () => {} })
+      : restoreExpandedDirectories({ ...input, showHiddenFiles: false });
+    const fresh = directory(folder, ["NEW.md"]);
+    await refreshExplorerDirectories({
+      hasWorkspaceScope: true,
+      expandedPaths: saved,
+      showHiddenFiles: hidden,
+      invalidateDirectoryListings: model.refresh,
+      requestDirectoryListing: (path) =>
+        model.load(path, Promise.resolve(path === "." ? root : fresh)),
+    });
+    pending.resolve(directory(folder, ["OLD.md"]));
+    const restored = await restoration;
+    const expanded = reconcileRestoredExpandedPaths({
+      persistedExpandedPaths: saved,
+      currentExpandedPaths: saved,
+      restoredExpandedPaths: restored,
+    });
+    expect(model.state().directories.get(folder)).toEqual(fresh);
+    expect(expanded).toEqual([".", folder]);
+  },
+);
