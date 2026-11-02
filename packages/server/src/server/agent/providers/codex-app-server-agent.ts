@@ -6781,10 +6781,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     return !this.closed && this.activeForegroundTurnId === turnId;
   }
 
-  private forgetPendingToolCallDetail(itemId: string | null | undefined): void {
-    if (itemId) this.pendingToolCallDetails.delete(itemId);
-  }
-
   private async handleItemCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
   ): Promise<void> {
@@ -6796,7 +6792,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
     }
-    this.forgetPendingToolCallDetail(parsed.item.id);
+    if (parsed.item.id) {
+      this.pendingToolCallDetails.delete(parsed.item.id);
+    }
     this.receiveAsyncQuestion(parsed.threadId, parsed.item);
     if (this.isUserMessageItem(parsed.item)) {
       await this.handleUserMessageItem(parsed);
@@ -6844,10 +6842,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (timelineItem.type === "assistant_message") {
         this.pendingAssistantMessageBoundary = true;
       }
-      if (itemId) {
-        this.emittedItemCompletedIds.add(itemId);
-        this.emittedItemStartedIds.delete(itemId);
-      }
+      this.emittedItemCompletedIds.add(itemId);
+      this.emittedItemStartedIds.delete(itemId);
       await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
     }
@@ -6883,7 +6879,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private consumeStreamedTextCompletion(
     timelineItem: AgentTimelineItem,
     itemId: string | null | undefined,
-  ): boolean {
+  ): itemId is string {
     if (!itemId) {
       return false;
     }
@@ -7280,15 +7276,16 @@ export class CodexAppServerAgentSession implements AgentSession {
       input: { reason: parsed.reason ?? null },
       output: null,
     };
+    const title =
+      detail.type === "edit" && detail.filePath
+        ? `Apply file changes: ${detail.filePath}`
+        : "Apply file changes";
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: CODEX_PROVIDER,
       name: "CodexFileChange",
       kind: "tool",
-      title:
-        detail.type === "edit" && detail.filePath
-          ? `Apply file changes: ${detail.filePath}`
-          : "Apply file changes",
+      title,
       description: parsed.reason ?? undefined,
       detail,
       metadata: {

@@ -236,21 +236,13 @@ describe("Codex file-change approvals", () => {
         ["file-alpha", "/workspace/project/alpha.txt", "@@ -1 +1 @@\n-blue\n+green\n"],
         ["file-beta", "/workspace/project/beta.txt", "@@ -1 +1 @@\n-small\n+large\n"],
       ]) {
-        appServer.child.stdout.write(
-          `${JSON.stringify({
-            method: "item/started",
-            params: {
-              threadId: "thread-1",
-              turnId: "native-A",
-              item: {
-                type: "fileChange",
-                id,
-                status: "inProgress",
-                changes: [{ path: filePath, kind: { type: "update", move_path: null }, diff }],
-              },
-            },
-          })}\n`,
-        );
+        appServer.startsFileChange({
+          threadId: "thread-1",
+          turnId: "native-A",
+          callId: id,
+          path: filePath,
+          diff,
+        });
       }
       const permission = waitForNextPermission(session);
       appServer.requestFileChangeApproval({
