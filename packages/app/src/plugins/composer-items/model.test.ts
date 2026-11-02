@@ -205,6 +205,9 @@ describe("toPluginComposer", () => {
 
     expect(() => composer.setPrompt("a")).toThrow("The composer is locked");
     expect(() => composer.insertText("b")).toThrow("The composer is locked");
+    expect(() => composer.addAttachment({ sourceId: "issues", item: issue })).toThrow(
+      "The composer is locked",
+    );
     await expect(composer.setProvider("codex")).rejects.toThrow("The composer is locked");
     await expect(composer.setModel("gpt")).rejects.toThrow("The composer is locked");
     await expect(composer.setMode("plan")).rejects.toThrow("The composer is locked");
@@ -231,6 +234,12 @@ describe("toPluginComposer", () => {
     input.isLocked = () => lock.locked;
 
     expect(() => composer.insertText("late")).toThrow("The composer is locked");
+    expect(() => composer.addAttachment({ sourceId: "issues", item: issue })).toThrow(
+      "The composer is locked",
+    );
+    expect(() => composer.removeAttachment({ sourceId: "issues", itemId: issue.id })).toThrow(
+      "The composer is locked",
+    );
     await expect(composer.setOptions({ effort: "low" })).rejects.toThrow("The composer is locked");
   });
 

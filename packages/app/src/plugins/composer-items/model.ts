@@ -68,6 +68,7 @@ export function toPluginComposer(input: {
       composerInput.insertText(text);
     },
     addAttachment({ sourceId, item }) {
+      assertUnlocked(composerInput.isLocked);
       const source = plugin.attachmentSources.find((candidate) => candidate.id === sourceId);
       if (!source) throw new Error(`Unknown attachment source: ${sourceId}`);
       const attachment = createPluginResourceAttachment(
@@ -86,6 +87,7 @@ export function toPluginComposer(input: {
       );
     },
     removeAttachment({ sourceId, itemId }) {
+      assertUnlocked(composerInput.isLocked);
       composerInput.changeAttachments((current) =>
         current.filter((candidate) => !isPluginAttachment(candidate, plugin.id, sourceId, itemId)),
       );
