@@ -1600,6 +1600,111 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("closes a history-only Pi runtime after replaying its timeline", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+
+    const client: import("../../agent-sdk-types.js").AgentClient = createClient(pi);
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+
+    onTestFinished(() => session.close());
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "timeline",
+          provider: "pi",
+          item: expect.objectContaining({ type: "assistant_message", text: "Old answer" }),
+        }),
+      ]),
+    );
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    await session.close();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay is stopped", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect((await history.next()).done).toBe(false);
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay fails", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.getMessagesError = new Error("History unavailable");
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    await expect(history.next()).rejects.toThrow("History unavailable");
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("keeps an interactive Pi runtime open after replaying history", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: tmpdir() },
+    });
+    onTestFinished(() => session.close());
+    for await (const _event of session.streamHistory()) {
+      // Hydrate the session before its next interactive prompt.
+    }
+    expect(pi.latestSession().closeCalls).toBe(0);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ provider: "pi" });
+  });
+
   test("resumes a session whose model was removed on the model Pi falls back to", async () => {
     const pi = new FakePi();
     pi.removeModel("9router/deepseek-v4-flash");
@@ -3740,14 +3845,17 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     },
   );
 
-  test("a history resume of an agent whose folder is gone removes its session copy on close and leaves the original unchanged", async () => {
+  test("a history resume of an agent whose folder is gone removes its session copy after replay and leaves the original unchanged", async () => {
     const archived = writeArchivedSession(createDeletedFolder());
     const pi = new FakePi();
 
     const session = await resumeArchived(createClient(pi), archived, "history");
     const sessionCopy = pi.recordedLaunches[0]!.session!;
     expect(existsSync(sessionCopy)).toBe(true);
-    await session.close();
+    for await (const _event of session.streamHistory()) {
+      // Completion releases both the runtime and its temporary session copy.
+    }
+    expect(pi.latestSession().closeCalls).toBe(1);
 
     expect(existsSync(path.dirname(sessionCopy))).toBe(false);
     expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
