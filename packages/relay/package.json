@@ -39,6 +39,7 @@
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "base64-js": "^1.5.1",
+    "fflate": "^0.8.2",
     "tweetnacl": "^1.0.3",
     "ws": "^8.14.2"
   },

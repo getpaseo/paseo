@@ -700,7 +700,7 @@ async function waitForCapturedLog(
     120000,
   );
 
-  test("daemon connects to relay and client ping/pong works through relay", async () => {
+  test("daemon connects to relay, negotiates binary deflate frames, and ping/pong works", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
     const { logger, lines } = createCapturingLogger();
@@ -723,6 +723,7 @@ async function waitForCapturedLog(
       });
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
+      const wireFrames: Array<{ isBinary: boolean; text?: string }> = [];
       const stableClientId = `cid_test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
@@ -766,6 +767,7 @@ async function waitForCapturedLog(
         };
 
         ws.on("message", (data, isBinary) => {
+          wireFrames.push(isBinary ? { isBinary } : { isBinary, text: data.toString() });
           transport.onmessage?.({
             data: isBinary
               ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
@@ -829,6 +831,16 @@ async function waitForCapturedLog(
       });
 
       expect(received).toEqual({ type: "pong" });
+      // Text frames are only (possibly retried) handshake replies; all app traffic is binary.
+      const textFrames = wireFrames.filter((frame) => !frame.isBinary);
+      expect(textFrames.length).toBeGreaterThan(0);
+      for (const frame of textFrames) {
+        expect(JSON.parse(frame.text ?? "")).toEqual({
+          type: "e2ee_ready",
+          capabilities: { binaryCiphertext: true, deflatePayloads: true },
+        });
+      }
+      expect(wireFrames.filter((frame) => frame.isBinary).length).toBeGreaterThan(0);
     } catch (err) {
       const tail = lines.slice(-50).join("");
       // Only prints on failure to help diagnose relay handshake issues.
