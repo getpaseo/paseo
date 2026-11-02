@@ -1,4 +1,6 @@
 import { PLUGINS_LINKED } from "~/plugins/launch";
+import { categoryHref } from "~/plugins/links";
+import type { CategorySlug } from "~/plugins/categories";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -10,7 +12,7 @@ import {
   ExternalLink,
   Gem,
   GitFork,
-  LayoutPanelLeft,
+  GitPullRequest,
   Laptop,
   Lock,
   Merge,
@@ -19,16 +21,17 @@ import {
   Smartphone,
   Terminal,
   Users,
-  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import {
   motion,
   AnimatePresence,
   useInView,
+  useReducedMotion,
   useScroll,
   useTransform,
   type Transition,
+  type Variants,
 } from "framer-motion";
 
 // Shared motion presets — hoisted so every JSX site receives the same object
@@ -86,7 +89,14 @@ import {
   PiIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
+import {
+  MobileChat,
+  MobileDiff,
+  MobileSidebar,
+  PhoneFrame,
+  type ToolCall,
+  ToolCallRow,
+} from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
 import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
@@ -132,8 +142,8 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <SocialProofWall />
             <MultiProviderSection />
             <TurnkeySection />
-            <AutomationSection />
             <ExtensibleSection />
+            <AutomationSection />
             <SponsorsSection placement="page" />
             <SponsorSection />
             <PhilosophySection />
@@ -703,41 +713,50 @@ function AutomationDetail({ kind }: { kind: AutomationKind }) {
   );
 }
 
+const MCP_AGENT_CALLS: ToolCall[] = [
+  { kind: "paseo", label: "Create agent", detail: "Fix #412: retry flaky relay handshake" },
+  { kind: "paseo", label: "Create agent", detail: "Fix #417: group schedules by project" },
+];
+
 function McpAutomationTranscript() {
   const { t } = useTranslation();
   return (
+    <AgentTurn request={t("landing.automation.transcriptRequest")}>
+      <AgentText>{t("landing.automation.transcriptPlan")}</AgentText>
+      <ToolCalls calls={MCP_AGENT_CALLS} />
+      <AgentText>{t("landing.automation.transcriptDone")}</AgentText>
+    </AgentTurn>
+  );
+}
+
+/** A user message and the agent's reply, laid out like the app's timeline. */
+function AgentTurn({ request, children }: { request: string; children: React.ReactNode }) {
+  return (
     <div className="space-y-5">
-      <div className="ml-auto w-fit max-w-xl rounded-xl rounded-tr-none bg-white/[0.07] px-4 py-3">
-        <p className="text-sm leading-relaxed text-white/75">
-          {t("landing.automation.transcriptRequest")}
-        </p>
-      </div>
-      <div className="flex items-start gap-3">
-        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
-        <div className="min-w-0 flex-1 space-y-4">
-          <p className="text-sm leading-relaxed text-white/55">
-            {t("landing.automation.transcriptPlan")}
-          </p>
-          <div className="space-y-2 font-mono text-[11px]">
-            <McpAgentCall issue="#412" provider="claude/opus-4.6" />
-            <McpAgentCall issue="#417" provider="codex/gpt-5.6-sol" />
-          </div>
-          <p className="text-sm leading-relaxed text-white/55">
-            {t("landing.automation.transcriptDone")}
-          </p>
-        </div>
-      </div>
+      <UserMessage>{request}</UserMessage>
+      <div className="space-y-3">{children}</div>
     </div>
   );
 }
 
-function McpAgentCall({ issue, provider }: { issue: string; provider: string }) {
+function UserMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-white/[0.07] bg-white/[0.025] px-3 py-2">
-      <span className="text-sky-300/80">create_agent</span>
-      <span className="text-white/25">{issue}</span>
-      <span className="text-white/35">{provider}</span>
-      <span className="text-white/25">worktree</span>
+    <div className="ml-auto w-fit max-w-md rounded-xl bg-white/[0.07] px-4 py-3">
+      <p className="text-sm leading-relaxed text-white/80">{children}</p>
+    </div>
+  );
+}
+
+function AgentText({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm leading-relaxed text-white/80">{children}</p>;
+}
+
+function ToolCalls({ calls }: { calls: ReadonlyArray<ToolCall> }) {
+  return (
+    <div>
+      {calls.map((call) => (
+        <ToolCallRow key={`${call.kind}:${call.detail}`} call={call} />
+      ))}
     </div>
   );
 }
@@ -842,17 +861,16 @@ function ExtensibleSection() {
       title={t("landing.plugins.title")}
       description={t("landing.plugins.description")}
     >
-      <div className="space-y-8">
-        <ProductLead icon={Puzzle} title={t("landing.plugins.lead")} actions={pluginActions} />
-        <div className="grid gap-4 md:grid-cols-3">
-          {PLUGIN_CAPABILITIES.map((capability) => (
-            <FeatureCard
-              key={capability.key}
-              icon={capability.icon}
-              title={t(`landing.plugins.${capability.key}Title`)}
-              description={t(`landing.plugins.${capability.key}Description`)}
-            />
-          ))}
+      <div className="space-y-12">
+        <SelfModifyDemo />
+        <div className="space-y-6">
+          <ProductLead
+            icon={Puzzle}
+            title={t("landing.plugins.libraryTitle")}
+            description={t("landing.plugins.libraryDescription")}
+            actions={pluginActions}
+          />
+          <PluginCategoryLinks />
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-white/45">{t("landing.plugins.license")}</p>
@@ -869,6 +887,156 @@ function ExtensibleSection() {
         </div>
       </div>
     </FeatureSection>
+  );
+}
+
+const PLUGIN_BUILD_CALLS: ToolCall[] = [
+  { kind: "read", detail: "paseo-plugin/SKILL.md" },
+  { kind: "shell", detail: "paseo plugin init review-queue" },
+  { kind: "write", detail: "review-queue/index.ts" },
+  { kind: "write", detail: "review-queue/review-queue.client.tsx" },
+  { kind: "shell", detail: "paseo plugin install ./review-queue" },
+];
+
+// The demo plays once when it scrolls into view: the prompt, then each timeline
+// item in turn, then the panel the agent built slides in and fills.
+const DEMO_STEP_SECONDS = 0.45;
+const DEMO_STEPS = {
+  prompt: 0,
+  plan: 1.4,
+  firstCall: 2.2,
+} as const;
+const DEMO_DONE_STEP = DEMO_STEPS.firstCall + PLUGIN_BUILD_CALLS.length;
+const DEMO_PANEL_STEP = DEMO_DONE_STEP + 1;
+
+const DEMO_ITEM_VARIANTS: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  shown: (step: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: step * DEMO_STEP_SECONDS, duration: 0.35, ease: "easeOut" },
+  }),
+};
+const DEMO_PANEL_VARIANTS: Variants = {
+  hidden: { opacity: 0, x: "100%" },
+  shown: {
+    opacity: 1,
+    x: 0,
+    transition: {
+      delay: DEMO_PANEL_STEP * DEMO_STEP_SECONDS,
+      duration: 0.6,
+      ease: [0.22, 0.61, 0.36, 1],
+    },
+  },
+};
+
+/** One piece of the demo that fades in at its step. */
+function DemoItem({ step, children }: { step: number; children: React.ReactNode }) {
+  return (
+    <motion.div variants={DEMO_ITEM_VARIANTS} custom={step}>
+      {children}
+    </motion.div>
+  );
+}
+
+/** The ask on the left, the panel it produced on the right. */
+function SelfModifyDemo() {
+  const { t } = useTranslation();
+  // Visitors who ask for reduced motion get the finished demo, with no slide or staging.
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduceMotion ? "shown" : "hidden"}
+      whileInView="shown"
+      viewport={VIEWPORT_60}
+      className="grid min-h-[22rem] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-xl border border-white/10 bg-black/20 md:grid-cols-[minmax(0,1fr)_17rem]"
+    >
+      <div className="space-y-5 p-5 md:p-6">
+        <DemoItem step={DEMO_STEPS.prompt}>
+          <UserMessage>{t("landing.plugins.request")}</UserMessage>
+        </DemoItem>
+        <div className="space-y-3">
+          <DemoItem step={DEMO_STEPS.plan}>
+            <AgentText>{t("landing.plugins.plan")}</AgentText>
+          </DemoItem>
+          <div>
+            {PLUGIN_BUILD_CALLS.map((call, index) => (
+              <DemoItem key={`${call.kind}:${call.detail}`} step={DEMO_STEPS.firstCall + index}>
+                <ToolCallRow call={call} />
+              </DemoItem>
+            ))}
+          </div>
+          <DemoItem step={DEMO_DONE_STEP}>
+            <AgentText>{t("landing.plugins.done")}</AgentText>
+          </DemoItem>
+        </div>
+      </div>
+      <ReviewQueuePreview />
+    </motion.div>
+  );
+}
+
+const REVIEW_QUEUE = [
+  { number: "#418", title: "Retry flaky relay handshake", author: "ana", age: "12m" },
+  { number: "#415", title: "Group schedules by project", author: "kenji", age: "1h" },
+  { number: "#409", title: "Add Gruvbox theme", author: "lea", age: "3h" },
+] as const;
+
+/** The panel the agent just built, docked like a real sidebar panel. */
+function ReviewQueuePreview() {
+  const { t } = useTranslation();
+  return (
+    <motion.div
+      variants={DEMO_PANEL_VARIANTS}
+      className="border-t border-white/10 bg-white/[0.025] p-4 md:border-t-0 md:border-l"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <GitPullRequest className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
+        <span className="text-sm font-medium text-white/85">{t("landing.plugins.panelTitle")}</span>
+        <span className="ml-auto rounded-full bg-white/[0.07] px-2 py-0.5 text-[10px] text-white/55">
+          {REVIEW_QUEUE.length}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {REVIEW_QUEUE.map((pr, index) => (
+          <DemoItem key={pr.number} step={DEMO_PANEL_STEP + 1.2 + index * 0.4}>
+            <div className="rounded-md px-2 py-2 hover:bg-white/[0.04]">
+              <p className="truncate text-xs text-white/80">{pr.title}</p>
+              <p className="mt-0.5 font-mono text-[10px] text-white/35">
+                {pr.number} · {pr.author} · {pr.age}
+              </p>
+            </div>
+          </DemoItem>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+const SHOWCASE_CATEGORIES = [
+  "themes",
+  "sidebar",
+  "workspaces",
+  "providers",
+  "orchestration",
+  "git",
+] as const satisfies ReadonlyArray<CategorySlug>;
+
+function PluginCategoryLinks() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  return (
+    <div className="flex flex-wrap gap-2">
+      {SHOWCASE_CATEGORIES.map((category) => (
+        <a
+          key={category}
+          href={localize(categoryHref(category))}
+          className="rounded-full border border-white/10 bg-white/[0.025] px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
+        >
+          {t(`plugins.categories.${category}.label`)}
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -898,12 +1066,6 @@ function PluginActions() {
     </>
   );
 }
-
-const PLUGIN_CAPABILITIES = [
-  { icon: LayoutPanelLeft, key: "ui" },
-  { icon: Workflow, key: "lifecycle" },
-  { icon: Bot, key: "providers" },
-] as const;
 
 const PRINCIPLES = [
   { icon: Lock, key: "private" },

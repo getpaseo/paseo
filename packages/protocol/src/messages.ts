@@ -1612,6 +1612,14 @@ export const PluginRpcInvokeRequestSchema = z.object({
   requestId: z.string(),
   pluginId: PluginIdSchema,
   method: z.string().min(1),
+  input: z.unknown().optional(),
+});
+
+export const PluginRpcSubscribeRequestSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+  method: z.string().min(1),
   input: z.unknown(),
 });
 
@@ -3349,6 +3357,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  PluginRpcSubscribeRequestSchema,
   AgentTimelineAppendRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
@@ -3749,6 +3758,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
+        // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
+        pluginSubscriptions: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -3761,6 +3772,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
+        "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -6986,8 +6999,24 @@ export const PluginRpcInvokeResponseSchema = z.object({
   type: z.literal("plugin.rpc.invoke.response"),
   payload: z.object({
     requestId: z.string(),
-    output: z.unknown(),
+    output: z.unknown().optional(),
   }),
+});
+
+export const PluginRpcSubscribeResponseSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.response"),
+  payload: z.object({ requestId: z.string(), subscriptionId: z.string() }),
+});
+
+/** A JSON subscription event. A `Uint8Array` event rides as binary opcode 0x20 instead. */
+export const PluginRpcEventSchema = z.object({
+  type: z.literal("plugin.rpc.event"),
+  payload: z.object({ subscriptionId: z.string(), event: z.unknown() }),
+});
+
+export const PluginRpcClosedSchema = z.object({
+  type: z.literal("plugin.rpc.closed"),
+  payload: z.object({ subscriptionId: z.string(), error: z.string().optional() }),
 });
 
 export const AgentTimelineAppendResponseSchema = z.object({
@@ -7063,6 +7092,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  PluginRpcSubscribeResponseSchema,
+  PluginRpcEventSchema,
+  PluginRpcClosedSchema,
   AgentTimelineAppendResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,

@@ -1,7 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { claudeProjectDir } from "./project-dir.js";
 import { FakeClaudeSdk } from "./test-rewind-claude-sdk.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentSession } from "../../agent-sdk-types.js";
@@ -265,5 +269,51 @@ describe("Claude rewind after a turn whose last assistant message came from a su
     }
 
     expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
+  });
+});
+
+describe("Claude rewind to a message steered into a running turn", () => {
+  test("forks at the entry Claude read the message after", async () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), "claude-rewind-steer-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    const conversation = createConversation([{ assistantMessageId: "assistant-1" }]);
+    const rewindSdk = new FakeClaudeSdk();
+    const session = await createSession(conversation, rewindSdk);
+
+    try {
+      await runTurns(session, 1);
+      // A steered message opens no turn: Claude Code records it as a queued_command attachment
+      // under the uuid Paseo minted for it, hung off the entry it was read after.
+      const projectDir = await claudeProjectDir(process.cwd(), { configDir });
+      mkdirSync(projectDir, { recursive: true });
+      const entries = [
+        { type: "user", uuid: conversation.userMessageIds[0], parentUuid: null },
+        { type: "assistant", uuid: "assistant-1", parentUuid: conversation.userMessageIds[0] },
+        { type: "user", uuid: "tool-result-1", parentUuid: "assistant-1" },
+        {
+          type: "attachment",
+          uuid: "queued-command-1",
+          parentUuid: "tool-result-1",
+          attachment: { type: "queued_command", source_uuid: "steered-message-1" },
+        },
+      ];
+      writeFileSync(
+        path.join(projectDir, `${SESSION_ID}.jsonl`),
+        entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
+      );
+
+      await session.revertConversation?.({ messageId: "steered-message-1" });
+    } finally {
+      await session.close();
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      rmSync(configDir, { recursive: true, force: true });
+    }
+
+    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "tool-result-1" }]);
   });
 });

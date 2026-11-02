@@ -65,6 +65,7 @@ per-agent examples and provider-specific keys.
 ## Table of Contents
 
 - [Extending a built-in provider](#extending-a-built-in-provider)
+- [OpenCode with an existing v2 server](#opencode-with-an-existing-v2-server)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
@@ -104,6 +105,35 @@ Required fields for custom providers:
 - `label` — display name in the UI
 
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
+
+---
+
+## OpenCode with an existing v2 server
+
+Paseo first uses an explicitly configured server, then a healthy locally registered OpenCode v2 service, then starts its own helper. It never stops a reused service. To select a server explicitly, set its URL in the provider environment:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": {
+          "PASEO_OPENCODE_SERVER_URL": "http://127.0.0.1:4096",
+          "PASEO_OPENCODE_SERVER_PASSWORD": "<server password>"
+        }
+      }
+    }
+  }
+}
+```
+
+`PASEO_OPENCODE_SERVER_URL` must be an absolute `http` or `https` URL. Omit `PASEO_OPENCODE_SERVER_PASSWORD` when the server has no authentication; when set, Paseo authenticates with HTTP Basic auth as `opencode`.
+
+A configured URL takes precedence even when unreachable; Paseo reports the connection error. The local service registration supplies its own authentication. For a discovered local service, Paseo installs its bridge package in OpenCode's watched global plugin directory without changing the existing configuration. Refresh reads the existing service's catalogs without starting another server.
+
+An explicitly configured server needs the bridge installed separately. Connect once and start a session: the setup error gives the local package directory. Copy that directory to the server's OpenCode global `plugins` directory, then retry. For a server on another machine, set `PASEO_OPENCODE_BRIDGE_PORT` in the Paseo OpenCode provider environment before starting Paseo, and set `PASEO_OPENCODE_BRIDGE_URL` to the URL the OpenCode server can use to reach that port. For example, an SSH reverse tunnel can expose the Paseo loopback port on the OpenCode host. The bridge token is exchanged through the OpenCode connection and is not written into the plugin package.
+
+OpenCode's custom MCP registrations are shared by all sessions in a location. Paseo rejects custom MCP servers and per-agent process environment overrides on a reused server rather than applying them to other sessions or ignoring them. Session identity is applied to each session's shell environment. A Paseo-owned helper supports custom process and MCP settings; it is selected when there is no explicit URL or healthy registered service.
 
 ---
 

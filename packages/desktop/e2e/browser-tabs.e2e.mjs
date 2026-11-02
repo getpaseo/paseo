@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
@@ -196,6 +197,20 @@ async function waitForDesktopStatus(page) {
   throw new Error(
     `Timed out waiting for the Electron desktop bridge${lastError ? `: ${String(lastError)}` : ""}`,
   );
+}
+
+async function settleDesktopStartup(page) {
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
+  // The dev launcher supplies its package directory as an open-project request.
+  // Before the local host connects, that request opens the connection prompt.
+  // Finish startup before exercising the unrelated Settings/browser workflows.
+  const connectionPrompt = page.getByTestId("add-host-method-modal");
+  if (await connectionPrompt.isVisible()) {
+    await connectionPrompt.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(connectionPrompt).toBeHidden();
+  }
 }
 
 async function startTargetPage() {
@@ -1208,6 +1223,7 @@ async function main() {
     const page = await waitForAppPage(browser, expoPort);
     await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
+    await settleDesktopStartup(page);
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({

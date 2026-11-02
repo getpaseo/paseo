@@ -50,6 +50,7 @@ import type {
   WorkerTerminalState,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
+import { classifyTerminalProgramProcess } from "./terminal-worker-ownership.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import {
   readUnconfirmedTerminalCleanup,
@@ -881,8 +882,19 @@ it.each([false, true])(
 
     expect(manager.getTerminal(remaining.id)).toBeUndefined();
     expect(await manager.getTerminals(cwd)).toEqual([]);
-    await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
     expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+    const original = record!.terminals.find((entry) => entry.id === remaining.id)!;
+    // Startup can launch a new worker after cleanup and Windows can reuse the old PID.
+    // Require the original process to be gone, not the numeric PID to remain unused.
+    await expect
+      .poll(
+        async () =>
+          !isProcessAlive(remainingPid) ||
+          classifyTerminalProgramProcess(original, await inspector.inspect(remainingPid)).status ===
+            "unrelated",
+        { timeout: 10000 },
+      )
+      .toBe(true);
   },
 );
 
@@ -1611,13 +1623,26 @@ it.each([1, 4])(
   async (version) => {
     const paseoHome = createTemporaryHome();
     const old = await leaveWorkerWithTerminal(paseoHome, version);
+    const [record] = await workerRecords(paseoHome);
+    const program = record!.terminals.find((entry) => entry.id === old.terminalId)!;
+    const inspector = createTerminalWorkerProcessInspector();
 
     manager = await startRealWorkerManager({ paseoHome });
 
-    await waitForCondition(
-      () => !isProcessAlive(old.workerPid) && !isProcessAlive(old.programPid),
-      10000,
-    );
+    expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+    // Startup launches a replacement worker after cleanup. Either old PID may already
+    // belong to another process, so verify that the recorded birth identities are gone.
+    for (const original of [{ pid: record!.pid, ...record!.identity }, program]) {
+      await expect
+        .poll(
+          async () =>
+            !isProcessAlive(original.pid) ||
+            classifyTerminalProgramProcess(original, await inspector.inspect(original.pid))
+              .status === "unrelated",
+          { timeout: 10000 },
+        )
+        .toBe(true);
+    }
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
@@ -1851,7 +1876,8 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
       ...nodeTerminalCommand(`
       const row = Array.from({length: 1000}, (_, i) => "\\x1b[" + (31 + i % 2) + "mX").join("");
       for (let i = 0; i < 900; i++) process.stdout.write(row + "\\r\\n");
-      process.stdout.write("READY-WIDE\\r\\n");
+      // Seeing the marker must mean no trailing newline can still add history.
+      process.stdout.write("READY-WIDE");
       process.stdin.on("data", data => { if (data.toString().includes("small")) { process.stdout.write("SAME-TERMINAL-LIVE\\r\\n"); return; } process.stdout.write("q".repeat(8 * 1024 * 1024) + "\\r\\nRECOVERED-LIVE\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(overflowProgress)}, "done")); });
       setInterval(() => {}, 1000);
     `),

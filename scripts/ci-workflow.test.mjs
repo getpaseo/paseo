@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -678,4 +678,49 @@ test("macOS jobs use latest runners while preserving release architectures", () 
   assert.match(release, /runner: macos-latest\n\s+electron_arch: arm64/);
   // GitHub has no standard macos-latest-intel alias; use the newest Intel image.
   assert.match(release, /runner: macos-26-intel\n\s+electron_arch: x64/);
+});
+
+test("Nix desktop packaging resolves the workspace-local builder", () => {
+  const source = readFileSync(new URL("nix/desktop-package.nix", repoRoot), "utf8");
+  const invocation = source.match(/^\s+([^\n]*electron-builder) \\\n/m)?.[1];
+  assert.ok(invocation, "Nix invokes the desktop packaging tool");
+  const directory = mkdtempSync(join(tmpdir(), "nix-builder-resolution-"));
+  try {
+    const desktop = join(directory, "packages/desktop");
+    mkdirSync(join(desktop, "node_modules/.bin"), { recursive: true });
+    mkdirSync(join(desktop, "node_modules/electron-builder"));
+    writeFileSync(
+      join(desktop, "node_modules/electron-builder/package.json"),
+      JSON.stringify({
+        name: "electron-builder",
+        version: "1.0.0",
+        bin: { "electron-builder": "../.bin/electron-builder" },
+      }),
+    );
+    writeFileSync(
+      join(directory, "package.json"),
+      JSON.stringify({ private: true, workspaces: ["packages/desktop"] }),
+    );
+    writeFileSync(
+      join(desktop, "package.json"),
+      JSON.stringify({
+        name: "desktop-fixture",
+        private: true,
+        devDependencies: { "electron-builder": "1.0.0" },
+      }),
+    );
+    writeFileSync(
+      join(desktop, "node_modules/.bin/electron-builder"),
+      '#!/bin/sh\nprintf "workspace-builder\\n"\n',
+      { mode: 0o755 },
+    );
+    const result = spawnSync("sh", ["-c", `${invocation} --version`], {
+      cwd: desktop,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "workspace-builder");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
