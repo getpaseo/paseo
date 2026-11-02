@@ -1,4 +1,8 @@
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { sendPreparedPromptToAgent } from "../agent-prompt.js";
+import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { HostObservationError } from "../host-operations/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,10 +12,13 @@ import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-clien
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { buildStoredAgentPayload } from "../agent-projections.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import type { FinishRunStarted } from "./internal/observation-buffer.js";
 import {
+  createFinishObservation,
   createFinishSubscriptions,
   createJsonFinishSubscriptionStore,
   type FinishObservation,
+  type FinishSubscription,
   type FinishSubscriptions,
 } from "./index.js";
 
@@ -25,19 +32,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 class Observation implements FinishObservation {
-  waits: Array<{ signal: AbortSignal; result: ReturnType<typeof deferred<WaitForFinishResult>> }> =
-    [];
+  waits: Array<{
+    signal: AbortSignal;
+    result: ReturnType<typeof deferred<WaitForFinishResult | FinishRunStarted>>;
+  }> = [];
   permission = deferred<void>();
   opening: Promise<void> = Promise.resolve();
   openedSignals: AbortSignal[] = [];
-  async open(_record: unknown, signal: AbortSignal) {
+  openedRecords: FinishSubscription[] = [];
+  async open(record: FinishSubscription, signal: AbortSignal) {
     this.openedSignals.push(signal);
+    this.openedRecords.push(record);
     await this.opening;
     return { next: () => this.wait(signal), close: async () => {} };
   }
   async wait(signal: AbortSignal) {
     signal.throwIfAborted();
-    const result = deferred<WaitForFinishResult>();
+    const result = deferred<WaitForFinishResult | FinishRunStarted>();
     signal.addEventListener("abort", () => result.reject(new Error("Stopped")), { once: true });
     this.waits.push({ signal, result });
     return result.promise;
@@ -59,8 +70,11 @@ class Delivery implements AgentMessageDelivery {
       dispatched: acknowledgment.promise,
     };
   }
+  dispatchWaits = 0;
   async close() {}
-  async waitForDispatch() {}
+  async waitForDispatch() {
+    this.dispatchWaits++;
+  }
 }
 const homes: string[] = [];
 const services: FinishSubscriptions[] = [];
@@ -496,4 +510,291 @@ test("finish recovery protects callers before durable intent has loaded", async 
   await starting;
   expect(recovered.hasPendingForCaller("parent")).toBe(true);
   expect(recovered.hasPendingForCaller("unrelated")).toBe(false);
+});
+
+const standing = { ...intent, requireParentOwnership: true, standing: true };
+const runStarted: FinishRunStarted = { runStarted: true };
+function archived(): WaitForFinishResult {
+  const result = outcome("closed");
+  result.final!.archivedAt = "2026-01-02T00:00:00.000Z";
+  return { ...result, noRun: true } as WaitForFinishResult;
+}
+async function reportFirstRun(s: Awaited<ReturnType<typeof scenario>>) {
+  await s.service.register(standing, true).then((registration) => registration.accept());
+  await until(() => s.observation.waits.length === 1);
+  s.observation.waits[0]!.result.resolve(outcome("idle"));
+  await until(() => s.delivery.prompts.length === 1);
+  s.delivery.acknowledgments[0]!.resolve("steered");
+  await until(() => s.observation.waits.length === 2);
+}
+
+test("standing subscription reports each settled run until the child is archived", async () => {
+  const s = await scenario();
+  await reportFirstRun(s);
+  expect(await s.store.list()).toMatchObject([{ standing: true, reported: true }]);
+  const second = outcome("idle");
+  second.lastMessage = "Second run";
+  s.observation.waits[1]!.result.resolve(second);
+  await until(() => s.delivery.prompts.length === 2);
+  expect(s.delivery.prompts[1]).toContain("Second run");
+  s.delivery.acknowledgments[1]!.resolve("steered");
+  await until(() => s.observation.waits.length === 3);
+  s.observation.waits[2]!.result.resolve(archived());
+  await expect.poll(async () => (await s.store.list()).length).toBe(0);
+  expect(s.delivery.prompts).toHaveLength(2);
+});
+
+test("restart resumes a standing subscription without repeating the reported run", async () => {
+  const first = await scenario();
+  await reportFirstRun(first);
+  await first.service.close();
+  const restarted = await scenario(first.home);
+  await until(() => restarted.observation.openedRecords.length === 1);
+  expect(restarted.observation.openedRecords[0]).toMatchObject({ standing: true, reported: true });
+});
+
+test("restart still owes a standing run that started after the reported outcome", async () => {
+  const first = await scenario();
+  await reportFirstRun(first);
+  first.observation.waits[1]!.result.resolve(runStarted);
+  await expect.poll(async () => (await first.store.list())[0]?.reported).toBe(false);
+  await first.service.close();
+  const restarted = await scenario(first.home);
+  await until(() => restarted.observation.openedRecords.length === 1);
+  expect(restarted.observation.openedRecords[0]!.reported).toBe(false);
+});
+
+test("restart still owes a standing outcome whose dispatch was not acknowledged", async () => {
+  const first = await scenario();
+  await reportFirstRun(first);
+  first.observation.waits[1]!.result.resolve(runStarted);
+  await until(() => first.observation.waits.length === 3);
+  first.observation.waits[2]!.result.resolve(outcome("idle"));
+  await until(() => first.delivery.prompts.length === 2);
+  await first.service.close();
+  const restarted = await scenario(first.home);
+  await until(() => restarted.observation.openedRecords.length === 1);
+  expect(restarted.observation.openedRecords[0]!.reported).toBe(false);
+});
+
+test("a follow-up registration for a standing pair keeps reporting after its own outcome", async () => {
+  const s = await scenario();
+  await reportFirstRun(s);
+  const followUp = await s.service.register(intent, true);
+  followUp.accept();
+  await until(() => s.observation.waits.length === 3);
+  expect(s.observation.waits[1]!.signal.aborted).toBe(true);
+  expect(s.observation.openedRecords[1]).toMatchObject({ standing: true, reported: false });
+  s.observation.waits[2]!.result.resolve(outcome("idle"));
+  await until(() => s.delivery.prompts.length === 2);
+  s.delivery.acknowledgments[1]!.resolve("steered");
+  await until(() => s.observation.waits.length === 4);
+  expect(await s.store.list()).toMatchObject([{ standing: true, reported: true }]);
+});
+
+test("a standing subscription holds its caller from each run's start until its outcome is acknowledged", async () => {
+  const s = await scenario();
+  await s.service.register(standing, true).then((registration) => registration.accept());
+  await until(() => s.observation.waits.length === 1);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  s.observation.waits[0]!.result.resolve(outcome("idle"));
+  await until(() => s.delivery.prompts.length === 1);
+  s.delivery.acknowledgments[0]!.resolve("steered");
+  await until(() => s.observation.waits.length === 2);
+  expect(s.service.hasPendingForCaller("parent")).toBe(false);
+  s.observation.waits[1]!.result.resolve(runStarted);
+  await until(() => s.observation.waits.length === 3);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  s.observation.waits[2]!.result.resolve(outcome("idle"));
+  await until(() => s.delivery.prompts.length === 2);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  s.delivery.acknowledgments[1]!.resolve("steered");
+  await until(() => s.observation.waits.length === 4);
+  expect(s.service.hasPendingForCaller("parent")).toBe(false);
+});
+
+test("detachment ends a standing subscription without reporting the detached run", async () => {
+  const s = await scenario();
+  await reportFirstRun(s);
+  const detached = outcome("idle");
+  detached.final!.labels = {};
+  s.observation.waits[1]!.result.resolve(detached);
+  await expect.poll(async () => (await s.store.list()).length).toBe(0);
+  expect(s.delivery.prompts).toHaveLength(1);
+});
+
+async function liveStanding(options: { recordReadDelayMs?: number } = {}) {
+  const home = await mkdtemp(join(tmpdir(), "finish-standing-live-"));
+  homes.push(home);
+  const logger = createTestLogger();
+  const agentStorage = new AgentStorage(join(home, "agents"), logger);
+  const held = deferred<void>();
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients({
+      beforeTurnComplete: async (prompt) =>
+        String(prompt).includes("HOLD") ? held.promise : undefined,
+    }),
+    registry: agentStorage,
+    logger,
+  });
+  const parent = await agentManager.createAgent({ provider: "claude", cwd: home }, undefined, {
+    workspaceId: undefined,
+  });
+  const child = await agentManager.createAgent({ provider: "claude", cwd: home }, undefined, {
+    workspaceId: undefined,
+    labels: { "paseo.parent-agent-id": parent.id },
+  });
+  const delivery = new Delivery();
+  const store = createJsonFinishSubscriptionStore(home);
+  const { recordReadDelayMs } = options;
+  const observedStorage: AgentStorage =
+    recordReadDelayMs === undefined
+      ? agentStorage
+      : Object.assign(Object.create(agentStorage), {
+          async get(agentId: string) {
+            const record = await agentStorage.get(agentId);
+            await new Promise((resolve) => setTimeout(resolve, recordReadDelayMs));
+            return record;
+          },
+        });
+  const service = createFinishSubscriptions({
+    store,
+    messages: () => delivery,
+    callerIsActive: async () => true,
+    serverId: "origin",
+    logger,
+    retryDelayMs: 1,
+    ...createFinishObservation({
+      agentManager,
+      agentStorage: observedStorage,
+      waitForResume: async () => {},
+      messages: () => delivery,
+      hosts: () => {
+        throw new Error("No connected hosts");
+      },
+      serverId: "origin",
+      logger,
+    }),
+  });
+  services.push(service);
+  await service.start();
+  const send = (prompt: string) =>
+    sendPreparedPromptToAgent({ agentManager, agentStorage, agentId: child.id, prompt, logger });
+  const registration = await service.register(
+    {
+      callerAgentId: parent.id,
+      childAgentId: child.id,
+      requireParentOwnership: true,
+      standing: true,
+    },
+    true,
+  );
+  return { agentManager, agentStorage, child, delivery, store, send, registration, held };
+}
+async function liveChild() {
+  const live = await liveStanding();
+  await live.send("First task");
+  live.registration.accept();
+  await until(() => live.delivery.prompts.length === 1);
+  live.delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(async () => (await live.store.list())[0]?.reported).toBe(true);
+  return live;
+}
+
+test("a standing subscription follows a live child across idle cleanup, resume and archive", async () => {
+  const { agentManager, child, delivery, store, send } = await liveChild();
+  // Idle cleanup closes the runtime and keeps the record; that is not the end of the child.
+  await agentManager.closeAgent(child.id);
+  await send("Second task");
+  await until(() => delivery.prompts.length === 2);
+  expect(delivery.prompts[1]).toContain(`Agent ${child.id}`);
+  expect(delivery.prompts[1]).toContain("finished");
+  delivery.acknowledgments[1]!.resolve("steered");
+  await expect.poll(async () => (await store.list())[0]?.reported).toBe(true);
+  await agentManager.closeAgent(child.id);
+  await agentManager.archiveSnapshot(child.id, new Date().toISOString());
+  await expect.poll(async () => store.list()).toEqual([]);
+  expect(delivery.prompts).toHaveLength(2);
+});
+
+test("a standing subscription reports a run closed midway and keeps watching", async () => {
+  // A slow record read holds back the closed state, so the opening wait's own result arrives first.
+  const { agentManager, child, delivery, store, send, registration, held } = await liveStanding({
+    recordReadDelayMs: 20,
+  });
+  // The watch opens while the child's first run is still working, as it does at creation.
+  const first = send("HOLD the first task");
+  await expect.poll(() => agentManager.getAgent(child.id)?.lifecycle).toBe("running");
+  registration.accept();
+  await until(() => delivery.dispatchWaits === 1);
+  // A close in the middle of a run, as kill_agent or the app's close does, keeps the child.
+  await agentManager.closeAgent(child.id);
+  await until(() => delivery.prompts.length === 1);
+  expect(delivery.prompts[0]).toContain(`Agent ${child.id}`);
+  expect(delivery.prompts[0]).toContain("was closed");
+  delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(async () => (await store.list())[0]?.reported).toBe(true);
+  held.resolve();
+  await first.catch(() => undefined);
+  await send("Second task");
+  await until(() => delivery.prompts.length === 2);
+  expect(delivery.prompts[1]).toContain("finished");
+  expect(await store.list()).toHaveLength(1);
+});
+
+test("a standing observation opened over a stale running record waits for a real run", async () => {
+  const { agentManager, agentStorage, child, delivery, send } = await liveChild();
+  // A close whose snapshot write failed leaves the record running with no runtime behind it.
+  await agentManager.closeAgent(child.id);
+  await agentStorage.upsert({ ...(await agentStorage.get(child.id))!, lastStatus: "running" });
+  const observation = createFinishObservation({
+    agentManager,
+    agentStorage,
+    waitForResume: async () => {},
+    messages: () => new Delivery(),
+    hosts: () => {
+      throw new Error("No connected hosts");
+    },
+    serverId: "origin",
+    logger: createTestLogger(),
+  });
+  const controller = new AbortController();
+  const session = await observation.open(
+    {
+      id: "reopened",
+      callerAgentId: "parent",
+      childAgentId: child.id,
+      standing: true,
+      reported: true,
+    },
+    controller.signal,
+  );
+  try {
+    let announced = false;
+    const next = session.next();
+    void next.then(
+      () => (announced = true),
+      () => undefined,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(announced).toBe(false);
+    await send("Second task");
+    expect(await next).toEqual({ runStarted: true });
+    expect(await session.next()).toMatchObject({ status: "idle", final: { status: "idle" } });
+    await until(() => delivery.prompts.length === 2);
+  } finally {
+    controller.abort();
+    await session.close();
+  }
+});
+
+test("a standing subscription ends when its live child is deleted", async () => {
+  const { agentManager, agentStorage, child, delivery, store } = await liveChild();
+  // The daemon's delete request closes the runtime, removes the record, then announces removal.
+  await agentManager.closeAgent(child.id);
+  await agentStorage.remove(child.id);
+  await agentManager.deleteAgentState(child.id);
+  agentManager.notifyAgentRemoved({ id: child.id, workspaceId: undefined });
+  await expect.poll(async () => store.list()).toEqual([]);
+  expect(delivery.prompts).toHaveLength(1);
 });

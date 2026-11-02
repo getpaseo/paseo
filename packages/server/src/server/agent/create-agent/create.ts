@@ -75,7 +75,8 @@ export interface CreateAgentFromMcpInput {
   mode?: string;
   unattended?: boolean;
   promptFailure?: CreateAgentPromptFailureMode;
-  notifyOnFinish: boolean;
+  /** "every" keeps reporting each settled run until the child is archived, removed or detached. */
+  notifyOnFinish: boolean | "every";
   internal?: boolean;
   detached?: boolean;
   owner?: AgentOwner;
@@ -186,6 +187,7 @@ export async function createAgentCommand(
             childAgentId: snapshot.id,
             callerAgentId: input.callerAgentId,
             requireParentOwnership: !(input.detached ?? false),
+            ...(input.notifyOnFinish === "every" ? { standing: true } : {}),
           },
           true,
         )

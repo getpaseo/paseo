@@ -3,7 +3,7 @@ import { HostObservationError } from "../host-operations/index.js";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
-import type { FinishObservationResult } from "./internal/observation-buffer.js";
+import type { FinishObservationResult, FinishRunStarted } from "./internal/observation-buffer.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
@@ -20,6 +20,10 @@ export interface FinishSubscription {
   serverId?: string;
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
+  /** Reports every settled run, not just the next one, until the child is archived or removed. */
+  standing?: boolean;
+  /** Standing only: the caller has the child's latest outcome. */
+  reported?: boolean;
 }
 export interface FinishSubscriptionStore {
   list(): Promise<FinishSubscription[]>;
@@ -27,7 +31,7 @@ export interface FinishSubscriptionStore {
   remove(id: string): Promise<void>;
 }
 export interface FinishObservationSession {
-  next(): Promise<FinishObservationResult>;
+  next(): Promise<FinishObservationResult | FinishRunStarted>;
   close(): Promise<void>;
 }
 export interface FinishObservation {
@@ -63,10 +67,23 @@ interface Watch {
   decision: Promise<boolean>;
   decide(accepted: boolean): void;
   pending: boolean;
+  /** A standing watch between runs. Its caller is free to be collected. */
+  dormant?: boolean;
   task?: Promise<void>;
 }
 function key(record: FinishSubscription): string {
   return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
+}
+function coalesce(records: FinishSubscription[]): FinishSubscription {
+  return {
+    ...records[0]!,
+    requireParentOwnership: records.every((intent) => intent.requireParentOwnership === true),
+    standing: records.some((intent) => intent.standing === true),
+    reported: records.every((intent) => intent.standing === true && intent.reported === true),
+  };
+}
+function childEnded(result: FinishObservationResult): boolean {
+  return !result.final || Boolean(result.final.archivedAt);
 }
 
 /** Owns durable intent, live observation, supersession, and dispatch acknowledgment. */
@@ -112,6 +129,36 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   async function remove(watch: Watch): Promise<void> {
     // Only IDs captured by this observer are eligible; newer registrations survive.
     for (const record of watch.records) await deps.store.remove(record.id);
+  }
+  /** An outcome consumes one-shot intent; standing intent stays and records whether it was reported. */
+  async function settle(watch: Watch, reported: boolean): Promise<FinishSubscription> {
+    const records: FinishSubscription[] = [];
+    for (const record of watch.records) {
+      // A superseded watch hands its standing records to the replacement; it must not write them.
+      watch.controller.signal.throwIfAborted();
+      if (record.standing) {
+        await deps.store.put({ ...record, reported });
+        records.push({ ...record, reported });
+      } else if (reported) await deps.store.remove(record.id);
+      else records.push(record);
+    }
+    watch.records = records;
+    return coalesce(records);
+  }
+  /** Commits an acknowledged outcome and returns the standing intent that keeps watching, if any. */
+  async function commit(
+    watch: Watch,
+    group: Set<Watch>,
+    result: FinishObservationResult,
+  ): Promise<FinishSubscription | undefined> {
+    if (watch.records.some((intent) => intent.standing) && !childEnded(result)) {
+      const record = await settle(watch, true);
+      watch.dormant = true;
+      return record;
+    }
+    await remove(watch);
+    stop(watch, group);
+    return undefined;
   }
   async function delay(signal: AbortSignal, attempt: number): Promise<void> {
     try {
@@ -217,20 +264,16 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
     if (!(await watch.decision) || signal.aborted) return;
-    const record = {
-      ...watch.records[0]!,
-      requireParentOwnership: watch.records.every(
-        (intent) => intent.requireParentOwnership === true,
-      ),
-    };
+    let record = coalesce(watch.records);
+    watch.dormant = record.reported;
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
-    let pending: FinishObservationResult | undefined;
+    let pending: FinishObservationResult | FinishRunStarted | undefined;
     let acknowledged = false;
     let remoteFailures = 0;
     let retries = 0;
     let warned = false;
-    async function observeNext(): Promise<FinishObservationResult | undefined> {
+    async function observeNext(): Promise<FinishObservationResult | FinishRunStarted | undefined> {
       try {
         observation ??= await deps.open(record, signal);
         const result = await abortable(observation.next(), signal);
@@ -266,21 +309,27 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             await delay(signal, retries++);
             continue;
           }
+          watch.dormant = false;
+          if ("runStarted" in pending) {
+            // The caller no longer has the latest outcome; intent restored after a restart owes it.
+            record = await settle(watch, false);
+            pending = undefined;
+            continue;
+          }
           if (signal.aborted) return;
           await decisions(group);
           if (signal.aborted) return;
-          if (await suppressed(record, pending)) {
+          if (pending.noRun || (await suppressed(record, pending))) {
             await remove(watch);
             stop(watch, group);
             return;
           }
           if (!acknowledged) acknowledged = await deliver(record, pending, permissions, signal);
-          if (acknowledged) {
-            // A removal failure retries only the commit, never the already accepted callback.
-            await remove(watch);
-            stop(watch, group);
-            return;
-          }
+          // A removal failure retries only the commit, never the already accepted callback.
+          const standing = acknowledged ? await commit(watch, group, pending) : record;
+          if (!standing) return;
+          record = standing;
+          acknowledged = false;
           pending = undefined;
           retries = 0;
           warned = false;
@@ -307,7 +356,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     hasPendingForCaller(agentId) {
       if (recovering || registering.has(agentId)) return true;
       for (const group of watches.values()) {
-        for (const watch of group) if (watch.records[0]!.callerAgentId === agentId) return true;
+        for (const watch of group)
+          if (watch.records[0]!.callerAgentId === agentId && !watch.dormant) return true;
       }
       return false;
     },
@@ -340,10 +390,17 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           accept() {
             if (!watch.pending || closed) return;
             watch.pending = false;
+            // Standing intent outlives the outcome this registration asked for.
+            for (const prior of predecessors)
+              for (const intent of prior.records)
+                if (intent.standing && !watch.records.some((own) => own.id === intent.id))
+                  watch.records.push(intent);
             for (const prior of predecessors) stop(prior, actualGroup);
             watch.decide(true);
             void serialize(async () => {
-              for (const prior of predecessors) await remove(prior);
+              for (const prior of predecessors)
+                for (const intent of prior.records)
+                  if (!intent.standing) await deps.store.remove(intent.id);
             }).catch((error) =>
               deps.logger.error({ err: error }, "Failed to remove superseded finish subscriptions"),
             );

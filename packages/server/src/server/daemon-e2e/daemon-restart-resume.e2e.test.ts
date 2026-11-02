@@ -244,6 +244,177 @@ test.each([false, true])(
 );
 
 test.each([false, true])(
+  "notifyOnFinish every reports each run once across a restart until archive (abrupt=%s)",
+  async (abrupt) => {
+    const root = await mkdtemp(path.join(tmpdir(), "standing-finish-process-"));
+    const processes: ChildProcess[] = [];
+    let client: DaemonClient | undefined;
+    let mcp: Client | undefined;
+    const records = async (home: string) =>
+      JSON.parse(await readFile(path.join(home, "finish-subscriptions.json"), "utf8"));
+    try {
+      const first = await restartFixture(root);
+      processes.push(first.child);
+      client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.13.0" });
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+      const parent = await client.createAgent({
+        provider: "claude",
+        cwd: first.cwd,
+        title: "Standing parent",
+        modeId: "full-access",
+      });
+      mcp = new Client({ name: "standing-parent", version: "1" });
+      await mcp.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${first.port}/mcp/agents?callerAgentId=${parent.id}`),
+        ),
+      );
+      const result = await mcp.callTool({
+        name: "create_agent",
+        arguments: {
+          provider: "claude/claude-test",
+          title: "Standing child",
+          initialPrompt: "Respond with exactly: RUN_ONE",
+          notifyOnFinish: "every",
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      const childId = (result.structuredContent as { agentId: string }).agentId;
+      await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(1);
+      // The parent did not start this run.
+      await client.sendMessage(childId, "Respond with exactly: RUN_TWO");
+      await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(2);
+      await expect
+        .poll(() => records(first.paseoHome), { timeout: 5000 })
+        .toEqual([
+          expect.objectContaining({ childAgentId: childId, standing: true, reported: true }),
+        ]);
+      await mcp.close();
+      mcp = undefined;
+      await client.close();
+      client = undefined;
+      await stopFixture(first.child, abrupt);
+
+      const second = await restartFixture(root);
+      processes.push(second.child);
+      client = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws`, appVersion: "0.13.0" });
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+      await client.sendMessage(childId, "Respond with exactly: RUN_THREE");
+      await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(3);
+      await client.archiveAgent(childId);
+      await expect.poll(() => records(second.paseoHome), { timeout: 5000 }).toEqual([]);
+      // One report per run, in order: the restart repeated nothing and the archive added nothing.
+      const prompts = await readPrompts(root);
+      expect(prompts).toHaveLength(3);
+      for (const [index, marker] of ["RUN_ONE", "RUN_TWO", "RUN_THREE"].entries()) {
+        expect(prompts[index]).toContain(`Agent ${childId}`);
+        expect(prompts[index]).toContain("finished");
+        expect(prompts[index]).toContain(marker);
+      }
+    } catch (error) {
+      console.error(
+        await readFile(path.join(root, "fixture.log"), "utf8").catch(() => "No fixture log"),
+      );
+      throw error;
+    } finally {
+      await mcp?.close();
+      await client?.close();
+      for (const child of processes.toReversed()) await stopFixture(child, true);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
+
+test.each([false, true])(
+  "notifyOnFinish every reports the run a restart interrupted (resume=%s)",
+  async (resume) => {
+    const root = await mkdtemp(path.join(tmpdir(), "standing-interrupted-process-"));
+    const processes: ChildProcess[] = [];
+    let client: DaemonClient | undefined;
+    let mcp: Client | undefined;
+    const settings = { resumeOnStartup: resume, resumePrompt: "Respond with exactly: RESUMED" };
+    const records = async (home: string) =>
+      JSON.parse(await readFile(path.join(home, "finish-subscriptions.json"), "utf8"));
+    try {
+      const first = await restartFixture(root, settings);
+      processes.push(first.child);
+      client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.13.0" });
+      await client.connect();
+      const parent = await client.createAgent({
+        provider: "claude",
+        cwd: first.cwd,
+        title: "Standing parent",
+        modeId: "full-access",
+      });
+      mcp = new Client({ name: "standing-parent", version: "1" });
+      await mcp.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${first.port}/mcp/agents?callerAgentId=${parent.id}`),
+        ),
+      );
+      const result = await mcp.callTool({
+        name: "create_agent",
+        arguments: {
+          provider: "claude/claude-test",
+          title: "Standing child",
+          initialPrompt: "Respond with exactly: RUN_ONE",
+          notifyOnFinish: "every",
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      const childId = (result.structuredContent as { agentId: string }).agentId;
+      await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(1);
+      // A run the parent did not start is still in flight when the host stops.
+      await client.sendMessage(childId, "HOLD_CHILD");
+      await expect
+        .poll(
+          async () =>
+            (
+              await new AgentStorage(path.join(first.paseoHome, "agents"), createTestLogger()).get(
+                childId,
+              )
+            )?.lastStatus,
+        )
+        .toBe("running");
+      await mcp.close();
+      mcp = undefined;
+      await client.close();
+      client = undefined;
+      await stopFixture(first.child, false);
+
+      const second = await restartFixture(root, settings);
+      processes.push(second.child);
+      await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(2);
+      const prompts = await readPrompts(root);
+      expect(prompts[1]).toContain(`Agent ${childId}`);
+      if (resume) {
+        expect(prompts[1]).toContain("finished");
+        expect(prompts[1]).toContain("RESUMED");
+      } else expect(prompts[1]).toContain("was closed");
+      client = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws`, appVersion: "0.13.0" });
+      await client.connect();
+      await client.archiveAgent(childId);
+      await expect.poll(() => records(second.paseoHome), { timeout: 5000 }).toEqual([]);
+      expect(await readPrompts(root)).toHaveLength(2);
+    } catch (error) {
+      console.error(
+        await readFile(path.join(root, "fixture.log"), "utf8").catch(() => "No fixture log"),
+      );
+      throw error;
+    } finally {
+      await mcp?.close();
+      await client?.close();
+      for (const child of processes.toReversed()) await stopFixture(child, true);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
+
+test.each([false, true])(
   "host restart recovery settings (enabled=%s)",
   async (enabled) => {
     const root = await mkdtemp(path.join(tmpdir(), "resume-settings-process-"));
