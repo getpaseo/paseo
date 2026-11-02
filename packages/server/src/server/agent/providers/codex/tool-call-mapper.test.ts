@@ -1326,3 +1326,64 @@ describe("multi-file diff budget", () => {
     expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
   });
 });
+
+describe("multi-file preview metadata", () => {
+  it("preserves a path-keyed move destination", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "moved-keyed",
+        status: "completed",
+        changes: {
+          "/repo/old.txt": {
+            type: "update",
+            move_path: "/repo/new.txt",
+            unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+          "/repo/other.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-before\n+after\n" },
+        },
+      },
+      { cwd: "/repo" },
+    );
+    expect(item?.detail.type).toBe("edit");
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/old.txt b/new.txt");
+    expect(item.detail.unifiedDiff).toContain("+++ b/new.txt");
+  });
+  it("names the file whose diff is shown when the first entry has no content", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "partial-content",
+        status: "completed",
+        changes: [
+          { path: "/repo/first.txt", kind: "modify" },
+          { path: "/repo/second.txt", kind: "modify", diff: "@@ -1 +1 @@\n-old\n+new\n" },
+        ],
+      },
+      { cwd: "/repo" },
+    );
+    expect(item?.detail).toMatchObject({ type: "edit", filePath: "second.txt" });
+  });
+  it("keeps whole labels and marks omitted files when many long paths exceed the preview", () => {
+    const paths = Array.from(
+      { length: 50 },
+      (_, index) => `src/${String(index).padStart(2, "0")}-${"x".repeat(108)}.txt`,
+    );
+    const item = mapCodexToolCallFromThreadItem({
+      type: "fileChange",
+      id: "many-files",
+      status: "completed",
+      changes: paths.map((path) => ({ path, kind: "modify", diff: "@@ -1 +1 @@\n-old\n+new\n" })),
+    });
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    const diff = item.detail.unifiedDiff!;
+    const headers = diff.split("\n").filter((line) => line.startsWith("diff --git "));
+    expect(headers.length).toBeGreaterThan(0);
+    const expectedHeaders = paths.map((path) => `diff --git a/${path} b/${path}`);
+    expect(expectedHeaders).toEqual(expect.arrayContaining(headers));
+    expect(diff).toContain("-old\n+new");
+    expect(diff).toContain(`${paths.length - headers.length} more files omitted`);
+    expect(diff.length).toBeLessThanOrEqual(12000);
+  });
+});

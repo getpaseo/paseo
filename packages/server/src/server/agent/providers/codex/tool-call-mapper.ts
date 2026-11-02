@@ -772,14 +772,14 @@ function toFileChangeEntry(
   if (!path) {
     return null;
   }
+  const kind = isRecord(entry.kind) ? entry.kind : undefined;
+  const movePath = entry.move_path ?? kind?.move_path;
   return {
     path,
     kind: parseFileChangeKind(entry),
     diff: parseFileChangeDiff(entry),
     movePath:
-      isRecord(entry.kind) && typeof entry.kind.move_path === "string"
-        ? normalizeCodexFilePath(entry.kind.move_path, options?.cwd)
-        : undefined,
+      typeof movePath === "string" ? normalizeCodexFilePath(movePath, options?.cwd) : undefined,
   };
 }
 
@@ -874,19 +874,62 @@ function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   return lines.join("\n");
 }
 
-export function fileChangesToUnifiedDiff(files: CodexFileChangeEntry[]): string {
-  const diffs = files.map(fileChangeToUnifiedDiff).filter(Boolean);
-  const combined = diffs.join("\n\n");
-  if (combined.length <= TOOL_CALL_DIFF_MAX_CHARS) return combined;
+function splitFileDiffPreview(diff: string): { header: string; body: string } {
+  const hunk = diff.indexOf("\n@@");
+  const bodyStart = hunk < 0 ? -1 : diff.indexOf("\n", hunk + 1);
+  return bodyStart < 0
+    ? { header: diff, body: "" }
+    : { header: diff.slice(0, bodyStart + 1), body: diff.slice(bodyStart + 1) };
+}
 
-  // Share the existing detail budget so a large first file cannot hide later files.
-  const budget = Math.floor((TOOL_CALL_DIFF_MAX_CHARS - 2 * (diffs.length - 1)) / diffs.length);
+export function fileChangesToPreview(files: CodexFileChangeEntry[]): {
+  filePath: string | undefined;
+  unifiedDiff: string;
+} {
+  const diffs = files
+    .map((file) => ({ filePath: file.path, diff: fileChangeToUnifiedDiff(file) }))
+    .filter((file) => file.diff.length > 0);
+  const filePath = diffs[0]?.filePath ?? files[0]?.path;
+  const combined = diffs.map((file) => file.diff).join("\n\n");
+  if (combined.length <= TOOL_CALL_DIFF_MAX_CHARS) return { filePath, unifiedDiff: combined };
+
   const marker = "\n...[truncated]";
-  return diffs
-    .map((diff) =>
-      diff.length <= budget ? diff : diff.slice(0, Math.max(0, budget - marker.length)) + marker,
+  const omittedNotice = (count: number) =>
+    count > 0 ? `\n\n...[${count} more files omitted]` : "";
+  const previews = diffs.map((file) => splitFileDiffPreview(file.diff));
+  const visible: typeof previews = [];
+  let minimumSize = 0;
+  for (const preview of previews) {
+    // Keep whole labels and a useful body excerpt, or explicitly omit the file.
+    const required =
+      preview.header.length + Math.max(marker.length, Math.min(80, preview.body.length));
+    const nextSize = minimumSize + required + (visible.length > 0 ? 2 : 0);
+    if (
+      nextSize + omittedNotice(previews.length - visible.length - 1).length >
+      TOOL_CALL_DIFF_MAX_CHARS
     )
-    .join("\n\n");
+      break;
+    visible.push(preview);
+    minimumSize = nextSize;
+  }
+  const omitted = omittedNotice(previews.length - visible.length);
+  const headersSize = visible.reduce((size, preview) => size + preview.header.length, 0);
+  const bodyBudget = Math.floor(
+    (TOOL_CALL_DIFF_MAX_CHARS -
+      headersSize -
+      Math.max(0, visible.length - 1) * 2 -
+      omitted.length) /
+      Math.max(1, visible.length),
+  );
+  const unifiedDiff =
+    visible
+      .map(
+        ({ header, body }) =>
+          header +
+          (body.length <= bodyBudget ? body : body.slice(0, bodyBudget - marker.length) + marker),
+      )
+      .join("\n\n") + omitted;
+  return { filePath, unifiedDiff };
 }
 
 function mapFileChangeItem(
@@ -923,14 +966,15 @@ function mapFileChangeItem(
   const error = item.error ?? null;
   const status = normalizeToolCallStatus(item.status, error, output);
   const firstFile = files[0];
-  const textFields =
-    files.length > 1
-      ? { unifiedDiff: fileChangesToUnifiedDiff(files) }
-      : resolveFileChangeTextFields(firstFile);
+  const preview = files.length > 1 ? fileChangesToPreview(files) : undefined;
+  const filePath = preview?.filePath ?? firstFile?.path;
+  const textFields = preview
+    ? { unifiedDiff: preview.unifiedDiff }
+    : resolveFileChangeTextFields(firstFile);
   const hasTextFields = Boolean(textFields.unifiedDiff || textFields.newString);
   const input = toNullableObject({
     ...inputBase,
-    ...(firstFile?.path && hasTextFields ? { path: firstFile.path } : {}),
+    ...(filePath && hasTextFields ? { path: filePath } : {}),
     ...(hasTextFields && textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
     ...(hasTextFields && textFields.newString ? { content: textFields.newString } : {}),
   });

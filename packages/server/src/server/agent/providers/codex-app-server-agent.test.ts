@@ -7987,3 +7987,25 @@ describe("legacy multi-file diff budget", () => {
     },
   );
 });
+
+describe("legacy multi-file move metadata", () => {
+  test.each([true, false])("preserves path-keyed moves while running: %s", (running) => {
+    const item = mapCodexPatchNotificationToToolCall({
+      callId: "legacy-move",
+      cwd: "/repo",
+      running,
+      success: true,
+      changes: {
+        "/repo/old.txt": {
+          type: "update",
+          move_path: "/repo/new.txt",
+          unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+        },
+        "/repo/other.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-before\n+after\n" },
+      },
+    });
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/old.txt b/new.txt");
+    expect(item.detail.unifiedDiff).toContain("+++ b/new.txt");
+  });
+});
