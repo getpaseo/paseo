@@ -36,14 +36,16 @@ describe("the base ref a plugin reads", () => {
     const origin = rows.find((row) => row.kind === "branch" && row.refName.includes("remotes"));
     if (!origin) throw new Error("expected an origin row");
 
-    const setup = createNewWorkspaceSetup({
-      locked: false,
-      project: { id: "p", name: "repo" },
-      canCreateWorktree: true,
-      supportsMetadata: true,
-    });
     const chosen: PickerItem[] = [];
-    setup.onBaseChosen((item) => chosen.push(item));
+    const setup = createNewWorkspaceSetup(
+      {
+        locked: false,
+        project: { id: "p", name: "repo" },
+        canCreateWorktree: true,
+        supportsMetadata: true,
+      },
+      { persistIsolation: () => {}, syncBaseAttachment: (item) => chosen.push(item) },
+    );
     const read = toPluginNewWorkspace({
       host: HOST,
       view: viewOf(origin),

@@ -712,8 +712,9 @@ metadata), so a command is valid from a child's first effect, which runs before 
 effects. `syncInputs` refreshes those inputs in a layout effect on every commit, and commands read
 them when they run, never from the render that built them. The pickers and the commands pick
 through the same `chooseBase` and `chooseIsolation`, so a plugin command has the effects of a
-pick; the screen supplies those effects (syncing the picker's PR attachment, remembering the
-isolation) with `onBaseChosen` and `onIsolationChosen`. Add a capability by extending the store;
+pick; the screen injects those effects when it builds the store (syncing the picker's PR attachment,
+remembering the isolation), so a command from a mount effect does the same as a click. Closing the
+picker stays in the picker's own handler. Add a capability by extending the store;
 do not read screen state from a plugin component.
 
 `ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a

@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import {
   archiveWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
   connectNewWorkspaceDaemonClient,
+  expectWorkspaceIsolationSelected,
   openNewWorkspaceComposer,
   openProjectViaDaemon,
   submitNewWorkspacePrompt,
@@ -32,6 +33,7 @@ import { Action } from "@getpaseo/plugin/client/ui";
 function OnMount() {
   const newWorkspace = useNewWorkspace();
   useEffect(() => {
+    void newWorkspace.setIsolation("worktree");
     void newWorkspace.setBranch("set-on-mount");
     void newWorkspace.setMetadata({ "new-workspace-issues.issue": "ON-MOUNT" });
   }, []);
@@ -71,6 +73,9 @@ export async function withNewWorkspaceIssuesExample(
     chooseWorktree(): Promise<void>;
     chooseIssue(label: string): Promise<void>;
     createWorkspace(options?: { prompt?: string }): Promise<{ branch: string; metadata: unknown }>;
+    expectIsolation(isolation: "local" | "worktree"): Promise<void>;
+    /** Removes the plugin, leaves the screen, and opens New workspace for the project again. */
+    reopenWithoutPlugin(): Promise<void>;
   }) => Promise<void>,
 ) {
   const client = await connectNewWorkspaceDaemonClient();
@@ -100,6 +105,18 @@ export async function withNewWorkspaceIssuesExample(
         test.step(`choose the issue "${label}"`, async () => {
           await page.getByRole("button", { name: "Issue", exact: true }).click();
           await page.getByText(label, { exact: true }).click();
+        }),
+      expectIsolation: (isolation) =>
+        test.step(`the screen is on ${isolation}`, () =>
+          expectWorkspaceIsolationSelected(page, isolation)),
+      reopenWithoutPlugin: () =>
+        test.step("reopen the screen without the plugin", async () => {
+          await client.removePlugin(PLUGIN_ID);
+          // Leaving the screen drops its in-memory choice, so only the saved preference is left.
+          await page.goBack();
+          await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveCount(0);
+          await openNewWorkspaceComposer(page, project);
+          await expect(page.getByRole("button", { name: "Mount", exact: true })).toHaveCount(0);
         }),
       createWorkspace: (createOptions) =>
         test.step("create the workspace and read what it carries", async () => {

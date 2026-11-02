@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PickerItem } from "../new-workspace-picker-item";
-import { createNewWorkspaceSetup, type SetupInputs } from "./setup-model";
+import { createNewWorkspaceSetup, type SetupEffects, type SetupInputs } from "./setup-model";
 
 const READY: SetupInputs = {
   locked: false,
@@ -9,9 +9,19 @@ const READY: SetupInputs = {
   supportsMetadata: true,
 };
 
+function recordingEffects() {
+  const chosen: PickerItem[] = [];
+  const isolations: string[] = [];
+  const effects: SetupEffects = {
+    persistIsolation: (isolation) => isolations.push(isolation),
+    syncBaseAttachment: (item) => chosen.push(item),
+  };
+  return { effects, chosen, isolations };
+}
+
 describe("New workspace setup commands", () => {
   it("accepts commands from the first moment, before the screen has committed", async () => {
-    const setup = createNewWorkspaceSetup(READY);
+    const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
 
     await setup.commands.setBranch("pas-101");
 
@@ -19,7 +29,7 @@ describe("New workspace setup commands", () => {
   });
 
   it("applies commands that run back to back without waiting for a render", async () => {
-    const setup = createNewWorkspaceSetup(READY);
+    const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
 
     void setup.commands.setBranch("pas-101");
     void setup.commands.setMetadata({ issue: "PAS-101", keep: true });
@@ -29,12 +39,9 @@ describe("New workspace setup commands", () => {
     expect(setup.getSnapshot().metadata).toEqual({ issue: "PAS-101" });
   });
 
-  it("changes the model and tells the screen, for a base branch and an isolation choice", async () => {
-    const setup = createNewWorkspaceSetup(READY);
-    const chosen: PickerItem[] = [];
-    const isolations: string[] = [];
-    setup.onBaseChosen((item) => chosen.push(item));
-    setup.onIsolationChosen((isolation) => isolations.push(isolation));
+  it("changes the model and runs the effects of a pick, for a base branch and an isolation choice", async () => {
+    const { effects, chosen, isolations } = recordingEffects();
+    const setup = createNewWorkspaceSetup(READY, effects);
 
     await setup.commands.setBaseRef({ type: "branch", name: " release " });
     await setup.commands.setIsolation("worktree");
@@ -46,7 +53,7 @@ describe("New workspace setup commands", () => {
   });
 
   it("shows a base ref's short name and keeps the exact ref for creation", async () => {
-    const setup = createNewWorkspaceSetup(READY);
+    const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
 
     await setup.commands.setBaseRef({ type: "branch", name: "refs/remotes/origin/release" });
 
@@ -57,7 +64,7 @@ describe("New workspace setup commands", () => {
   });
 
   it("rejects every command while the screen is locked, as the pickers do", async () => {
-    const setup = createNewWorkspaceSetup({ ...READY, locked: true });
+    const setup = createNewWorkspaceSetup({ ...READY, locked: true }, recordingEffects().effects);
 
     const results = await Promise.allSettled([
       setup.commands.setBranch("x"),
@@ -72,7 +79,7 @@ describe("New workspace setup commands", () => {
   });
 
   it("reads the inputs when a command runs, so a project change after render is seen", async () => {
-    const setup = createNewWorkspaceSetup(READY);
+    const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
     setup.syncInputs({ ...READY, project: null });
 
     await expect(setup.commands.setBaseRef({ type: "branch", name: "main" })).rejects.toThrow(
@@ -81,11 +88,10 @@ describe("New workspace setup commands", () => {
   });
 
   it("rejects what the project or host cannot do", async () => {
-    const setup = createNewWorkspaceSetup({
-      ...READY,
-      canCreateWorktree: false,
-      supportsMetadata: false,
-    });
+    const setup = createNewWorkspaceSetup(
+      { ...READY, canCreateWorktree: false, supportsMetadata: false },
+      recordingEffects().effects,
+    );
 
     await expect(setup.commands.setIsolation("worktree")).rejects.toThrow(
       "cannot create worktrees",

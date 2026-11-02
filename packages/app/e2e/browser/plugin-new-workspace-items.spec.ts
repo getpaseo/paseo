@@ -48,13 +48,26 @@ test("a plugin's branch applies when the project has no default base to branch o
   );
 });
 
+test("an isolation set from a mount effect is remembered like a pick", async ({ page }) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(
+    page,
+    { compact: false, setsOnMount: true },
+    async (screen) => {
+      await screen.expectIsolation("worktree");
+      await screen.reopenWithoutPlugin();
+      await screen.expectIsolation("worktree");
+    },
+  );
+});
+
 test("an item can set the branch and metadata from its mount effect", async ({ page }) => {
   test.setTimeout(180_000);
   await withNewWorkspaceIssuesExample(
     page,
     { compact: false, setsOnMount: true },
     async (screen) => {
-      await screen.chooseWorktree();
+      await screen.expectIsolation("worktree");
       const created = await screen.createWorkspace();
       expect(created.branch).toBe("set-on-mount");
       expect(created.metadata).toEqual({ "new-workspace-issues.issue": "ON-MOUNT" });

@@ -48,11 +48,16 @@ export interface NewWorkspaceSetup {
   chooseBase(item: PickerItem): void;
   /** The isolation picker's entry, and the one `setIsolation` takes. */
   chooseIsolation(isolation: Isolation): void;
-  /** What the screen does beyond changing the model when a pick lands; returns the remover. */
-  onBaseChosen(listener: (item: PickerItem) => void): () => void;
-  onIsolationChosen(listener: (isolation: Isolation) => void): () => void;
   syncInputs(inputs: SetupInputs): void;
   commands: SetupCommands;
+}
+
+/** What a pick does beyond changing the model, the same for the picker and for a command. */
+export interface SetupEffects {
+  /** Remembers the isolation as the default for the next New workspace screen. */
+  persistIsolation(isolation: Isolation): void;
+  /** Keeps the picker's change-request attachment in step with the chosen base. */
+  syncBaseAttachment(item: PickerItem): void;
 }
 
 const LOCKED_MESSAGE = "The New workspace screen is locked while the workspace is being created.";
@@ -61,9 +66,13 @@ const LOCKED_MESSAGE = "The New workspace screen is locked while the workspace i
  * The New workspace screen's choices as one plain model. The pickers and the plugin commands
  * write to it through the same entries, so a command sees what an earlier command or pick left,
  * has the effects of a pick, and applies the same rules as the picker it stands in for. It is
- * built with its inputs, so a command is valid from the first render.
+ * built with its inputs and effects, so a command does the same thing from a child's mount effect
+ * as from a button later.
  */
-export function createNewWorkspaceSetup(initial: SetupInputs): NewWorkspaceSetup {
+export function createNewWorkspaceSetup(
+  initial: SetupInputs,
+  effects: SetupEffects,
+): NewWorkspaceSetup {
   let state: SetupState = {
     pickerSelection: initialPickerSelectionState,
     manualIsolation: null,
@@ -71,8 +80,6 @@ export function createNewWorkspaceSetup(initial: SetupInputs): NewWorkspaceSetup
     metadata: {},
   };
   let inputs = initial;
-  let baseChosen: (item: PickerItem) => void = () => {};
-  let isolationChosen: (isolation: Isolation) => void = () => {};
   const listeners = new Set<() => void>();
   const update = (patch: Partial<SetupState>) => {
     state = { ...state, ...patch };
@@ -86,11 +93,11 @@ export function createNewWorkspaceSetup(initial: SetupInputs): NewWorkspaceSetup
     update({ pickerSelection: reducePickerSelection(state.pickerSelection, event) });
   const chooseBase = (item: PickerItem) => {
     dispatchPicker({ type: "picker-selected", item });
-    baseChosen(item);
+    effects.syncBaseAttachment(item);
   };
   const chooseIsolation = (isolation: Isolation) => {
     update({ manualIsolation: isolation });
-    isolationChosen(isolation);
+    effects.persistIsolation(isolation);
   };
   return {
     subscribe(listener) {
@@ -101,18 +108,6 @@ export function createNewWorkspaceSetup(initial: SetupInputs): NewWorkspaceSetup
     dispatchPicker,
     chooseBase,
     chooseIsolation,
-    onBaseChosen(listener) {
-      baseChosen = listener;
-      return () => {
-        baseChosen = () => {};
-      };
-    },
-    onIsolationChosen(listener) {
-      isolationChosen = listener;
-      return () => {
-        isolationChosen = () => {};
-      };
-    },
     syncInputs: (next) => {
       inputs = next;
     },

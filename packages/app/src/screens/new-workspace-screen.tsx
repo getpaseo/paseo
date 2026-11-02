@@ -93,6 +93,7 @@ import {
   startsNewBranch,
   type BranchPickerDetail,
   type PickerCheckoutRequest,
+  type PickerItem,
   type PickerOptionData,
 } from "./new-workspace-picker-item";
 import {
@@ -207,18 +208,10 @@ function useWorkspaceIsolation(input: {
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
-  const { preferences, updatePreferences } = useFormPreferences();
+  const { preferences } = useFormPreferences();
   const { manualIsolation } = useNewWorkspaceSetupState(setup);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
-
-  useEffect(
-    () =>
-      setup.onIsolationChosen((value) => {
-        void updatePreferences({ isolation: value });
-      }),
-    [setup, updatePreferences],
-  );
 
   return {
     isolation,
@@ -1022,6 +1015,8 @@ export function NewWorkspaceScreen({
     supportsMultiplicity: supportsWorkspaceMultiplicity,
     pendingAction,
     isDraftHandoffActive,
+    updatePreferences: updateFormPreferences,
+    setAttachments: chatDraft.setAttachments,
   });
   const dispatchPickerSelection = setup.dispatchPicker;
   const selectedItem = useNewWorkspaceSetupState(setup).pickerSelection.selectedItem;
@@ -1123,15 +1118,12 @@ export function NewWorkspaceScreen({
     const displayItem = itemById.get(selectedOptionId);
     return displayItem ? pickerItemLabel(displayItem) : "main";
   }, [itemById, selectedOptionId]);
-  const selectPickerItem = setup.chooseBase;
-  const setDraftAttachments = chatDraft.setAttachments;
-  useEffect(
-    () =>
-      setup.onBaseChosen((item) => {
-        setDraftAttachments((attachments) => syncPickerPrAttachment({ attachments, item }));
-        setPickerOpen(false);
-      }),
-    [setDraftAttachments, setup],
+  const selectPickerItem = useCallback(
+    (item: PickerItem) => {
+      setup.chooseBase(item);
+      setPickerOpen(false);
+    },
+    [setup],
   );
 
   const pluginScreen = useMemo<NewWorkspaceItemsScreen>(
@@ -1635,8 +1627,18 @@ function usePluginSetup(input: {
   supportsMultiplicity: boolean;
   pendingAction: Parameters<typeof isNewWorkspacePending>[0]["pendingAction"];
   isDraftHandoffActive: boolean;
+  updatePreferences: ReturnType<typeof useFormPreferences>["updatePreferences"];
+  setAttachments: ReturnType<typeof useAgentInputDraft>["setAttachments"];
 }) {
-  const { serverId, project, supportsMultiplicity, pendingAction, isDraftHandoffActive } = input;
+  const {
+    serverId,
+    project,
+    supportsMultiplicity,
+    pendingAction,
+    isDraftHandoffActive,
+    updatePreferences,
+    setAttachments,
+  } = input;
   const worktreeSupport = project
     ? getWorktreeSupportForHostProject({ project, serverId })
     : "unsupported";
@@ -1650,7 +1652,15 @@ function usePluginSetup(input: {
     [projectId, projectName],
   );
   const inputs = { locked, project: pluginProject, canCreateWorktree, supportsMetadata };
-  const [setup] = useState(() => createNewWorkspaceSetup(inputs));
+  // Both are stable for the life of the screen: preferences write through the query client, and
+  // the draft is keyed per mount. A command and a pick run the same effects.
+  const [setup] = useState(() =>
+    createNewWorkspaceSetup(inputs, {
+      persistIsolation: (isolation) => void updatePreferences({ isolation }),
+      syncBaseAttachment: (item) =>
+        setAttachments((attachments) => syncPickerPrAttachment({ attachments, item })),
+    }),
+  );
   useLayoutEffect(() => setup.syncInputs(inputs));
   return { setup, pluginProject, canCreateWorktree, isPending: locked };
 }
