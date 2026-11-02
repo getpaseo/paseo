@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type { TerminalSession } from "../terminal/terminal.js";
 import type {
   WorkspaceLaunchEndpointPayload,
   WorkspaceLaunchPayload,
@@ -17,7 +18,10 @@ import {
 } from "../utils/worktree.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
-import { getAllReservedWorkspaceServicePorts } from "./workspace-service-port-registry.js";
+import {
+  getAllReservedWorkspaceServicePorts,
+  releaseWorkspaceServicePort,
+} from "./workspace-service-port-registry.js";
 import {
   buildStringCommandShellInvocation,
   type StringCommandShellInvocation,
@@ -35,6 +39,7 @@ const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
 const HTTP_RETRY_INITIAL_MS = 5_000;
 const HTTP_RETRY_MAX_MS = 60_000;
 const LAUNCH_PROXY_NAMESPACE = "@paseo/launch";
+const LAUNCH_TERMINAL_NAME_PREFIX = "@paseo/launch:v1:";
 
 export interface WorkspaceLaunchContext {
   workspaceId: string;
@@ -116,6 +121,8 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   private readonly runtimes = new Map<string, Map<string, WorkspaceLaunchRuntime>>();
   private readonly activeLaunches = new Map<string, string>();
   private readonly operationChains = new Map<string, Promise<unknown>>();
+  private readonly recoveredWorkspaces = new Set<string>();
+  private readonly recoveryPromises = new Map<string, Promise<void>>();
   private readonly endpointProbe: WorkspaceLaunchEndpointProbe;
   private readonly endpointProbeLimit = pLimit(LAUNCH_ENDPOINT_PROBE_CONCURRENCY);
   private readonly now: () => number;
@@ -126,6 +133,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   }
 
   async buildSnapshot(context: WorkspaceLaunchContext): Promise<WorkspaceLaunchPayload[]> {
+    await this.ensureWorkspaceRecovered(context);
     const configuredNames = new Set(
       await this.readLaunchConfigNames(this.getConfigDirectory(context)),
     );
@@ -175,6 +183,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (!this.deps.terminalManager || !this.deps.serviceProxy) {
       throw new Error("Workspace launches are not available on this daemon");
     }
+    await this.ensureWorkspaceRecovered(context);
 
     const activeLaunchName = this.activeLaunches.get(context.workspaceId);
     const activeRuntime = activeLaunchName
@@ -210,7 +219,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       context,
     };
     const supersededLaunch =
-      activeLaunchName && activeRuntime?.lifecycle === "running"
+      activeLaunchName && activeRuntime?.lifecycle === "running" && activeRuntime.command
         ? {
             launchName: activeRuntime.launchName,
             command: activeRuntime.command,
@@ -265,7 +274,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     const terminal = await terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
       workspaceId: context.workspaceId,
-      name: `launch:${launchName}`,
+      name: getLaunchTerminalName(launchName, environment),
       title: `launch:${launchName}`,
       command: invocation.shell,
       args: invocation.args,
@@ -290,19 +299,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     workspaceRuntimes.set(launchName, runtime);
     this.runtimes.set(context.workspaceId, workspaceRuntimes);
     this.activeLaunches.set(context.workspaceId, launchName);
-
-    let unsubscribeExit: (() => void) | null = null;
-    runtime.stopListener = () => {
-      unsubscribeExit?.();
-      unsubscribeExit = null;
-    };
-    const stopRuntime = (exitCode: number | null) => {
-      this.markStopped(runtime, exitCode);
-      void this.emitWorkspaceUpdate(context.workspaceId);
-    };
-    unsubscribeExit = terminal.onExit((info) => {
-      stopRuntime(info.exitCode);
-    });
+    this.listenForRuntimeExit(runtime, terminal);
 
     try {
       if (this.isCurrentRunningRuntime(runtime)) {
@@ -328,6 +325,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     context: WorkspaceLaunchContext,
     launchName: string,
   ): Promise<WorkspaceLaunchPayload> {
+    await this.ensureWorkspaceRecovered(context);
     const runtime = this.runtimes.get(context.workspaceId)?.get(launchName);
     if (!runtime || runtime.lifecycle !== "running") {
       throw new Error(`Launch '${launchName}' is not running`);
@@ -355,6 +353,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   }
 
   private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
+    await this.recoveryPromises.get(workspaceId)?.catch(() => undefined);
     const runtimes = this.runtimes.get(workspaceId);
     if (runtimes) {
       await Promise.all(
@@ -369,7 +368,91 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
     this.runtimes.delete(workspaceId);
     this.activeLaunches.delete(workspaceId);
+    this.recoveredWorkspaces.delete(workspaceId);
+    this.recoveryPromises.delete(workspaceId);
     this.deps.workspaceRuntimeEnvironment.release(workspaceId);
+  }
+
+  private async ensureWorkspaceRecovered(context: WorkspaceLaunchContext): Promise<void> {
+    if (this.recoveredWorkspaces.has(context.workspaceId)) return;
+    const existing = this.recoveryPromises.get(context.workspaceId);
+    if (existing) return await existing;
+
+    const recovery = this.recoverWorkspace(context).then(() => {
+      this.recoveredWorkspaces.add(context.workspaceId);
+      return undefined;
+    });
+    this.recoveryPromises.set(context.workspaceId, recovery);
+    try {
+      await recovery;
+    } finally {
+      if (this.recoveryPromises.get(context.workspaceId) === recovery) {
+        this.recoveryPromises.delete(context.workspaceId);
+      }
+    }
+  }
+
+  private async recoverWorkspace(context: WorkspaceLaunchContext): Promise<void> {
+    const terminalManager = this.deps.terminalManager;
+    if (!terminalManager) return;
+
+    const terminals = await terminalManager.getTerminals(context.workspaceDirectory, {
+      workspaceId: context.workspaceId,
+    });
+    const launchTerminals = terminals.flatMap((terminal) => {
+      const identity = parseLaunchTerminalName(terminal.name);
+      return identity ? [{ terminal, identity }] : [];
+    });
+    if (launchTerminals.length === 0) return;
+
+    const configResult = await readPaseoConfig(this.getConfigDirectory(context));
+    const launchConfigs = configResult.ok
+      ? getWorkspaceLaunchConfigs(configResult.config)
+      : new Map<string, { command: string }>();
+    const workspaceRuntimes = this.runtimes.get(context.workspaceId) ?? new Map();
+    this.runtimes.set(context.workspaceId, workspaceRuntimes);
+
+    for (const { terminal, identity } of launchTerminals) {
+      if (workspaceRuntimes.has(identity.launchName)) continue;
+      const environment = await this.deps.workspaceRuntimeEnvironment.adopt({
+        workspaceId: context.workspaceId,
+        portBase: identity.portBase,
+        portCount: identity.portCount,
+      });
+      const exitInfo = terminal.getExitInfo();
+      const runtime: WorkspaceLaunchRuntime = {
+        launchName: identity.launchName,
+        command: launchConfigs.get(identity.launchName)?.command ?? "",
+        lifecycle: exitInfo ? "stopped" : "running",
+        terminalId: terminal.id,
+        exitCode: exitInfo?.exitCode ?? null,
+        environment,
+        context,
+        endpoints: new Map(),
+        stopListener: null,
+        monitor: null,
+        scanInFlight: false,
+      };
+      workspaceRuntimes.set(identity.launchName, runtime);
+      if (runtime.lifecycle === "running") {
+        this.activeLaunches.set(context.workspaceId, identity.launchName);
+        this.listenForRuntimeExit(runtime, terminal);
+        this.startEndpointMonitor(runtime);
+        void this.scanEndpoints(runtime);
+      }
+    }
+  }
+
+  private listenForRuntimeExit(runtime: WorkspaceLaunchRuntime, terminal: TerminalSession): void {
+    let unsubscribeExit: (() => void) | null = null;
+    runtime.stopListener = () => {
+      unsubscribeExit?.();
+      unsubscribeExit = null;
+    };
+    unsubscribeExit = terminal.onExit((info) => {
+      this.markStopped(runtime, info.exitCode);
+      void this.emitWorkspaceUpdate(runtime.context.workspaceId);
+    });
   }
 
   private async runExclusive<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
@@ -645,6 +728,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
 
     this.markSupersededScriptStopped(context, runtime);
+    releaseWorkspaceServicePort(context.workspaceId, runtime.scriptName);
   }
 
   private markSupersededScriptStopped(
@@ -741,6 +825,44 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
 
 function getLaunchEndpointScriptName(runtime: WorkspaceLaunchRuntime, offset: number): string {
   return `${LAUNCH_PROXY_NAMESPACE}:${runtime.context.workspaceId}:${runtime.launchName}:p${offset}`;
+}
+
+function getLaunchTerminalName(
+  launchName: string,
+  environment: WorkspaceRuntimeEnvironment,
+): string {
+  // The worker's frozen terminal identity survives daemon replacement. Keep
+  // restart metadata here while the separate title remains user-facing.
+  return `${LAUNCH_TERMINAL_NAME_PREFIX}${environment.portBase}:${environment.portCount}:${encodeURIComponent(launchName)}`;
+}
+
+function parseLaunchTerminalName(name: string): {
+  launchName: string;
+  portBase: number;
+  portCount: number;
+} | null {
+  if (!name.startsWith(LAUNCH_TERMINAL_NAME_PREFIX)) return null;
+  const [portBaseText, portCountText, ...encodedNameParts] = name
+    .slice(LAUNCH_TERMINAL_NAME_PREFIX.length)
+    .split(":");
+  const portBase = Number(portBaseText);
+  const portCount = Number(portCountText);
+  if (
+    !Number.isInteger(portBase) ||
+    !Number.isInteger(portCount) ||
+    portBase < 1 ||
+    portCount < 1 ||
+    portBase + portCount - 1 > 65_535 ||
+    encodedNameParts.length === 0
+  ) {
+    return null;
+  }
+  try {
+    const launchName = decodeURIComponent(encodedNameParts.join(":"));
+    return launchName ? { launchName, portBase, portCount } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function probeHttp(port: number): Promise<boolean> {

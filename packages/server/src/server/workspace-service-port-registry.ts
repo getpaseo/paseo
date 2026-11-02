@@ -117,6 +117,22 @@ export function releaseWorkspaceServicePortPlan(workspaceId: string): void {
   dynamicPortsByWorkspace.delete(workspaceId);
 }
 
+/** Releases one service lease when another runtime takes over its name. */
+export function releaseWorkspaceServicePort(workspaceId: string, scriptName: string): void {
+  const plan = workspaceServicePortPlans.get(workspaceId);
+  const port = plan?.get(scriptName);
+  if (port === undefined) return;
+
+  const nextPlan = new Map(plan);
+  nextPlan.delete(scriptName);
+  if (nextPlan.size === 0) {
+    workspaceServicePortPlans.delete(workspaceId);
+  } else {
+    workspaceServicePortPlans.set(workspaceId, nextPlan);
+  }
+  releaseDynamicPort({ workspaceId, scriptName, port });
+}
+
 interface WorkspaceServicePortPlanUpdateOptions extends EnsureWorkspaceServicePortPlanOptions {
   existingPlan: ReadonlyMap<string, number>;
   refreshScriptName?: string;

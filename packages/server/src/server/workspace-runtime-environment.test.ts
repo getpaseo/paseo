@@ -57,6 +57,34 @@ describe("WorkspaceRuntimeEnvironmentService", () => {
     service.release("workspace-two");
   });
 
+  it("adopts a surviving launch port block without probing its occupied ports", async () => {
+    const service = new WorkspaceRuntimeEnvironmentService({
+      checkPortAvailable: async () => {
+        throw new Error("adoption must not probe a running launch");
+      },
+    });
+
+    const environment = await service.adopt({
+      workspaceId: "workspace-restarted-launch",
+      portBase: 43_100,
+      portCount: 100,
+    });
+
+    expect(environment).toMatchObject({
+      portBase: 43_100,
+      portEnd: 43_199,
+      portCount: 100,
+      env: {
+        PASEO_WORKSPACE_ID: "workspace-restarted-launch",
+        PASEO_PORT_BASE: "43100",
+        PASEO_PORT_END: "43199",
+        PASEO_PORT_COUNT: "100",
+        COMPOSE_PROJECT_NAME: environment.composeProjectName,
+      },
+    });
+    expect(service.getReservedPorts()).toEqual(environment.reservedPorts);
+  });
+
   it("keeps explicit service ports outside the workspace block", async () => {
     const [firstPort, secondPort] = await getFreePortPair();
     const service = new WorkspaceRuntimeEnvironmentService();

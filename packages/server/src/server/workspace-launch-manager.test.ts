@@ -124,6 +124,74 @@ describe("WorkspaceLaunchManager", () => {
     await manager.disposeWorkspace(context.workspaceId);
   });
 
+  it("recovers a surviving launch terminal and its port block after daemon restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-recovery-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const terminalManager = createTerminalManager();
+    const context = {
+      workspaceId: "workspace-launch-recovery",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/recovery",
+    };
+    const dependencies = {
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async () => false,
+        probeHttp: async () => false,
+      },
+      logger: pino({ level: "silent" }),
+    };
+    const original = new WorkspaceLaunchManager({
+      ...dependencies,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+    });
+    const recovered = new WorkspaceLaunchManager({
+      ...dependencies,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+    });
+
+    try {
+      const started = await original.start(context, "dev");
+      expect(terminalManager.created[0]?.name).toContain("@paseo/launch:v1:");
+
+      expect(await recovered.buildSnapshot(context)).toEqual([
+        expect.objectContaining({
+          launchName: "dev",
+          lifecycle: "running",
+          active: true,
+          terminalId: started.terminalId,
+          portBase: port,
+          portEnd: port,
+          portCount: 1,
+          composeProjectName: started.composeProjectName,
+        }),
+      ]);
+      await expect(recovered.start(context, "dev")).resolves.toMatchObject({
+        terminalId: started.terminalId,
+      });
+      expect(terminalManager.created).toHaveLength(1);
+
+      await recovered.stop(context, "dev");
+    } finally {
+      await recovered.disposeWorkspace(context.workspaceId);
+      await original.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("releases the shared port before starting a replacement launch", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-switch-port-"));
     tempDirs.push(directory);
@@ -210,6 +278,11 @@ describe("WorkspaceLaunchManager", () => {
       terminalId: legacyTerminal.id,
       exitCode: null,
     });
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: "workspace-project-launch-test",
+      services: [{ scriptName: "dev" }],
+      allocatePort: async () => port,
+    });
     const manager = new WorkspaceLaunchManager({
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
@@ -250,6 +323,7 @@ describe("WorkspaceLaunchManager", () => {
       expect(terminalManager.created[1]?.env).not.toHaveProperty("PASEO_PORT");
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
+      releaseWorkspaceServicePortPlan(context.workspaceId);
     }
   });
 
@@ -1017,6 +1091,7 @@ function createTerminalManager(): {
   manager: TerminalManager;
   created: Array<{
     env: Record<string, string> | undefined;
+    name: string;
     retainOnExit: boolean;
     triggerExit: (exitCode: number | null) => void;
   }>;
@@ -1026,6 +1101,7 @@ function createTerminalManager(): {
   const sessions = new Map<string, TerminalSession>();
   const created: Array<{
     env: Record<string, string> | undefined;
+    name: string;
     retainOnExit: boolean;
     triggerExit: (exitCode: number | null) => void;
   }> = [];
@@ -1033,41 +1109,64 @@ function createTerminalManager(): {
   let nextId = 0;
   let failNextCreate = false;
   const manager = {
-    createTerminal: async (options: { env?: Record<string, string>; retainOnExit?: boolean }) => {
+    createTerminal: async (options: {
+      cwd: string;
+      workspaceId: string;
+      name?: string;
+      env?: Record<string, string>;
+      retainOnExit?: boolean;
+    }) => {
       if (failNextCreate) {
         failNextCreate = false;
         throw new Error("Failed to create terminal");
       }
       const id = `terminal-${++nextId}`;
       let exitListener: ((info: { exitCode: number | null }) => void) | null = null;
+      let exitInfo: { exitCode: number | null } | null = null;
+      const triggerExit = (exitCode: number | null) => {
+        exitInfo = { exitCode };
+        exitListener?.(exitInfo);
+      };
       const terminal = {
         id,
-        name: id,
-        cwd: "",
-        workspaceId: "",
+        name: options.name ?? id,
+        cwd: options.cwd,
+        workspaceId: options.workspaceId,
         getState: () => ({ scrollback: [], grid: [[{ char: "$" }]] }),
         subscribe: () => () => {},
         onExit: (listener: (info: { exitCode: number | null }) => void) => {
+          if (exitInfo) {
+            queueMicrotask(() => listener(exitInfo!));
+            return () => {};
+          }
           exitListener = listener;
           return () => {
             exitListener = null;
           };
         },
+        getExitInfo: () => exitInfo,
         send: vi.fn(),
       } as unknown as TerminalSession;
       sessions.set(id, terminal);
       created.push({
         env: options.env,
+        name: terminal.name,
         retainOnExit: options.retainOnExit === true,
-        triggerExit: (exitCode) => exitListener?.({ exitCode }),
+        triggerExit,
       });
       // Keep the exit callback with the fake terminal rather than exposing an
       // implementation-only method through the production interface.
       Object.assign(terminal, {
-        __exit: () => exitListener?.({ exitCode: 0 }),
+        __exit: () => triggerExit(0),
       });
       return terminal;
     },
+    getTerminals: async (cwd: string, options?: { workspaceId?: string }) =>
+      Array.from(sessions.values()).filter(
+        (session) =>
+          session.cwd === cwd &&
+          (options?.workspaceId === undefined || session.workspaceId === options.workspaceId),
+      ),
     getTerminal: (id: string) => sessions.get(id),
     killTerminal: (id: string) => {
       sessions.delete(id);

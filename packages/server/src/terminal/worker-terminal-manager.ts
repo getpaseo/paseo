@@ -795,6 +795,13 @@ export function createWorkerTerminalManager(
       if (record) {
         record.replayPreamble = item.replayPreamble;
       }
+      if (item.exitInfo) {
+        handleTerminalExitEvent({
+          type: "terminalExit",
+          terminalId: info.id,
+          info: item.exitInfo,
+        });
+      }
       // The agent hooks inside each shell keep the token they were started with.
       if (item.activityToken) {
         terminalActivityTokenById.set(info.id, item.activityToken);

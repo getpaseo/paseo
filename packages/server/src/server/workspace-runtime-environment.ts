@@ -28,6 +28,12 @@ export interface EnsureWorkspaceRuntimeEnvironmentInput {
   excludedPorts?: ReadonlySet<number> | (() => ReadonlySet<number>);
 }
 
+export interface AdoptWorkspaceRuntimeEnvironmentInput {
+  workspaceId: string;
+  portBase: number;
+  portCount: number;
+}
+
 export interface WorkspaceRuntimeEnvironmentServiceOptions {
   /** Injectable only to make allocation ordering deterministic in tests. */
   random?: () => number;
@@ -93,6 +99,36 @@ export class WorkspaceRuntimeEnvironmentService {
     return environment ? cloneEnvironment(environment) : null;
   }
 
+  /** Restores a lease already owned by a launch that survived a daemon restart. */
+  async adopt(input: AdoptWorkspaceRuntimeEnvironmentInput): Promise<WorkspaceRuntimeEnvironment> {
+    // A surviving process owns this block. Cancel a newer allocation that may
+    // have started before launch recovery observed the terminal.
+    this.pending.delete(input.workspaceId);
+    return await runWithWorkspacePortAllocationLock(async () => {
+      const existing = this.environments.get(input.workspaceId);
+      if (existing) {
+        if (existing.portBase !== input.portBase || existing.portCount !== input.portCount) {
+          throw new Error(`Workspace '${input.workspaceId}' already owns a different port block`);
+        }
+        return cloneEnvironment(existing);
+      }
+      if (!isValidTcpBlock(input.portBase, input.portCount)) {
+        throw new Error(
+          `Workspace port block ${input.portBase}-${input.portBase + input.portCount - 1} is outside the TCP port range`,
+        );
+      }
+      if (this.intersectsReservedBlock(input.portBase, input.portCount)) {
+        throw new Error(
+          `Workspace port block ${input.portBase}-${input.portBase + input.portCount - 1} overlaps another workspace lease`,
+        );
+      }
+
+      const environment = buildEnvironment(input.workspaceId, input.portBase, input.portCount);
+      this.environments.set(input.workspaceId, environment);
+      return cloneEnvironment(environment);
+    });
+  }
+
   getReservedPorts(): ReadonlySet<number> {
     const ports = new Set<number>();
     for (const environment of this.environments.values()) {
@@ -122,33 +158,7 @@ export class WorkspaceRuntimeEnvironmentService {
       const portCount = input.allocation?.blockSize ?? DEFAULT_WORKSPACE_PORT_BLOCK_SIZE;
       const excludedPorts = resolveExcludedPorts(input.excludedPorts);
       const base = await this.allocatePortBlock({ ...input, excludedPorts, portCount });
-      const portEnd = base + portCount - 1;
-      const reservedPorts = new Set<number>();
-      for (let port = base; port <= portEnd; port += 1) {
-        reservedPorts.add(port);
-      }
-
-      const composeProjectName = `paseo_${createHash("sha256")
-        .update(input.workspaceId)
-        .digest("hex")
-        .slice(0, 12)}`;
-      const environment: StoredWorkspaceRuntimeEnvironment = {
-        portBase: base,
-        portEnd,
-        portCount,
-        composeProjectName,
-        env: {
-          PASEO_WORKSPACE_ID: input.workspaceId,
-          PASEO_PORT_BASE: String(base),
-          PASEO_PORT_END: String(portEnd),
-          PASEO_PORT_COUNT: String(portCount),
-          PASEO_COMPOSE_PROJECT_NAME: composeProjectName,
-          // Overlay instead of inheriting an ambient value: every unit in this
-          // workspace must address the same Compose project.
-          COMPOSE_PROJECT_NAME: composeProjectName,
-        },
-        reservedPorts,
-      };
+      const environment = buildEnvironment(input.workspaceId, base, portCount);
       if (!isCurrent()) {
         throw new Error("Workspace runtime environment was released during allocation");
       }
@@ -262,7 +272,46 @@ export class WorkspaceRuntimeEnvironmentService {
 
 function isValidTcpBlock(base: number, portCount: number): boolean {
   const end = base + portCount - 1;
-  return Number.isInteger(base) && base >= MIN_TCP_PORT && end <= MAX_TCP_PORT;
+  return (
+    Number.isInteger(base) &&
+    Number.isInteger(portCount) &&
+    portCount > 0 &&
+    base >= MIN_TCP_PORT &&
+    end <= MAX_TCP_PORT
+  );
+}
+
+function buildEnvironment(
+  workspaceId: string,
+  portBase: number,
+  portCount: number,
+): StoredWorkspaceRuntimeEnvironment {
+  const portEnd = portBase + portCount - 1;
+  const reservedPorts = new Set<number>();
+  for (let port = portBase; port <= portEnd; port += 1) {
+    reservedPorts.add(port);
+  }
+  const composeProjectName = `paseo_${createHash("sha256")
+    .update(workspaceId)
+    .digest("hex")
+    .slice(0, 12)}`;
+  return {
+    portBase,
+    portEnd,
+    portCount,
+    composeProjectName,
+    env: {
+      PASEO_WORKSPACE_ID: workspaceId,
+      PASEO_PORT_BASE: String(portBase),
+      PASEO_PORT_END: String(portEnd),
+      PASEO_PORT_COUNT: String(portCount),
+      PASEO_COMPOSE_PROJECT_NAME: composeProjectName,
+      // Overlay instead of inheriting an ambient value: every unit in this
+      // workspace must address the same Compose project.
+      COMPOSE_PROJECT_NAME: composeProjectName,
+    },
+    reservedPorts,
+  };
 }
 
 function cloneEnvironment(

@@ -271,6 +271,37 @@ it("keeps a completed retained terminal in the detached worker until it is dismi
   expect(manager.getTerminal(terminal.id)).toBeUndefined();
 }, 30000);
 
+it("adopts the exit of a retained terminal that completed without a daemon controller", async () => {
+  const paseoHome = createTemporaryHome();
+  const exitRequestPath = join(paseoHome, "exit-requested");
+  const exitObservedPath = join(paseoHome, "exit-observed");
+  const first = await startRealWorkerManager({ paseoHome });
+  const terminal = await first.createTerminal({
+    workspaceId: "ws-retained-disconnected-exit",
+    cwd: paseoHome,
+    retainOnExit: true,
+    ...nodeTerminalCommand(`
+      const { existsSync, writeFileSync } = require("node:fs");
+      const timer = setInterval(() => {
+        if (!existsSync(${JSON.stringify(exitRequestPath)})) return;
+        clearInterval(timer);
+        writeFileSync(${JSON.stringify(exitObservedPath)}, "");
+        process.exit(17);
+      }, 10);
+    `),
+  });
+
+  await first.detach();
+  writeFileSync(exitRequestPath, "");
+  await waitForCondition(() => existsSync(exitObservedPath), 10000);
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const adopted = manager.getTerminal(terminal.id);
+  expect(adopted).toBeDefined();
+  await waitForCondition(() => adopted?.getExitInfo() !== null, 10000);
+  expect(adopted?.getExitInfo()).toMatchObject({ exitCode: 17 });
+}, 30000);
+
 it("retires a killed worker's sessions and shares one replacement across concurrent creates", async () => {
   const paseoHome = createTemporaryHome();
   manager = await startRealWorkerManager({ paseoHome });

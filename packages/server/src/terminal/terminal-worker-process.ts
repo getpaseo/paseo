@@ -28,6 +28,7 @@ import {
   type TerminalWorkerListResult,
   type TerminalWorkerRequest,
   type TerminalWorkerToParentMessage,
+  type WorkerListedTerminal,
   type WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
@@ -529,12 +530,15 @@ function runWorker(argv: string[]): void {
       // Buffered output is already in the headless state; flushing first keeps a later
       // batch from carrying bytes the snapshot already shows.
       outputCoalescerByTerminalId.get(session.id)?.flush();
-      return {
+      const exitInfo = session.getExitInfo();
+      const listed: WorkerListedTerminal = {
         terminal: toTerminalInfo(session),
         state: terminalMetadata(session),
         activityToken: manager.getTerminalActivityToken(session.id),
         replayPreamble: session.getReplayPreamble(),
       };
+      if (exitInfo) listed.exitInfo = exitInfo;
+      return listed;
     });
   }
 

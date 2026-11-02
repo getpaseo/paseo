@@ -247,7 +247,7 @@ describe("buildSnapshot", () => {
     expect(spawnCalls[0]?.branchName).toBe(workspace.branch);
   });
 
-  test("hides a worktree script when the project defines a same-named launch", () => {
+  test("hides a worktree script when the project defines a same-named launch", async () => {
     const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
     const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
     tempDirs.push(projectDirectory, workspaceDirectory);
@@ -276,7 +276,7 @@ describe("buildSnapshot", () => {
     } as PersistedWorkspaceRecord;
     const { service } = buildService({ workspace, project });
 
-    expect(service.buildSnapshot(workspace, project)).toEqual([]);
+    expect(await service.buildSnapshot(workspace, project)).toEqual([]);
   });
 });
 

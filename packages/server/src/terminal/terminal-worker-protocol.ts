@@ -45,7 +45,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 6;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 7;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.
@@ -83,6 +83,8 @@ export interface WorkerListedTerminal {
   state: WorkerTerminalState;
   activityToken: string | null;
   replayPreamble: string;
+  /** Present for a retained terminal whose process exited while no daemon was connected. */
+  exitInfo?: TerminalExitInfo;
 }
 
 export interface WorkerKillAndWaitOptions {
