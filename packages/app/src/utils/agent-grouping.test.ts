@@ -71,6 +71,18 @@ describe("deriveProjectDisplayName", () => {
 });
 
 describe("groupAgents", () => {
+  it("keeps unrelated default-root worktrees in separate project groups", () => {
+    const cwds = [
+      "/home/alice/.paseo/worktrees/project-hash-a/feature-a",
+      "/home/alice/.paseo/worktrees/project-hash-b/feature-b",
+    ];
+    const agents = cwds.map((cwd, index) =>
+      makeAgent({ id: `a${index}`, cwd, lastActivityAt: new Date("2026-01-01T00:00:00Z") }),
+    );
+
+    expect(groupAgents(agents).activeGroups.map((group) => group.projectKey)).toEqual(cwds);
+  });
+
   it("uses turn liveness instead of protocol status for active grouping", () => {
     const old = new Date("2020-01-01T00:00:00.000Z");
     const open = makeAgent({ id: "open", status: "idle", lastActivityAt: old });
