@@ -2389,6 +2389,12 @@ class ClaudeAgentSession implements AgentSession {
   private mainTurnInFlight = false;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
+  /**
+   * The reply Claude Code writes when a turn stops on an API error ("You've hit your session
+   * limit", "API Error: 529 ..."), held back until the result says whether the turn failed: a
+   * failed turn shows the same text as its error, so showing both would repeat it.
+   */
+  private withheldErrorReply: AgentTimelineItem[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
@@ -2531,6 +2537,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
     this.activeTurnHasAssistantText = false;
+    this.withheldErrorReply = [];
     this.contextUsage.beginTurn();
     this.transitionTurnState("foreground", "foreground turn started");
     this.clearRecentStderr();
@@ -4419,6 +4426,21 @@ class ClaudeAgentSession implements AgentSession {
               }) satisfies AgentStreamEvent,
           );
 
+    if (!readClaudeParentToolUseId(message)) {
+      if (message.type === "assistant" && message.error) {
+        this.withheldErrorReply.push(...assistantTimelineEvents.map((event) => event.item));
+        return messageEvents;
+      }
+      if (
+        message.type === "assistant" ||
+        message.type === "user" ||
+        message.type === "stream_event"
+      ) {
+        const released: AgentStreamEvent[] = [];
+        this.releaseWithheldErrorReply(released);
+        return [...released, ...messageEvents, ...assistantTimelineEvents];
+      }
+    }
     return [...messageEvents, ...assistantTimelineEvents];
   }
 
@@ -4966,6 +4988,23 @@ class ClaudeAgentSession implements AgentSession {
     events: AgentStreamEvent[],
   ): void {
     const usage = this.convertUsage(message);
+    // Claude Code reports a turn that stopped on an API error (a usage limit, an overloaded or
+    // rejected request) as `success` with `is_error`, carrying the error text in `result`.
+    if (message.subtype === "success" && message.is_error) {
+      const withheld = this.withheldErrorReply;
+      this.withheldErrorReply = [];
+      const resultText = typeof message.result === "string" ? message.result.trim() : "";
+      const withheldText = withheld
+        .map((item) => (item.type === "assistant_message" ? item.text : ""))
+        .join("\n")
+        .trim();
+      if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
+      events.push(...this.sidechainTracker.finishAll("failed"));
+      events.push(this.buildTurnFailedEvent(resultText || withheldText || "Claude run failed"));
+      return;
+    }
+    const releasedErrorReply = this.withheldErrorReply.length > 0;
+    this.releaseWithheldErrorReply(events);
     if (message.subtype === "success") {
       events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
@@ -4975,7 +5014,12 @@ class ClaudeAgentSession implements AgentSession {
       // accounting from provider gateways does not duplicate streamed output.
       const resultText = typeof message.result === "string" ? message.result.trim() : "";
       const outputTokens = message.usage?.output_tokens;
-      if (resultText.length > 0 && outputTokens === 0 && !this.activeTurnHasAssistantText) {
+      if (
+        resultText.length > 0 &&
+        outputTokens === 0 &&
+        !this.activeTurnHasAssistantText &&
+        !releasedErrorReply
+      ) {
         events.push({
           type: "timeline",
           provider: "claude",
@@ -4995,6 +5039,14 @@ class ClaudeAgentSession implements AgentSession {
         : "Claude run failed";
     events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
+  }
+
+  private releaseWithheldErrorReply(events: AgentStreamEvent[]): void {
+    if (this.withheldErrorReply.length === 0) return;
+    for (const item of this.withheldErrorReply) {
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+    this.withheldErrorReply = [];
   }
 
   private createClaudeSessionChangedNotice(
