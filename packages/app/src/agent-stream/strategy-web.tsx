@@ -443,6 +443,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       unsubscribe?.();
     };
   }, []);
+  // The virtualizer caches measured sizes by key. Two rows with one key overwrite
+  // each other's size on every measurement pass, so the layout never settles and
+  // React aborts with "Maximum update depth exceeded". A repeated id gets a suffix.
+  const historyVirtualizedKeys = useMemo(() => {
+    const used = new Set<string>();
+    return segments.historyVirtualized.map((row) => {
+      let key = row.id;
+      for (let repeat = 1; used.has(key); repeat++) key = `${row.id}:${repeat}`;
+      used.add(key);
+      return key;
+    });
+  }, [segments.historyVirtualized]);
   const contentWidth = contentRef.current?.getBoundingClientRect().width;
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
@@ -452,7 +464,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       height: scrollContainerRef.current?.clientHeight ?? 0,
     },
     getScrollElement: () => scrollContainerRef.current,
-    getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
+    getItemKey: (index: number) => historyVirtualizedKeys[index] ?? index,
     estimateSize: (index: number) => {
       const row = segments.historyVirtualized[index];
       const measured = row && measuredRowHeights.current.get(row.id);
