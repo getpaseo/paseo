@@ -2163,6 +2163,20 @@ describe("plugin session skills", () => {
   test("merges discovered skills into advertised commands and expands unadvertised ones", async () => {
     await withSkillSession(expectMergedSkillsAndExpansion);
   });
+
+  test("expands a discovered skill in a steered prompt too", async () => {
+    await withSkillSession(async (session, prompts) => {
+      await session.steerActiveTurn!("/temp-skill do it", {
+        expectedTurnId: "turn-1",
+        clientMessageId: "steer-1",
+      });
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.prompt.input).toEqual({
+        type: "message",
+        content: [{ type: "text", text: expect.stringContaining('<skill name="temp-skill"') }],
+      });
+    });
+  });
 });
 
 async function expectMergedSkillsAndExpansion(
@@ -2214,7 +2228,7 @@ async function withSkillSession(
     );
     await withObservedProvider(
       {
-        capabilities: [...CAPABILITIES, "prompt.command"],
+        capabilities: [...CAPABILITIES, "prompt.command", "prompt.steer"],
         skillRoots: [skillRoot],
         openChildren(sessionId, emit) {
           emit({

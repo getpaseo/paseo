@@ -1242,6 +1242,8 @@ class PluginAgentSession implements AgentSession {
   private closed = false;
   skillRoots: readonly string[] = [];
   private discoveredSkills: readonly DiscoveredACPSkill[] = [];
+  /** Set once a skill scan has finished, so an empty result is not rescanned. */
+  private skillsDiscovered: Promise<readonly DiscoveredACPSkill[]> | null = null;
   private replay: {
     persistence: ProviderPersistence;
     config: ProviderConfigState;
@@ -1337,10 +1339,14 @@ class PluginAgentSession implements AgentSession {
     if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
       return { status: "unavailable" };
     }
+    // A steered prompt is a prompt: a skill the plugin does not advertise must
+    // be expanded here too, or the plugin receives the bare `/name` and never
+    // learns what the user asked for.
+    const expandedPrompt = await this.expandSkillPrompt(prompt);
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",
-      input: { type: "message", content: mapPromptContent(prompt) },
+      input: { type: "message", content: mapPromptContent(expandedPrompt) },
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
@@ -1449,11 +1455,21 @@ class PluginAgentSession implements AgentSession {
    * it must never block listing commands or starting a turn.
    */
   private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
-    if (this.skillRoots.length === 0 || this.discoveredSkills.length > 0) {
+    if (this.skillRoots.length === 0) {
       return this.discoveredSkills;
     }
-    this.discoveredSkills = await discoverACPSkills({ roots: this.skillRoots }).catch(() => []);
-    return this.discoveredSkills;
+    // Cache the promise, not just the result: an empty scan is a real answer,
+    // and concurrent callers must not each walk the filesystem.
+    this.skillsDiscovered ??= discoverACPSkills({ roots: this.skillRoots })
+      .then((skills) => {
+        this.discoveredSkills = skills;
+        return skills;
+      })
+      .catch(() => {
+        this.discoveredSkills = [];
+        return this.discoveredSkills;
+      });
+    return this.skillsDiscovered;
   }
 
   /**

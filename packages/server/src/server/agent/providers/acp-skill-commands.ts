@@ -238,7 +238,9 @@ export function renderACPSkillInvocation(invocation: {
 }): string {
   const { skill, args } = invocation;
   const usesPlaceholder = skill.body.includes("$ARGUMENTS");
-  const body = usesPlaceholder ? skill.body.replaceAll("$ARGUMENTS", args) : skill.body;
+  // A replacement callback keeps the arguments literal: `$$`, `$&` and friends
+  // are text the user typed, not replacement-pattern syntax.
+  const body = usesPlaceholder ? skill.body.replaceAll("$ARGUMENTS", () => args) : skill.body;
   const lines = [
     `<skill name="${skill.name}" source="${skill.source}">`,
     `The user invoked the /${skill.name} skill. Follow the instructions below.`,

@@ -161,6 +161,14 @@ describe("renderACPSkillInvocation", () => {
     const rendered = renderACPSkillInvocation({ skill, args: "extra" });
     expect(rendered).toContain("Arguments: extra");
   });
+
+  test("substitutes arguments literally, without replacement-pattern syntax", () => {
+    // `$` sequences in user arguments are text, not replacement syntax. Only
+    // the skill body's own `$ARGUMENTS` placeholder is substituted.
+    const skill = makeSkill("my-skill", { body: "Process $ARGUMENTS carefully" });
+    const rendered = renderACPSkillInvocation({ skill, args: "a $$ b $& c $` d" });
+    expect(rendered).toContain("Process a $$ b $& c $` d carefully");
+  });
 });
 
 describe("toSlashCommand", () => {

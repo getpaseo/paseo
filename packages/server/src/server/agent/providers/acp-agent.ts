@@ -1782,12 +1782,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
   private discoveredSkills: DiscoveredACPSkill[] = [];
+  /** Set once a skill scan has finished, so an empty result is not rescanned. */
+  private skillsDiscovered: Promise<readonly DiscoveredACPSkill[]> | null = null;
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  /**
+   * Set when a turn is interrupted before its prompt reached the agent.
+   *
+   * `startTurn` waits for the skill scan before it can send anything. A Stop
+   * during that wait has nothing to cancel at the agent, so the request is
+   * recorded here and the turn ends without sending a prompt.
+   */
+  private pendingTurnInterrupt = false;
+  /**
+   * Whether the current turn's prompt has reached the agent. Until it has,
+   * a Stop has nothing to cancel at the agent.
+   */
+  private promptSentToAgent = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -2005,6 +2020,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.pendingTurnInterrupt = false;
+    this.promptSentToAgent = false;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -2013,6 +2030,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const expandedPrompt = await this.expandSkillPrompt(prompt);
 
+    // The prompt is prepared asynchronously, so the user can stop the turn
+    // before it reaches the agent. Sending it anyway would start work after
+    // the user asked for it to stop.
+    if (this.pendingTurnInterrupt) {
+      this.pendingTurnInterrupt = false;
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return { turnId };
+    }
+
+    this.promptSentToAgent = true;
     void this.connection
       .prompt({
         sessionId: this.sessionId,
@@ -2042,9 +2074,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * Expand a leading `/name` that names a skill Paseo discovered but the agent
    * did not advertise. See `expandSkillPrompt` in acp-skill-commands for the
    * shared rules; the agent expands its own advertised commands itself.
+   *
+   * The agent's command inventory must be settled first. A provider publishes
+   * its commands in batches, so a name that is not advertised yet may still be
+   * the agent's own command. Expanding a local skill over it would take the
+   * command away from the agent that owns it.
    */
   private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
     await this.ensureSkillsDiscovered();
+    await this.waitForCommandInventory();
     const advertisedNames = new Set(this.cachedCommands.map((command) => command.name));
     return expandSkillPrompt(prompt, this.discoveredSkills, advertisedNames);
   }
@@ -2122,14 +2160,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    await this.ensureSkillsDiscovered();
     if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
+      await this.ensureSkillsDiscovered();
       return this.mergeDiscoveredSkills(this.cachedCommands);
     }
 
     await this.waitForCommandsToSettle();
     this.settleCommandsReady();
+    await this.ensureSkillsDiscovered();
     return this.mergeDiscoveredSkills(this.cachedCommands);
+  }
+
+  /**
+   * Wait until the agent's command inventory is complete.
+   *
+   * Providers that publish their commands in batches need this: without it a
+   * name that has not arrived yet looks like a name nobody owns. The wait is
+   * bounded by `initialCommandsWaitTimeoutMs` and skipped for providers that
+   * publish once or not at all.
+   */
+  private async waitForCommandInventory(): Promise<void> {
+    if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
+      return;
+    }
+    await this.waitForCommandsToSettle();
+    this.settleCommandsReady();
   }
 
   /**
@@ -2145,16 +2200,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * conventions are scanned. Project roots win over user roots.
    */
   private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
-    if (this.discoveredSkills.length > 0) {
+    if (this.skillsDiscovered) {
+      return this.skillsDiscovered;
+    }
+    // Cache the promise, not just the result: an empty scan is a real answer,
+    // and concurrent callers must not each walk the filesystem.
+    this.skillsDiscovered = (async () => {
+      try {
+        this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to discover ACP skills");
+        this.discoveredSkills = [];
+      }
       return this.discoveredSkills;
-    }
-    try {
-      this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
-    } catch (error) {
-      this.logger.warn({ err: error }, "Failed to discover ACP skills");
-      this.discoveredSkills = [];
-    }
-    return this.discoveredSkills;
+    })();
+    return this.skillsDiscovered;
   }
 
   /**
@@ -2626,6 +2686,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
+      // The prompt may still be on its way to the agent, in which case there
+      // is nothing to cancel there yet. Record the stop so `startTurn` does
+      // not send a prompt the user already cancelled.
+      if (!this.promptSentToAgent) {
+        this.pendingTurnInterrupt = true;
+      }
       await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
