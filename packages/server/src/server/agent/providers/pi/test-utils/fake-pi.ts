@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+
 import type {
   PiRuntime,
   PiRuntimeLaunch,
@@ -75,6 +77,12 @@ export class FakePi implements PiRuntime {
     const session = new FakePiSession(launch, this.removedModels);
     session.commands = this.queuedCommands.shift() ?? [];
     this.queuedSessionSetups.shift()?.(session);
+    const missingSessionCwd = launch.noSession ? null : readMissingSessionCwd(launch.session);
+    if (missingSessionCwd !== null) {
+      session.getStateError = new Error(
+        `Pi RPC process exited with code 1 and signal null\nStored session working directory does not exist: ${missingSessionCwd}\nSession file: ${launch.session}\nCurrent working directory: ${launch.cwd}`,
+      );
+    }
     this.sessions.push(session);
     return session;
   }
@@ -99,6 +107,27 @@ export class FakePi implements PiRuntime {
     }
     return session;
   }
+}
+
+function readMissingSessionCwd(sessionFile: string | undefined): string | null {
+  if (!sessionFile || !existsSync(sessionFile)) {
+    return null;
+  }
+  const [headerLine = ""] = readFileSync(sessionFile, "utf8").split("\n", 1);
+  let header: unknown;
+  try {
+    header = JSON.parse(headerLine);
+  } catch {
+    return null;
+  }
+  if (typeof header !== "object" || header === null || !("cwd" in header)) {
+    return null;
+  }
+  const { type, cwd } = header as { type?: unknown; cwd?: unknown };
+  if (type !== "session" || typeof cwd !== "string" || !cwd || existsSync(cwd)) {
+    return null;
+  }
+  return cwd;
 }
 
 export class FakePiSession implements PiRuntimeSession {
