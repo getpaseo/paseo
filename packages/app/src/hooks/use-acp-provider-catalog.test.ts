@@ -69,6 +69,18 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
 
+  it("offers GLM Agent on a version whose ACP SDK resolves on Node 22", () => {
+    // 1.15.0 pulls @agentclientprotocol/sdk 2.x, which imports `zod/v4` as a
+    // directory. Node's ESM resolver rejects that, so the agent never answers
+    // `initialize` and the provider times out.
+    expect(findProvider("glm-acp-agent")).toMatchObject({
+      title: "GLM Agent",
+      version: "1.16.0",
+      command: ["npx", "-y", "glm-acp-agent@1.16.0"],
+    });
+    expect(findProvider("glm-acp-agent").iconSvg).toContain("<svg");
+  });
+
   it("offers Hoplite through its local ACP bridge with the Hoplite mark", () => {
     expect(findProvider("hoplite")).toMatchObject({
       title: "Hoplite",
