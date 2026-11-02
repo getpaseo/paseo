@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { classifyTerminalWorkerProtocol } from "./terminal-worker-protocol.js";
+import {
+  classifyTerminalWorkerProtocol,
+  TERMINAL_WORKER_PROTOCOL_VERSION,
+} from "./terminal-worker-protocol.js";
 
 describe("classifyTerminalWorkerProtocol", () => {
+  it("drains the released worker protocol without closing its terminals", () => {
+    expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(6);
+    expect(classifyTerminalWorkerProtocol(5)).toBe("previous");
+  });
   it("rejects the unreleased cell protocol without a draining adapter", () => {
     expect(classifyTerminalWorkerProtocol(1, 2)).toBe("obsolete");
     expect(classifyTerminalWorkerProtocol(2, 3)).toBe("obsolete");

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ensureWorkspaceServicePortPlan,
   refreshWorkspaceServicePort,
+  releaseWorkspaceServicePort,
+  getAllReservedWorkspaceServicePorts,
   releaseWorkspaceServicePortPlan,
 } from "./workspace-service-port-registry.js";
 
@@ -427,6 +429,72 @@ describe("ensureWorkspaceServicePortPlan", () => {
     expect(first).not.toBe(second);
     expect(Array.from(first.entries())).toEqual([["api", 4700]]);
     expect(Array.from(second.entries())).toEqual(Array.from(first.entries()));
+  });
+});
+
+describe("releaseWorkspaceServicePort", () => {
+  it("waits for a sibling refresh and releases only the superseded service", async () => {
+    const workspaceId = "registry-release-during-refresh";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "dev" }, { scriptName: "api" }],
+      allocatePort: createSequentialPortAllocator(6700),
+    });
+    const allocation = createDeferredPort();
+    const refresh = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "api" },
+      allocatePort: () => allocation.promise,
+    });
+    const release = releaseWorkspaceServicePort(workspaceId, "dev");
+    allocation.resolve(6702);
+    await refresh;
+    await release;
+
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [],
+      allocatePort: async () => {
+        throw new Error("No allocation expected");
+      },
+    });
+    expect(Array.from(plan)).toEqual([["api", 6702]]);
+    expect(getAllReservedWorkspaceServicePorts().has(6700)).toBe(false);
+    const reused = await ensureWorkspaceServicePortPlan({
+      workspaceId: "registry-reuse-released-service",
+      services: [{ scriptName: "dev" }],
+      allocatePort: async () => 6700,
+    });
+    expect(reused.get("dev")).toBe(6700);
+    releaseWorkspaceServicePortPlan(workspaceId);
+    releaseWorkspaceServicePortPlan("registry-reuse-released-service");
+  });
+
+  it("does not restore a released entry from a refresh queued behind the release", async () => {
+    const workspaceId = "registry-refresh-after-release";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "dev" }, { scriptName: "api" }],
+      allocatePort: createSequentialPortAllocator(6800),
+    });
+    const release = releaseWorkspaceServicePort(workspaceId, "dev");
+    const refresh = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "api" },
+      allocatePort: async () => 6802,
+    });
+    await release;
+    await refresh;
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [],
+      allocatePort: async () => {
+        throw new Error("No allocation expected");
+      },
+    });
+    expect(Array.from(plan)).toEqual([["api", 6802]]);
+    expect(getAllReservedWorkspaceServicePorts().has(6800)).toBe(false);
+    releaseWorkspaceServicePortPlan(workspaceId);
   });
 });
 

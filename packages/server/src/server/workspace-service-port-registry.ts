@@ -74,7 +74,7 @@ export async function ensureWorkspaceServicePortPlan(
     return new Map(existingPlan);
   }
 
-  return new Map(await startWorkspaceServicePortPlanUpdate({ ...options, existingPlan }));
+  return new Map(await startWorkspaceServicePortPlanUpdate(options));
 }
 
 export function requirePlannedWorkspaceServicePort(
@@ -118,23 +118,22 @@ export function releaseWorkspaceServicePortPlan(workspaceId: string): void {
 }
 
 /** Releases one service lease when another runtime takes over its name. */
-export function releaseWorkspaceServicePort(workspaceId: string, scriptName: string): void {
-  const plan = workspaceServicePortPlans.get(workspaceId);
-  const port = plan?.get(scriptName);
-  if (port === undefined) return;
+export async function releaseWorkspaceServicePort(
+  workspaceId: string,
+  scriptName: string,
+): Promise<void> {
+  await runWithWorkspacePortAllocationLock(async () => {
+    const plan = workspaceServicePortPlans.get(workspaceId);
+    const port = plan?.get(scriptName);
+    if (port === undefined) return;
 
-  const nextPlan = new Map(plan);
-  nextPlan.delete(scriptName);
-  if (nextPlan.size === 0) {
-    workspaceServicePortPlans.delete(workspaceId);
-  } else {
-    workspaceServicePortPlans.set(workspaceId, nextPlan);
-  }
-  releaseDynamicPort({ workspaceId, scriptName, port });
+    plan?.delete(scriptName);
+    if (plan?.size === 0) workspaceServicePortPlans.delete(workspaceId);
+    releaseDynamicPort({ workspaceId, scriptName, port });
+  });
 }
 
 interface WorkspaceServicePortPlanUpdateOptions extends EnsureWorkspaceServicePortPlanOptions {
-  existingPlan: ReadonlyMap<string, number>;
   refreshScriptName?: string;
 }
 
@@ -153,8 +152,12 @@ function startWorkspaceServicePortPlanUpdate(
 async function createPendingWorkspaceServicePortPlan(
   options: WorkspaceServicePortPlanUpdateOptions & { token: PendingWorkspaceServicePortPlanToken },
 ): Promise<Map<string, number>> {
+  // Read under the allocation lock: a queued release may have removed an entry
+  // since this update was requested.
+  const existingPlan =
+    workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>();
   const previousDynamicPorts = new Map(dynamicPortsByWorkspace.get(options.workspaceId));
-  const retainedPlan = new Map(options.existingPlan);
+  const retainedPlan = new Map(existingPlan);
   if (options.refreshScriptName !== undefined) retainedPlan.delete(options.refreshScriptName);
   try {
     const updatedPlan = await buildWorkspaceServicePortPlan({
@@ -164,7 +167,7 @@ async function createPendingWorkspaceServicePortPlan(
       getReservedPorts: options.getReservedPorts,
       existingPlan: retainedPlan,
     });
-    const plan = new Map(options.existingPlan);
+    const plan = new Map(existingPlan);
     for (const [scriptName, port] of updatedPlan) plan.set(scriptName, port);
     if (options.token.isReleased) {
       throw new WorkspaceServicePortPlanReleasedError(options.workspaceId);
@@ -260,7 +263,6 @@ export async function refreshWorkspaceServicePort(
     services: [options.service],
     allocatePort: options.allocatePort,
     getReservedPorts: options.getReservedPorts,
-    existingPlan: workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>(),
     refreshScriptName: options.service.scriptName,
   });
   return requirePlannedWorkspaceServicePort(plan, options.service.scriptName);

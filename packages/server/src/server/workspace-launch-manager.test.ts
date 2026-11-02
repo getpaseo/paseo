@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TerminalSession } from "../terminal/terminal.js";
+import type { TerminalSession, WorkspaceLaunchTerminalMetadata } from "../terminal/terminal.js";
 import {
   createTerminalManager as createRealTerminalManager,
   type TerminalManager,
@@ -166,7 +166,17 @@ describe("WorkspaceLaunchManager", () => {
 
     try {
       const started = await original.start(context, "dev");
-      expect(terminalManager.created[0]?.name).toContain("@paseo/launch:v1:");
+      expect(terminalManager.created[0]?.name).toBe("launch:dev");
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          launches: {
+            dev: { command: "./bin/edited-dev" },
+            full: { command: "./bin/full" },
+          },
+        }),
+      );
+      await recovered.initialize([context]);
 
       expect(await recovered.buildSnapshot(context)).toEqual([
         expect.objectContaining({
@@ -179,17 +189,129 @@ describe("WorkspaceLaunchManager", () => {
           portCount: 1,
           composeProjectName: started.composeProjectName,
         }),
+        expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
       ]);
       await expect(recovered.start(context, "dev")).resolves.toMatchObject({
         terminalId: started.terminalId,
       });
       expect(terminalManager.created).toHaveLength(1);
 
+      terminalManager.failNextCreate();
+      await expect(recovered.start(context, "full")).rejects.toThrow("Failed to create terminal");
+      const restored = (await recovered.buildSnapshot(context)).find((launch) => launch.active)!;
+      expect(terminalManager.manager.getTerminal(restored.terminalId!)?.workspaceLaunch).toEqual({
+        launchName: "dev",
+        command: "./bin/dev",
+        portBase: port,
+        portCount: 1,
+      });
       await recovered.stop(context, "dev");
     } finally {
       await recovered.disposeWorkspace(context.workspaceId);
       await original.disposeWorkspace(context.workspaceId);
     }
+  });
+
+  it("reserves every surviving launch block before a different workspace starts", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-startup-reservations-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "42004-42019", blockSize: 8 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const terminalManager = createTerminalManager();
+    const firstContext = {
+      workspaceId: "startup-launch-a",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: "a",
+    };
+    const secondContext = { ...firstContext, workspaceId: "startup-launch-b", branchName: "b" };
+    const survivingTerminal = await terminalManager.manager.createTerminal({
+      cwd: directory,
+      workspaceId: firstContext.workspaceId,
+      name: "launch:dev",
+      retainOnExit: true,
+      workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 8 },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: environment,
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+      logger: pino({ level: "silent" }),
+    });
+    try {
+      await manager.initialize([firstContext, secondContext]);
+      const second = await manager.start(secondContext, "dev");
+      expect(second).toMatchObject({ portBase: 42008, portEnd: 42015 });
+      expect(await manager.buildSnapshot(firstContext)).toEqual([
+        expect.objectContaining({
+          active: true,
+          terminalId: survivingTerminal.id,
+          portBase: 42000,
+          portEnd: 42007,
+        }),
+      ]);
+      await expect(
+        ensureWorkspaceServicePortPlan({
+          workspaceId: "startup-service",
+          services: [{ scriptName: "api", port: 42004 }],
+          getReservedPorts: () => environment.getReservedPorts(),
+          allocatePort: async () => {
+            throw new Error("No dynamic allocation expected");
+          },
+        }),
+      ).rejects.toThrow("reserved by a workspace runtime block");
+    } finally {
+      await manager.disposeWorkspace(firstContext.workspaceId);
+      await manager.disposeWorkspace(secondContext.workspaceId);
+      releaseWorkspaceServicePortPlan("startup-service");
+    }
+  });
+
+  it("keeps workspace snapshots readable when the terminal worker is unavailable", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-unavailable-worker-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const unavailable = new Error("Terminals are held by a newer Paseo");
+    const terminalManager = createTerminalManager({ unavailableError: unavailable });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "unavailable-worker",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    await manager.initialize([context]);
+    expect(await manager.buildSnapshot(context)).toEqual([
+      expect.objectContaining({ launchName: "dev", lifecycle: "stopped", terminalId: null }),
+    ]);
+    await expect(manager.start(context, "dev")).rejects.toThrow(unavailable);
+    expect(terminalManager.created).toEqual([]);
   });
 
   it("releases the shared port before starting a replacement launch", async () => {
@@ -1087,7 +1209,7 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function createTerminalManager(): {
+function createTerminalManager(managerOptions: { unavailableError?: Error } = {}): {
   manager: TerminalManager;
   created: Array<{
     env: Record<string, string> | undefined;
@@ -1108,13 +1230,18 @@ function createTerminalManager(): {
   const killed: string[] = [];
   let nextId = 0;
   let failNextCreate = false;
+  const unavailableError = managerOptions.unavailableError;
   const manager = {
+    getUnavailableError: () => unavailableError ?? null,
+    listDirectories: () =>
+      Array.from(new Set(Array.from(sessions.values(), (session) => session.cwd))),
     createTerminal: async (options: {
       cwd: string;
       workspaceId: string;
       name?: string;
       env?: Record<string, string>;
       retainOnExit?: boolean;
+      workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
     }) => {
       if (failNextCreate) {
         failNextCreate = false;
@@ -1132,6 +1259,7 @@ function createTerminalManager(): {
         name: options.name ?? id,
         cwd: options.cwd,
         workspaceId: options.workspaceId,
+        workspaceLaunch: options.workspaceLaunch,
         getState: () => ({ scrollback: [], grid: [[{ char: "$" }]] }),
         subscribe: () => () => {},
         onExit: (listener: (info: { exitCode: number | null }) => void) => {
@@ -1161,12 +1289,14 @@ function createTerminalManager(): {
       });
       return terminal;
     },
-    getTerminals: async (cwd: string, options?: { workspaceId?: string }) =>
-      Array.from(sessions.values()).filter(
+    getTerminals: async (cwd: string, options?: { workspaceId?: string }) => {
+      if (unavailableError) throw unavailableError;
+      return Array.from(sessions.values()).filter(
         (session) =>
           session.cwd === cwd &&
           (options?.workspaceId === undefined || session.workspaceId === options.workspaceId),
-      ),
+      );
+    },
     getTerminal: (id: string) => sessions.get(id),
     killTerminal: (id: string) => {
       sessions.delete(id);

@@ -813,9 +813,16 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-adopt-"));
   temporaryDirs.push(cwd);
   const envPath = join(cwd, "adopt-env.json");
+  const workspaceLaunch = {
+    launchName: "dev",
+    command: "./bin/dev",
+    portBase: 42000,
+    portCount: 8,
+  };
   const first = await startRealWorkerManager({ paseoHome });
   const created = await first.createTerminal({
     workspaceId: "ws-adopt",
+    workspaceLaunch,
     cwd,
     ...nodeTerminalCommand(`
       require("node:fs").writeFileSync(
@@ -836,6 +843,7 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
 
   const adopted = manager.getTerminal(created.id);
   expect(adopted?.workspaceId).toBe("ws-adopt");
+  expect(adopted?.workspaceLaunch).toEqual(workspaceLaunch);
   expect(await manager.getTerminals(cwd)).toHaveLength(1);
   expect(manager.validateTerminalActivityToken(created.id, token)).toBe("valid");
   const messages: string[] = [];
@@ -1528,6 +1536,53 @@ it("keeps a retained worker terminal available after it exits", async () => {
   manager.killTerminal("terminal-a");
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
 });
+
+it.each(["working", "attention"] as const)(
+  "clears %s activity while keeping completed launch output available",
+  async (state) => {
+    const worker = new FakeTerminalWorker();
+    manager = createWorkerTerminalManager({ requestTimeoutMs: 50, worker });
+    const activity = { state, changedAt: 1000 };
+    worker.emitWorkerMessage({
+      type: "terminalCreated",
+      terminal: {
+        id: "retained-launch",
+        name: "Launch",
+        cwd: "/workspace",
+        workspaceId: "ws-test",
+        activity,
+        retainOnExit: true,
+      },
+      state: createTerminalState(),
+    });
+    const session = manager.getTerminal("retained-launch")!;
+    const contributions: TerminalWorkspaceContributionChangedEvent[] = [];
+    manager.subscribeTerminalWorkspaceContributionChanged((event) => contributions.push(event));
+    const transitions: unknown[] = [];
+    session.onActivityChange((transition) => transitions.push(transition));
+
+    worker.emitWorkerMessage({
+      type: "terminalExit",
+      terminalId: session.id,
+      info: { exitCode: 17, signal: null, lastOutputLines: ["failed"] },
+    });
+    // Buffered activity arriving after exit must not revive workspace status.
+    worker.emitWorkerMessage({
+      type: "terminalActivityChange",
+      terminalId: session.id,
+      activity,
+      previous: null,
+    });
+
+    expect(session.getActivity()).toBeNull();
+    expect(transitions).toEqual([{ activity: null, previous: activity }]);
+    expect(contributions).toEqual([
+      { terminalId: session.id, cwd: "/workspace", workspaceId: "ws-test" },
+    ]);
+    expect(await manager.getTerminals("/workspace")).toEqual([session]);
+    expect(session.getExitInfo()?.exitCode).toBe(17);
+  },
+);
 
 it("removes a running retained worker terminal when explicitly killed", async () => {
   const worker = new FakeTerminalWorker();

@@ -210,6 +210,7 @@ import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
+import { deriveProjectServiceSlug, deriveProjectSlug } from "./workspace-git-metadata.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
 import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
@@ -1215,6 +1216,26 @@ export async function createPaseoDaemon(
     emitWorkspaceUpdates: emitWorkspaceUpdatesExternal,
     logger,
   });
+  const launchProjects = new Map(
+    (await projectRegistry.list()).map((project) => [project.projectId, project]),
+  );
+  await workspaceLaunchManager.initialize(
+    (await workspaceRegistry.list())
+      .filter((workspace) => !workspace.archivedAt)
+      .map((workspace) => {
+        const project = launchProjects.get(workspace.projectId);
+        const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+        return {
+          workspaceId: workspace.workspaceId,
+          workspaceDirectory: workspace.cwd,
+          projectConfigDirectory: project?.rootPath ?? workspace.cwd,
+          projectSlug: project
+            ? deriveProjectServiceSlug(project)
+            : deriveProjectSlug(workspace.cwd),
+          branchName: snapshot?.git.currentBranch ?? workspace.branch ?? null,
+        };
+      }),
+  );
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,

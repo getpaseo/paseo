@@ -282,6 +282,9 @@ export function createWorkerTerminalManager(
       get workspaceId() {
         return record.info.workspaceId;
       },
+      get workspaceLaunch() {
+        return record.state.workspaceLaunch;
+      },
       send(message: ClientMessage): void {
         if (message.type === "resize") {
           record.state = {
@@ -464,6 +467,14 @@ export function createWorkerTerminalManager(
     }
     const wasExplicitlyClosed = closingRecordsById.delete(message.terminalId);
     record.exitInfo = message.info;
+    if (!wasExplicitlyClosed && record.info.retainOnExit) {
+      handleTerminalActivityChangeEvent({
+        type: "terminalActivityChange",
+        terminalId: record.info.id,
+        activity: null,
+        previous: record.activity,
+      });
+    }
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
@@ -473,12 +484,7 @@ export function createWorkerTerminalManager(
     }
     if (!record.info.retainOnExit) {
       removeRecordAndEmit(message.terminalId);
-      return;
     }
-    emitTerminalsChanged({
-      cwd: record.info.cwd,
-      terminals: listTerminalItemsForCwd(record.info.cwd),
-    });
   }
 
   function handleTerminalTitleChangeEvent(
@@ -527,6 +533,7 @@ export function createWorkerTerminalManager(
     if (!record) {
       return;
     }
+    if (record.exitInfo && message.activity) return;
     const previousActivity = record.activity;
     record.activity = message.activity;
     const transition: TerminalActivityTransition = {

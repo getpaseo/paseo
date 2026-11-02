@@ -9,6 +9,7 @@ import {
   type LocalTerminalSession,
   type TerminalActivityTransition,
   type TerminalSession,
+  type WorkspaceLaunchTerminalMetadata,
 } from "./terminal.js";
 import { type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -58,6 +59,7 @@ export interface TerminalManagerCreateOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -367,6 +369,7 @@ export function createTerminalManager(
             id: terminalId,
             cwd: options.cwd,
             workspaceId: options.workspaceId,
+            workspaceLaunch: options.workspaceLaunch,
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),

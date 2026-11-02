@@ -1,10 +1,16 @@
-import type { TerminalExitInfo, ServerMessage, ClientMessage } from "./terminal.js";
+import type {
+  TerminalExitInfo,
+  ServerMessage,
+  ClientMessage,
+  WorkspaceLaunchTerminalMetadata,
+} from "./terminal.js";
 import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
 export interface WorkerTerminalState {
   rows: number;
   cols: number;
   hasOutput: boolean;
   title?: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
 }
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -23,6 +29,7 @@ export interface WorkerCreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId?: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -45,7 +52,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 7;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 6;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.

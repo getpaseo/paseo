@@ -274,7 +274,12 @@ function runWorker(argv: string[]): void {
   }
 
   function terminalMetadata(session: LocalTerminalSession) {
-    return { ...session.getSize(), hasOutput: session.hasOutput(), title: session.getTitle() };
+    return {
+      ...session.getSize(),
+      hasOutput: session.hasOutput(),
+      title: session.getTitle(),
+      workspaceLaunch: session.workspaceLaunch,
+    };
   }
 
   function toTerminalInfo(session: LocalTerminalSession): WorkerTerminalInfo {
