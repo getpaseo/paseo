@@ -6,6 +6,8 @@ import {
   listAntigravitySessions,
   readAntigravityTranscript,
   getAntigravitySessionTitle,
+  normalizePath,
+  resolveAntigravityRoot,
 } from "./history.js";
 import { mapHistoryToolDetail } from "./timeline.js";
 
@@ -355,5 +357,81 @@ describe("history utilities", () => {
   it("handles non-existent conversation title gracefully", () => {
     const title = getAntigravitySessionTitle("non-existent-conv-id-12345", tempDir);
     expect(title).toBeNull();
+  });
+
+  it("preserves case on POSIX filesystems while folding case on Windows", () => {
+    const windowsPathA = "C:\\Workspace\\Project";
+    const windowsPathB = "c:\\workspace\\project";
+    expect(normalizePath(windowsPathA)).toBe(normalizePath(windowsPathB));
+
+    const posixPathA = "/workspace/App";
+    const posixPathB = "/workspace/app";
+    if (process.platform === "win32") {
+      expect(normalizePath(posixPathA)).toBe(normalizePath(posixPathB));
+    } else {
+      expect(normalizePath(posixPathA)).not.toBe(normalizePath(posixPathB));
+      expect(normalizePath(posixPathA)).toBe("/workspace/App");
+      expect(normalizePath(posixPathB)).toBe("/workspace/app");
+    }
+  });
+
+  it("resolves antigravity root with effective launch and session environment overrides", () => {
+    // 1. Explicit AGY_HOME in env
+    expect(resolveAntigravityRoot(undefined, { AGY_HOME: "/custom/agy" })).toBe("/custom/agy");
+
+    // 2. Custom HOME in env overrides daemon process.env.AGY_HOME
+    const oldAgyHome = process.env.AGY_HOME;
+    try {
+      process.env.AGY_HOME = "/daemon/agy";
+      const resolved = resolveAntigravityRoot(undefined, { HOME: "/account/user" });
+      expect(resolved).toBe(path.join("/account/user", ".gemini", "antigravity-cli"));
+    } finally {
+      process.env.AGY_HOME = oldAgyHome;
+    }
+
+    // 3. Explicit baseDir takes precedence over everything
+    expect(resolveAntigravityRoot("/base/override", { AGY_HOME: "/custom/agy" })).toBe(
+      "/base/override",
+    );
+  });
+
+  it("reads sessions, title, and transcript using effective environment overrides", async () => {
+    const customHome = path.join(tempDir, "custom-user");
+    const customAgy = path.join(customHome, ".gemini", "antigravity-cli");
+    await mkdir(customAgy, { recursive: true });
+
+    const historyJsonl = path.join(customAgy, "history.jsonl");
+    const record = {
+      conversationId: "conv-custom-env",
+      display: "Custom Env Task",
+      workspace: "/workspace/custom",
+      timestamp: 1789509896806,
+    };
+    await writeFile(historyJsonl, JSON.stringify(record) + "\n");
+
+    const logDir = path.join(customAgy, "brain", "conv-custom-env", ".system_generated", "logs");
+    await mkdir(logDir, { recursive: true });
+    await writeFile(
+      path.join(logDir, "transcript.jsonl"),
+      JSON.stringify({ type: "USER_INPUT", content: "hello from custom env" }) + "\n",
+    );
+
+    // List with env.HOME pointing to custom home
+    const sessions = listAntigravitySessions({ env: { HOME: customHome } });
+    expect(sessions.some((s) => s.persistence.data.conversationId === "conv-custom-env")).toBe(
+      true,
+    );
+
+    // Title lookup with env.HOME
+    const title = getAntigravitySessionTitle("conv-custom-env", undefined, { HOME: customHome });
+    expect(title).toBe("Custom Env Task");
+
+    // Transcript read with env.HOME
+    const turns = readAntigravityTranscript("conv-custom-env", undefined, { HOME: customHome });
+    expect(turns).toHaveLength(1);
+    expect(turns[0].items[0]).toMatchObject({
+      type: "user_message",
+      text: "hello from custom env",
+    });
   });
 });

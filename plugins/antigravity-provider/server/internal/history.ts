@@ -33,14 +33,27 @@ function getDatabaseSync(): SqliteDatabaseConstructor | null {
   }
 }
 
-function resolveAntigravityRoot(baseDir?: string): string {
-  return baseDir ?? process.env.AGY_HOME ?? join(homedir(), ".gemini", "antigravity-cli");
+export function resolveAntigravityRoot(
+  baseDir?: string,
+  env?: Record<string, string | undefined>,
+): string {
+  if (baseDir) return baseDir;
+  if (env?.AGY_HOME) return env.AGY_HOME;
+  const envHome = env?.HOME || (process.platform === "win32" ? env?.USERPROFILE : undefined);
+  if (envHome) return join(envHome, ".gemini", "antigravity-cli");
+  if (process.env.AGY_HOME) return process.env.AGY_HOME;
+  const processHome =
+    process.env.HOME ||
+    (process.platform === "win32" ? process.env.USERPROFILE : undefined) ||
+    homedir();
+  return join(processHome, ".gemini", "antigravity-cli");
 }
 
 export interface ListSessionOptions {
   query?: string;
   cwd?: string;
   limit?: number;
+  env?: Record<string, string | undefined>;
 }
 
 function parseWorkspaceUri(uri: string): string | null {
@@ -80,7 +93,7 @@ function findFirstWorkspaceUri(list: unknown[]): string | null {
   return null;
 }
 
-function normalizePath(p?: string | null): string {
+export function normalizePath(p?: string | null): string {
   if (!p) return "";
   let resolved = p;
   try {
@@ -88,7 +101,11 @@ function normalizePath(p?: string | null): string {
       resolved = realpathSync.native(p);
     }
   } catch {}
-  return resolved.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const standardized = resolved.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (process.platform === "win32" || /^[a-zA-Z]:[\\/]/.test(resolved)) {
+    return standardized.toLowerCase();
+  }
+  return standardized;
 }
 
 function parseIsoTimestamp(t?: unknown): number {
@@ -294,8 +311,9 @@ function listFromJsonl(
 export function listAntigravitySessions(
   options?: ListSessionOptions,
   baseDir?: string,
+  env?: Record<string, string | undefined>,
 ): ProviderSessionSummary[] {
-  const root = resolveAntigravityRoot(baseDir);
+  const root = resolveAntigravityRoot(baseDir, options?.env ?? env);
   const dbPath = join(root, "conversation_summaries.db");
 
   const fromSqlite = listFromSqlite(dbPath, options);
@@ -343,8 +361,9 @@ function getTitleFromJsonl(historyJsonl: string, conversationId: string): string
 export function getAntigravitySessionTitle(
   conversationId: string,
   baseDir?: string,
+  env?: Record<string, string | undefined>,
 ): string | null {
-  const root = resolveAntigravityRoot(baseDir);
+  const root = resolveAntigravityRoot(baseDir, env);
   const dbPath = join(root, "conversation_summaries.db");
   const DatabaseSyncClass = getDatabaseSync();
 
@@ -387,8 +406,12 @@ export interface HistoryTurn {
   usage?: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
 }
 
-function resolveTranscriptPath(conversationId: string, baseDir?: string): string | null {
-  const root = resolveAntigravityRoot(baseDir);
+function resolveTranscriptPath(
+  conversationId: string,
+  baseDir?: string,
+  env?: Record<string, string | undefined>,
+): string | null {
+  const root = resolveAntigravityRoot(baseDir, env);
   const candidates = [
     join(root, "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl"),
     join(root, "brain", conversationId, ".system_generated", "logs", "transcript.jsonl"),
@@ -564,8 +587,12 @@ function processTranscriptLine(line: string, state: TranscriptParserState): void
   }
 }
 
-export function readAntigravityTranscript(conversationId: string, baseDir?: string): HistoryTurn[] {
-  const transcriptPath = resolveTranscriptPath(conversationId, baseDir);
+export function readAntigravityTranscript(
+  conversationId: string,
+  baseDir?: string,
+  env?: Record<string, string | undefined>,
+): HistoryTurn[] {
+  const transcriptPath = resolveTranscriptPath(conversationId, baseDir, env);
   if (!transcriptPath) return [];
 
   const state: TranscriptParserState = {

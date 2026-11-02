@@ -58,8 +58,10 @@ export class Session {
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
+    const sessionEnv = { ...options.launch.env, ...this.config.env };
     if (!this.config.title && this.conversationId) {
-      this.config.title = getAntigravitySessionTitle(this.conversationId) ?? undefined;
+      this.config.title =
+        getAntigravitySessionTitle(this.conversationId, undefined, sessionEnv) ?? undefined;
     }
     this.firstMessage = this.conversationId === null;
     validateSelection(this.config, options.catalog());
@@ -375,7 +377,8 @@ export class Session {
   }
   private replayHistory(): void {
     if (!this.conversationId) return;
-    const turns = readAntigravityTranscript(this.conversationId);
+    const sessionEnv = { ...this.options.launch.env, ...this.config.env };
+    const turns = readAntigravityTranscript(this.conversationId, undefined, sessionEnv);
     for (const turn of turns) {
       this.emit({
         type: "session.turn",

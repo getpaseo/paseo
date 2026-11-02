@@ -98,6 +98,7 @@ function createConnection(
             query: input.query,
             cwd: input.cwd,
             limit: input.limit,
+            env: launch.env,
           }),
         });
         return;
