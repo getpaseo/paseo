@@ -617,7 +617,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: "No connected hosts",
           icon: Plus,
           testID: "add-project-flow-add-host",
-          select: addHost,
+          select: () => {
+            // The native project Modal must release its window before the root sheet opens.
+            onClose();
+            addHost();
+          },
         });
       }
       return choices;
@@ -716,6 +720,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     githubQuery.data,
     host,
     addHost,
+    onClose,
     openAddedProject,
     page,
     pathOptions,
