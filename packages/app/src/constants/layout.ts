@@ -14,12 +14,11 @@ export const HEADER_TOP_PADDING_MOBILE = 8;
 // Measured composer width; independent of the window's compact/wide breakpoint.
 export const COMPACT_CONTENT_WIDTH = 500;
 
-// Settings navigation can shrink below its preferred width to preserve the detail
-// minimum. Both targets must fit before Settings shares width with app navigation.
+// Settings can use the shared app sidebar width. Its list can also shrink below
+// the preferred width to preserve the detail minimum. Both targets must fit
+// before Settings shares width with app navigation.
 export const SETTINGS_DESKTOP_SIDEBAR_WIDTH = 320;
 export const SETTINGS_DESKTOP_DETAIL_MIN_WIDTH = 400;
-export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
-  SETTINGS_DESKTOP_SIDEBAR_WIDTH + SETTINGS_DESKTOP_DETAIL_MIN_WIDTH;
 
 // Desktop app constants for macOS traffic light buttons
 // These buttons (close/minimize/maximize) overlay the top-left corner

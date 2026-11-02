@@ -82,6 +82,29 @@ export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   return explorer;
 }
 
+interface ResizeExplorerSidebarByInput {
+  page: Page;
+  deltaWidth: number;
+}
+
+export async function resizeExplorerSidebarBy({
+  page,
+  deltaWidth,
+}: ResizeExplorerSidebarByInput): Promise<void> {
+  const handle = visibleTestId(page, "workspace-explorer-sidebar-resize-handle").getByRole(
+    "separator",
+  );
+  await expect(handle).toBeVisible();
+  const box = await handle.boundingBox();
+  if (!box) throw new Error("Explorer resize handle must be visible");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - deltaWidth, y, { steps: 10 });
+  await page.mouse.up();
+}
+
 /** Reveals the Explorer sidebar and selects one of its fixed navigation views. */
 async function openExplorerView(
   page: Page,
