@@ -15,7 +15,12 @@ export function OrchestrationStep({ setup }: { setup: OrchestrationSetupControll
     <SettingsCard>
       <PaseoToolsRow value={choices.tools} onValueChange={setTools} disabled={isApplying} />
       {offered.skills ? (
-        <AgentSkillsRow skills={setup.skills} value={choices.skills} onValueChange={setSkills} />
+        <AgentSkillsRow
+          skills={setup.skills}
+          value={choices.skills}
+          onValueChange={setSkills}
+          disabled={isApplying}
+        />
       ) : null}
       {offered.cli ? (
         <CommandLineRow value={choices.cli} onValueChange={setCli} disabled={isApplying} />

@@ -107,10 +107,12 @@ export function AgentSkillsRow({
   skills,
   value,
   onValueChange,
+  disabled = false,
 }: {
   skills: AgentSkillsController;
   value: boolean;
   onValueChange: (next: boolean) => void;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   const { status, isWorking, reconcile, saveSelection } = skills;
@@ -150,7 +152,7 @@ export function AgentSkillsRow({
       >
         <View style={styles.controls}>
           {needsUpdate ? (
-            <Button variant="outline" onPress={handleUpdate} disabled={isWorking}>
+            <Button variant="outline" onPress={handleUpdate} disabled={disabled || isWorking}>
               {isWorking
                 ? t("settings.host.skills.actions.working")
                 : t("settings.host.skills.actions.update")}
@@ -160,14 +162,16 @@ export function AgentSkillsRow({
             variant="ghost"
             leftIcon={chooseIcon}
             onPress={handleOpen}
-            disabled={status === null || isWorking}
+            disabled={disabled || status === null || isWorking}
             accessibilityLabel={t("settings.host.skills.choose")}
           />
           <Switch
             value={value}
             onValueChange={onValueChange}
             // Nothing picked means nothing to install; the gear is the way forward.
-            disabled={status === null || isWorking || (!value && !hasSelectedSkills(status))}
+            disabled={
+              disabled || status === null || isWorking || (!value && !hasSelectedSkills(status))
+            }
             accessibilityLabel={t("settings.host.skills.title")}
           />
         </View>

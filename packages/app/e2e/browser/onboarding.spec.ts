@@ -23,6 +23,7 @@ import {
   skipSetup,
   startSetupHost,
 } from "../support/helpers/onboarding";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { enableRelayAndExpectOffer } from "../support/helpers/pair-device";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openSettingsHostSection } from "../support/helpers/settings";
@@ -238,6 +239,7 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
 test("in the compact layout, Finish on Orchestration applies its switches", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const host = await startSetupHost("compact");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
   // The compact sheet is the only surface on screen, and Orchestration is its last step.
   const step = (title: string) =>
     expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible({
@@ -258,7 +260,18 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     expect(await hostGivesAgentsPaseoTools(host)).toBe(false);
     await step("Let agents use Paseo");
     await expect(paseoToolsSwitch(page)).toBeChecked();
+    // Skills are not installed, so leaving them off has nothing to apply.
+    const skillsSwitch = page.getByRole("switch", { name: "Orchestration skills", exact: true });
+    await skillsSwitch.click();
+    await expect(skillsSwitch).not.toBeChecked();
+    gate.holdNextClientRequest("set_daemon_config_request");
     await primary("Finish").click();
+
+    // While the choices apply, none of them can change.
+    await gate.waitForHeldClientRequest();
+    await expect(paseoToolsSwitch(page)).toBeDisabled();
+    await expect(skillsSwitch).toBeDisabled();
+    gate.releaseHeldClientRequest();
 
     await expect.poll(() => hostGivesAgentsPaseoTools(host), { timeout: 30_000 }).toBe(true);
     await expect(page.getByRole("heading", { name: "Let agents use Paseo" })).toHaveCount(0);
