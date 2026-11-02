@@ -1641,40 +1641,53 @@ describe("PiRpcAgentSession", () => {
     expect(pi.latestSession().closeCalls).toBe(1);
   });
 
-  test.each(["stopped", "failed"] as const)(
-    "closes a history-only Pi runtime when replay is %s",
-    async (outcome) => {
-      const pi = new FakePi();
-      pi.queueSessionSetup((runtimeSession) => {
-        runtimeSession.messages = [
-          { role: "user", content: "Old question" },
-          { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
-        ];
-        if (outcome === "failed")
-          runtimeSession.getMessagesError = new Error("History unavailable");
-      });
-      const session = await createClient(pi).resumeSession(
-        {
-          provider: "pi",
-          sessionId: "pi-session-1",
-          nativeHandle: "/tmp/native-pi-session",
-          metadata: { cwd: tmpdir() },
-        },
-        {},
-        undefined,
-        { purpose: "history" },
-      );
-      onTestFinished(() => session.close());
-      const history = session.streamHistory();
-      if (outcome === "failed") {
-        await expect(history.next()).rejects.toThrow("History unavailable");
-      } else {
-        expect((await history.next()).done).toBe(false);
-        await history.return();
-      }
-      expect(pi.latestSession().closeCalls).toBe(1);
-    },
-  );
+  test("closes a history-only Pi runtime when replay is stopped", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect((await history.next()).done).toBe(false);
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay fails", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.getMessagesError = new Error("History unavailable");
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    await expect(history.next()).rejects.toThrow("History unavailable");
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
 
   test("keeps an interactive Pi runtime open after replaying history", async () => {
     const pi = new FakePi();
