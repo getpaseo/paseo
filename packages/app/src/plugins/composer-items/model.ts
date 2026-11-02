@@ -4,6 +4,7 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import type { ComposerAgent, ComposerInput } from "@/composer/session";
 import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment } from "../attachments/model";
+import { cloneAndFreeze } from "../freeze";
 
 function isPluginAttachment(
   attachment: UserComposerAttachment,
@@ -17,6 +18,17 @@ function isPluginAttachment(
     attachment.sourceId === sourceId &&
     (itemId === undefined || attachment.item.id === itemId)
   );
+}
+
+const LOCKED_MESSAGE = "The composer is locked while the agent is being created.";
+
+function assertUnlocked(locked: boolean): void {
+  if (locked) throw new Error(LOCKED_MESSAGE);
+}
+
+async function whenUnlocked(agent: ComposerAgent, command: () => Promise<void>): Promise<void> {
+  assertUnlocked(agent.locked);
+  await command();
 }
 
 /**
@@ -44,11 +56,17 @@ export function toPluginComposer(input: {
       model: agent.model,
       mode: agent.mode,
       thinking: agent.thinking,
-      options: agent.options as Record<string, JsonValue>,
-      metadata: agent.metadata,
+      options: cloneAndFreeze(agent.options as Record<string, JsonValue>),
+      metadata: cloneAndFreeze(agent.metadata),
     },
-    setPrompt: composerInput.setText,
-    insertText: composerInput.insertText,
+    setPrompt: (text) => {
+      assertUnlocked(composerInput.locked);
+      composerInput.setText(text);
+    },
+    insertText: (text) => {
+      assertUnlocked(composerInput.locked);
+      composerInput.insertText(text);
+    },
     addAttachment({ sourceId, item }) {
       const source = plugin.attachmentSources.find((candidate) => candidate.id === sourceId);
       if (!source) throw new Error(`Unknown attachment source: ${sourceId}`);
@@ -72,11 +90,12 @@ export function toPluginComposer(input: {
         current.filter((candidate) => !isPluginAttachment(candidate, plugin.id, sourceId, itemId)),
       );
     },
-    setProvider: agent.setProvider,
-    setModel: agent.setModel,
-    setMode: agent.setMode,
-    setThinking: agent.setThinking,
-    setOptions: agent.setOptions,
-    setMetadata: agent.setMetadata,
+    setProvider: (provider) => whenUnlocked(agent, () => agent.setProvider(provider)),
+    setModel: (modelId) => whenUnlocked(agent, () => agent.setModel(modelId)),
+    setMode: (modeId) => whenUnlocked(agent, () => agent.setMode(modeId)),
+    setThinking: (thinkingOptionId) =>
+      whenUnlocked(agent, () => agent.setThinking(thinkingOptionId)),
+    setOptions: (patch) => whenUnlocked(agent, () => agent.setOptions(patch)),
+    setMetadata: (patch) => whenUnlocked(agent, () => agent.setMetadata(patch)),
   };
 }

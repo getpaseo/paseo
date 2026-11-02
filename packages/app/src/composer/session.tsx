@@ -8,6 +8,8 @@ import type { ComposerTextSource } from "@/composer/text-source";
  * control reaches the prompt without knowing which screen mounted the composer.
  */
 export interface ComposerInput {
+  /** The prompt is held while the composer submits; the built-in input is read-only meanwhile. */
+  locked: boolean;
   textSource: ComposerTextSource;
   setText: (text: string) => void;
   /** Inserts at the cursor, replacing the selection. */
@@ -25,6 +27,8 @@ export interface ComposerInput {
  */
 export interface ComposerAgent {
   context: "agent" | "draft" | "new-workspace";
+  /** The agent is being created; the built-in controls are disabled meanwhile. */
+  locked: boolean;
   provider: string | null;
   model: string | null;
   mode: string | null;
@@ -71,4 +75,11 @@ export function useComposerInput(): ComposerInput | null {
 
 export function useComposerAgent(): ComposerAgent | null {
   return useContext(ComposerAgentContext);
+}
+
+/** True while the composer holds its prompt or its agent's settings for a submit in flight. */
+export function useComposerLocked(): boolean {
+  const input = useComposerInput();
+  const agent = useComposerAgent();
+  return Boolean(input?.locked || agent?.locked);
 }

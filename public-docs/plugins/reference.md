@@ -1972,6 +1972,11 @@ callback, so `await composer.setProvider("codex")` followed by `await composer.s
 changes both. A command's promise resolves once the change has taken effect, and `composer.agent`
 shows it on the next render.
 
+While the New workspace screen creates the workspace and its agent, the composer is locked. Your
+controls render disabled, `setPrompt` and `insertText` throw, and the agent commands reject with
+"The composer is locked while the agent is being created." `composer.agent.options` and
+`composer.agent.metadata` are frozen copies; change them through `setOptions` and `setMetadata`.
+
 A composer item counts toward how much fits before Paseo knows what it renders. An item that
 renders nothing can still leave an empty overflow sheet on a narrow composer, so always render a
 control.

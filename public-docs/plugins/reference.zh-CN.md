@@ -1659,6 +1659,8 @@ export default function contribute(client: PluginClientContext) {
 
 每个命令都按运行时 composer 的当前状态执行，而不是按创建回调的那次渲染，所以 `await composer.setProvider("codex")` 之后再 `await composer.setModel("gpt")` 会同时生效。命令的 Promise 在更改生效后完成，`composer.agent` 在下一次渲染时反映它。
 
+新建工作区界面在创建工作区及其 Agent 期间会锁定 composer。你的控件显示为禁用，`setPrompt` 和 `insertText` 会抛出错误，Agent 命令会以 "The composer is locked while the agent is being created." 拒绝。`composer.agent.options` 和 `composer.agent.metadata` 是冻结的副本；请通过 `setOptions` 和 `setMetadata` 修改它们。
+
 在 Paseo 知道渲染结果之前，composer 项就已计入可容纳的数量。不渲染任何内容的项仍可能在窄 composer 上留下空的溢出面板，所以请始终渲染一个控件。
 
 [Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`。

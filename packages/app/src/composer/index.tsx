@@ -1435,13 +1435,21 @@ function ComposerContentImpl({
   );
   const composerInput = useMemo<ComposerInput>(
     () => ({
+      locked: isComposerLocked,
       textSource,
       setText: replaceUserInput,
       insertText: insertUserInput,
       attachments,
       changeAttachments: setSelectedAttachments,
     }),
-    [attachments, insertUserInput, replaceUserInput, setSelectedAttachments, textSource],
+    [
+      attachments,
+      insertUserInput,
+      isComposerLocked,
+      replaceUserInput,
+      setSelectedAttachments,
+      textSource,
+    ],
   );
 
   const runClientSlashCommand = useCallback(

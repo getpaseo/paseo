@@ -9,6 +9,7 @@ export function draftComposerAgent(
   props: Pick<
     DraftAgentControlsProps,
     | "context"
+    | "disabled"
     | "selectedProvider"
     | "selectedModel"
     | "selectedMode"
@@ -24,6 +25,7 @@ export function draftComposerAgent(
 ): ComposerAgent {
   return {
     context: props.context ?? "draft",
+    locked: props.disabled ?? false,
     provider: props.selectedProvider,
     model: props.selectedModel || null,
     mode: props.selectedMode || null,

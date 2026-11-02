@@ -28,7 +28,8 @@ import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { isWeb } from "@/constants/platform";
-import { applyMetadataPatch } from "@/composer/draft/metadata";
+
+const NO_METADATA: Record<string, JsonValue> = {};
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -197,18 +198,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [saveDraft],
   );
 
-  const [metadata, setMetadataState] = useState<Record<string, JsonValue>>({});
+  const metadata = useDraftStore((state) => state.metadataByDraftKey[draftKey] ?? NO_METADATA);
   const setMetadata = useCallback(
     (patch: Record<string, JsonValue>) =>
-      setMetadataState((current) => applyMetadataPatch(current, patch)),
-    [],
+      useDraftStore.getState().patchDraftMetadata({ draftKey, patch }),
+    [draftKey],
   );
 
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
       textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
-      if (lifecycle === "sent") setMetadataState({});
+      if (lifecycle === "sent") useDraftStore.getState().clearDraftMetadata({ draftKey });
     },
     [draftKey, textPublication],
   );

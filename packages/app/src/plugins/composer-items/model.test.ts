@@ -59,10 +59,11 @@ const issue = {
   resourceType: "issue",
 };
 
-function fakeAgent(context: ComposerAgent["context"]) {
+function fakeAgent(context: ComposerAgent["context"], locked = false) {
   const calls: string[] = [];
   const agent: ComposerAgent = {
     context,
+    locked,
     provider: "claude",
     model: "sonnet",
     mode: "default",
@@ -84,9 +85,10 @@ function fakeAgent(context: ComposerAgent["context"]) {
   return { agent, calls };
 }
 
-function fakeInput(initial: UserComposerAttachment[] = []) {
+function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
   const state = { text: "", attachments: initial };
   const input: ComposerInput = {
+    locked,
     textSource: { getSnapshot: () => state.text, subscribe: () => () => {} },
     setText: (text) => {
       state.text = text;
@@ -187,6 +189,46 @@ describe("toPluginComposer", () => {
     composer.setPrompt("a");
     composer.insertText("b");
     expect(state.text).toBe("ab");
+  });
+
+  it("refuses every prompt and agent command while the composer is locked", async () => {
+    const { agent, calls } = fakeAgent("new-workspace", true);
+    const { input, state } = fakeInput([], true);
+    const composer = toPluginComposer({
+      plugin: installed(),
+      agent,
+      composerInput: input,
+      prompt: "",
+    });
+
+    expect(() => composer.setPrompt("a")).toThrow("The composer is locked");
+    expect(() => composer.insertText("b")).toThrow("The composer is locked");
+    await expect(composer.setProvider("codex")).rejects.toThrow("The composer is locked");
+    await expect(composer.setModel("gpt")).rejects.toThrow("The composer is locked");
+    await expect(composer.setMode("plan")).rejects.toThrow("The composer is locked");
+    await expect(composer.setThinking("high")).rejects.toThrow("The composer is locked");
+    await expect(composer.setOptions({ effort: "low" })).rejects.toThrow("The composer is locked");
+    await expect(composer.setMetadata({ flag: null })).rejects.toThrow("The composer is locked");
+    expect(state.text).toBe("");
+    expect(calls).toEqual([]);
+  });
+
+  it("hands out options and metadata a plugin cannot change", () => {
+    const { agent } = fakeAgent("draft");
+    agent.metadata = { nested: { list: [1] } };
+    const { input } = fakeInput();
+    const composer = toPluginComposer({
+      plugin: installed(),
+      agent,
+      composerInput: input,
+      prompt: "",
+    });
+
+    expect(Object.isFrozen(composer.agent.options)).toBe(true);
+    expect(Object.isFrozen(composer.agent.metadata)).toBe(true);
+    expect(Object.isFrozen((composer.agent.metadata as { nested: object }).nested)).toBe(true);
+    expect(agent.metadata).toEqual({ nested: { list: [1] } });
+    expect(Object.isFrozen(agent.metadata)).toBe(false);
   });
 
   it("adds and removes the plugin's own attachments only", () => {

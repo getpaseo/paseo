@@ -36,6 +36,8 @@ import {
 } from "./migration";
 import { createDraftPersistStorage } from "./persistence";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import { applyMetadataPatch } from "@/composer/draft/metadata";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -49,6 +51,9 @@ interface DraftStoreActions {
     draftKey: string;
     lifecycle?: Exclude<DraftLifecycleState, "active">;
   }) => void;
+  /** Plugin metadata the draft will create its agent with; see `composer/draft/metadata`. */
+  patchDraftMetadata: (input: { draftKey: string; patch: Record<string, JsonValue> }) => void;
+  clearDraftMetadata: (input: { draftKey: string }) => void;
   attachWorkspaceFile: (input: {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
@@ -60,6 +65,11 @@ interface DraftStoreActions {
 
 interface DraftStoreRuntimeState {
   attachmentFocusRequestByDraftKey: Record<string, number>;
+  /**
+   * Kept beside the prompt so a composer that remounts finds it. Not persisted, and not cleared
+   * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
+   */
+  metadataByDraftKey: Record<string, Record<string, JsonValue>>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -256,6 +266,7 @@ export const useDraftStore = create<DraftStore>()(
       drafts: {},
       createModalDraft: null,
       attachmentFocusRequestByDraftKey: {},
+      metadataByDraftKey: {},
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -372,6 +383,25 @@ export const useDraftStore = create<DraftStore>()(
         });
 
         scheduleAttachmentGc();
+      },
+
+      patchDraftMetadata: ({ draftKey, patch }) => {
+        set((state) => {
+          const next = applyMetadataPatch(state.metadataByDraftKey[draftKey] ?? {}, patch);
+          const { [draftKey]: _previous, ...others } = state.metadataByDraftKey;
+          return {
+            metadataByDraftKey:
+              Object.keys(next).length > 0 ? { ...others, [draftKey]: next } : others,
+          };
+        });
+      },
+
+      clearDraftMetadata: ({ draftKey }) => {
+        set((state) => {
+          if (!(draftKey in state.metadataByDraftKey)) return state;
+          const { [draftKey]: _removed, ...others } = state.metadataByDraftKey;
+          return { metadataByDraftKey: others };
+        });
       },
 
       attachWorkspaceFile: async ({ draftKey, attachment }) => {

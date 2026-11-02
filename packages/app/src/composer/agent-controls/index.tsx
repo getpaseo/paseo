@@ -1139,6 +1139,7 @@ export const AgentControls = memo(function AgentControls({
     if (!agent || !client) return null;
     return {
       context: "agent",
+      locked: false,
       provider: agent.provider,
       model: activeModelId,
       mode: modeControl?.selectedModeId ?? null,
@@ -1359,6 +1360,7 @@ export function DraftAgentControls({
     () =>
       draftComposerAgent({
         context,
+        disabled,
         selectedProvider,
         selectedModel,
         selectedMode,
@@ -1374,6 +1376,7 @@ export function DraftAgentControls({
       }),
     [
       context,
+      disabled,
       effectiveSelectedThinkingOption,
       metadata,
       onSelectMode,

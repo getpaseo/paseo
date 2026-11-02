@@ -5,6 +5,7 @@ import {
   useComposerControlSurface,
   type ComposerControlItem,
 } from "@/composer/agent-controls/composer-control";
+import { useComposerLocked } from "@/composer/session";
 import { parsePluginIcon, pluginIconComponent } from "../icons";
 
 /** Icons resolve at render, so an invalid one throws to the item's boundary. */
@@ -21,12 +22,13 @@ function PluginComposerControl({
   disabled: boolean | undefined;
 }) {
   const surface = useComposerControlSurface();
+  const locked = useComposerLocked();
   const [open, setOpen] = useState(false);
   return (
     <ComposerControl
       item={item}
       surface={surface}
-      disabled={disabled}
+      disabled={disabled || locked}
       open={open}
       onOpenChange={setOpen}
     />
