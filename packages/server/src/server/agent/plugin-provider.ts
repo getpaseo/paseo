@@ -1462,7 +1462,7 @@ class PluginAgentSession implements AgentSession {
     } finally {
       this.applyingOptions = false;
     }
-    const ended = this.optionDifferences({ ...before, ...settings });
+    const ended = this.optionChanges({ ...before, ...settings });
     for (const [id, value] of Object.entries(settings)) {
       if (value === null) delete this.committedOptions[id];
     }
@@ -1672,14 +1672,22 @@ class PluginAgentSession implements AgentSession {
     this.knownOptions = current;
   }
 
+  /**
+   * What changed against the options `known` to be set: values that differ, and `null` for a key
+   * the plugin no longer reports, which went back to its default.
+   */
+  private optionChanges(known: Readonly<Record<string, JsonValue>>): Record<string, JsonValue> {
+    const patch = this.optionDifferences(known);
+    const current = this.currentOptions();
+    for (const [id, value] of Object.entries(known)) {
+      if (value !== null && !(id in current)) patch[id] = null;
+    }
+    return patch;
+  }
+
   private reportOptionChanges(): AgentStreamEvent[] {
     if (this.applyingOptions) return [];
-    const patch = this.optionDifferences(this.knownOptions);
-    // A key the plugin reported before and no longer reports went back to its default.
-    const current = this.currentOptions();
-    for (const id of Object.keys(this.knownOptions)) {
-      if (!(id in current)) patch[id] = null;
-    }
+    const patch = this.optionChanges(this.knownOptions);
     if (Object.keys(patch).length === 0) return [];
     this.commitOptions();
     return [{ type: "options_changed", provider: this.provider, patch }];

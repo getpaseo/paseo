@@ -1171,6 +1171,8 @@ describe("PluginAgentClientRegistry", () => {
             }
             if (typeof loud === "boolean") state.loud = loud;
             if (typeof tokenBudget === "number") state.tokenBudget = tokenBudget;
+            // Going loud returns an unrequested token budget to its default, by leaving it out.
+            if (loud === true && tokenBudget === undefined) state.tokenBudget = undefined;
             emitConfig(emit, input.sessionId);
             emit(
               refuseAfterChanging
@@ -1228,6 +1230,23 @@ describe("PluginAgentClientRegistry", () => {
             provider: "plugin-direct",
             patch: { token_budget: null, loud: true },
           },
+        ]);
+        await session.close();
+      },
+    );
+
+    test.runIf(shape === "controls")(
+      "an apply returns the option the plugin reset along the way as removed",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        const ended = await session.applyOptions?.({ loud: true });
+
+        expect(ended).toEqual({ token_budget: null });
+        // The apply reports it; the plugin's later identical report is not a second change.
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
         ]);
         await session.close();
       },
