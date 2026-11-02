@@ -550,7 +550,7 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   foregroundExtraMuted: "#a0a4b2",
   border: "#353a47",
   borderAccent: "#3f4454",
-  accent: "#89b4fa",
+  accent: "#3570e0", // dark enough to carry white text on filled buttons
   accentBright: "#b4d0fc",
   destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
   terminalBlack: "#21252d",
@@ -564,8 +564,10 @@ export const SPACING = {
   1.5: 6,
   2: 8,
   3: 12,
+  3.5: 14,
   4: 16,
   6: 24,
+  7: 28,
   8: 32,
   12: 48,
   16: 64,

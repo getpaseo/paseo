@@ -6,7 +6,7 @@ import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { type FieldControlSize } from "@/components/ui/control-geometry";
+import { type ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import {
   SelectField,
@@ -14,7 +14,6 @@ import {
   type SelectFieldOption,
 } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
 import type {
@@ -133,7 +132,7 @@ function OpenAgentProfileEditModal({
   onSave,
 }: AgentProfileEditModalProps & { onDismiss: () => void }): ReactElement {
   const { t } = useTranslation();
-  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const controlSize: ControlSize = "md";
   const snapshot = useMemo(
     () => ({ mode, ...(profile ? { profile } : {}), ...(seed ? { seed } : {}) }),
     [mode, profile, seed],
@@ -410,7 +409,7 @@ function AgentProfileFeatureRow({
   feature: AgentFeature;
   isFirst: boolean;
   disabled: boolean;
-  size: FieldControlSize;
+  size: ControlSize;
   model: AgentProfileFormModel;
 }): ReactElement {
   const rowStyle = useMemo(

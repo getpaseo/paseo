@@ -46,7 +46,6 @@ export function ParentAgentCallout({
           {parent.label ?? t("subagents.parent.parentAgent")}
         </Text>
         <Button
-          size="sm"
           variant="secondary"
           leftIcon={CornerUpLeft}
           onPress={parent.open}

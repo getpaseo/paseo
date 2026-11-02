@@ -1,267 +1,207 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View, type PressableStateCallbackType } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Check } from "lucide-react-native";
-import { Button } from "@/components/ui/button";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { PressHighlight } from "@/components/ui/press-highlight";
+import { type Animated, Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { SkeletonPulse, useSkeletonPulse } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { useTimeAgo } from "@/hooks/use-time-ago";
+import { projectIconRadius } from "@/components/project-icon-view";
 import { settingsStyles } from "@/styles/settings";
-import type { Theme } from "@/styles/theme";
-import type { ProjectSuggestion, ProviderSuggestions } from "./suggestions";
+import { ICON_SIZE } from "@/styles/theme";
+import { FolderProjectIcon } from "./folder-project-icon";
+import type { ProjectSuggestion } from "./suggestions";
 import type {
   ProjectSuggestionsController,
   SuggestionRow as SuggestionRowModel,
 } from "./use-project-suggestions";
 
-const ThemedCheck = withUnistyles(Check);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const accentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
-const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const SKELETON_ROWS = [0, 1, 2];
+const INITIAL_SKELETON_ROWS = [0, 1, 2];
+const TRAILING_SKELETON_ROWS = [0];
 
 /**
  * Folders the user already ran agents in, ready to add as projects. Rows appear as each provider
- * answers and a failed provider can be retried. Adding the checked rows is the owner's primary
- * action, through the same controller. Renders nothing on a host that cannot suggest projects.
+ * answers, with skeleton rows while any is still reading; a provider that cannot read its history
+ * adds nothing. Adding the checked rows is the owner's primary action, through the same
+ * controller. Renders nothing on a host that cannot suggest projects.
  */
 export function ProjectSuggestionList({
+  serverId,
   suggestions,
 }: {
+  serverId: string;
   suggestions: ProjectSuggestionsController;
 }) {
   const { t } = useTranslation();
   const { list } = suggestions;
   if (list.status === "unsupported") return null;
-  if (list.status === "loading") return <SuggestionsSkeleton />;
+  if (list.rows.length === 0 && !list.isReading) {
+    return (
+      <Text style={styles.statusText}>
+        {t("onboarding.setup.steps.projects.suggestions.empty")}
+      </Text>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      {list.rows.length > 0 ? (
-        <View style={settingsStyles.card}>
-          {list.rows.map((row, index) => (
-            <SuggestionRow
-              key={row.suggestion.rootPath}
-              row={row}
-              first={index === 0}
-              providerLabels={list.providerLabels}
-              disabled={list.isAdding}
-              onToggle={list.toggle}
-            />
-          ))}
-        </View>
-      ) : null}
-      {list.rows.length === 0 && list.reading.length === 0 ? (
-        <Text style={styles.statusText}>
-          {t("onboarding.setup.steps.projects.suggestions.empty")}
-        </Text>
-      ) : null}
-      {list.reading.length > 0 ? <StillReading providers={list.reading} /> : null}
-      {list.failed.map((provider) => (
-        <ProviderFailure key={provider.provider} provider={provider} onRetry={list.retry} />
+    <View
+      style={settingsStyles.card}
+      accessibilityLabel={
+        list.isReading ? t("onboarding.setup.steps.projects.suggestions.loading") : undefined
+      }
+    >
+      {list.rows.map((row, index) => (
+        <SuggestionRow
+          key={row.suggestion.rootPath}
+          serverId={serverId}
+          row={row}
+          first={index === 0}
+          disabled={list.isAdding}
+          onToggle={list.toggle}
+        />
       ))}
+      {list.isReading ? <SkeletonRows afterRows={list.rows.length > 0} /> : null}
     </View>
   );
 }
 
 function SuggestionRow({
+  serverId,
   row,
   first,
-  providerLabels,
   disabled,
   onToggle,
 }: {
+  serverId: string;
   row: SuggestionRowModel;
   first: boolean;
-  providerLabels: ReadonlyMap<string, string>;
   disabled: boolean;
   onToggle: (suggestion: ProjectSuggestion) => void;
 }) {
   const { t } = useTranslation();
   const { suggestion, checked, addFailure } = row;
-  const handlePress = useCallback(() => onToggle(suggestion), [onToggle, suggestion]);
-  const accessibilityState = useMemo(() => ({ checked, disabled }), [checked, disabled]);
+  const handleValueChange = useCallback(() => onToggle(suggestion), [onToggle, suggestion]);
   const lastActivity = useTimeAgo(useMemo(() => new Date(suggestion.lastActivityAt), [suggestion]));
-  const providers = suggestion.providerIds.map((id) => providerLabels.get(id) ?? id).join(" · ");
-  const rowStyle = useCallback(
-    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      settingsStyles.row,
-      styles.row,
-      !first && settingsStyles.rowBorder,
-      hovered && styles.rowHovered,
-    ],
-    [first],
-  );
-  return (
-    <PressHighlight
-      style={rowStyle}
-      onPress={handlePress}
-      disabled={disabled}
-      accessibilityRole="checkbox"
-      accessibilityLabel={suggestion.displayName}
-      accessibilityState={accessibilityState}
-      aria-checked={checked}
-    >
-      <View style={checked ? styles.checkboxChecked : styles.checkbox}>
-        {checked ? (
-          <ThemedCheck size={12} strokeWidth={3} uniProps={accentForegroundMapping} />
-        ) : null}
-      </View>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {suggestion.displayName}
-        </Text>
-        <Text style={settingsStyles.rowHint} numberOfLines={1}>
-          {suggestion.rootPath}
-        </Text>
-        {addFailure === undefined ? null : (
-          <Text style={settingsStyles.rowError}>
-            {addFailure ?? t("onboarding.setup.steps.projects.suggestions.addFailed")}
-          </Text>
-        )}
-      </View>
-      <View style={styles.meta}>
-        <Text style={styles.metaText} numberOfLines={1}>
-          {providers}
-        </Text>
-        <Text style={styles.metaText} numberOfLines={1}>
-          {t("onboarding.setup.steps.projects.suggestions.sessions", {
-            count: suggestion.sessionCount,
-          })}
-          {" · "}
-          {lastActivity}
-        </Text>
-      </View>
-    </PressHighlight>
-  );
-}
-
-function StillReading({ providers }: { providers: readonly ProviderSuggestions[] }) {
-  const { t } = useTranslation();
-  return (
-    <View style={styles.statusRow}>
-      <ThemedLoadingSpinner uniProps={mutedMapping} />
-      <Text style={styles.statusText}>
-        {t("onboarding.setup.steps.projects.suggestions.stillReading", {
-          providers: providers.map((provider) => provider.label).join(", "),
-        })}
-      </Text>
-    </View>
-  );
-}
-
-function ProviderFailure({
-  provider,
-  onRetry,
-}: {
-  provider: ProviderSuggestions;
-  onRetry: (provider: string) => void;
-}) {
-  const { t } = useTranslation();
-  const handleRetry = useCallback(() => onRetry(provider.provider), [onRetry, provider.provider]);
-  return (
-    <View style={styles.statusRow}>
-      <Text style={styles.statusText}>
-        {t("onboarding.setup.steps.projects.suggestions.readFailed", { provider: provider.label })}
-      </Text>
-      <Button variant="ghost" size="sm" onPress={handleRetry}>
-        {t("common.actions.retry")}
-      </Button>
-    </View>
-  );
-}
-
-function SuggestionsSkeleton() {
-  const { t } = useTranslation();
-  const pulse = useSkeletonPulse();
   return (
     <View
-      style={settingsStyles.card}
-      accessibilityLabel={t("onboarding.setup.steps.projects.suggestions.loading")}
-      testID="project-suggestions-skeleton"
+      style={[settingsStyles.row, !first && settingsStyles.rowBorder]}
+      testID="project-suggestion"
     >
-      {SKELETON_ROWS.map((row) => (
-        <View
-          key={row}
-          style={[settingsStyles.row, styles.row, row > 0 && settingsStyles.rowBorder]}
-        >
-          <SkeletonPulse pulse={pulse} style={styles.skeletonCheckbox} />
-          <View style={styles.skeletonText}>
-            <SkeletonPulse pulse={pulse} style={styles.skeletonTitle} />
-            <SkeletonPulse pulse={pulse} style={styles.skeletonPath} />
-          </View>
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.titleLine}>
+          <FolderProjectIcon
+            serverId={serverId}
+            rootPath={suggestion.rootPath}
+            name={suggestion.displayName}
+          />
+          <Text style={[settingsStyles.rowTitle, styles.title]} numberOfLines={1}>
+            {suggestion.displayName}
+          </Text>
         </View>
-      ))}
+        <View style={styles.underTitle}>
+          <Text style={settingsStyles.rowHint} numberOfLines={1}>
+            {suggestion.rootPath}
+          </Text>
+          <Text style={[settingsStyles.rowHint, styles.lastUsed]} numberOfLines={1}>
+            {t("onboarding.setup.steps.projects.suggestions.lastUsed", { time: lastActivity })}
+          </Text>
+          {addFailure === undefined ? null : (
+            <Text style={settingsStyles.rowError}>
+              {addFailure ?? t("onboarding.setup.steps.projects.suggestions.addFailed")}
+            </Text>
+          )}
+        </View>
+      </View>
+      <Switch
+        value={checked}
+        onValueChange={handleValueChange}
+        disabled={disabled}
+        accessibilityLabel={suggestion.displayName}
+      />
     </View>
   );
 }
 
-const CHECKBOX_SIZE = 16;
+/** Placeholder rows in the shape of a suggestion: icon and name, path, and the switch. */
+function SkeletonRows({ afterRows }: { afterRows: boolean }) {
+  const pulse = useSkeletonPulse();
+  const rows = afterRows ? TRAILING_SKELETON_ROWS : INITIAL_SKELETON_ROWS;
+  return rows.map((row) => <SkeletonRow key={row} pulse={pulse} bordered={afterRows || row > 0} />);
+}
+
+function SkeletonRow({ pulse, bordered }: { pulse: Animated.Value; bordered: boolean }) {
+  return (
+    <View
+      style={[settingsStyles.row, bordered && settingsStyles.rowBorder]}
+      testID="project-suggestions-skeleton"
+    >
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.titleLine}>
+          <SkeletonPulse pulse={pulse} style={styles.skeletonIcon} />
+          <SkeletonPulse pulse={pulse} style={styles.skeletonTitle} />
+        </View>
+        <View style={[styles.underTitle, styles.skeletonHints]}>
+          <SkeletonPulse pulse={pulse} style={styles.skeletonPath} />
+          <SkeletonPulse pulse={pulse} style={styles.skeletonLastUsed} />
+        </View>
+      </View>
+      <SkeletonPulse pulse={pulse} style={styles.skeletonSwitch} />
+    </View>
+  );
+}
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
-    gap: theme.spacing[3],
-  },
-  row: {
-    justifyContent: "flex-start",
-    gap: theme.spacing[3],
-  },
-  rowHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  checkbox: {
-    width: CHECKBOX_SIZE,
-    height: CHECKBOX_SIZE,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-  },
-  checkboxChecked: {
-    width: CHECKBOX_SIZE,
-    height: CHECKBOX_SIZE,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.accent,
-    backgroundColor: theme.colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  meta: {
-    alignItems: "flex-end",
-    gap: theme.spacing[1],
-  },
-  metaText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  statusRow: {
+  titleLine: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  title: {
+    flexShrink: 1,
+  },
+  // Path and last use line up under the name, past the icon.
+  underTitle: {
+    marginLeft: ICON_SIZE.md + theme.spacing[2],
+  },
+  lastUsed: {
+    color: theme.colors.foregroundExtraMuted,
   },
   statusText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
-  skeletonCheckbox: {
-    width: CHECKBOX_SIZE,
-    height: CHECKBOX_SIZE,
-    borderRadius: theme.borderRadius.sm,
+  skeletonSwitch: {
+    width: 34,
+    height: 20,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
   },
-  skeletonText: {
-    flex: 1,
-    gap: theme.spacing[2],
+  skeletonIcon: {
+    width: ICON_SIZE.md,
+    height: ICON_SIZE.md,
+    borderRadius: projectIconRadius(ICON_SIZE.md),
+    backgroundColor: theme.colors.surface2,
   },
   skeletonTitle: {
-    width: 140,
+    width: 120,
     height: 12,
     borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonHints: {
+    marginTop: theme.spacing[2],
+    gap: theme.spacing[2],
   },
   skeletonPath: {
     width: 220,
+    maxWidth: "100%",
     height: 10,
     borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonLastUsed: {
+    width: 90,
+    height: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
   },
 }));

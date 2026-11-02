@@ -1,5 +1,4 @@
-import { useCallback, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useFetchQueries } from "@/data/query";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -16,7 +15,7 @@ export type ProjectSuggestionsState =
   | { status: "unsupported" }
   /** The provider list itself has not arrived yet. */
   | { status: "loading" }
-  | { status: "ready"; providers: ProviderSuggestions[]; retry: (provider: string) => void };
+  | { status: "ready"; providers: ProviderSuggestions[] };
 
 function suggestionsQueryKey(serverId: string, provider: string) {
   return ["project-suggestions", serverId, provider] as const;
@@ -27,39 +26,28 @@ function suggestionsQueryKey(serverId: string, provider: string) {
  * calling this early (when setup opens) means the Projects step usually finds them answered.
  */
 export function useProviderSuggestions(serverId: string): ProjectSuggestionsState {
-  const queryClient = useQueryClient();
   const supported = useHostFeature(serverId, "projectSuggestions");
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { entries } = useProvidersSnapshot(serverId, { enabled: supported });
   const providers = useMemo(
-    () =>
-      entries
-        ?.filter((entry) => entry.enabled !== false)
-        .map((entry) => ({ id: entry.provider, label: entry.label ?? entry.provider })),
+    () => entries?.filter((entry) => entry.enabled !== false).map((entry) => entry.provider),
     [entries],
   );
 
   const results = useFetchQueries<SuggestionsResponse>(
     (supported && providers ? providers : []).map((provider) => ({
-      queryKey: suggestionsQueryKey(serverId, provider.id),
+      queryKey: suggestionsQueryKey(serverId, provider),
       dataShape: "value",
       enabled: Boolean(client) && isConnected,
-      // A provider that cannot answer stays failed until the user presses Retry.
+      // Suggestions are a convenience: a provider that cannot answer simply adds nothing.
       retry: false,
       staleTimeMs: SUGGESTIONS_STALE_TIME_MS,
       queryFn: () => {
         if (!client) throw new Error("Host disconnected");
-        return client.listProjectSuggestions({ providers: [provider.id] });
+        return client.listProjectSuggestions({ providers: [provider] });
       },
     })),
-  );
-
-  const retry = useCallback(
-    (provider: string) => {
-      void queryClient.refetchQueries({ queryKey: suggestionsQueryKey(serverId, provider) });
-    },
-    [queryClient, serverId],
   );
 
   return useMemo((): ProjectSuggestionsState => {
@@ -70,26 +58,19 @@ export function useProviderSuggestions(serverId: string): ProjectSuggestionsStat
       providers: providers.map((provider, index) =>
         toProviderSuggestions(provider, results[index]),
       ),
-      retry,
     };
-  }, [supported, providers, results, retry]);
+  }, [supported, providers, results]);
 }
 
 function toProviderSuggestions(
-  provider: { id: string; label: string },
+  provider: string,
   result: { data?: SuggestionsResponse; error: Error | null; isFetching: boolean } | undefined,
 ): ProviderSuggestions {
-  const base = { provider: provider.id, label: provider.label };
-  const data = result?.data;
-  const providerError = data?.providerErrors.find((error) => error.provider === provider.id);
-  const failure = result?.error?.message ?? providerError?.message ?? null;
-  // A retry shows as reading again; a background refresh of good results keeps the rows.
-  if (!result || (result.isFetching && (failure !== null || !data))) {
-    return { ...base, status: "loading" };
+  if (result?.data) {
+    return { provider, status: "answered", suggestions: result.data.suggestions };
   }
-  if (failure !== null) {
-    return { ...base, status: "failed", message: failure, suggestions: data?.suggestions ?? [] };
+  if (result?.error && !result.isFetching) {
+    return { provider, status: "answered", suggestions: [] };
   }
-  if (!data) return { ...base, status: "loading" };
-  return { ...base, status: "ready", suggestions: data.suggestions };
+  return { provider, status: "loading" };
 }

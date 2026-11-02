@@ -1235,7 +1235,7 @@ function ProviderErrorEmptyState({
       <ThemedAlertTriangle size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
       <Text style={styles.emptyStateText}>{message}</Text>
       {onRetryProvider ? (
-        <Button variant="default" size="sm" onPress={handleRetry} disabled={isRetryingProvider}>
+        <Button variant="default" onPress={handleRetry} disabled={isRetryingProvider}>
           {isRetryingProvider ? t("modelSelector.retrying") : t("modelSelector.retry")}
         </Button>
       ) : null}

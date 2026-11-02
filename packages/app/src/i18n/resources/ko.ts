@@ -1550,6 +1550,7 @@ export const ko: TranslationResources = {
       cli: {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
+        uninstallFailed: "Paseo CLI를 제거할 수 없습니다.",
       },
     },
   },
@@ -1652,8 +1653,7 @@ export const ko: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "Paseo 설정",
-      footnote: "여기의 모든 항목은 설정에서도 변경할 수 있습니다",
+      title: "Paseo",
       stepCounter: "{{total}}단계 중 {{current}}단계",
       skip: "설정 건너뛰기",
       continue: "계속",
@@ -1662,30 +1662,23 @@ export const ko: TranslationResources = {
         appearance: {
           label: "모양",
           title: "Paseo에 오신 것을 환영합니다",
-          description:
-            "이 컴퓨터에서 Claude Code, Codex 등 여러 에이전트를 책상에서도, 휴대폰에서도 실행하세요. 먼저 모양을 고르세요.",
+          description: "먼저 모양을 골라 보세요",
         },
         providers: {
           label: "제공자",
           title: "에이전트",
-          description:
-            "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다. 에이전트 선택기에 표시하고 싶지 않은 항목은 끄세요.",
+          description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
         },
         projects: {
           label: "프로젝트",
           title: "프로젝트 추가",
-          description:
-            "에이전트가 작업할 폴더를 추가하세요. 나중에 사이드바에서 더 추가할 수 있습니다.",
+          description: "에이전트가 어디에서 작업하길 원하나요",
           addProject: "프로젝트 추가",
-          addAnotherProject: "다른 프로젝트 추가…",
           added: "추가됨",
           suggestions: {
             loading: "작업했던 폴더를 찾는 중",
-            stillReading: "{{providers}} 기록을 아직 읽는 중…",
-            readFailed: "{{provider}} 기록을 읽지 못했습니다",
             empty: "최근 프로젝트를 찾지 못했습니다",
-            sessions_one: "세션 {{count}}개",
-            sessions_other: "세션 {{count}}개",
+            lastUsed: "마지막 사용 {{time}}",
             addSelected_one: "프로젝트 {{count}}개 추가",
             addSelected_other: "프로젝트 {{count}}개 추가",
             adding: "추가하는 중…",
@@ -1695,35 +1688,21 @@ export const ko: TranslationResources = {
         orchestration: {
           label: "오케스트레이션",
           title: "에이전트가 Paseo를 사용하도록 허용",
-          description:
-            "Paseo 도구를 사용하면 에이전트가 다른 에이전트에게 작업을 넘기고 직접 워크스페이스와 일정을 만들 수 있습니다.",
-          capabilities: {
-            agents: {
-              title: "다른 에이전트 시작 및 조정",
-              description:
-                "Codex, Claude Code, OpenCode 에이전트를 시작하고 프롬프트를 보낸 뒤 결과를 기다립니다.",
-            },
-            workspaces: {
-              title: "워크스페이스 만들기",
-              description: "작업마다 worktree를 열어 병렬 에이전트끼리 충돌하지 않게 합니다.",
-            },
-            schedules: {
-              title: "일정과 하트비트",
-              description: "10분마다 CI를 확인하고 실패를 수정합니다.",
-            },
-            terminals: {
-              title: "터미널과 스크립트",
-              description: "워크스페이스의 개발 서버를 실행하고 출력을 읽습니다.",
-            },
-          },
+          description: "에이전트가 워크스페이스를 만들고 다른 에이전트와 대화하게 하세요",
         },
         phone: {
-          label: "휴대폰",
+          label: "모바일",
           title: "어디서나 에이전트와 함께",
           description:
-            "iOS 및 Android용 Paseo가 이 컴퓨터에 연결됩니다. 에이전트는 여기서 계속 실행되고, 휴대폰으로 상태를 보고 권한을 승인하며 프롬프트를 보냅니다.",
+            "모든 기능을 갖춘 네이티브 모바일 앱으로 휴대폰에서 어떤 Paseo 컴퓨터든 제어할 수 있습니다",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "연결 방법 선택",
+          connectDocs: "문서",
+          openConnectDocs: "연결 문서 열기",
+          recommended: "권장",
+          relay: { title: "릴레이", hint: "엔드투엔드 암호화, QR 코드를 스캔하세요" },
+          tailscale: { title: "Tailscale", hint: "약간의 설정이 필요합니다" },
         },
       },
     },
@@ -2704,11 +2683,7 @@ export const ko: TranslationResources = {
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
-      },
-      actions: {
-        install: "설치",
-        installing: "설치 중...",
-        installed: "설치됨",
+        accessibilityLabel: "Paseo CLI 설치",
       },
     },
     permissions: {
@@ -2786,13 +2761,9 @@ export const ko: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "오케스트레이션 스킬",
         title: "오케스트레이션 스킬",
-        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
+        description: "에이전트에게 Paseo 도구 사용법을 알려 줍니다",
         updateAvailable: "업데이트 사용 가능",
         updateTitle: "Paseo 스킬을 업데이트할까요?",
-        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
-        uninstallTitle: "Paseo 스킬을 제거할까요?",
-        uninstallMessage:
-          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
         choose: "스킬 선택",
         chooseAll: "모든 스킬",
         chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
@@ -2807,13 +2778,9 @@ export const ko: TranslationResources = {
         uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
         saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
         actions: {
-          install: "설치",
-          installing: "설치 중...",
-          installed: "설치됨",
           update: "업데이트",
           working: "작업 중...",
           remove: "제거",
-          uninstall: "제거",
           save: "저장",
           saving: "저장 중...",
           cancel: "취소",

@@ -1,7 +1,8 @@
 import { ChevronRight } from "lucide-react-native";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { Text, View, type AccessibilityState, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ExternalLinkLabel } from "@/components/ui/external-link";
 import { mutedIconColorMapping } from "@/components/ui/icon-color";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { settingsStyles } from "@/styles/settings";
@@ -15,12 +16,18 @@ type HoverState = PressableStateCallbackType & { hovered?: boolean };
 
 export interface SettingsRowHeaderProps {
   label: string;
+  /** Shown beside the label, such as a badge. */
+  labelAccessory?: ReactNode;
+  /** A line under the label saying what the row leads to. */
+  hint?: string;
   /** A short status shown before the chevron. */
   summary?: string;
   onPress: () => void;
   disabled?: boolean;
   /** Turns the chevron down, for a row whose children are revealed in place. */
   expanded?: boolean;
+  /** The row leaves the app, such as to a docs page: the summary and an outward arrow are drawn as an external link in place of the chevron. */
+  external?: boolean;
   accessibilityState?: AccessibilityState;
   /** Props React Native Web does not derive from `accessibilityState`, such as `aria-expanded`. */
   webAccessibilityProps?: Record<string, unknown> | null;
@@ -34,10 +41,13 @@ export interface SettingsRowHeaderProps {
  */
 export function SettingsRowHeader({
   label,
+  labelAccessory,
+  hint,
   summary,
   onPress,
   disabled,
   expanded = false,
+  external = false,
   accessibilityState,
   webAccessibilityProps,
   testID,
@@ -58,7 +68,7 @@ export function SettingsRowHeader({
   return (
     <PressHighlight
       {...webAccessibilityProps}
-      accessibilityRole="button"
+      accessibilityRole={external ? "link" : "button"}
       accessibilityLabel={summary ? `${label}, ${summary}` : label}
       accessibilityState={accessibilityState}
       disabled={disabled}
@@ -70,20 +80,35 @@ export function SettingsRowHeader({
       {({ hovered }: HoverState) => (
         <>
           <View style={settingsStyles.rowContent}>
-            <Text style={layout.title}>{label}</Text>
+            {labelAccessory ? (
+              <View style={styles.labelRow}>
+                <Text style={layout.title}>{label}</Text>
+                {labelAccessory}
+              </View>
+            ) : (
+              <Text style={layout.title}>{label}</Text>
+            )}
+            {hint ? <Text style={layout.hint}>{hint}</Text> : null}
           </View>
-          {summary ? (
-            <Text style={styles.summary} numberOfLines={1}>
-              {summary}
-            </Text>
-          ) : null}
-          {disabled ? null : (
-            <View style={chevronStyle}>
-              <ThemedChevron
-                size={ICON_SIZE.sm}
-                uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
-              />
-            </View>
+          {external ? (
+            // Drawn the same as a section header's docs link, so the two read as one thing.
+            <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel>
+          ) : (
+            <>
+              {summary ? (
+                <Text style={styles.summary} numberOfLines={1}>
+                  {summary}
+                </Text>
+              ) : null}
+              {disabled ? null : (
+                <View style={chevronStyle}>
+                  <ThemedChevron
+                    size={ICON_SIZE.sm}
+                    uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
+                  />
+                </View>
+              )}
+            </>
           )}
         </>
       )}
@@ -92,6 +117,7 @@ export function SettingsRowHeader({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  labelRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   summary: {
     flexShrink: 1,
     color: theme.colors.foregroundMuted,

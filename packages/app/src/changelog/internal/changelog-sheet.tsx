@@ -118,7 +118,7 @@ function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogB
           description={t("changelog.error.description")}
           testID="changelog-error"
         >
-          <Button variant="outline" size="sm" onPress={onRetry} testID="changelog-retry">
+          <Button variant="outline" onPress={onRetry} testID="changelog-retry">
             {t("common.actions.retry")}
           </Button>
         </Alert>

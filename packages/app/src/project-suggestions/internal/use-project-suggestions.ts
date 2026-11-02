@@ -4,11 +4,10 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { useProjectRootPaths } from "@/stores/session-store-hooks";
 import {
   addSuggestedProjects,
-  isAwaitingFirstAnswer,
+  isStillReading,
   isSuggestionChecked,
   mergeProviderSuggestions,
   type ProjectSuggestion,
-  type ProviderSuggestions,
 } from "./suggestions";
 import { useProviderSuggestions } from "./use-provider-suggestions";
 
@@ -21,18 +20,14 @@ export interface SuggestionRow {
 
 export type SuggestionList =
   | { status: "unsupported" }
-  /** Nothing to show yet: the provider list or the first provider's answer is pending. */
-  | { status: "loading" }
   | {
       status: "ready";
       rows: SuggestionRow[];
-      providerLabels: ReadonlyMap<string, string>;
-      reading: ProviderSuggestions[];
-      failed: ProviderSuggestions[];
+      /** True while any provider, or the provider list itself, is still pending. */
+      isReading: boolean;
       /** True while checked rows are being added; the selection is frozen until it settles. */
       isAdding: boolean;
       toggle: (suggestion: ProjectSuggestion) => void;
-      retry: (provider: string) => void;
     };
 
 export interface ProjectSuggestionsController {
@@ -88,8 +83,7 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
   }, [mutateAsync, checkedRootPaths]);
 
   const list = useMemo((): SuggestionList => {
-    if (state.status !== "ready") return state;
-    if (isAwaitingFirstAnswer(state.providers)) return { status: "loading" };
+    if (state.status === "unsupported") return state;
     return {
       status: "ready",
       rows: suggestions.map((suggestion) => ({
@@ -97,14 +91,9 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
         checked: checkedRootPaths.includes(suggestion.rootPath),
         addFailure: addFailures.get(suggestion.rootPath),
       })),
-      providerLabels: new Map(
-        state.providers.map((provider) => [provider.provider, provider.label]),
-      ),
-      reading: state.providers.filter((provider) => provider.status === "loading"),
-      failed: state.providers.filter((provider) => provider.status === "failed"),
+      isReading: state.status === "loading" || isStillReading(state.providers),
       isAdding: isPending,
       toggle,
-      retry: state.retry,
     };
   }, [state, suggestions, checkedRootPaths, addFailures, isPending, toggle]);
 

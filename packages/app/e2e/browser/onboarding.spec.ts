@@ -9,10 +9,13 @@ import {
   finishSetup,
   goToSetupStep,
   openAppAsNewUser,
+  openRelayPairingFromSetup,
+  closeRelayPairing,
   openTailscaleDocsFromSetup,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
+  projectSuggestionRow,
   setupModal,
   setupPrimaryButton,
   showSetupAgainFromSettings,
@@ -38,7 +41,7 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
       await expectSetupStep(page, "Welcome to Paseo");
       await pickTheme(page, "Midnight");
       await expect(
-        setupModal(page).getByText(/^Run Claude Code, Codex and other agents/),
+        setupModal(page).getByText("Let's start by picking a look", { exact: true }),
       ).toHaveCSS("color", MIDNIGHT_MUTED_FOREGROUND);
       await page.screenshot({ path: testInfo.outputPath("1-appearance.png") });
     });
@@ -63,12 +66,13 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
       await page.screenshot({ path: testInfo.outputPath("3-projects.png") });
     });
 
-    await test.step("Orchestration shows the Paseo tools switch", async () => {
+    await test.step("Orchestration starts with its switches on", async () => {
       await continueSetup(page);
       await expectSetupStep(page, "Let agents use Paseo");
+      await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
       await expect(
-        setupModal(page).getByRole("switch", { name: "Inject Paseo tools", exact: true }),
-      ).toBeVisible();
+        setupModal(page).getByRole("switch", { name: "Orchestration skills", exact: true }),
+      ).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("4-orchestration.png") });
     });
 
@@ -110,23 +114,23 @@ test("setup suggests the repos the user already ran agents in", async ({ page },
 
     await test.step("the repo, its subfolder and its worktree become one checked row", async () => {
       await expect(projectSuggestion(page, repoName)).toBeChecked({ timeout: 60_000 });
-      await expect(projectSuggestion(page, repoName)).toContainText("3 sessions");
       await expect(projectSuggestion(page, scratchName)).toBeChecked();
-      await expect(setupModal(page).getByRole("checkbox")).toHaveCount(2);
+      await expect(setupModal(page).getByTestId("project-suggestion")).toHaveCount(2);
     });
 
-    await test.step("a provider that cannot read its history offers Retry", async () => {
-      await expect(
-        setupModal(page).getByText("Couldn't read Broken ACP history", { exact: true }),
-      ).toBeVisible({ timeout: 60_000 });
-      await expect(setupModal(page).getByRole("button", { name: "Retry" })).toBeVisible();
+    await test.step("a provider that cannot read its history adds nothing and shows no error", async () => {
+      await expect(setupModal(page).getByTestId("project-suggestions-skeleton")).toHaveCount(0, {
+        timeout: 60_000,
+      });
+      await expect(setupModal(page).getByText(/Broken ACP/)).toHaveCount(0);
+      await expect(setupModal(page).getByTestId("project-suggestion")).toHaveCount(2);
     });
 
     await test.step("the footer adds what is checked; the Add project flow is separate", async () => {
       await expect(setupPrimaryButton(page, "Add 2 projects")).toBeVisible();
       await expect(setupModal(page).getByRole("button", { name: "Continue" })).toHaveCount(0);
       await expect(
-        setupModal(page).getByRole("button", { name: "Add another project…", exact: true }),
+        setupModal(page).getByRole("button", { name: "Add project", exact: true }),
       ).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("8-project-suggestions.png") });
       await projectSuggestion(page, repoName).click();
@@ -142,7 +146,7 @@ test("setup suggests the repos the user already ran agents in", async ({ page },
       await expect(setupPrimaryButton(page, "Add 1 project")).toBeVisible({ timeout: 30_000 });
       await expectSetupStep(page, "Add your projects");
       await expect(projectSuggestion(page, scratchName)).toBeChecked();
-      await expect(projectSuggestion(page, scratchName)).toContainText("Directory not found");
+      await expect(projectSuggestionRow(page, scratchName)).toContainText("Directory not found");
       await expect(projectSuggestion(page, repoName)).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath("9-project-suggestion-failed.png") });
     });
@@ -198,24 +202,24 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
     await openAppAsNewUser(page, host);
     await expectSetupStep(page, "Welcome to Paseo");
 
-    await test.step("Paseo tools turned on in setup", async () => {
+    await test.step("Paseo tools start on in setup and Continue turns them on", async () => {
       await goToSetupStep(page, "Orchestration");
       await expectSetupStep(page, "Let agents use Paseo");
-      await expect(paseoToolsSwitch(setupModal(page))).not.toBeChecked();
-      await paseoToolsSwitch(setupModal(page)).click();
       await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
+      await continueSetup(page);
     });
 
-    await test.step("Phone asks for relay consent, then shows the pairing QR", async () => {
-      await continueSetup(page);
+    await test.step("Phone offers Tailscale docs and pairs over relay in its own modal", async () => {
       await expectSetupStep(page, "Take your agents with you");
-      await expect(setupModal(page).getByText("Enable relay?", { exact: true })).toBeVisible();
-      await page.screenshot({ path: testInfo.outputPath("5-phone-consent.png") });
+      await page.screenshot({ path: testInfo.outputPath("5-phone.png") });
       expect(await openTailscaleDocsFromSetup(page)).toBe(
         "https://paseo.sh/docs/connectivity#tailscale",
       );
+      const pairing = await openRelayPairingFromSetup(page);
+      await expect(pairing.getByText("Enable relay?", { exact: true })).toBeVisible();
       await enableRelayAndExpectOffer(page);
       await page.screenshot({ path: testInfo.outputPath("6-phone-qr.png") });
+      await closeRelayPairing(pairing);
     });
 
     await test.step("Finish closes setup and Settings shows the same Paseo tools value", async () => {

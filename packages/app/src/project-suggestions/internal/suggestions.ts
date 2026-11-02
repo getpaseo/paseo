@@ -5,17 +5,13 @@ export type { ProjectSuggestion };
 const PRESELECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const PRESELECT_MIN_SESSIONS = 3;
 
-/** One provider's answer. Each provider is asked separately so a slow one never holds up the rest. */
+/**
+ * One provider's answer. Each provider is asked separately so a slow one never holds up the rest.
+ * A provider that cannot read its history answers with whatever it found, often nothing.
+ */
 export type ProviderSuggestions =
-  | { provider: string; label: string; status: "loading" }
-  | { provider: string; label: string; status: "ready"; suggestions: ProjectSuggestion[] }
-  | {
-      provider: string;
-      label: string;
-      status: "failed";
-      message: string;
-      suggestions: ProjectSuggestion[];
-    };
+  | { provider: string; status: "loading" }
+  | { provider: string; status: "answered"; suggestions: ProjectSuggestion[] };
 
 /** Combines the providers that answered into one row per folder, most recent first. */
 export function mergeProviderSuggestions(
@@ -48,12 +44,9 @@ function combineSuggestions(a: ProjectSuggestion, b: ProjectSuggestion): Project
   };
 }
 
-/**
- * True until the first provider answers. After that the list shows what it has, including a failed
- * provider's Retry, while the slower providers keep reading.
- */
-export function isAwaitingFirstAnswer(providers: readonly ProviderSuggestions[]): boolean {
-  return providers.length > 0 && providers.every((provider) => provider.status === "loading");
+/** True while any provider is still reading its history; the rows so far show meanwhile. */
+export function isStillReading(providers: readonly ProviderSuggestions[]): boolean {
+  return providers.some((provider) => provider.status === "loading");
 }
 
 /** Folders the user worked in often and recently start checked. */

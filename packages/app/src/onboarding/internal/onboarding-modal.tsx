@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check } from "lucide-react-native";
-import { AdaptiveModalSheet, FULL_SHEET_SNAP_POINTS } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  FULL_SHEET_SNAP_POINTS,
+  SheetFooter,
+} from "@/components/adaptive-modal-sheet";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { PressHighlight } from "@/components/ui/press-highlight";
@@ -12,6 +16,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectSuggestions, type ProjectSuggestionsController } from "@/project-suggestions";
 import type { Theme } from "@/styles/theme";
 import type { OnboardingModel, OnboardingState, OnboardingStepId } from "./model";
+import { useOrchestrationSetup, type OrchestrationSetupController } from "./orchestration-setup";
 import { OnboardingStepContent } from "./steps";
 
 type OpenState = Extract<OnboardingState, { status: "open" }>;
@@ -29,6 +34,8 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
   // the Projects step rarely waits.
   const projectSuggestions = useProjectSuggestions(state.serverId);
   const { addChecked } = projectSuggestions;
+  const orchestration = useOrchestrationSetup(state.serverId);
+  const { apply: applyOrchestration } = orchestration;
 
   const handleComplete = useCallback(() => {
     void model.complete();
@@ -41,36 +48,46 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
       if (await addChecked()) model.next(visit);
     })();
   }, [addChecked, model, visit]);
+  const handleApplyOrchestration = useCallback(() => {
+    void (async () => {
+      if (await applyOrchestration()) model.next(visit);
+    })();
+  }, [applyOrchestration, model, visit]);
   const primary = usePrimaryAction({
     step,
     isLast,
     projectSuggestions,
+    orchestration,
     onFinish: handleComplete,
     onNext: handleNext,
     onAddSuggestions: handleAddSuggestions,
+    onApplyOrchestration: handleApplyOrchestration,
   });
 
-  const header = useMemo(
+  // The compact sheet stacks a title row, the step and the actions. The desktop card gives the
+  // step rail the full height instead: the brand tops the rail, the actions close the step pane,
+  // and the sheet floats its close button.
+  const compactHeader = useMemo(
     () => ({
       title: t("onboarding.setup.title"),
-      leading: <PaseoLogo size={20} />,
-      subtitle: isCompact ? (
+      leading: <PaseoLogo size={LOGO_SIZE} />,
+      subtitle: (
         <Text style={styles.stepCounter}>
           {t("onboarding.setup.stepCounter", {
             current: state.stepIndex + 1,
             total: state.steps.length,
           })}
         </Text>
-      ) : undefined,
+      ),
     }),
-    [isCompact, state.stepIndex, state.steps.length, t],
+    [state.stepIndex, state.steps.length, t],
   );
 
-  const footer = (
+  const actions = (
     <>
       <View>
         {isLast ? null : (
-          <Button variant="ghost" onPress={handleComplete}>
+          <Button variant="outline" onPress={handleComplete}>
             {t("onboarding.setup.skip")}
           </Button>
         )}
@@ -92,8 +109,8 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
     <AdaptiveModalSheet
       visible
       onClose={handleComplete}
-      header={header}
-      footer={footer}
+      header={isCompact ? compactHeader : undefined}
+      footer={isCompact ? actions : undefined}
       scrollable={false}
       snapPoints={FULL_SHEET_SNAP_POINTS}
       desktopMaxWidth={880}
@@ -103,25 +120,28 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
     >
       <View style={styles.body}>
         {isCompact ? null : <StepRail state={state} onSelect={model.goTo} />}
-        <ScrollView style={styles.pane}>
-          {/* Padding lives on a wrapper: the ScrollView's contentContainerStyle skips Unistyles. */}
-          <View style={styles.paneContent}>
-            <View style={styles.stepHeader}>
-              <Text style={styles.stepTitle} accessibilityRole="header">
-                {t(`onboarding.setup.steps.${step}.title`)}
-              </Text>
-              <Text style={styles.stepDescription}>
-                {t(`onboarding.setup.steps.${step}.description`)}
-              </Text>
+        <View style={styles.pane}>
+          <ScrollView style={styles.paneScroll}>
+            {/* Padding lives on a wrapper: the ScrollView's contentContainerStyle skips Unistyles. */}
+            <View style={styles.paneContent}>
+              <View style={styles.stepHeader}>
+                <Text style={styles.stepTitle} accessibilityRole="header">
+                  {t(`onboarding.setup.steps.${step}.title`)}
+                </Text>
+                <Text style={styles.stepDescription}>
+                  {t(`onboarding.setup.steps.${step}.description`)}
+                </Text>
+              </View>
+              <OnboardingStepContent
+                step={step}
+                serverId={state.serverId}
+                projectSuggestions={projectSuggestions}
+                orchestration={orchestration}
+              />
             </View>
-            <OnboardingStepContent
-              step={step}
-              serverId={state.serverId}
-              projectSuggestions={projectSuggestions}
-              onFinish={handleComplete}
-            />
-          </View>
-        </ScrollView>
+          </ScrollView>
+          {isCompact ? null : <SheetFooter>{actions}</SheetFooter>}
+        </View>
       </View>
     </AdaptiveModalSheet>
   );
@@ -129,18 +149,30 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
 
 /**
  * The footer's main button. On Projects, with folders checked, it adds them and moves on only once
- * every one was added; otherwise it continues, or finishes on the last step.
+ * every one was added. On Orchestration it applies the switches and moves on once they all took.
+ * Otherwise it continues, or finishes on the last step.
  */
 function usePrimaryAction(input: {
   step: OnboardingStepId;
   isLast: boolean;
   projectSuggestions: ProjectSuggestionsController;
+  orchestration: OrchestrationSetupController;
   onFinish: () => void;
   onNext: () => void;
   onAddSuggestions: () => void;
+  onApplyOrchestration: () => void;
 }): { label: string; busy: boolean; onPress: () => void } {
   const { t } = useTranslation();
-  const { step, isLast, projectSuggestions, onFinish, onNext, onAddSuggestions } = input;
+  const {
+    step,
+    isLast,
+    projectSuggestions,
+    orchestration,
+    onFinish,
+    onNext,
+    onAddSuggestions,
+    onApplyOrchestration,
+  } = input;
   const { checkedCount, isAdding } = projectSuggestions;
   if (isLast) {
     return { label: t("onboarding.setup.finish"), busy: false, onPress: onFinish };
@@ -153,6 +185,13 @@ function usePrimaryAction(input: {
         : t("onboarding.setup.steps.projects.suggestions.addSelected", { count: checkedCount }),
       busy: isAdding,
       onPress: onAddSuggestions,
+    };
+  }
+  if (step === "orchestration") {
+    return {
+      label: t("onboarding.setup.continue"),
+      busy: orchestration.isApplying,
+      onPress: onApplyOrchestration,
     };
   }
   return { label: t("onboarding.setup.continue"), busy: false, onPress: onNext };
@@ -168,6 +207,12 @@ function StepRail({
   const { t } = useTranslation();
   return (
     <View style={styles.rail}>
+      <View style={styles.railBrand}>
+        <PaseoLogo size={LOGO_SIZE} />
+        <Text style={styles.railTitle} numberOfLines={1}>
+          {t("onboarding.setup.title")}
+        </Text>
+      </View>
       <View style={styles.railSteps}>
         {state.steps.map((step, index) => (
           <StepRailItem
@@ -180,7 +225,6 @@ function StepRail({
           />
         ))}
       </View>
-      <Text style={styles.railFootnote}>{t("onboarding.setup.footnote")}</Text>
     </View>
   );
 }
@@ -234,6 +278,7 @@ function StepRailItem({
 }
 
 const BADGE_SIZE = 20;
+const LOGO_SIZE = 20;
 
 const styles = StyleSheet.create((theme) => ({
   content: {
@@ -248,10 +293,24 @@ const styles = StyleSheet.create((theme) => ({
   rail: {
     width: 200,
     padding: theme.spacing[3],
-    justifyContent: "space-between",
     borderRightWidth: theme.borderWidth[1],
     borderRightColor: theme.colors.surface2,
     backgroundColor: theme.colors.surface1,
+  },
+  // Inset like a rail item, so the logo sits on the badges' column.
+  railBrand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    marginBottom: theme.spacing[4],
+  },
+  railTitle: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
   },
   railSteps: {
     gap: theme.spacing[1],
@@ -262,7 +321,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.full,
   },
   railItemHovered: {
     backgroundColor: theme.colors.surface2,
@@ -291,27 +350,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   railBadgeText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   railBadgeTextActive: {
     color: theme.colors.accentForeground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   railLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   railLabelCurrent: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
-  railFootnote: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    paddingHorizontal: theme.spacing[2],
-  },
   pane: {
+    flex: 1,
+    minHeight: 0,
+  },
+  paneScroll: {
     flex: 1,
     minHeight: 0,
   },

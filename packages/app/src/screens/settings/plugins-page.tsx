@@ -216,7 +216,7 @@ function PluginLogsSheet({
     () => ({
       title: t("settings.plugins.logs.title", { id: pluginId }),
       actions: (
-        <Button variant="outline" size="sm" onPress={refresh} disabled={logs.isFetching}>
+        <Button variant="outline" onPress={refresh} disabled={logs.isFetching}>
           {logs.isFetching
             ? t("settings.plugins.logs.refreshing")
             : t("settings.plugins.logs.refresh")}
@@ -235,7 +235,7 @@ function PluginLogsSheet({
         title={t("settings.plugins.logs.errorTitle")}
         description={errorMessage(logs.error)}
       >
-        <Button variant="outline" size="sm" onPress={refresh}>
+        <Button variant="outline" onPress={refresh}>
           {t("settings.plugins.logs.refresh")}
         </Button>
       </Alert>
@@ -433,7 +433,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
         title={t("settings.plugins.states.errorTitle")}
         description={errorMessage(plugins.error)}
       >
-        <Button variant="outline" size="sm" onPress={retry}>
+        <Button variant="outline" onPress={retry}>
           {t("settings.plugins.states.retry")}
         </Button>
       </Alert>

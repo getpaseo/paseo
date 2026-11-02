@@ -11,6 +11,8 @@ import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
+export type AgentSkillsController = ReturnType<typeof useAgentSkills>;
+
 export function useAgentSkills(serverId: string) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -83,12 +85,23 @@ export function useAgentSkills(serverId: string) {
   const refresh = useCallback(async () => {
     await refetch();
   }, [refetch]);
-  const runReconcile = useCallback(async () => {
-    await reconcileAsync().catch(() => undefined);
-  }, [reconcileAsync]);
-  const runUninstall = useCallback(async () => {
-    await uninstallAsync().catch(() => undefined);
-  }, [uninstallAsync]);
+  // Both resolve to whether the host ended in the asked-for state; failures are already toasted.
+  const runReconcile = useCallback(
+    () =>
+      reconcileAsync().then(
+        (status) => status.state !== "not-installed",
+        () => false,
+      ),
+    [reconcileAsync],
+  );
+  const runUninstall = useCallback(
+    () =>
+      uninstallAsync().then(
+        (status) => status.state === "not-installed",
+        () => false,
+      ),
+    [uninstallAsync],
+  );
   const saveSelection = useCallback(
     (selection: AgentSkillSelection, confirmedRemovals: readonly string[] = []) =>
       saveAsync({ selection, confirmedRemovals }),

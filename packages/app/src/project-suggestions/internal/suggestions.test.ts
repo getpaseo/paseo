@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addSuggestedProjects,
-  isAwaitingFirstAnswer,
+  isStillReading,
   isSuggestionChecked,
   mergeProviderSuggestions,
   type ProjectSuggestion,
@@ -30,8 +30,7 @@ describe("mergeProviderSuggestions", () => {
       [
         {
           provider: "claude",
-          label: "Claude",
-          status: "ready",
+          status: "answered",
           suggestions: [
             suggestion("/dev/app", { sessionCount: 2, lastActivityAt: "2026-10-29T00:00:00.000Z" }),
             suggestion("/dev/docs", { lastActivityAt: "2026-10-20T00:00:00.000Z" }),
@@ -39,9 +38,7 @@ describe("mergeProviderSuggestions", () => {
         },
         {
           provider: "codex",
-          label: "Codex",
-          status: "failed",
-          message: "Timed out",
+          status: "answered",
           suggestions: [
             suggestion("/dev/app", {
               sessionCount: 3,
@@ -50,7 +47,7 @@ describe("mergeProviderSuggestions", () => {
             }),
           ],
         },
-        { provider: "opencode", label: "OpenCode", status: "loading" },
+        { provider: "opencode", status: "loading" },
       ],
       new Set(),
     );
@@ -70,8 +67,7 @@ describe("mergeProviderSuggestions", () => {
       [
         {
           provider: "claude",
-          label: "Claude",
-          status: "ready",
+          status: "answered",
           suggestions: [suggestion("/dev/app"), suggestion("/dev/docs")],
         },
       ],
@@ -131,19 +127,17 @@ describe("addSuggestedProjects", () => {
   });
 });
 
-describe("isAwaitingFirstAnswer", () => {
-  it("stops waiting once any provider answers, so a failure shows while others still read", () => {
-    const reading: ProviderSuggestions = { provider: "codex", label: "Codex", status: "loading" };
-    const failed: ProviderSuggestions = {
+describe("isStillReading", () => {
+  it("keeps reading while any provider has not answered", () => {
+    const reading: ProviderSuggestions = { provider: "codex", status: "loading" };
+    const answered: ProviderSuggestions = {
       provider: "opencode",
-      label: "OpenCode",
-      status: "failed",
-      message: "Timed out",
+      status: "answered",
       suggestions: [],
     };
 
-    expect(isAwaitingFirstAnswer([reading, { ...reading, provider: "pi" }])).toBe(true);
-    expect(isAwaitingFirstAnswer([reading, failed])).toBe(false);
-    expect(isAwaitingFirstAnswer([])).toBe(false);
+    expect(isStillReading([answered, reading])).toBe(true);
+    expect(isStillReading([answered, { ...answered, provider: "pi" }])).toBe(false);
+    expect(isStillReading([])).toBe(false);
   });
 });

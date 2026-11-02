@@ -1557,6 +1557,7 @@ export const ja: TranslationResources = {
       cli: {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
+        uninstallFailed: "Paseo CLI をアンインストールできません。",
       },
     },
   },
@@ -1659,8 +1660,7 @@ export const ja: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "Paseo のセットアップ",
-      footnote: "ここでの設定はすべて設定画面でも変更できます",
+      title: "Paseo",
       stepCounter: "ステップ {{current}}/{{total}}",
       skip: "セットアップをスキップ",
       continue: "続ける",
@@ -1669,30 +1669,23 @@ export const ja: TranslationResources = {
         appearance: {
           label: "外観",
           title: "Paseo へようこそ",
-          description:
-            "このコンピューターで Claude Code、Codex などのエージェントを、デスクからでもスマートフォンからでも実行できます。まずは見た目を選びましょう。",
+          description: "まずは外観を選びましょう",
         },
         providers: {
           label: "プロバイダー",
           title: "エージェント",
-          description:
-            "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います。エージェント選択に表示したくないものはオフにしてください。",
+          description: "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います",
         },
         projects: {
           label: "プロジェクト",
           title: "プロジェクトを追加",
-          description:
-            "エージェントに作業させるフォルダーを追加します。後からサイドバーで追加することもできます。",
+          description: "エージェントにどこで作業させますか",
           addProject: "プロジェクトを追加",
-          addAnotherProject: "別のプロジェクトを追加…",
           added: "追加済み",
           suggestions: {
             loading: "作業したフォルダーを探しています",
-            stillReading: "{{providers}} の履歴を読み込んでいます…",
-            readFailed: "{{provider}} の履歴を読み込めませんでした",
             empty: "最近のプロジェクトは見つかりませんでした",
-            sessions_one: "{{count}} セッション",
-            sessions_other: "{{count}} セッション",
+            lastUsed: "最終使用 {{time}}",
             addSelected_one: "{{count}} 件のプロジェクトを追加",
             addSelected_other: "{{count}} 件のプロジェクトを追加",
             adding: "追加しています…",
@@ -1703,35 +1696,21 @@ export const ja: TranslationResources = {
           label: "オーケストレーション",
           title: "エージェントに Paseo を使わせる",
           description:
-            "Paseo ツールを使うと、エージェントは他のエージェントに作業を任せたり、自分でワークスペースやスケジュールを作成したりできます。",
-          capabilities: {
-            agents: {
-              title: "他のエージェントを起動・操作",
-              description:
-                "Codex、Claude Code、OpenCode のエージェントを起動し、プロンプトを送って結果を待ちます。",
-            },
-            workspaces: {
-              title: "ワークスペースを作成",
-              description:
-                "タスクごとに worktree を作成し、並行するエージェント同士の衝突を防ぎます。",
-            },
-            schedules: {
-              title: "スケジュールとハートビート",
-              description: "10 分ごとに CI を確認して失敗を修正する。",
-            },
-            terminals: {
-              title: "ターミナルとスクリプト",
-              description: "ワークスペースの開発サーバーを起動し、その出力を読み取ります。",
-            },
-          },
+            "エージェントがワークスペースを作成し、ほかのエージェントとやり取りできるようにします",
         },
         phone: {
-          label: "スマートフォン",
+          label: "モバイル",
           title: "エージェントを持ち歩く",
           description:
-            "iOS と Android 版 Paseo はこのコンピューターに接続します。エージェントはここで動き続け、スマートフォンで状況を確認し、権限を承認し、プロンプトを送れます。",
+            "フル機能のネイティブモバイルアプリで、スマートフォンからどの Paseo コンピューターでも操作できます",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "接続方法を選択",
+          connectDocs: "ドキュメント",
+          openConnectDocs: "接続のドキュメントを開く",
+          recommended: "おすすめ",
+          relay: { title: "リレー", hint: "エンドツーエンド暗号化、QR コードをスキャン" },
+          tailscale: { title: "Tailscale", hint: "少し設定が必要です" },
         },
       },
     },
@@ -2716,11 +2695,7 @@ export const ja: TranslationResources = {
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
-      },
-      actions: {
-        install: "インストール",
-        installing: "インストール中...",
-        installed: "インストール済み",
+        accessibilityLabel: "Paseo CLI をインストール",
       },
     },
     permissions: {
@@ -2799,13 +2774,9 @@ export const ja: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "オーケストレーションスキル",
         title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        description: "エージェントに Paseo ツールの使い方を教えます",
         updateAvailable: "更新が利用可能",
         updateTitle: "Paseoスキルを更新しますか？",
-        updateFallback: "バンドルされたスキルをマシンに同期します。",
-        uninstallTitle: "Paseoスキルをアンインストールしますか？",
-        uninstallMessage:
-          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
         choose: "スキルを選択",
         chooseAll: "すべてのスキル",
         chooseAllHint:
@@ -2821,13 +2792,9 @@ export const ja: TranslationResources = {
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
         saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
         actions: {
-          install: "インストール",
-          installing: "インストール中...",
-          installed: "インストール済み",
           update: "更新",
           working: "処理中...",
           remove: "削除",
-          uninstall: "アンインストール",
           save: "保存",
           saving: "保存中...",
           cancel: "キャンセル",

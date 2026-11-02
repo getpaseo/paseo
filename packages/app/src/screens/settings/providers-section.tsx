@@ -190,10 +190,7 @@ function ProviderRowsSkeleton() {
             <SkeletonPulse pulse={pulse} style={styles.skeletonIcon} />
             <SkeletonPulse pulse={pulse} style={styles.skeletonTitle} />
           </View>
-          <View style={styles.trailingControls}>
-            <SkeletonPulse pulse={pulse} style={styles.skeletonSwitch} />
-            <View style={styles.menuSlot} />
-          </View>
+          <SkeletonPulse pulse={pulse} style={styles.skeletonSwitch} />
         </View>
       ))}
     </View>
@@ -277,27 +274,27 @@ function ProviderRow({
               ) : null}
             </View>
           </View>
+          {/* The menu leads the switch, so every switch sits on the row's right edge without
+              rows that have no menu reserving room for one. */}
           <View style={styles.trailingControls}>
+            {canRemove ? (
+              <ProviderActionsMenu
+                providerId={def.id}
+                providerLabel={def.label}
+                isRemoving={isRemoving}
+                iconSize={theme.iconSize.sm}
+                foregroundColor={theme.colors.foreground}
+                foregroundMutedColor={theme.colors.foregroundMuted}
+                dangerColor={theme.colors.statusDanger}
+                onRemove={onRemove}
+              />
+            ) : null}
             <Switch
               value={enabled}
               onValueChange={handleToggleValueChange}
               disabled={isToggling || isRemoving}
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
-            <View style={styles.menuSlot}>
-              {canRemove ? (
-                <ProviderActionsMenu
-                  providerId={def.id}
-                  providerLabel={def.label}
-                  isRemoving={isRemoving}
-                  iconSize={theme.iconSize.sm}
-                  foregroundColor={theme.colors.foreground}
-                  foregroundMutedColor={theme.colors.foregroundMuted}
-                  dangerColor={theme.colors.statusDanger}
-                  onRemove={onRemove}
-                />
-              ) : null}
-            </View>
           </View>
         </>
       )}
@@ -611,10 +608,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     alignItems: "center",
     justifyContent: "center",
-  },
-  menuSlot: {
-    width: 32,
-    height: 32,
   },
   menuButtonHovered: {
     backgroundColor: theme.colors.surface2,

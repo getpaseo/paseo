@@ -1,5 +1,6 @@
 import type { ProjectSuggestionsController } from "@/project-suggestions";
 import type { OnboardingStepId } from "../model";
+import type { OrchestrationSetupController } from "../orchestration-setup";
 import { AppearanceStep } from "./appearance-step";
 import { OrchestrationStep } from "./orchestration-step";
 import { PhoneStep } from "./phone-step";
@@ -10,12 +11,12 @@ export function OnboardingStepContent({
   step,
   serverId,
   projectSuggestions,
-  onFinish,
+  orchestration,
 }: {
   step: OnboardingStepId;
   serverId: string;
   projectSuggestions: ProjectSuggestionsController;
-  onFinish: () => void;
+  orchestration: OrchestrationSetupController;
 }) {
   switch (step) {
     case "appearance":
@@ -25,8 +26,8 @@ export function OnboardingStepContent({
     case "projects":
       return <ProjectsStep serverId={serverId} suggestions={projectSuggestions} />;
     case "orchestration":
-      return <OrchestrationStep serverId={serverId} />;
+      return <OrchestrationStep setup={orchestration} />;
     case "phone":
-      return <PhoneStep serverId={serverId} onFinish={onFinish} />;
+      return <PhoneStep serverId={serverId} />;
   }
 }

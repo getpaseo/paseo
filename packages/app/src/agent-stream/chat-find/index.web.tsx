@@ -147,7 +147,7 @@ export function ChatFind({
           {state.failure && (
             <View style={styles.error}>
               <Text style={styles.errorText}>{t(FAILURE_TEXT[state.failure])}</Text>
-              <Button size="xs" variant="ghost" onPress={model.retry}>
+              <Button size="sm" variant="ghost" onPress={model.retry}>
                 {t("paneFind.retry")}
               </Button>
             </View>

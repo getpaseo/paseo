@@ -1582,6 +1582,7 @@ export const fr: TranslationResources = {
       cli: {
         statusFailed: "Impossible de vérifier l’installation de la CLI.",
         installFailed: "Impossible d’installer la CLI Paseo.",
+        uninstallFailed: "Impossible de désinstaller la CLI Paseo.",
       },
     },
   },
@@ -1686,8 +1687,7 @@ export const fr: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "Configurer Paseo",
-      footnote: "Tout ceci se trouve aussi dans les Réglages",
+      title: "Paseo",
       stepCounter: "Étape {{current}} sur {{total}}",
       skip: "Passer la configuration",
       continue: "Continuer",
@@ -1696,30 +1696,23 @@ export const fr: TranslationResources = {
         appearance: {
           label: "Apparence",
           title: "Bienvenue dans Paseo",
-          description:
-            "Lancez Claude Code, Codex et d'autres agents sur cet ordinateur, depuis votre bureau ou votre téléphone. Choisissez d'abord un style.",
+          description: "Commençons par choisir une apparence",
         },
         providers: {
           label: "Fournisseurs",
           title: "Vos agents",
-          description:
-            "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur. Désactivez celles que vous ne voulez pas dans le sélecteur d'agents.",
+          description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
         },
         projects: {
           label: "Projets",
           title: "Ajoutez vos projets",
-          description:
-            "Ajoutez les dossiers dans lesquels les agents doivent travailler. Vous pourrez en ajouter d'autres depuis la barre latérale.",
+          description: "Où voulez-vous que vos agents travaillent",
           addProject: "Ajouter un projet",
-          addAnotherProject: "Ajouter un autre projet…",
           added: "Ajouté",
           suggestions: {
             loading: "Recherche des dossiers dans lesquels vous avez travaillé",
-            stillReading: "Lecture de l'historique {{providers}} en cours…",
-            readFailed: "Impossible de lire l'historique {{provider}}",
             empty: "Aucun projet récent trouvé",
-            sessions_one: "{{count}} session",
-            sessions_other: "{{count}} sessions",
+            lastUsed: "Dernière utilisation {{time}}",
             addSelected_one: "Ajouter {{count}} projet",
             addSelected_other: "Ajouter {{count}} projets",
             adding: "Ajout…",
@@ -1730,36 +1723,21 @@ export const fr: TranslationResources = {
           label: "Orchestration",
           title: "Laissez les agents utiliser Paseo",
           description:
-            "Avec les outils Paseo, un agent peut confier du travail à d'autres agents et créer ses propres espaces de travail et planifications.",
-          capabilities: {
-            agents: {
-              title: "Lancer et piloter d'autres agents",
-              description:
-                "Lancez des agents Codex, Claude Code ou OpenCode, envoyez-leur des instructions et attendez leurs résultats.",
-            },
-            workspaces: {
-              title: "Créer des espaces de travail",
-              description:
-                "Ouvrez un worktree par tâche pour que les agents en parallèle ne se gênent pas.",
-            },
-            schedules: {
-              title: "Planifications et heartbeats",
-              description: "Vérifier la CI toutes les 10 minutes et corriger les échecs.",
-            },
-            terminals: {
-              title: "Terminaux et scripts",
-              description:
-                "Lancez le serveur de développement de votre espace de travail et lisez sa sortie.",
-            },
-          },
+            "Laissez vos agents créer des espaces de travail et parler à d'autres agents",
         },
         phone: {
-          label: "Téléphone",
+          label: "Mobile",
           title: "Emportez vos agents partout",
           description:
-            "Paseo pour iOS et Android se connecte à cet ordinateur. Les agents continuent de tourner ici ; votre téléphone les suit, approuve les permissions et envoie des instructions.",
+            "L'application mobile native complète vous permet de contrôler n'importe quel ordinateur Paseo depuis votre téléphone",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "Choisissez comment vous connecter",
+          connectDocs: "Docs",
+          openConnectDocs: "Ouvrir la documentation sur la connectivité",
+          recommended: "Recommandé",
+          relay: { title: "Relais", hint: "Chiffré de bout en bout, scannez un QR code" },
+          tailscale: { title: "Tailscale", hint: "Demande un peu de configuration" },
         },
       },
     },
@@ -2753,11 +2731,7 @@ export const fr: TranslationResources = {
       commandLine: {
         title: "Ligne de commande",
         description: "Pilotez et scriptez vos agents depuis votre terminal",
-      },
-      actions: {
-        install: "Installer",
-        installing: "Installation…",
-        installed: "Installé",
+        accessibilityLabel: "Installer la CLI Paseo",
       },
     },
     permissions: {
@@ -2836,13 +2810,9 @@ export const fr: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "Skills d’orchestration",
         title: "Skills d’orchestration",
-        description: "Apprenez à vos agents à orchestrer via la CLI",
+        description: "Apprenez à vos agents à utiliser les outils Paseo",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les skills Paseo ?",
-        updateFallback: "Synchronisez les skills fournis sur cet hôte.",
-        uninstallTitle: "Désinstaller les skills Paseo ?",
-        uninstallMessage:
-          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex sur cet hôte.",
         choose: "Choisir les skills",
         chooseAll: "Tous les skills",
         chooseAllHint:
@@ -2858,13 +2828,9 @@ export const fr: TranslationResources = {
         uninstallFailed: "Impossible de désinstaller les skills d’orchestration.",
         saveSelectionFailed: "Impossible d’enregistrer la sélection des skills d’orchestration.",
         actions: {
-          install: "Installer",
-          installing: "Installation…",
-          installed: "Installé",
           update: "Mettre à jour",
           working: "En cours…",
           remove: "Supprimer",
-          uninstall: "Désinstaller",
           save: "Enregistrer",
           saving: "Enregistrement…",
           cancel: "Annuler",

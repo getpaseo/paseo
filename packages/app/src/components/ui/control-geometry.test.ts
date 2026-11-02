@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  buttonControlHeight,
-  buttonIconSize,
+  ALERT_ICON_SIZE,
+  CONTROL_HEIGHTS,
+  controlHeightForLayout,
   createControlGeometry,
+  switchGeometryForLayout,
   getControlInteractionPhase,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -26,6 +28,7 @@ const theme = {
     xs: 10,
     sm: 12,
     base: 14,
+    lg: 16,
   },
   opacity: {
     50: 0.5,
@@ -36,8 +39,10 @@ const theme = {
     1: 4,
     2: 8,
     3: 12,
+    3.5: 14,
     4: 16,
     6: 24,
+    7: 28,
     8: 32,
   },
 } as unknown as Theme;
@@ -81,95 +86,104 @@ describe("control geometry", () => {
   it("keeps field text sizing tied to control size", () => {
     const geometry = createControlGeometry(theme);
 
-    expect(geometry.fieldTextXs.fontSize).toBe(12);
-    expect(geometry.fieldTextXs.lineHeight).toBe(17);
-    expect(geometry.fieldTextSm.fontSize).toBe(14);
-    expect(geometry.fieldTextSm.lineHeight).toBe(20);
+    expect(geometry.fieldTextSm.fontSize).toBe(12);
+    expect(geometry.fieldTextSm.lineHeight).toBe(17);
     expect(geometry.fieldTextMd.fontSize).toBe(14);
     expect(geometry.fieldTextMd.lineHeight).toBe(20);
-    expect(geometry.formTextInputSm.fontSize).toBe(14);
-    expect(geometry.formTextInputSm.lineHeight).toBe(20);
+    expect(geometry.formTextInputSm.fontSize).toBe(12);
     expect(geometry.formTextInputMd.fontSize).toBe(14);
-    expect(geometry.formTextInputMd.lineHeight).toBe(20);
   });
 
   it("derives field padding from content and border without changing the control height", () => {
     const geometry = createControlGeometry(theme);
     const borderWidth = theme.borderWidth[1];
 
-    expect(geometry.fieldControlXs.minHeight).toBe(28);
-    expect(
-      geometry.fieldTextXs.lineHeight +
-        geometry.fieldControlXs.paddingVertical * 2 +
-        borderWidth * 2,
-    ).toBe(geometry.fieldControlXs.minHeight);
-
-    expect(geometry.fieldControlSm.minHeight).toBe(32);
-    expect(geometry.fieldControlSm.paddingVertical).toBe(5);
+    expect(geometry.fieldControlSm.minHeight).toBe(28);
     expect(
       geometry.fieldTextSm.lineHeight +
         geometry.fieldControlSm.paddingVertical * 2 +
         borderWidth * 2,
     ).toBe(geometry.fieldControlSm.minHeight);
 
-    expect(geometry.fieldControlMd.minHeight).toBe(44);
-    expect(geometry.fieldControlMd.paddingVertical).toBe(11);
-    expect(
-      geometry.fieldTextMd.lineHeight +
-        geometry.fieldControlMd.paddingVertical * 2 +
-        borderWidth * 2,
-    ).toBe(geometry.fieldControlMd.minHeight);
-
-    expect(geometry.formTextInputSm.paddingVertical).toBe(5);
-    expect(geometry.formTextInputMd.paddingVertical).toBe(11);
+    // The default keeps a 44 touch target in the compact layout and is 32 from the md
+    // breakpoint up.
+    expect(geometry.fieldControlMd.minHeight).toEqual({ xs: 44, md: 32 });
+    expect(geometry.fieldControlMd.paddingVertical).toEqual({ xs: 11, md: 5 });
+    for (const layout of ["xs", "md"] as const) {
+      expect(
+        geometry.fieldTextMd.lineHeight +
+          geometry.fieldControlMd.paddingVertical[layout] * 2 +
+          borderWidth * 2,
+      ).toBe(geometry.fieldControlMd.minHeight[layout]);
+    }
   });
 
   it("keeps segmented controls ghost with button-radius segments in a button-sized track", () => {
     const geometry = createControlGeometry(theme);
 
-    expect(geometry.segmentedContainerXs.padding).toBe(0);
     expect(geometry.segmentedContainerSm.padding).toBe(0);
     expect(geometry.segmentedContainerMd.padding).toBe(0);
-    expect(geometry.segmentedSegmentXs.borderRadius).toBe(geometry.buttonXs.borderRadius);
     expect(geometry.segmentedSegmentSm.borderRadius).toBe(geometry.buttonSm.borderRadius);
     expect(geometry.segmentedSegmentMd.borderRadius).toBe(geometry.buttonMd.borderRadius);
-    expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight);
     expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight);
-    expect(geometry.segmentedContainerMd.minHeight).toBe(geometry.buttonMd.minHeight);
-    expect(geometry.segmentedSegmentXs.minHeight).toBe(24);
-    expect(geometry.segmentedSegmentSm.minHeight).toBe(28);
-    expect(geometry.segmentedSegmentMd.minHeight).toBe(38);
+    expect(geometry.segmentedContainerMd.minHeight).toEqual(geometry.buttonMd.minHeight);
+    expect(geometry.segmentedSegmentSm.minHeight).toBe(24);
+    expect(geometry.segmentedSegmentMd.minHeight).toEqual({ xs: 40, md: 28 });
   });
 
-  it("keeps one size contract across buttons and segmented controls", () => {
+  it("keeps one size contract across buttons, fields, and segmented controls", () => {
     const geometry = createControlGeometry(theme);
 
-    // xs is a genuinely smaller tier, not sm with a different font.
-    expect(geometry.buttonXs.minHeight).toBe(28);
-    expect(geometry.buttonSm.minHeight).toBe(32);
-    expect(geometry.buttonMd.minHeight).toBe(44);
-    expect(geometry.buttonXs.minHeight).toBe(buttonControlHeight.xs);
-    expect(geometry.buttonSm.minHeight).toBe(buttonControlHeight.sm);
-    expect(geometry.buttonMd.minHeight).toBe(buttonControlHeight.md);
+    expect(geometry.buttonSm.minHeight).toBe(28);
+    expect(geometry.buttonMd.minHeight).toEqual({ xs: 44, md: 32 });
+    expect(geometry.buttonSm.minHeight).toBe(CONTROL_HEIGHTS.sm);
+    expect(geometry.buttonMd.minHeight).toEqual(CONTROL_HEIGHTS.md);
+    expect(geometry.fieldControlSm.minHeight).toBe(CONTROL_HEIGHTS.sm);
+    expect(geometry.fieldControlMd.minHeight).toEqual(CONTROL_HEIGHTS.md);
+    expect(controlHeightForLayout("md", true)).toBe(44);
+    expect(controlHeightForLayout("md", false)).toBe(32);
+    expect(controlHeightForLayout("sm", true)).toBe(28);
 
     // Same size name means the same label size on every control kind.
-    expect(geometry.segmentedLabelXs.fontSize).toBe(12);
-    expect(geometry.segmentedLabelXs.fontSize).toBe(geometry.buttonTextXs.fontSize);
-    expect(geometry.segmentedLabelSm.fontSize).toBe(14);
-    expect(geometry.segmentedLabelSm.fontSize).toBe(geometry.buttonText.fontSize);
-    expect(geometry.segmentedLabelMd.fontSize).toBe(geometry.buttonText.fontSize);
+    expect(geometry.segmentedLabelSm.fontSize).toBe(12);
+    expect(geometry.segmentedLabelSm.fontSize).toBe(geometry.buttonTextSm.fontSize);
+    expect(geometry.segmentedLabelMd.fontSize).toBe(14);
+    expect(geometry.segmentedLabelMd.fontSize).toBe(geometry.buttonTextMd.fontSize);
 
-    // Segments sit inside a track, so they run one padding step tighter than a
-    // standalone button of the same size — the gap between segments reads as the padding.
-    expect(geometry.segmentedSegmentXs.paddingHorizontal).toBeLessThan(
-      geometry.buttonXs.paddingHorizontal,
-    );
+    // Segments sit inside a track, so they run tighter than a standalone button of the same
+    // size — the gap between segments reads as the padding.
     expect(geometry.segmentedSegmentSm.paddingHorizontal).toBeLessThan(
       geometry.buttonSm.paddingHorizontal,
     );
-    expect(geometry.segmentedSegmentMd.paddingHorizontal).toBeLessThan(
-      geometry.buttonMd.paddingHorizontal,
-    );
+    for (const layout of ["xs", "md"] as const) {
+      expect(geometry.segmentedSegmentMd.paddingHorizontal).toBeLessThan(
+        geometry.buttonMd.paddingHorizontal[layout],
+      );
+    }
+  });
+
+  it("sizes switches with the same two control sizes", () => {
+    expect(switchGeometryForLayout("md", false)).toEqual({
+      trackWidth: 34,
+      trackHeight: 20,
+      thumbSize: 16,
+      thumbTravel: 14,
+      reservedHeight: 32,
+    });
+    expect(switchGeometryForLayout("md", true)).toEqual({
+      trackWidth: 44,
+      trackHeight: 26,
+      thumbSize: 22,
+      thumbTravel: 18,
+      reservedHeight: 44,
+    });
+    // Tight chrome keeps the pointer-sized switch on every layout.
+    for (const isCompact of [true, false]) {
+      expect(switchGeometryForLayout("sm", isCompact)).toMatchObject({
+        trackWidth: 34,
+        reservedHeight: 28,
+      });
+    }
   });
 
   it("gives alert title and description one font size and a tight gap per size", () => {
@@ -188,7 +202,7 @@ describe("control geometry", () => {
     const { alert } = createControlGeometry(theme);
 
     for (const size of ["xs", "sm", "md", "lg"] as const) {
-      expect(alert[size].iconSlot.width).toBe(buttonIconSize[size]);
+      expect(alert[size].iconSlot.width).toBe(ALERT_ICON_SIZE[size]);
       expect(alert[size].indent.marginLeft).toBe(alert[size].iconSlot.width + alert[size].lead.gap);
     }
   });

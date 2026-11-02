@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/text-input";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
-const TAILSCALE_DOCS_URL = "https://paseo.sh/docs/connectivity#tailscale";
+export const CONNECTIVITY_DOCS_URL = "https://paseo.sh/docs/connectivity";
+export const TAILSCALE_DOCS_URL = `${CONNECTIVITY_DOCS_URL}#tailscale`;
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedShieldCheck = withUnistyles(ShieldCheck);
@@ -170,7 +171,7 @@ function OfferLoadError({ message, onRetry }: { message: string; onRetry: () => 
   const { t } = useTranslation();
   return (
     <Alert size="sm" variant="error" description={message}>
-      <Button variant="outline" size="sm" leftIcon={RotateCw} onPress={onRetry}>
+      <Button variant="outline" leftIcon={RotateCw} onPress={onRetry}>
         {t("pairing.device.retry")}
       </Button>
     </Alert>
@@ -262,12 +263,7 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
             accessibilityLabel={t("pairing.link.label")}
           />
         </View>
-        <Button
-          variant="outline"
-          size="sm"
-          leftIcon={props.copied ? Check : Copy}
-          onPress={props.onCopy}
-        >
+        <Button variant="outline" leftIcon={props.copied ? Check : Copy} onPress={props.onCopy}>
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
       </View>

@@ -206,7 +206,7 @@ function EditableTextFile({
     return (
       <View style={styles.centerState}>
         <Text style={styles.errorText}>{snapshot.error ?? t("panels.file.failedToLoad")}</Text>
-        <Button variant="outline" size="sm" onPress={handleRetry}>
+        <Button variant="outline" onPress={handleRetry}>
           {t("common.actions.retry")}
         </Button>
       </View>

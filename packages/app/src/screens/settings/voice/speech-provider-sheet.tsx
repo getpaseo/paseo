@@ -21,7 +21,7 @@ import {
   SettingsSelect,
 } from "@/components/settings";
 import { Button } from "@/components/ui/button";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
 import { foregroundIconColorMapping } from "@/components/ui/icon-color";
 import { PressHighlight } from "@/components/ui/press-highlight";
@@ -532,8 +532,12 @@ function LocalModelRow({
 // Every catalog row is as tall as one holding a button, so a row does not shrink when its
 // download finishes and the button goes away.
 function TrailingControls({ children }: { children: ReactNode }) {
-  const size = useContainedControlSize() ?? "sm";
-  const style = useMemo(() => [styles.trailing, { minHeight: buttonControlHeight[size] }], [size]);
+  const size = useContainedControlSize() ?? "md";
+  const isCompact = useIsCompactFormFactor();
+  const style = useMemo(
+    () => [styles.trailing, { minHeight: controlHeightForLayout(size, isCompact) }],
+    [size, isCompact],
+  );
   return <View style={style}>{children}</View>;
 }
 

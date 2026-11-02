@@ -1568,6 +1568,7 @@ export const ru: TranslationResources = {
       cli: {
         statusFailed: "Не удалось проверить состояние установки CLI.",
         installFailed: "Не удалось установить Paseo CLI.",
+        uninstallFailed: "Не удалось удалить Paseo CLI.",
       },
     },
   },
@@ -1671,8 +1672,7 @@ export const ru: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "Настройка Paseo",
-      footnote: "Всё это также есть в настройках",
+      title: "Paseo",
       stepCounter: "Шаг {{current}} из {{total}}",
       skip: "Пропустить настройку",
       continue: "Продолжить",
@@ -1681,30 +1681,23 @@ export const ru: TranslationResources = {
         appearance: {
           label: "Оформление",
           title: "Добро пожаловать в Paseo",
-          description:
-            "Запускайте Claude Code, Codex и других агентов на этом компьютере — за столом или с телефона. Сначала выберите оформление.",
+          description: "Начнём с выбора оформления",
         },
         providers: {
           label: "Провайдеры",
           title: "Ваши агенты",
-          description:
-            "Paseo использует CLI агентов, уже установленные на этом компьютере. Отключите те, которые не нужны в списке агентов.",
+          description: "Paseo использует CLI агентов, уже установленные на этом компьютере",
         },
         projects: {
           label: "Проекты",
           title: "Добавьте проекты",
-          description:
-            "Добавьте папки, в которых будут работать агенты. Позже можно добавить ещё из боковой панели.",
+          description: "Где будут работать ваши агенты",
           addProject: "Добавить проект",
-          addAnotherProject: "Добавить другой проект…",
           added: "Добавлено",
           suggestions: {
             loading: "Ищем папки, в которых вы работали",
-            stillReading: "Ещё читаем историю {{providers}}…",
-            readFailed: "Не удалось прочитать историю {{provider}}",
             empty: "Недавних проектов не найдено",
-            sessions_one: "{{count}} сессия",
-            sessions_other: "Сессий: {{count}}",
+            lastUsed: "Последнее использование {{time}}",
             addSelected_one: "Добавить {{count}} проект",
             addSelected_other: "Добавить проекты: {{count}}",
             adding: "Добавляем…",
@@ -1715,35 +1708,21 @@ export const ru: TranslationResources = {
           label: "Оркестрация",
           title: "Дайте агентам доступ к Paseo",
           description:
-            "С инструментами Paseo агент может передавать работу другим агентам и сам создавать рабочие пространства и расписания.",
-          capabilities: {
-            agents: {
-              title: "Запуск других агентов и управление ими",
-              description:
-                "Запускайте агентов Codex, Claude Code или OpenCode, отправляйте им запросы и ждите результатов.",
-            },
-            workspaces: {
-              title: "Создание рабочих пространств",
-              description:
-                "Отдельный worktree для каждой задачи, чтобы параллельные агенты не мешали друг другу.",
-            },
-            schedules: {
-              title: "Расписания и heartbeat",
-              description: "Проверять CI каждые 10 минут и исправлять сбои.",
-            },
-            terminals: {
-              title: "Терминалы и скрипты",
-              description: "Запускайте dev-сервер рабочего пространства и читайте его вывод.",
-            },
-          },
+            "Разрешите агентам создавать рабочие пространства и общаться с другими агентами",
         },
         phone: {
-          label: "Телефон",
+          label: "Мобильный",
           title: "Агенты всегда под рукой",
           description:
-            "Paseo для iOS и Android подключается к этому компьютеру. Агенты продолжают работать здесь, а телефон следит за ними, одобряет разрешения и отправляет запросы.",
+            "Полнофункциональное нативное мобильное приложение позволяет управлять любым компьютером с Paseo с телефона",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "Выберите способ подключения",
+          connectDocs: "Документация",
+          openConnectDocs: "Открыть документацию по подключению",
+          recommended: "Рекомендуется",
+          relay: { title: "Ретранслятор", hint: "Сквозное шифрование, отсканируйте QR-код" },
+          tailscale: { title: "Tailscale", hint: "Требует небольшой настройки" },
         },
       },
     },
@@ -2737,11 +2716,7 @@ export const ru: TranslationResources = {
       commandLine: {
         title: "Командная строка",
         description: "Управляйте агентами и автоматизируйте их работу из терминала",
-      },
-      actions: {
-        install: "Установить",
-        installing: "Установка...",
-        installed: "Установлено",
+        accessibilityLabel: "Установить Paseo CLI",
       },
     },
     permissions: {
@@ -2820,17 +2795,13 @@ export const ru: TranslationResources = {
       skills: {
         sectionTitle: "Навыки оркестрации",
         title: "Навыки оркестрации",
-        description: "Научите агентов координировать работу через CLI",
+        description: "Научите агентов пользоваться инструментами Paseo",
         docs: "Навыки",
         openDocs: "Открыть документацию по навыкам",
         unavailable: "Подключитесь к этому хосту, чтобы управлять навыками оркестрации",
         unsupported: "Обновите этот хост, чтобы управлять навыками оркестрации",
         updateAvailable: "Доступно обновление",
         updateTitle: "Обновить навыки Paseo?",
-        updateFallback: "Встроенные навыки будут синхронизированы с этим хостом.",
-        uninstallTitle: "Удалить навыки Paseo?",
-        uninstallMessage:
-          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude и ~/.codex на этом хосте.",
         choose: "Выбрать навыки",
         chooseAll: "Все навыки",
         chooseAllHint: "Устанавливать все встроенные навыки, включая добавленные позже.",
@@ -2845,13 +2816,9 @@ export const ru: TranslationResources = {
         uninstallFailed: "Не удалось удалить навыки оркестрации.",
         saveSelectionFailed: "Не удалось сохранить выбор навыков оркестрации.",
         actions: {
-          install: "Установить",
-          installing: "Установка...",
-          installed: "Установлено",
           update: "Обновить",
           working: "Выполняется...",
           remove: "Удалить",
-          uninstall: "Удалить",
           save: "Сохранить",
           saving: "Сохранение...",
           cancel: "Отмена",

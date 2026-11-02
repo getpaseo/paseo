@@ -5,10 +5,14 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, FolderPlus } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
-import { ProjectSuggestionList, type ProjectSuggestionsController } from "@/project-suggestions";
+import {
+  FolderProjectIcon,
+  ProjectSuggestionList,
+  type ProjectSuggestionsController,
+} from "@/project-suggestions";
 import { useProjectRootPaths } from "@/stores/session-store-hooks";
 import { settingsStyles } from "@/styles/settings";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 const ThemedCheck = withUnistyles(Check);
 const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[400] });
@@ -33,7 +37,11 @@ export function ProjectsStep({
 
   return (
     <View style={styles.container}>
-      <ProjectSuggestionList suggestions={suggestions} />
+      <View style={styles.actions}>
+        <Button variant="outline" leftIcon={FolderPlus} onPress={handleAddProject}>
+          {t("onboarding.setup.steps.projects.addProject")}
+        </Button>
+      </View>
       {projectRootPaths.length > 0 ? (
         <View style={settingsStyles.card}>
           {projectRootPaths.map((rootPath, index) => (
@@ -42,10 +50,17 @@ export function ProjectsStep({
               style={[settingsStyles.row, index > 0 && settingsStyles.rowBorder]}
             >
               <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-                  {basename(rootPath)}
-                </Text>
-                <Text style={settingsStyles.rowHint} numberOfLines={1}>
+                <View style={styles.titleLine}>
+                  <FolderProjectIcon
+                    serverId={serverId}
+                    rootPath={rootPath}
+                    name={basename(rootPath)}
+                  />
+                  <Text style={[settingsStyles.rowTitle, styles.title]} numberOfLines={1}>
+                    {basename(rootPath)}
+                  </Text>
+                </View>
+                <Text style={[settingsStyles.rowHint, styles.underTitle]} numberOfLines={1}>
                   {rootPath}
                 </Text>
               </View>
@@ -57,13 +72,7 @@ export function ProjectsStep({
           ))}
         </View>
       ) : null}
-      <View style={styles.actions}>
-        <Button variant="outline" leftIcon={FolderPlus} onPress={handleAddProject}>
-          {suggestions.list.status === "ready" && suggestions.list.rows.length > 0
-            ? t("onboarding.setup.steps.projects.addAnotherProject")
-            : t("onboarding.setup.steps.projects.addProject")}
-        </Button>
-      </View>
+      <ProjectSuggestionList serverId={serverId} suggestions={suggestions} />
     </View>
   );
 }
@@ -76,6 +85,17 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: theme.spacing[2],
+  },
+  titleLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  title: {
+    flexShrink: 1,
+  },
+  underTitle: {
+    marginLeft: ICON_SIZE.md + theme.spacing[2],
   },
   addedBadge: {
     flexDirection: "row",

@@ -1565,6 +1565,7 @@ export const en = {
       cli: {
         statusFailed: "Unable to check CLI install status.",
         installFailed: "Unable to install the Paseo CLI.",
+        uninstallFailed: "Unable to uninstall the Paseo CLI.",
       },
     },
   },
@@ -1667,8 +1668,7 @@ export const en = {
   },
   onboarding: {
     setup: {
-      title: "Set up Paseo",
-      footnote: "Everything here is also in Settings",
+      title: "Paseo",
       stepCounter: "Step {{current}} of {{total}}",
       skip: "Skip setup",
       continue: "Continue",
@@ -1677,30 +1677,23 @@ export const en = {
         appearance: {
           label: "Appearance",
           title: "Welcome to Paseo",
-          description:
-            "Run Claude Code, Codex and other agents on this computer, from your desk or your phone. First, pick a look.",
+          description: "Let's start by picking a look",
         },
         providers: {
           label: "Providers",
           title: "Your agents",
-          description:
-            "Paseo runs the agent CLIs already on this computer. Turn off any you don't want in the agent picker.",
+          description: "Paseo runs the agent CLIs already on this computer",
         },
         projects: {
           label: "Projects",
           title: "Add your projects",
-          description:
-            "Add the folders you want agents to work in. You can add more later from the sidebar.",
+          description: "Where do you want your agents to work on",
           addProject: "Add project",
-          addAnotherProject: "Add another project…",
           added: "Added",
           suggestions: {
             loading: "Looking for folders you've worked in",
-            stillReading: "Still reading {{providers}} history…",
-            readFailed: "Couldn't read {{provider}} history",
             empty: "No recent projects found",
-            sessions_one: "{{count}} session",
-            sessions_other: "{{count}} sessions",
+            lastUsed: "Last used {{time}}",
             addSelected_one: "Add {{count}} project",
             addSelected_other: "Add {{count}} projects",
             adding: "Adding…",
@@ -1710,35 +1703,21 @@ export const en = {
         orchestration: {
           label: "Orchestration",
           title: "Let agents use Paseo",
-          description:
-            "With Paseo tools, an agent can hand work to other agents and set up its own workspaces and schedules.",
-          capabilities: {
-            agents: {
-              title: "Start and steer other agents",
-              description:
-                "Launch Codex, Claude Code or OpenCode agents, send them prompts and wait for their results.",
-            },
-            workspaces: {
-              title: "Create workspaces",
-              description: "Open a worktree for each task so parallel agents don't collide.",
-            },
-            schedules: {
-              title: "Schedules and heartbeats",
-              description: "Check CI every 10 minutes and fix failures.",
-            },
-            terminals: {
-              title: "Terminals and scripts",
-              description: "Run your workspace's dev server and read its output.",
-            },
-          },
+          description: "Let your agents create workspaces and talk to other agents",
         },
         phone: {
-          label: "Phone",
+          label: "Mobile",
           title: "Take your agents with you",
           description:
-            "Paseo for iOS and Android connects to this computer. Agents keep running here; your phone watches them, approves permissions and sends prompts.",
+            "The fully featured native mobile app allows you to control any Paseo computer from your phone",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "Choose how to connect",
+          connectDocs: "Docs",
+          openConnectDocs: "Open connectivity documentation",
+          recommended: "Recommended",
+          relay: { title: "Relay", hint: "End-to-end encrypted, scan a QR code" },
+          tailscale: { title: "Tailscale", hint: "Requires some setup" },
         },
       },
     },
@@ -2816,11 +2795,7 @@ export const en = {
       commandLine: {
         title: "Command line",
         description: "Control and script agents from your terminal",
-      },
-      actions: {
-        install: "Install",
-        installing: "Installing...",
-        installed: "Installed",
+        accessibilityLabel: "Install the Paseo CLI",
       },
     },
     permissions: {
@@ -2897,7 +2872,7 @@ export const en = {
       skills: {
         sectionTitle: "Orchestration skills",
         title: "Orchestration skills",
-        description: "Teach your agents to orchestrate through the CLI",
+        description: "Teach your agents how to use Paseo tools",
         docs: "Skills",
         openDocs: "Open skills documentation",
         unavailable: "Connect to this host to manage orchestration skills",
@@ -2908,10 +2883,6 @@ export const en = {
         saveSelectionFailed: "Unable to save the orchestration skills selection.",
         updateAvailable: "Update available",
         updateTitle: "Update Paseo skills?",
-        updateFallback: "Sync bundled skills to this host.",
-        uninstallTitle: "Uninstall Paseo skills?",
-        uninstallMessage:
-          "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex on this host.",
         choose: "Choose skills",
         chooseAll: "All skills",
         chooseAllHint: "Keep every bundled skill installed, including ones added later.",
@@ -2922,13 +2893,9 @@ export const en = {
           "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex on this host. Anything you added inside those skill folders is deleted too.",
         saveFailed: "Could not save your skill selection.",
         actions: {
-          install: "Install",
-          installing: "Installing...",
-          installed: "Installed",
           update: "Update",
           working: "Working...",
           remove: "Remove",
-          uninstall: "Uninstall",
           save: "Save",
           saving: "Saving...",
           cancel: "Cancel",

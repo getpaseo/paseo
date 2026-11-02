@@ -204,7 +204,6 @@ function ContentWidthRow({ value, onChange }: ContentWidthRowProps) {
         {value === null ? null : (
           <Button
             variant="ghost"
-            size="sm"
             onPress={reset}
             accessibilityLabel={t("settings.appearance.layout.resetAccessibility")}
           >

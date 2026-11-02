@@ -13,7 +13,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import {
   createControlGeometry,
   resolveControlInteractionStyles,
-  type FieldControlSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import { Field } from "@/components/ui/form-field";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -55,7 +55,7 @@ export interface SelectFieldProps<TValue> {
   searchable?: boolean;
   searchPlaceholder?: string;
   title?: string;
-  size?: FieldControlSize;
+  size?: ControlSize;
   getValueKey?: (value: TValue) => string;
   renderOption?: (input: SelectFieldRenderOptionInput<TValue>) => ReactElement;
   triggerLeading?: ReactNode;
@@ -75,7 +75,7 @@ export interface SelectFieldTriggerProps {
   disabled?: boolean;
   loading?: boolean;
   leading?: ReactNode;
-  size?: FieldControlSize;
+  size?: ControlSize;
   testID?: string;
 }
 

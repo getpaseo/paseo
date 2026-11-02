@@ -1586,6 +1586,7 @@ export const es: TranslationResources = {
       cli: {
         statusFailed: "No se puede verificar el estado de instalación deCLI.",
         installFailed: "No se puede instalar elPaseoCLI.",
+        uninstallFailed: "No se pudo desinstalar la CLI de Paseo.",
       },
     },
   },
@@ -1688,8 +1689,7 @@ export const es: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "Configurar Paseo",
-      footnote: "Todo lo de aquí también está en Ajustes",
+      title: "Paseo",
       stepCounter: "Paso {{current}} de {{total}}",
       skip: "Omitir configuración",
       continue: "Continuar",
@@ -1698,30 +1698,23 @@ export const es: TranslationResources = {
         appearance: {
           label: "Apariencia",
           title: "Te damos la bienvenida a Paseo",
-          description:
-            "Ejecuta Claude Code, Codex y otros agentes en este ordenador, desde tu escritorio o tu teléfono. Primero, elige un aspecto.",
+          description: "Empecemos por elegir una apariencia",
         },
         providers: {
           label: "Proveedores",
           title: "Tus agentes",
-          description:
-            "Paseo usa las CLI de agentes que ya están en este ordenador. Desactiva las que no quieras ver en el selector de agentes.",
+          description: "Paseo usa las CLI de agentes que ya están en este ordenador",
         },
         projects: {
           label: "Proyectos",
           title: "Añade tus proyectos",
-          description:
-            "Añade las carpetas en las que quieres que trabajen los agentes. Puedes añadir más después desde la barra lateral.",
+          description: "Dónde quieres que trabajen tus agentes",
           addProject: "Añadir proyecto",
-          addAnotherProject: "Añadir otro proyecto…",
           added: "Añadido",
           suggestions: {
             loading: "Buscando carpetas en las que has trabajado",
-            stillReading: "Todavía leyendo el historial de {{providers}}…",
-            readFailed: "No se pudo leer el historial de {{provider}}",
             empty: "No se encontraron proyectos recientes",
-            sessions_one: "{{count}} sesión",
-            sessions_other: "{{count}} sesiones",
+            lastUsed: "Último uso {{time}}",
             addSelected_one: "Añadir {{count}} proyecto",
             addSelected_other: "Añadir {{count}} proyectos",
             adding: "Añadiendo…",
@@ -1731,37 +1724,21 @@ export const es: TranslationResources = {
         orchestration: {
           label: "Orquestación",
           title: "Deja que los agentes usen Paseo",
-          description:
-            "Con las herramientas de Paseo, un agente puede pasar trabajo a otros agentes y crear sus propios espacios de trabajo y programaciones.",
-          capabilities: {
-            agents: {
-              title: "Iniciar y dirigir otros agentes",
-              description:
-                "Lanza agentes de Codex, Claude Code u OpenCode, envíales instrucciones y espera sus resultados.",
-            },
-            workspaces: {
-              title: "Crear espacios de trabajo",
-              description:
-                "Abre un worktree por tarea para que los agentes en paralelo no choquen.",
-            },
-            schedules: {
-              title: "Programaciones y heartbeats",
-              description: "Revisa la CI cada 10 minutos y corrige los fallos.",
-            },
-            terminals: {
-              title: "Terminales y scripts",
-              description:
-                "Ejecuta el servidor de desarrollo de tu espacio de trabajo y lee su salida.",
-            },
-          },
+          description: "Deja que tus agentes creen espacios de trabajo y hablen con otros agentes",
         },
         phone: {
-          label: "Teléfono",
+          label: "Móvil",
           title: "Lleva tus agentes contigo",
           description:
-            "Paseo para iOS y Android se conecta a este ordenador. Los agentes siguen ejecutándose aquí; tu teléfono los supervisa, aprueba permisos y envía instrucciones.",
+            "La app móvil nativa completa te permite controlar cualquier ordenador con Paseo desde tu teléfono",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "Elige cómo conectarte",
+          connectDocs: "Docs",
+          openConnectDocs: "Abrir la documentación de conectividad",
+          recommended: "Recomendado",
+          relay: { title: "Relé", hint: "Cifrado de extremo a extremo, escanea un código QR" },
+          tailscale: { title: "Tailscale", hint: "Requiere algo de configuración" },
         },
       },
     },
@@ -2751,11 +2728,7 @@ export const es: TranslationResources = {
       commandLine: {
         title: "línea de comando",
         description: "Agentes de control y script desde tu terminal",
-      },
-      actions: {
-        install: "Instalar",
-        installing: "Instalando...",
-        installed: "Instalado",
+        accessibilityLabel: "Instalar la CLI de Paseo",
       },
     },
     permissions: {
@@ -2833,13 +2806,9 @@ export const es: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "Habilidades de orquestación",
         title: "Habilidades de orquestación",
-        description: "Enseñe a sus agentes a orquestar a través delCLI",
+        description: "Enseña a tus agentes a usar las herramientas de Paseo",
         updateAvailable: "Actualización disponible",
         updateTitle: "¿Actualizar las habilidades dePaseo?",
-        updateFallback: "Sincronice las habilidades incluidas con su máquina.",
-        uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
-        uninstallMessage:
-          "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
         choose: "Elegir habilidades",
         chooseAll: "Todas las habilidades",
         chooseAllHint:
@@ -2855,13 +2824,9 @@ export const es: TranslationResources = {
         uninstallFailed: "No se pueden desinstalar las habilidades de orquestación.",
         saveSelectionFailed: "No se puede guardar la selección de habilidades de orquestación.",
         actions: {
-          install: "Instalar",
-          installing: "Instalando...",
-          installed: "Instalado",
           update: "Actualizar",
           working: "Laboral...",
           remove: "Eliminar",
-          uninstall: "Desinstalar",
           save: "Guardar",
           saving: "Guardando...",
           cancel: "Cancelar",

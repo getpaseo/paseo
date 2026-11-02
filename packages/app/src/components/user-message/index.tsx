@@ -41,7 +41,6 @@ export function MessagePreview({ children }: { children: ReactNode }) {
       {overflowing ? (
         <Button
           variant="ghost"
-          size="sm"
           style={[styles.toggle, expanded && styles.expandedToggle]}
           accessibilityState={accessibilityState}
           onPress={toggle}
@@ -77,7 +76,6 @@ export function MessageSender({
   return (
     <Button
       variant="ghost"
-      size="sm"
       leftIcon={renderProviderIcon}
       style={styles.sender}
       textStyle={styles.senderText}

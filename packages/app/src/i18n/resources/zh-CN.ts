@@ -1525,6 +1525,7 @@ export const zhCN: TranslationResources = {
       cli: {
         statusFailed: "无法检查 CLI 安装状态。",
         installFailed: "无法安装 Paseo CLI。",
+        uninstallFailed: "无法卸载 Paseo CLI。",
       },
     },
   },
@@ -1625,8 +1626,7 @@ export const zhCN: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "设置 Paseo",
-      footnote: "这里的所有选项也都在设置中",
+      title: "Paseo",
       stepCounter: "第 {{current}} 步，共 {{total}} 步",
       skip: "跳过设置",
       continue: "继续",
@@ -1635,28 +1635,23 @@ export const zhCN: TranslationResources = {
         appearance: {
           label: "外观",
           title: "欢迎使用 Paseo",
-          description:
-            "在这台电脑上运行 Claude Code、Codex 和其他代理，无论在桌前还是用手机。先选一个外观。",
+          description: "先选择一个外观",
         },
         providers: {
           label: "提供方",
           title: "你的代理",
-          description: "Paseo 使用这台电脑上已安装的代理 CLI。关闭不想在代理选择器中显示的项。",
+          description: "Paseo 使用这台电脑上已安装的代理 CLI",
         },
         projects: {
           label: "项目",
           title: "添加项目",
-          description: "添加你希望代理工作的文件夹。之后也可以从侧边栏添加更多。",
+          description: "你希望代理在哪里工作",
           addProject: "添加项目",
-          addAnotherProject: "添加其他项目…",
           added: "已添加",
           suggestions: {
             loading: "正在查找你工作过的文件夹",
-            stillReading: "仍在读取 {{providers}} 历史记录…",
-            readFailed: "无法读取 {{provider}} 历史记录",
             empty: "未找到最近的项目",
-            sessions_one: "{{count}} 个会话",
-            sessions_other: "{{count}} 个会话",
+            lastUsed: "上次使用 {{time}}",
             addSelected_one: "添加 {{count}} 个项目",
             addSelected_other: "添加 {{count}} 个项目",
             adding: "正在添加…",
@@ -1666,34 +1661,20 @@ export const zhCN: TranslationResources = {
         orchestration: {
           label: "编排",
           title: "让代理使用 Paseo",
-          description:
-            "启用 Paseo 工具后，代理可以把工作交给其他代理，并自行创建工作区和计划任务。",
-          capabilities: {
-            agents: {
-              title: "启动并引导其他代理",
-              description: "启动 Codex、Claude Code 或 OpenCode 代理，向它们发送提示并等待结果。",
-            },
-            workspaces: {
-              title: "创建工作区",
-              description: "为每个任务打开一个 worktree，避免并行代理相互冲突。",
-            },
-            schedules: {
-              title: "计划任务和心跳",
-              description: "每 10 分钟检查一次 CI 并修复失败。",
-            },
-            terminals: {
-              title: "终端和脚本",
-              description: "运行工作区的开发服务器并读取输出。",
-            },
-          },
+          description: "让你的代理创建工作区并与其他代理对话",
         },
         phone: {
-          label: "手机",
+          label: "移动端",
           title: "随身带上你的代理",
-          description:
-            "iOS 和 Android 版 Paseo 会连接到这台电脑。代理继续在这里运行，手机用来查看进度、批准权限和发送提示。",
+          description: "功能完整的原生移动应用让你可以在手机上控制任意一台 Paseo 电脑",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "选择连接方式",
+          connectDocs: "文档",
+          openConnectDocs: "打开连接文档",
+          recommended: "推荐",
+          relay: { title: "中继", hint: "端到端加密，扫描二维码" },
+          tailscale: { title: "Tailscale", hint: "需要一些设置" },
         },
       },
     },
@@ -2660,11 +2641,7 @@ export const zhCN: TranslationResources = {
       commandLine: {
         title: "命令行",
         description: "从终端控制 Agent 并运行脚本",
-      },
-      actions: {
-        install: "安装",
-        installing: "正在安装...",
-        installed: "已安装",
+        accessibilityLabel: "安装 Paseo CLI",
       },
     },
     permissions: {
@@ -2742,12 +2719,9 @@ export const zhCN: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "编排 skills",
         title: "编排 skills",
-        description: "教会 Agent 通过 CLI 编排任务",
+        description: "教你的代理如何使用 Paseo 工具",
         updateAvailable: "有更新可用",
         updateTitle: "更新 Paseo skills？",
-        updateFallback: "将内置 skills 同步到你的机器。",
-        uninstallTitle: "卸载 Paseo skills？",
-        uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
         choose: "选择 skills",
         chooseAll: "全部 skills",
         chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
@@ -2762,13 +2736,9 @@ export const zhCN: TranslationResources = {
         uninstallFailed: "无法卸载编排 skills。",
         saveSelectionFailed: "无法保存编排 skills 的选择。",
         actions: {
-          install: "安装",
-          installing: "正在安装...",
-          installed: "已安装",
           update: "更新",
           working: "处理中...",
           remove: "移除",
-          uninstall: "卸载",
           save: "保存",
           saving: "正在保存...",
           cancel: "取消",

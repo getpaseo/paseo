@@ -22,8 +22,7 @@ const PICKER_THEME_OPTIONS = [
   ...THEME_OPTIONS.filter((option) => option.name !== "auto"),
 ];
 
-const PREVIEW_WIDTH = 128;
-const PREVIEW_HEIGHT = 72;
+const PREVIEW_ASPECT_RATIO = 16 / 9;
 
 /**
  * Every theme as a tile with a small preview drawn from its own tokens. Picking a tile applies
@@ -134,21 +133,27 @@ function ThemeTile({
     [selected],
   );
   return (
-    <PressHighlight
-      style={tileStyle}
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityLabel={label}
-      accessibilityState={accessibilityState}
-      aria-checked={selected}
-    >
-      <View style={styles.previewFrame}>
-        {previewTheme === "system" ? <SystemThemePreview /> : <ThemePreview theme={previewTheme} />}
-      </View>
-      <Text style={styles.label} numberOfLines={1}>
-        {label}
-      </Text>
-    </PressHighlight>
+    <View style={styles.cell}>
+      <PressHighlight
+        style={tileStyle}
+        onPress={onPress}
+        accessibilityRole="radio"
+        accessibilityLabel={label}
+        accessibilityState={accessibilityState}
+        aria-checked={selected}
+      >
+        <View style={styles.previewFrame}>
+          {previewTheme === "system" ? (
+            <SystemThemePreview />
+          ) : (
+            <ThemePreview theme={previewTheme} />
+          )}
+        </View>
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
+      </PressHighlight>
+    </View>
   );
 }
 
@@ -197,13 +202,18 @@ function SystemThemePreview() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Columns fill the row: each cell is a fixed fraction of it, and the half-gap padding on every
+  // cell plus the negative margin here leaves exactly one gap between neighbors.
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: theme.spacing[3],
+    margin: -theme.spacing[3] / 2,
+  },
+  cell: {
+    width: { xs: "50%", md: "25%" },
+    padding: theme.spacing[3] / 2,
   },
   tile: {
-    width: PREVIEW_WIDTH + theme.spacing[1] * 2 + theme.borderWidth[2] * 2,
     padding: theme.spacing[1],
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.lg,
@@ -228,8 +238,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
   },
   preview: {
-    width: PREVIEW_WIDTH,
-    height: PREVIEW_HEIGHT,
+    width: "100%",
+    aspectRatio: PREVIEW_ASPECT_RATIO,
     flexDirection: "row",
     overflow: "hidden",
   },
@@ -270,11 +280,13 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     top: 0,
     bottom: 0,
-    left: PREVIEW_WIDTH / 2,
-    width: PREVIEW_WIDTH / 2,
+    left: "50%",
+    width: "50%",
     overflow: "hidden",
   },
+  // A full-width dark preview shifted left by half, so only its right half shows.
   systemDarkOffset: {
-    marginLeft: -PREVIEW_WIDTH / 2,
+    width: "200%",
+    marginLeft: "-100%",
   },
 }));

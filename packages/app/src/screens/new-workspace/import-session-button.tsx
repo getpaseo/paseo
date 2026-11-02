@@ -21,7 +21,6 @@ export function ImportSessionButton({
       <Button
         // Ghost for its muted text that turns foreground on hover; the pill adds the outline.
         variant="ghost"
-        size="sm"
         leftIcon={Import}
         onPress={onPress}
         style={compact ? null : styles.pill}

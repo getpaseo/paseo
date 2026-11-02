@@ -1541,6 +1541,7 @@ export const ar: TranslationResources = {
       cli: {
         statusFailed: "غير قادر على التحقق من حالة تثبيت CLI.",
         installFailed: "غير قادر على تثبيت PaseoCLI.",
+        uninstallFailed: "تعذر إلغاء تثبيت Paseo CLI.",
       },
     },
   },
@@ -1642,8 +1643,7 @@ export const ar: TranslationResources = {
   },
   onboarding: {
     setup: {
-      title: "إعداد Paseo",
-      footnote: "كل ما هنا موجود أيضًا في الإعدادات",
+      title: "Paseo",
       stepCounter: "الخطوة {{current}} من {{total}}",
       skip: "تخطي الإعداد",
       continue: "متابعة",
@@ -1652,30 +1652,23 @@ export const ar: TranslationResources = {
         appearance: {
           label: "المظهر",
           title: "مرحبًا بك في Paseo",
-          description:
-            "شغّل Claude Code وCodex ووكلاء آخرين على هذا الكمبيوتر، من مكتبك أو من هاتفك. اختر مظهرًا أولًا.",
+          description: "لنبدأ باختيار المظهر",
         },
         providers: {
           label: "المزوّدون",
           title: "وكلاؤك",
-          description:
-            "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر. أوقف ما لا تريده في منتقي الوكلاء.",
+          description: "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر",
         },
         projects: {
           label: "المشاريع",
           title: "أضف مشاريعك",
-          description:
-            "أضف المجلدات التي تريد أن يعمل فيها الوكلاء. يمكنك إضافة المزيد لاحقًا من الشريط الجانبي.",
+          description: "أين تريد أن يعمل وكلاؤك",
           addProject: "إضافة مشروع",
-          addAnotherProject: "إضافة مشروع آخر…",
           added: "تمت الإضافة",
           suggestions: {
             loading: "جارٍ البحث عن المجلدات التي عملت فيها",
-            stillReading: "ما زلنا نقرأ سجل {{providers}}…",
-            readFailed: "تعذّرت قراءة سجل {{provider}}",
             empty: "لم يتم العثور على مشاريع حديثة",
-            sessions_one: "جلسة واحدة ({{count}})",
-            sessions_other: "{{count}} جلسات",
+            lastUsed: "آخر استخدام {{time}}",
             addSelected_one: "إضافة مشروع واحد ({{count}})",
             addSelected_other: "إضافة {{count}} مشاريع",
             adding: "جارٍ الإضافة…",
@@ -1685,35 +1678,21 @@ export const ar: TranslationResources = {
         orchestration: {
           label: "التنسيق",
           title: "اسمح للوكلاء باستخدام Paseo",
-          description:
-            "باستخدام أدوات Paseo، يمكن للوكيل تسليم العمل لوكلاء آخرين وإنشاء مساحات العمل والجداول بنفسه.",
-          capabilities: {
-            agents: {
-              title: "تشغيل وكلاء آخرين وتوجيههم",
-              description:
-                "شغّل وكلاء Codex أو Claude Code أو OpenCode وأرسل لهم الطلبات وانتظر نتائجهم.",
-            },
-            workspaces: {
-              title: "إنشاء مساحات عمل",
-              description: "افتح worktree لكل مهمة حتى لا يتعارض الوكلاء العاملون بالتوازي.",
-            },
-            schedules: {
-              title: "الجداول ونبضات المتابعة",
-              description: "تحقق من CI كل 10 دقائق وأصلح الإخفاقات.",
-            },
-            terminals: {
-              title: "الطرفيات والسكربتات",
-              description: "شغّل خادم التطوير لمساحة العمل واقرأ مخرجاته.",
-            },
-          },
+          description: "اسمح لوكلائك بإنشاء مساحات عمل والتحدث مع وكلاء آخرين",
         },
         phone: {
-          label: "الهاتف",
+          label: "الجوال",
           title: "خذ وكلاءك معك",
           description:
-            "يتصل Paseo لنظامي iOS وAndroid بهذا الكمبيوتر. يواصل الوكلاء العمل هنا، ويتابعهم هاتفك ويوافق على الأذونات ويرسل الطلبات.",
+            "يتيح لك تطبيق الجوال الأصلي كامل الميزات التحكم في أي كمبيوتر يعمل عليه Paseo من هاتفك",
           appStore: "App Store",
           googlePlay: "Google Play",
+          connectTitle: "اختر طريقة الاتصال",
+          connectDocs: "الوثائق",
+          openConnectDocs: "افتح وثائق الاتصال",
+          recommended: "موصى به",
+          relay: { title: "التتابع", hint: "مشفّر من طرف إلى طرف، امسح رمز QR" },
+          tailscale: { title: "Tailscale", hint: "يتطلب بعض الإعداد" },
         },
       },
     },
@@ -2728,11 +2707,7 @@ export const ar: TranslationResources = {
       commandLine: {
         title: "سطر الأوامر",
         description: "وكلاء التحكم والبرنامج النصي من المحطة الطرفية الخاصة بك",
-      },
-      actions: {
-        install: "ثَبَّتَ",
-        installing: "جارٍ التثبيت...",
-        installed: "تم التثبيت",
+        accessibilityLabel: "تثبيت Paseo CLI",
       },
     },
     permissions: {
@@ -2810,12 +2785,9 @@ export const ar: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "مهارات التنسيق",
         title: "مهارات التنسيق",
-        description: "قم بتعليم عملائك كيفية التنسيق من خلال CLI",
+        description: "علّم وكلاءك كيفية استخدام أدوات Paseo",
         updateAvailable: "التحديث متاح",
         updateTitle: "تحديث مهارات Paseo ؟",
-        updateFallback: "مزامنة المهارات المجمعة لجهازك.",
-        uninstallTitle: "إلغاء تثبيت مهارات Paseo ؟",
-        uninstallMessage: "يزيل جميع مهارات تنسيق Paseo من ~/.agents ، ~/.claude ، ~/.codex.",
         choose: "اختيار المهارات",
         chooseAll: "كل المهارات",
         chooseAllHint: "أبقِ جميع المهارات المرفقة مثبتة، بما فيها ما يُضاف لاحقًا.",
@@ -2830,13 +2802,9 @@ export const ar: TranslationResources = {
         uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
         saveSelectionFailed: "غير قادر على حفظ اختيار مهارات التنسيق.",
         actions: {
-          install: "ثَبَّتَ",
-          installing: "جارٍ التثبيت...",
-          installed: "تم التثبيت",
           update: "تحديث",
           working: "عمل...",
           remove: "إزالة",
-          uninstall: "إلغاء التثبيت",
           save: "حفظ",
           saving: "جارٍ الحفظ...",
           cancel: "يلغي",

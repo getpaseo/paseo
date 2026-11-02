@@ -33,7 +33,7 @@ export async function openAppAsNewUser(
 }
 
 export function setupModal(page: Page): Locator {
-  return page.getByRole("dialog").filter({ hasText: "Set up Paseo" });
+  return page.getByTestId("onboarding-modal").getByRole("dialog");
 }
 
 export async function expectSetupStep(page: Page, title: string): Promise<void> {
@@ -85,7 +85,20 @@ export async function finishSetup(page: Page): Promise<void> {
   await expect(setupModal(page)).toHaveCount(0);
 }
 
-/** Clicks the Tailscale docs link in the Phone step and returns the page it opened. */
+/** Opens the Phone step's Relay row: the pair device modal, over setup. */
+export async function openRelayPairingFromSetup(page: Page): Promise<Locator> {
+  await setupModal(page).getByRole("button", { name: "Relay", exact: true }).click();
+  const pairing = page.getByTestId("onboarding-pair-device-card");
+  await expect(pairing).toBeVisible();
+  return pairing;
+}
+
+export async function closeRelayPairing(pairing: Locator): Promise<void> {
+  await pairing.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(pairing).toHaveCount(0);
+}
+
+/** Clicks the Phone step's Tailscale row and returns the docs page it opened. */
 export async function openTailscaleDocsFromSetup(page: Page): Promise<string> {
   await page
     .context()
@@ -93,7 +106,7 @@ export async function openTailscaleDocsFromSetup(page: Page): Promise<string> {
       route.fulfill({ contentType: "text/html", body: "<title>Paseo docs</title>" }),
     );
   const popup = page.waitForEvent("popup");
-  await setupModal(page).getByRole("link", { name: "Read how to connect over Tailscale" }).click();
+  await setupModal(page).getByRole("link", { name: "Tailscale, Docs", exact: true }).click();
   const docs = await popup;
   await docs.waitForLoadState("domcontentloaded");
   const url = docs.url();
@@ -109,8 +122,9 @@ export interface SetupHost {
 
 /**
  * An isolated host whose only agent history is the Claude sessions given here, so suggestions
- * never depend on the machine running the test. `withBrokenProvider` adds a provider that cannot
- * start.
+ * never depend on the machine running the test. Its HOME is a scratch folder, so the skills setup
+ * installs never land in the real ~/.agents, ~/.claude or ~/.codex. `withBrokenProvider` adds a
+ * provider that cannot start.
  */
 export async function startSetupHost(
   label: string,
@@ -122,9 +136,10 @@ export async function startSetupHost(
 ): Promise<SetupHost> {
   const serverId = `srv_onboarding_${label}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
   const claudeConfigDir = await seedClaudeHistory(options.claudeSessionsIn ?? []);
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-onboarding-home-"));
   const daemon = await startIsolatedHostDaemon(serverId, {
     config: claudeOnlyConfig({ withBrokenProvider: options.withBrokenProvider ?? false }),
-    environment: { ...process.env, CLAUDE_CONFIG_DIR: claudeConfigDir },
+    environment: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeConfigDir },
     mutableRelay: options.mutableRelay,
   });
   return {
@@ -133,6 +148,7 @@ export async function startSetupHost(
     close: async () => {
       await daemon.close();
       await rm(claudeConfigDir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     },
   };
 }
@@ -182,8 +198,16 @@ function claudeOnlyConfig(options: { withBrokenProvider: boolean }) {
   };
 }
 
+/** The switch that picks a suggested project for adding. */
 export function projectSuggestion(page: Page, name: string): Locator {
-  return setupModal(page).getByRole("checkbox", { name, exact: true });
+  return setupModal(page).getByRole("switch", { name, exact: true });
+}
+
+/** The whole suggestion row, with its path, last use and any add error beside the switch. */
+export function projectSuggestionRow(page: Page, name: string): Locator {
+  return setupModal(page)
+    .getByTestId("project-suggestion")
+    .filter({ has: page.getByRole("switch", { name, exact: true }) });
 }
 
 /** The footer's main button, which adds the checked suggestions when there are any. */
