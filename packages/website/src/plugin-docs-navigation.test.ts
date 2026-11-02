@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect, parseHeadings } from "./docs";
 
 describe("plugin documentation", () => {
+  it.each(["en", "zh-CN"] as const)(
+    "nests local file copying under Git worktrees in %s",
+    (locale) => {
+      const workspaces = buildDocsNavTree(getDocs(locale)).find(
+        (node) => node.type === "category" && node.label === "Workspaces",
+      );
+      expect(workspaces).toMatchObject({
+        children: expect.arrayContaining([
+          expect.objectContaining({
+            type: "group",
+            href: "/docs/worktrees",
+            children: [expect.objectContaining({ href: "/docs/worktrees/worktreeinclude" })],
+          }),
+        ]),
+      });
+      expect(getDoc("worktrees/worktreeinclude", locale)).toBeDefined();
+    },
+  );
+
   it("groups current guides by task without version navigation", () => {
     const plugins = buildDocsNavTree(getDocs("en")).find(
       (node) => node.type === "category" && node.label === "Plugins",

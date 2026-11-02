@@ -9,7 +9,7 @@
 // elsewhere point SF_FONT_DIR at a folder holding SFNS.ttf copied from a Mac.
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,6 +23,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(root, "../..");
 const raw = (device, name) => path.join(root, "raw", device, `${name}.png`);
 const output = path.join(root, "output");
+const androidImages = path.join(repo, "fastlane/metadata/android/en-US/images");
 
 // Native captures per device: iPhone 16 Pro Max at 3x and iPad Pro 13-inch at
 // 2x. The frame's screen radius and Dynamic Island are in capture pixels.
@@ -116,6 +117,7 @@ const STORES = {
   },
   google: {
     device: "iphone",
+    androidScreenshots: "phoneScreenshots",
     width: 1440,
     height: 2560,
     textTop: 150,
@@ -134,6 +136,7 @@ const STORES = {
   },
   "google-tablet": {
     device: "ipad",
+    androidScreenshots: "tenInchScreenshots",
     width: 1800,
     height: 3200,
     textTop: 200,
@@ -352,6 +355,18 @@ async function expectLines(view, selector, expected, label) {
   if (lines !== expected) throw new Error(`${label} wraps to ${lines} lines, expected ${expected}`);
 }
 
+// Google Play and F-Droid read their screenshots from the Android metadata,
+// which holds links to these renders. Rewriting the links on every render keeps
+// added, removed and renamed panels in step with the App Store.
+async function linkAndroidScreenshots(folder, files) {
+  const dir = path.join(androidImages, folder);
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  for (const [index, file] of files.entries()) {
+    await symlink(path.relative(dir, file), path.join(dir, `${index + 1}.png`));
+  }
+}
+
 async function renderPreview(rows) {
   const tile = 440;
   const gap = 40;
@@ -387,7 +402,9 @@ try {
   const marks = await loadAgentMarks(work);
   const rows = [];
   for (const [name, store] of Object.entries(STORES)) {
-    rows.push(await renderStore(browser, name, store, font, marks, work));
+    const files = await renderStore(browser, name, store, font, marks, work);
+    if (store.androidScreenshots) await linkAndroidScreenshots(store.androidScreenshots, files);
+    rows.push(files);
   }
   await renderPreview(rows);
 } finally {

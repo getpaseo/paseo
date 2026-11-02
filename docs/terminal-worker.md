@@ -15,6 +15,8 @@ supervisor (paseo.pid) ──► daemon worker ──► launcher ──► term
 - The worker exits on its own when it has no controller and no terminals, on `shutdown`, on SIGTERM (killing its terminals), and when its record disappears (a deleted `$PASEO_HOME`: nobody can ever reach it again).
 - Its stderr goes to `$PASEO_HOME/terminal-worker.log`. No pipe to the daemon survives the daemon.
 
+The worker retains a fixed 10,000 history rows plus the screen in its existing xterm. Replay uses `@xterm/addon-serialize` 0.14 against headless xterm 6; no second cell grid or lifetime byte log is retained. The serializer boundary owns cursor position, visibility and explicit program-selected presentation; the addon alone does not preserve all three. An unset program style leaves each client’s configured cursor defaults intact. Standard modes come from the serializer; the existing input-mode tracker retains protocol modes such as Kitty and Win32 input. Commit that tracker with parsed output so replay bytes and metadata describe the same cut.
+
 Which triggers keep terminals and which close them is owned by the stop reason (`keepTerminals`) that flows from the request through the supervisor to `stop()`. The kill side always ends in the reaper (`terminal-worker-reaper.ts`), the only path that signals terminal processes outside a connected daemon.
 
 ## Record, socket and secret
@@ -40,9 +42,21 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 
 Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run. The count comes from the records, so an unreachable or unidentified worker counts, and so does one a cleanup could not confirm gone. When two run, the daemon starts with no current worker, and the first terminal created after one of them exits launches it.
 
-**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. When you bump the version, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
+**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. Protocol 5 hard cuts unreleased protocols 1 through 4, including the acknowledgement-based replay contract: those workers are obsolete and close. For future versions, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 
 Tests stand up other versions with `PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE`, read by the worker. It is test-only.
+
+## Display replay
+
+The worker keeps the headless xterm model and generates ANSI. A replay request emits begin metadata (dimensions, retained history, revision and input modes), at most 64 KiB per data chunk, and end. Live output keeps flowing independently during replay. Capture is synchronous with PTY callbacks; flush the output coalescer before the cut so a later batch never includes bytes already in replay. Retained-history metadata counts the worker history before the request limit.
+
+ConPTY renders a console rather than forwarding every program escape sequence unchanged. A program write callback does not establish that its hidden cursor move or input modes reached the worker. Test exact ANSI fidelity at the serializer boundary; PTY integration compares the initial replay plus committed observed output at the capture cut, including startup modes.
+
+The worker paces replay writes on its local socket; the daemon synchronously queues each event into the application's bounded transport. App network delivery does not extend the worker's request deadline. There is no per-chunk acknowledgement or second replay delivery queue in the daemon. The physical application transport owns its 64 MiB high-water close, so a backed-up app cannot hold worker capture open. Each daemon viewer still holds at most 4 MiB of live output during capture, then drops revisions already present in the worker replay. Capture failure and tail overflow affect only that viewer; PTYs and healthy viewers keep running.
+
+Live traffic that fills the shared worker socket beyond 4 MiB disconnects the stalled controller. Reconnection adopts the surviving sessions and requests fresh replay for existing streams. Readiness does not require a revision: adoption announces readiness without one, while the replay capture supplies the revision used for deduplication.
+
+The SDK advertises `terminal_chunked_replay` only because it decodes begin/data/end. Capable clients receive these events directly; the daemon collects one Restore frame only for older ANSI clients. The SDK normalizes an older host's single Restore into the same lifecycle. Capture stays a worker request; bootstrap readiness uses `hasOutput`, not a transported grid.
 
 ## Running from its own copy
 

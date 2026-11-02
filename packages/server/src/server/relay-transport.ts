@@ -2,6 +2,7 @@
 import { WebSocket } from "ws";
 import type pino from "pino";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import { webSocketProxyAgent } from "./network/index.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 export interface RelayTransportOptions {
@@ -56,7 +57,7 @@ const RELAY_WEBSOCKET_OPTIONS = {
 } as const;
 
 function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
-  return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
+  return new WebSocket(url, { ...RELAY_WEBSOCKET_OPTIONS, agent: webSocketProxyAgent(url) });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

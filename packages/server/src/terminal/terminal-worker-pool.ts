@@ -5,7 +5,7 @@ import type {
   TerminalsChangedListener,
   TerminalWorkspaceContributionChangedListener,
 } from "./terminal-manager.js";
-import type { TerminalSession, TerminalStateSnapshot } from "./terminal.js";
+import type { TerminalSession } from "./terminal.js";
 import type { WorkerCreateTerminalOptions } from "./terminal-worker-protocol.js";
 import type { DaemonTerminalManager } from "./worker-terminal-manager.js";
 
@@ -217,8 +217,8 @@ export function createTerminalWorkerPool(
       return undefined;
     },
 
-    async getTerminalState(id, stateOptions): Promise<TerminalStateSnapshot | null> {
-      return routed(id).getTerminalState(id, stateOptions);
+    async replayTerminal(id, replayOptions, sink) {
+      return routed(id).replayTerminal(id, replayOptions, sink);
     },
 
     setTerminalTitle(id, title) {

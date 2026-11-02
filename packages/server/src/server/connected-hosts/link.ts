@@ -1,7 +1,11 @@
 import type { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { encodeHostRouteFrame, type HostRouteFrame } from "@getpaseo/protocol/binary-frames/index";
+import {
+  MAX_HOST_CHANNEL_FRAME_BYTES,
+  encodeHostRouteFrame,
+  type HostRouteFrame,
+} from "@getpaseo/protocol/binary-frames/index";
 import type {
   DaemonPermission,
   SessionInboundMessage,
@@ -10,6 +14,7 @@ import type {
 
 /** A logical socket has no network resources or authority of its own. */
 export class VirtualHostSocket extends EventEmitter {
+  readonly maxFrameBytes = MAX_HOST_CHANNEL_FRAME_BYTES;
   readyState = 1;
   constructor(
     private readonly output: (data: string | Uint8Array) => Promise<void>,

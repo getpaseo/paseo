@@ -2222,9 +2222,167 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
+Inputs are parsed once in the plugin process; outputs are parsed once on the client. Send schema inputs from the client and return output-schema inputs from the handler; schema transforms run at the receiving side. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](/docs/sdk/events) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+
+## Stream events from the daemon {#subscriptions}
+
+A subscription runs a daemon handler for as long as one client listens and sends that client typed
+events. Use it for watchers, tails, and live media; use plugin RPC for a single answer.
+
+Define the contract in `shared/`:
+
+```ts
+// shared/diff.ts
+import { defineSubscription } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const diffWatch = defineSubscription({
+  name: "diff.watch",
+  input: z.object({ cwd: z.string(), from: z.string() }),
+  event: z.object({ type: z.literal("changes"), files: z.array(z.string()) }),
+});
+```
+
+Handle it in `index.server.ts`. The handler receives `push` and an abort `signal` next to `paseo`:
+
+```ts
+server.handle(diffWatch, ({ cwd, from }, { push, signal }) => {
+  const watcher = watchChanges(cwd, from, (files) => void push({ type: "changes", files }));
+  signal.addEventListener("abort", () => watcher.close(), { once: true });
+});
+```
+
+Subscribe from a surface with `useSubscription(contract, input, onEvent)`:
+
+```tsx
+const [files, setFiles] = useState<string[]>([]);
+const subscription = useSubscription(diffWatch, { cwd, from: "HEAD" }, (event) => {
+  setFiles(event.files);
+});
+if (subscription.status === "error") return <Text>{subscription.error.message}</Text>;
+```
+
+Outside React, `client.subscribe` takes the same arguments plus options and returns a remover:
+
+```ts
+const stop = client.subscribe(diffWatch, { cwd, from: "HEAD" }, onChanges, { signal });
+await stop.ready; // the daemon accepted the subscription
+stop(); // or await stop.release()
+```
+
+RPCs and subscriptions share one name space; registering the same name for both fails the plugin
+load.
+
+### Handler lifetime
+
+| The handler...                                | Result                                                       |
+| --------------------------------------------- | ------------------------------------------------------------ |
+| Throws synchronously, or the input is invalid | The subscribe call fails with the error. No events are sent. |
+| Returns nothing                               | The subscription stays open until the client releases it.    |
+| Returns a promise that resolves               | The subscription closes.                                     |
+| Returns a promise that rejects                | The subscription closes with the error.                      |
+
+`signal` aborts when the client releases the subscription, unmounts the hook, changes its input,
+disconnects, or the plugin stops. Pushes after the abort are dropped. `push` validates the event
+against the contract and resolves once the event has left the plugin process; await it in a loop
+to pace a producer.
+
+Each subscriber runs its own handler. Paseo does not share one handler between clients and does
+not replay missed events: after a reconnect or a plugin reload, mounted surfaces subscribe again and
+the handler starts from the beginning. Share an
+expensive watcher inside your plugin when several subscribers need it.
+
+`useSubscription` returns a union on `status`:
+
+| Status       | Meaning                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `connecting` | Sent; the daemon has not accepted it yet.                                                      |
+| `live`       | The handler is running. Events arrive through `onEvent`.                                       |
+| `closed`     | The handler finished.                                                                          |
+| `error`      | The subscribe failed, the handler failed, an event failed the contract, or the plugin stopped. |
+
+The hook subscribes again when `input` changes by shallow equality. `onEvent` is always the latest
+render's callback, so an inline function does not resubscribe. `client.subscribe` takes
+`{ signal, onClosed }`; `onClosed` receives `{ error? }`.
+
+### Bytes
+
+A top-level `Uint8Array` crosses the wire as binary, without JSON or base64. Everything else is
+JSON. The rule applies to subscription events, RPC outputs, and RPC inputs. A Node `Buffer` is a
+`Uint8Array`.
+
+```ts
+export const thumbnail = defineRpc({
+  name: "thumbnail.render",
+  input: z.object({ path: z.string(), width: z.number() }),
+  output: z.instanceof(Uint8Array),
+});
+
+// index.server.ts
+server.handle(thumbnail, ({ path, width }) => renderPng(path, width));
+
+// client
+const renderThumbnail = useRpc(thumbnail);
+const png = await renderThumbnail({ path, width }); // Uint8Array
+```
+
+Declare bytes with `z.instanceof(Uint8Array)`. An event can be bytes or JSON per push: declare a
+union and branch with `event instanceof Uint8Array`. A `Uint8Array` nested in an object fails
+validation on the sending side with an error that names the rule; send the bytes as their own
+event or RPC value and the metadata as a separate JSON event.
+
+One event or RPC value carries at most 100 MiB less 65 KiB of framing. Push large payloads in
+chunks of a few hundred KiB; each `push` waits for the previous one to leave the plugin process.
+Uploads from a phone have a lower limit: Android closes the connection when one send exceeds
+16 MiB, so split a larger upload into several RPCs.
+
+### Several streams on one subscription
+
+Put a header byte in front of each payload to multiplex streams. Keep the layout in `shared/`, so
+the handler and the surface call named functions:
+
+```ts
+// shared/media-frames.ts
+export const MediaOpcode = { Video: 0x01, Audio: 0x02 } as const;
+
+export function encodeMediaFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(1 + payload.byteLength);
+  bytes[0] = opcode;
+  bytes.set(payload, 1);
+  return bytes;
+}
+
+export function decodeMediaFrame(bytes: Uint8Array) {
+  return { opcode: bytes[0], payload: bytes.subarray(1) }; // a view, not a copy
+}
+
+export const mediaStream = defineSubscription({
+  name: "media.stream",
+  input: z.object({ source: z.string() }),
+  event: z.instanceof(Uint8Array),
+});
+```
+
+```ts
+useSubscription(mediaStream, { source }, (bytes) => {
+  const frame = decodeMediaFrame(bytes);
+  if (frame.opcode === MediaOpcode.Audio) audio.enqueue(frame.payload);
+  else video.draw(frame.payload);
+});
+```
+
+Events from one subscription arrive in push order, JSON and binary alike.
+`plugin-examples/media-stream` streams video and audio this way and uploads a frame back through
+an RPC with a `Uint8Array` input; `plugin-examples/diff-watch` watches a working tree.
+
+### Older hosts
+
+Subscriptions and binary RPC values need a host that advertises them. Against an older host,
+`useSubscription` reports `error` asking to update the host, `client.subscribe` rejects `ready`
+with the same message, and an RPC with a `Uint8Array` input or output fails. Raise your plugin's
+`requirements.paseo` to the release that ships subscriptions.
 
 ## Debug backend output
 

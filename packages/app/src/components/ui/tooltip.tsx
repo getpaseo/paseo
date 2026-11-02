@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import {
   Children,
   cloneElement,
@@ -16,7 +17,6 @@ import { createPortal } from "react-dom";
 import {
   Dimensions,
   Platform,
-  Modal,
   Pressable,
   View,
   type PressableProps,

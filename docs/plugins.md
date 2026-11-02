@@ -357,9 +357,27 @@ keys are stored under a `param.` prefix; plugins never see it and may use any ke
 `openScreen` validates its input once (`parsePluginOpenScreenInput`); code past it trusts the
 params.
 
-RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
-typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
-Paseo gives each plugin installation its own query client.
+RPC and subscription contracts validate inputs, outputs, and events in both the app and plugin
+subprocess. `useRpc` returns a typed async function. Use the host-provided `@tanstack/react-query`
+for request state and caching; Paseo gives each plugin installation its own query client.
+
+A subscription is a session-owned observation (`plugin-rpc` delivery family): the session that
+subscribed owns its lifetime, so release, disconnect, plugin stop, and reload need no plugin code.
+Each subscriber gets its own handler call in the subprocess; there is no fan-out or replay. The
+runtime buffers pushes until the session has sent `plugin.rpc.subscribe.response`, so a client
+never sees an event for an unknown subscription. The app installation's lifetime aborts every
+subscription its surfaces left open, and a reload replaces the installation, which resubscribes
+mounted hooks.
+
+The byte rule (a top-level `Uint8Array` is binary, a nested one is a validation error) is checked
+once per hop by `assertPluginWireValue`. Bytes ride plugin binary frames, opcodes `0x20`-`0x2f`
+(`packages/protocol/src/binary-frames/plugin.ts`); nothing on the path copies or re-encodes them,
+and `plugin-subscriptions.perf.e2e.test.ts` locks that. Keep it that way: never stringify a plugin
+payload for a log, and the client's bootstrap buffer holds bytes only until the first observer
+attaches. Binary outputs reach only clients that send `pluginBinaryPayloads`. A binary input
+frame (`0x22`) becomes a synthetic `plugin.rpc.invoke.request` and runs through the normal message
+path, so it is authorized like any other invoke. The author contract, including the native upload
+limit, is in [stream events from the daemon](../public-docs/plugins/reference.md#subscriptions).
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle.
@@ -550,7 +568,7 @@ string is never inline SVG or a URL.
 
 Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same SVG file rules as provider icons.
 
-The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
+When the host’s **Check usage** switch is off, the daemon rejects usage requests before discovery, without reading logins or calling vendors. Otherwise, the daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
 ## Contribute sidebar items
 

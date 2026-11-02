@@ -52,6 +52,47 @@ On capable daemons, connecting creates no timeline or event demand. Client subsc
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
 
+## Terminal ANSI replay
+
+Terminal replay intentionally drops JSON-era apps, an exception to the general cross-version policy:
+use app v0.1.81 or newer. Earlier apps omit `restore` and reject ANSI Restore (`0x05`), so they show
+only subsequent live output, without the existing screen or history.
+
+`terminal_chunked_replay` is SDK-owned delivery behavior. The daemon sends new binary opcodes only to a source
+advertising the capability. The SDK keeps the established subscribe request against older
+ANSI hosts and normalizes their single Restore frame into begin/data/end. `observeTerminal` defaults
+to an explicit full snapshot: omitting restore on an ANSI-era host selects its discarded JSON path.
+Explicit caller restore modes and history counts pass through unchanged. JSON snapshot
+wire declarations remain accepted, but JSON snapshot frames have no rendering runtime.
+Terminals require `terminal-restore-modes`; older hosts show an update message without attaching.
+
+## Binary chunking
+
+`binary_chunking_v1` in hello and optional `server_info.features.binaryChunkingV1`
+negotiate connection-scoped framing. Application serializers and routed envelopes use
+the same boundary. Small messages and handshakes keep their existing representation.
+Older peers retain existing frame limits.
+
+The reserved binary opcode `0x31` is followed by version `1`, original kind
+(`0` text, `1` binary), and START/END flag bits `0`/`1`. Remaining bytes are an
+unchanged slice. There is no total length or chunk count; a future receiver can
+consume slices incrementally. Today the receiver buffers up to the existing
+100 MiB logical limit and decodes UTF-8 only after END. Transfers cannot interleave.
+Disconnect clears partial state and negotiation.
+
+The lower transport supplies its plaintext frame budget, including encryption
+overhead. The sender waits for drain between chunks while ordinary messages keep
+the existing delivery path. Slow-client protections count messages queued behind
+an active transfer as well as bytes already in the socket.
+The framing module never selects an encryption construction.
+
+Native uploads retain the platform's existing queue limits. React Native's
+WebSocket does not report its queued bytes, so the client cannot wait for native
+drain. Android's installed OkHttp transport closes when a send would put more
+than 16 MiB in its queue. The native transport disables outbound chunking, including
+on routed channels, and retains its existing single-frame admission errors.
+Inbound chunking remains enabled; daemon-to-native responses use the daemon's paced writes.
+
 ## Owned observations
 
 `owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the source-owned

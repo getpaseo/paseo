@@ -1,11 +1,11 @@
-import type {
-  TerminalExitInfo,
-  ServerMessage,
-  ClientMessage,
-  TerminalStateSnapshot,
-  TerminalStateSnapshotOptions,
-} from "./terminal.js";
-import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalExitInfo, ServerMessage, ClientMessage } from "./terminal.js";
+import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
+export interface WorkerTerminalState {
+  rows: number;
+  cols: number;
+  hasOutput: boolean;
+  title?: string;
+}
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 
@@ -43,7 +43,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 1;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 5;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.
@@ -59,7 +59,8 @@ export function classifyTerminalWorkerProtocol(
   // A version this daemon cannot read comes from a Paseo it does not know: treat it as newer.
   if (typeof reported !== "number" || !Number.isSafeInteger(reported)) return "newer";
   if (reported === current) return "current";
-  if (reported === current - 1) return "previous";
+  // Protocols 1 through 4 were unreleased; they have no draining adapter.
+  if (reported === current - 1 && reported >= 5) return "previous";
   return reported < current ? "obsolete" : "newer";
 }
 
@@ -77,7 +78,7 @@ export interface TerminalWorkerHelloAck {
 
 export interface WorkerListedTerminal {
   terminal: WorkerTerminalInfo;
-  state: TerminalState;
+  state: WorkerTerminalState;
   activityToken: string | null;
   replayPreamble: string;
 }
@@ -122,10 +123,10 @@ export type TerminalWorkerRequest =
       options?: WorkerKillAndWaitOptions;
     }
   | {
-      type: "getTerminalState";
+      type: "replayTerminal";
       requestId: string;
       terminalId: string;
-      options?: TerminalStateSnapshotOptions;
+      options?: TerminalReplayOptions;
     }
   | {
       type: "captureTerminal";
@@ -166,10 +167,11 @@ export type TerminalWorkerResponse =
     };
 
 export type TerminalWorkerEvent =
+  | { type: "terminalReplay"; requestId: string; event: TerminalReplayEvent }
   | {
       type: "terminalCreated";
       terminal: WorkerTerminalInfo;
-      state: TerminalState;
+      state: WorkerTerminalState;
     }
   | {
       type: "terminalMessage";
@@ -206,6 +208,3 @@ export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWor
 export type TerminalWorkerListResult = WorkerListedTerminal[];
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
-// The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so
-// the parent can cache the input-mode preamble instead of re-deriving it.
-export type TerminalWorkerStateResult = TerminalStateSnapshot | null;
