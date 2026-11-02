@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -137,3 +139,89 @@ test("omitted after limit pages forward while explicit zero preserves complete C
     await daemon.close();
   }
 }, 60_000);
+
+test.each([
+  { label: "--json", flags: ["--json"] },
+  { label: "--format json", flags: ["--format", "json"] },
+])(
+  "logs --follow $label keeps history, live items and notices on their channels",
+  async ({ flags }) => {
+    await mkdir(".artifacts", { recursive: true });
+    const paseoHomeRoot = await mkdtemp(resolve(".artifacts/logs-follow-json-"));
+    const staticDir = join(paseoHomeRoot, "static");
+    await mkdir(staticDir);
+    const daemon = await createTestPaseoDaemon({ paseoHomeRoot, staticDir });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    let follow: ReturnType<typeof spawn> | undefined;
+    let stdout = "";
+    let stderr = "";
+    try {
+      await client.connect();
+      const agent = await client.createAgent({ provider: "claude", cwd: daemon.paseoHome });
+      const history = [
+        { type: "user_message" as const, text: "Saved JSON prompt" },
+        { type: "assistant_message" as const, text: "Saved JSON reply", messageId: "saved" },
+      ];
+      for (const item of history)
+        await daemon.daemon.agentManager.appendTimelineItem(agent.id, item);
+      follow = spawn(
+        process.execPath,
+        [
+          "--conditions=source",
+          "--import",
+          "tsx",
+          fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
+          "--host",
+          `127.0.0.1:${daemon.port}`,
+          "logs",
+          agent.id,
+          "--follow",
+          ...flags,
+        ],
+        {
+          env: { ...process.env, PASEO_HOME: daemon.paseoHome },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      const exited = once(follow, "exit");
+      follow.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      follow.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await expect
+        .poll(
+          () => {
+            if (follow?.exitCode !== null)
+              throw new Error(`CLI exited before following logs: ${stderr}`);
+            return stdout + stderr;
+          },
+          { timeout: 20_000 },
+        )
+        .toContain("Following logs");
+      const live = {
+        type: "assistant_message" as const,
+        text: "Live JSON reply",
+        messageId: "live",
+      };
+      await daemon.daemon.agentManager.appendTimelineItem(agent.id, live);
+      await expect.poll(() => stdout, { timeout: 10_000 }).toContain(live.text);
+      follow.kill("SIGINT");
+      await exited;
+      expect(
+        stdout
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual([...history, live]);
+      expect(stderr).toContain("Following logs");
+      expect(stdout).not.toContain("Following logs");
+    } finally {
+      follow?.kill("SIGTERM");
+      await client.close();
+      await daemon.close();
+    }
+  },
+  60_000,
+);
