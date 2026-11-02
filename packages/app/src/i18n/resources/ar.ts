@@ -371,6 +371,10 @@ export const ar: TranslationResources = {
       insertAndSend: "أدخل النسخ وأرسل",
       failed: "فشل الإملاء:{{error}}",
       failedRetry: "فشل الإملاء. اضغط على إعادة المحاولة.",
+      empty: {
+        noAudio: "لم يُسجَّل أي صوت. هل يستخدم تطبيق آخر الميكروفون؟",
+        noTranscript: "لم يتم إرجاع نص. اضغط على إعادة المحاولة.",
+      },
     },
     question: {
       responseFailed: "تعذر إرسال ردك. حاول مرة أخرى.",

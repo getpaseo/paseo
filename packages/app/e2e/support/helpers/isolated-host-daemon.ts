@@ -182,8 +182,8 @@ export async function startIsolatedHostDaemon(
   const spawnDaemon = async (): Promise<ChildProcess> => {
     const spawnOptions: SpawnOptions = {
       cwd: serverDir,
-      env: withDisabledE2ESpeechEnv({
-        ...process.env,
+      env: {
+        ...withDisabledE2ESpeechEnv(process.env),
         ...options.environment,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: serverId,
@@ -192,7 +192,7 @@ export async function startIsolatedHostDaemon(
         PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
         PASEO_NODE_ENV: "development",
         NODE_ENV: "development",
-      }),
+      },
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     };

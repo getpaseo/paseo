@@ -376,6 +376,10 @@ export const es: TranslationResources = {
       insertAndSend: "Insertar transcripción y enviar",
       failed: "Fallo en el dictado:{{error}}",
       failedRetry: "El dictado falló. Toca reintentar.",
+      empty: {
+        noAudio: "No se grabó audio. ¿Otra app está usando el micrófono?",
+        noTranscript: "No se devolvió ninguna transcripción. Toca reintentar.",
+      },
     },
     question: {
       responseFailed: "No se pudo enviar tu respuesta. Inténtalo de nuevo.",
