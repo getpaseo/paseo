@@ -1,0 +1,15 @@
+[package]
+name = "rn-gpui-sys"
+version = "0.1.0"
+edition = "2021"
+links = "rn_gpui_core"
+
+[dependencies]
+cxx = { workspace = true }
+log = { workspace = true }
+rn-gpui-module = { path = "../rn-gpui-module" }
+
+[build-dependencies]
+cxx-build = { workspace = true }
+cmake = { workspace = true }
+serde_json = { workspace = true }

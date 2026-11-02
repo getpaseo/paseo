@@ -25,6 +25,9 @@ export const isWeb = Platform.OS === "web";
 /** iOS or Android — the JS runtime is React Native. */
 export const isNative = Platform.OS !== "web";
 
+/** Platforms with an alpha-mask compositor for decorative shimmer effects. */
+export const supportsMaskedEffects = ["web", "ios", "android"].includes(Platform.OS);
+
 /** Development build/runtime — true in Metro dev bundles, false in production. */
 export const isDev = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
 

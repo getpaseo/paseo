@@ -1,0 +1,15 @@
+[package]
+name = "rn-gpui-module-generated-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rn-gpui-module = { path = "../.." }
+futures = { workspace = true }
+
+[build-dependencies]
+rn-gpui-module-build = { path = "../../../rn-gpui-module-build" }

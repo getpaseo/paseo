@@ -1,0 +1,99 @@
+[package]
+name = "react-native-gpui"
+version = "0.1.0"
+edition = "2021"
+links = "rn_gpui_runtime"
+
+[features]
+# Test/probe controls: synthetic input, resize/scale/headless overrides, custom
+# window-state paths, startup tracing, native-view probes, and frame capture.
+# `RN_GPUI_SCREENSHOT` renders the window's own scene to a PNG off-screen.
+# gpui's `Window::render_to_image` is gated on `test-support` in gpui,
+# gpui_macos, gpui_apple and (with the Linux patches) gpui_linux, so the
+# feature has to be enabled at the platform crate too.
+visual-capture = ["gpui_platform/test-support"]
+# A local-only WebSocket test driver. It is absent from normal builds.
+test-driver = ["visual-capture", "dep:tungstenite"]
+# Enables Window's draw/present histograms for the 10k-node benchmark.
+perf-timing = ["gpui/profiler"]
+
+[build-dependencies]
+rn-gpui-module-build = { path = "../rn-gpui-module-build" }
+
+[dependencies]
+rn-gpui-sys = { path = "../rn-gpui-sys" }
+rn-gpui-module = { path = "../rn-gpui-module" }
+gpui = { workspace = true }
+cxx = { workspace = true }
+async-channel = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+http_client = { workspace = true }
+fontdue = { workspace = true }
+image = { version = "0.25.1" }
+base64 = "0.22"
+# Menu-bar (tray) apps: NSStatusItem on macOS, the notification area
+# on Windows, StatusNotifierItem on Linux. `default-features = false` because
+# the crate default is its GTK Linux backend; the Linux block below selects the
+# GTK-free one instead (Cargo unifies features per crate, so a default here
+# would keep the GTK backend enabled no matter what the target block asked for).
+# macOS and Windows backends are not feature-gated, so they are unaffected.
+tray-icon = { version = "0.26", default-features = false }
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"], optional = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Native context menus. On macOS this is an NSMenu shown for the
+# window's NSView; on Windows a Win32 popup menu on the HWND.
+muda = "0.15"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# `font-kit` makes gpui_macos build a real (CoreText) text system; without it
+# every glyph paints as nothing.
+gpui_platform = { workspace = true, features = ["font-kit"] }
+cocoa = "0.25"
+objc = "0.2"
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# gpui_platform intentionally has no default features. Enable both backends so
+# Linux users can run under either X11 or Wayland.
+gpui_platform = { workspace = true, features = ["x11", "wayland"] }
+# `tray-icon`'s default Linux backend is `libappindicator`, which is a GTK
+# widget: `app_indicator_new` needs a GTK screen and its menu needs the GTK main
+# loop. GPUI runs its own X11 loop and never enters a GTK one, so the icon was
+# created but never appeared (the process logged
+# `gtk_icon_theme_get_for_screen: assertion 'GDK_IS_SCREEN (screen)' failed`).
+# `ksni` is the same StatusNotifierItem protocol over plain D-Bus, served from a
+# worker thread, and needs no GTK.
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+# Already in the tree through `ksni`; named directly so the tray can ask the
+# session bus whether a StatusNotifier host is running (see
+# `tray_host_available`). "blocking-api" supplies the synchronous `Connection`.
+zbus = { version = "5", default-features = false, features = ["blocking-api"] }
+
+# X11 window calls GPUI does not expose. Wayland has no
+# equivalent, so those sessions stay `unsupported`. The X11 path reads the
+# window's raw handle, which gpui exposes through raw-window-handle.
+x11-dl = "2.21"
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_platform = { workspace = true }
+# Win32 window calls GPUI does not expose.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    # `MonitorFromPoint` and `GetMonitorInfoW`: the work area a popover is placed in.
+    "Win32_Graphics_Gdi",
+    # `GetDpiForSystem`: the scale a tray icon's physical rectangle is divided by.
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# The HWND for the native menu bar and context menus, read from the window's
+# raw handle the same way macOS reads its NSView.
+raw-window-handle = "0.6"

@@ -1,0 +1,21 @@
+Repository: https://github.com/streetwriters/react-native-gpui
+Revision: de11aa265e6fb36c80e8a30315bce6d34a9be7d6
+License: MIT; see LICENSE and the licenses retained within packages.
+
+Snapshot: packages/{cli,codegen,core,hermes} and
+modules/{fs,gesture-handler,reanimated,safe-area-context,screens,svg,worklets}.
+Examples, tester, testing package, website, and unused fonts/vector-icons ports
+are not included. Upstream tests and build sources within retained packages stay
+with the snapshot so contributors can inspect and modify the renderer.
+
+Local patches (all other retained files match the revision above):
+- packages/core/ReactGpui/rn-gpui/src/node_view.rs: box-none views must not
+  install their own pointer area. Otherwise an empty portal overlay redirects
+  clicks to its parent, blocking Paseo's sidebar. native.test.ts exercises this
+  against the actual app.
+- packages/core/src-gpui/Libraries/Components/StatusBar/StatusBar.desktop.js:
+  desktop StatusBar implementation, because there is no mobile OS status bar.
+
+GPUI itself remains a pinned Cargo git dependency. Hermes/React Native prebuilt
+libraries are downloaded by upstream build tooling; this is not an offline or
+fully source-built distribution.

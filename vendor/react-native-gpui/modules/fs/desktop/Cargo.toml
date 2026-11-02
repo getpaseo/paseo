@@ -1,0 +1,25 @@
+[package]
+name = "rn-gpui-fs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rn-gpui-module = { version = "0.1" }
+# Dialogs with file-type filters and a default name on all three platforms, using
+# the XDG portal on Linux so no GTK is required.
+rfd = "0.15"
+# The standard cross-platform watcher.
+notify = "6"
+# Well-known folders, which differ per platform in ways not worth re-deriving.
+dirs = "5"
+# `utimes` sets both timestamps of an existing file; `std` cannot.
+filetime = "0.2"
+# `mkdtemp` with Node's retry-on-collision behaviour.
+tempfile = "3"
+# `chmod` by descriptor, and the errno constants the error mapping reads.
+libc = "0.2"
+# `realpath` without the `\\?\` prefix on Windows.
+dunce = "1"
+
+[build-dependencies]
+rn-gpui-module-build = { version = "0.1" }

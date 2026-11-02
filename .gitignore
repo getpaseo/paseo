@@ -98,3 +98,9 @@ app.json
 
 # Project-local Serena configuration and memories.
 .serena/
+
+# Vendored experimental React Native desktop runtime.
+!vendor/
+!vendor/react-native-gpui/
+!vendor/react-native-gpui/**
+!packages/app/gpui/app.json

@@ -1,0 +1,39 @@
+{
+  "version": "0.0.5",
+  "reactNative": "0.87.1",
+  "inputHash": "1ace36b422546ad8fdcf974597e67f9f84edb2ee5859ce425ea17ac2cad45dd0",
+  "repo": "streetwriters/react-native-gpui",
+  "tag": "@react-native-gpui/prebuilt-binaries@0.0.5",
+  "assets": {
+    "darwin-arm64": {
+      "file": "prebuilt-binaries-darwin-arm64.tar.gz",
+      "sha256": "247139f688126872da1bf665c804a4e7fae58ef39cb354fce272d75346d038cf",
+      "size": 44638103
+    },
+    "darwin-x64": {
+      "file": "prebuilt-binaries-darwin-x64.tar.gz",
+      "sha256": "43084dd31be49fcbe7adc6b3b0e9b2f7171a273c77426317c6d9316a81c138bd",
+      "size": 45966832
+    },
+    "linux-arm64": {
+      "file": "prebuilt-binaries-linux-arm64.tar.gz",
+      "sha256": "cfc26ee6c8fc93d6f3232fb91c3cfd5aba3cea4a71e0f7818c616b60113dc57e",
+      "size": 68247227
+    },
+    "linux-x64": {
+      "file": "prebuilt-binaries-linux-x64.tar.gz",
+      "sha256": "ef5d0235ed3c797be01a4e4b859e75485421d85e84a8dd1a193b8701796c2573",
+      "size": 70154849
+    },
+    "win32-arm64": {
+      "file": "prebuilt-binaries-win32-arm64.tar.gz",
+      "sha256": "2b5cbac7109e56f8a4c206cd3626b2b87b4f027acba3963a5328ec1668522f75",
+      "size": 181083820
+    },
+    "win32-x64": {
+      "file": "prebuilt-binaries-win32-x64.tar.gz",
+      "sha256": "04d5e71a15675b99d1096779acf357a0cbcd7e0e544a3f3168180bffe4897445",
+      "size": 98493565
+    }
+  }
+}

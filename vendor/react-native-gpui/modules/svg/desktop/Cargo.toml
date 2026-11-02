@@ -1,0 +1,10 @@
+[package]
+name = "rn-gpui-svg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+react-native-gpui = { version = "0.1" }
+rn-gpui-sys = { version = "0.1" }
+gpui = { version = "0.2" }
+serde_json = "1"

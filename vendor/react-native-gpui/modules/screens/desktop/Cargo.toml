@@ -1,0 +1,54 @@
+[package]
+name = "rn-gpui-screens"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+react-native-gpui = "0.1"
+rn-gpui-sys = "0.1"
+gpui = "0.2"
+serde_json = "1"
+log = "0.4"
+
+[dev-dependencies]
+# `TestNode` and `TreeView::for_test` are gated behind `test-driver`, and a
+# dependency cannot enable another package's feature. It is a dev-dependency
+# rather than a normal one so a build of the module never pays for it, and it only
+# becomes usable because this crate is its own workspace root below.
+react-native-gpui = { version = "0.1", features = ["test-driver"] }
+
+# Its own workspace root, deliberately. Cargo refuses to test a package that has
+# dev-dependencies unless it is a workspace member, and core's workspace cannot
+# hold it: a module resolves core by version and must not be a member of the
+# checkout's workspace. A root with itself as the only member satisfies the rule
+# without making the module part of anything else.
+[workspace]
+
+# The checkout's shared dev profile (see core's `ReactGpui/Cargo.toml`): line tables
+# only, no debug info for dependencies, which are optimized. Every workspace root
+# builds into the one root `target/`, so a matching profile is also what lets them
+# reuse each other's dependency builds instead of storing one copy each.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 3
+
+[profile.dev.package.rn-gpui-sys]
+opt-level = 0
+
+# This block has to live here because Cargo honours `[patch.crates-io]` only at a
+# workspace root, and this crate is one. `npm run test:rust` regenerates it from
+# core's manifest before running these tests and fails if it changed, so the gpui
+# revision is never written down by hand — commit whatever the run rewrites.
+[patch.crates-io]
+# Managed by @react-native-gpui/cli autolink; do not edit between these markers.
+react-native-gpui = { path = "../../../packages/core/ReactGpui/rn-gpui" }
+rn-gpui-sys = { path = "../../../packages/core/ReactGpui/rn-gpui-sys" }
+rn-gpui-module = { path = "../../../packages/core/ReactGpui/rn-gpui-module" }
+rn-gpui-module-build = { path = "../../../packages/core/ReactGpui/rn-gpui-module-build" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+# End managed by autolink.
