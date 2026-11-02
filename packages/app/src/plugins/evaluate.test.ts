@@ -819,6 +819,7 @@ it("binds imported getters to each originating installation across delayed callb
     hosts: {
       getSnapshot: () => [],
       subscribe: () => () => {},
+      observeHosts: () => () => {},
       getPaseoClient(serverId) {
         calls.push(`${installation}/${serverId}`);
         return runtime.paseo;

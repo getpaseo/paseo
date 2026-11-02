@@ -520,6 +520,8 @@ export function runPluginClientBundle(
         useSettings,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        observeHosts: (listener: Parameters<typeof runtime.hosts.observeHosts>[0]) =>
+          runtime.hosts.observeHosts(listener),
         useHosts: () =>
           React.useSyncExternalStore(
             runtime.hosts.subscribe,

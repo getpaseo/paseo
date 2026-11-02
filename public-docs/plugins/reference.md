@@ -2078,7 +2078,7 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
-### Discover hosts and target another host
+### Hosts
 
 Use `useHosts()` to display configured hosts and `getPaseoClient(serverId)` in an action callback
 to run SDK operations on one of them:
@@ -2124,8 +2124,15 @@ export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactE
 }
 ```
 
-`useHosts(): readonly PluginHostSummary[]` includes offline hosts and updates when hosts,
-labels, or statuses change.
+`useHosts(): readonly PluginHost[]` includes offline hosts and updates when projected fields change.
+`observeHosts(listener)` immediately delivers the same list and returns an unsubscribe function.
+Set `requirements.paseo` in the manifest to the release that ships these host capabilities.
+
+Each host handle provides `appearance`, `connections`, `activeConnectionId`, `error`,
+`authFailureReason`, `lastOnlineAt`, `createdAt`, and `updatedAt`. Connections expose their
+credential-free `uri`, or `null` for routed hosts. Call `host.update({ label, appearance })`,
+`host.removeConnection(id)`, `host.remove()`, or `host.openSettings()` to manage a host.
+Removing the last connection removes the host. The desktop daemon host cannot be removed by a plugin.
 
 | Summary field | Type or values                                               | Meaning                                                      |
 | ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
@@ -2150,8 +2157,8 @@ on the target daemon. Acquire the API when performing an action to use the curre
 
 You can also release individual subscriptions through the normal SDK API.
 
-Plugins are trusted app code; cross-host access is intentional. Summaries contain no connection
-URLs or credentials, and borrowed APIs provide no connection lifecycle controls. See the
+Plugins see connection targets and daemon identities but cannot read saved passwords. Borrowed APIs
+provide no connection lifecycle controls. See the
 [host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
 
 ## Add plugin-specific backend behavior

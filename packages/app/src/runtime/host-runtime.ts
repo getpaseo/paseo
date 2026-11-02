@@ -2221,7 +2221,10 @@ export class HostRuntimeStore {
     }));
   }
 
-  async setHostBadgeDisplay(serverId: string, badgeDisplay: HostBadgeDisplay): Promise<void> {
+  async setHostBadgeDisplay(
+    serverId: string,
+    badgeDisplay: HostBadgeDisplay | null,
+  ): Promise<void> {
     await this.updateHostAppearance(serverId, (host) => ({
       ...host,
       appearance: { ...host.appearance, badgeDisplay },
@@ -3034,7 +3037,7 @@ export interface HostMutations {
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
-  setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
+  setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay | null) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }

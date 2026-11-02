@@ -3,6 +3,7 @@ import {
   useHosts,
   usePaseo,
   type PluginSurfaceProps,
+  type PluginHost,
 } from "@getpaseo/plugin/client";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -33,27 +34,55 @@ export function Hosts({ theme }: PluginSurfaceProps) {
   const listSelected = useCallback(() => {
     void list();
   }, [list]);
-  const rows = hosts.map((host) => ({
-    serverId: host.serverId,
-    label: host.label,
-    status: host.status,
-    onPress() {
-      void list(host.serverId);
-    },
-  }));
   return (
     <View style={styles.root}>
       <Pressable accessibilityRole="button" onPress={listSelected}>
         <Text style={styles.text}>List selected host agents</Text>
       </Pressable>
-      {rows.map((host) => (
-        <Pressable key={host.serverId} accessibilityRole="button" onPress={host.onPress}>
-          <Text style={styles.text}>
-            {host.label}: {host.status}
-          </Text>
-        </Pressable>
+      {hosts.map((host) => (
+        <HostRow key={host.serverId} host={host} color={theme.colors.foreground} list={list} />
       ))}
       <Text style={styles.text}>{result}</Text>
+    </View>
+  );
+}
+
+function HostRow({
+  host,
+  color,
+  list,
+}: {
+  host: PluginHost;
+  color: string;
+  list: (serverId: string) => Promise<void>;
+}) {
+  const style = useMemo(() => ({ color }), [color]);
+  const rowStyle = useMemo(() => ({ gap: 4 }), []);
+  const listAgents = useCallback(() => void list(host.serverId), [host, list]);
+  const update = useCallback(
+    () => void host.update({ label: `${host.label} (build)`, appearance: { color: "sky" } }),
+    [host],
+  );
+  const open = useCallback(() => host.openSettings(), [host]);
+  const remove = useCallback(() => void host.remove(), [host]);
+  return (
+    <View style={rowStyle}>
+      <Text style={style}>
+        {host.label}: {host.status} ·{" "}
+        {host.connections.map((connection) => connection.uri ?? "via another host").join(", ")}
+      </Text>
+      <Pressable accessibilityRole="button" onPress={listAgents}>
+        <Text style={style}>List agents</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={update}>
+        <Text style={style}>Rename and color</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={open}>
+        <Text style={style}>Host settings</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={remove}>
+        <Text style={style}>Remove host</Text>
+      </Pressable>
     </View>
   );
 }
