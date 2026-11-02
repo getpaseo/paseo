@@ -2492,6 +2492,11 @@ export const ar: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "عناوين علامات التبويب",
+        hint: "الحد الأقصى لأسطر العنوان في قائمة علامات تبويب مساحة العمل.",
+        options: { 0: "بلا حد", 2: "سطران", 3: "3 أسطر" },
+      },
       theme: {
         title: "سمة",
         accessibilityLabel: "الموضوع:{{value}}",

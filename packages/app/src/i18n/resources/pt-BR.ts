@@ -2493,6 +2493,11 @@ export const ptBR: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "Títulos das abas",
+        hint: "Máximo de linhas do título na lista de abas do espaço de trabalho.",
+        options: { 0: "Sem limite", 2: "2 linhas", 3: "3 linhas" },
+      },
       theme: {
         title: "Tema",
         accessibilityLabel: "Tema: {{value}}",

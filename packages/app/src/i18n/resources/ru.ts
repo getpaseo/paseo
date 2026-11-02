@@ -2498,6 +2498,11 @@ export const ru: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "Заголовки вкладок",
+        hint: "Максимальное число строк заголовка в списке вкладок рабочего пространства.",
+        options: { 0: "Без ограничений", 2: "2 строки", 3: "3 строки" },
+      },
       theme: {
         title: "Тема",
         accessibilityLabel: "Тема: {{value}}",

@@ -471,6 +471,62 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
   );
 }
 
+function TabTitleLinesOption({
+  lines,
+  selected,
+  onChange,
+}: {
+  lines: AppSettings["workspaceTabTitleLines"];
+  selected: boolean;
+  onChange: (value: AppSettings["workspaceTabTitleLines"]) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(lines), [lines, onChange]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {t(`settings.appearance.tabTitles.options.${lines}`)}
+    </DropdownMenuItem>
+  );
+}
+
+function TabTitleLinesRow({
+  value,
+  onChange,
+}: {
+  value: AppSettings["workspaceTabTitleLines"];
+  onChange: (value: AppSettings["workspaceTabTitleLines"]) => void;
+}) {
+  const { t } = useTranslation();
+  const options = [2, 3, 0] as const;
+  const label = (lines: typeof value) => t(`settings.appearance.tabTitles.options.${lines}`);
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.tabTitles.title")}</Text>
+        <Text style={settingsStyles.rowHint}>{t("settings.appearance.tabTitles.hint")}</Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          testID="workspace-tab-title-lines"
+          accessibilityLabel={t("settings.appearance.tabTitles.title")}
+        >
+          {label(value)}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {options.map((lines) => (
+            <TabTitleLinesOption
+              key={lines}
+              lines={lines}
+              selected={value === lines}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -521,6 +577,13 @@ export function AppearanceSection() {
   const handleContentMaxWidthChange = useCallback(
     (contentMaxWidth: AppSettings["contentMaxWidth"]) => {
       void updateSettings({ contentMaxWidth });
+    },
+    [updateSettings],
+  );
+
+  const handleTabTitleLinesChange = useCallback(
+    (workspaceTabTitleLines: AppSettings["workspaceTabTitleLines"]) => {
+      void updateSettings({ workspaceTabTitleLines });
     },
     [updateSettings],
   );
@@ -687,6 +750,14 @@ export function AppearanceSection() {
             draft={codeSizeDraft}
             onChangeDraft={handleCodeSizeChange}
             onCommit={commitCodeSize}
+          />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.tabTitles.title")}>
+        <View style={settingsStyles.card}>
+          <TabTitleLinesRow
+            value={settings.workspaceTabTitleLines}
+            onChange={handleTabTitleLinesChange}
           />
         </View>
       </SettingsSection>

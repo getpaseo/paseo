@@ -1,0 +1,3 @@
+BEFORE [('workspace-tab-option-agent_c87a1dfd-eabe-4616-ad78-ca8344d0a644', '[504,1056][966,1200]'), ('workspace-tab-option-agent_443cb2b1-9cff-4662-9224-14e09dc867c5', '[504,1218][1002,1362]'), ('workspace-tab-option-agent_7d3841c6-7e98-4908-b0ad-27fb978d06ba', '[504,1380][1002,1524]')]
+AFTER [('workspace-tab-option-agent_443cb2b1-9cff-4662-9224-14e09dc867c5', '[504,1056][1002,1200]'), ('workspace-tab-option-agent_c87a1dfd-eabe-4616-ad78-ca8344d0a644', '[504,1218][966,1362]'), ('workspace-tab-option-agent_7d3841c6-7e98-4908-b0ad-27fb978d06ba', '[504,1380][1002,1524]')]
+PASS tablet-final native drag and reopen order

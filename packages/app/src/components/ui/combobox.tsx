@@ -106,6 +106,8 @@ export interface ComboboxProps {
    * and any leading icon at the sheet's shared indent.
    */
   header?: SheetHeader;
+  /** Use the sheet presentation even on wide layouts. */
+  forceSheet?: boolean;
   mobileChildrenScrollEnabled?: boolean;
   /** Let custom desktop children own scrolling, for example a virtualized list. */
   desktopChildrenScrollEnabled?: boolean;
@@ -135,6 +137,11 @@ export interface ComboboxProps {
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
+}
+
+function useComboboxSheetPresentation(forceSheet: boolean | undefined): boolean {
+  const isCompact = useIsCompactFormFactor();
+  return forceSheet === true || isCompact;
 }
 
 function resolveControlledOpen(
@@ -984,6 +991,7 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       onDismiss={handleSheetDismiss}
       backdropOpacity={0.45}
       enablePanDownToClose
+      enableContentPanningGesture={!props.hasChildren || props.mobileChildrenScrollEnabled}
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
@@ -1309,6 +1317,7 @@ export function Combobox({
   optionsPosition = "below-search",
   title,
   header,
+  forceSheet,
   mobileChildrenScrollEnabled = true,
   desktopChildrenScrollEnabled = true,
   mobileChildrenContentContainerStyle,
@@ -1331,7 +1340,7 @@ export function Combobox({
   const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useComboboxSheetPresentation(forceSheet);
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
   const titleColor = theme.colors.foreground;

@@ -2581,6 +2581,11 @@ export const en = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "Tab titles",
+        hint: "Maximum title lines in the workspace tab list.",
+        options: { 0: "Unlimited", 2: "2 lines", 3: "3 lines" },
+      },
       theme: {
         title: "Theme",
         accessibilityLabel: "Theme: {{value}}",
