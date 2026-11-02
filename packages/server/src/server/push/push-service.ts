@@ -32,14 +32,16 @@ const MAX_BATCH_SIZE = 100;
 export class PushService {
   private readonly logger: pino.Logger;
   private readonly revokeToken: (token: string) => void;
+  private readonly sendRequest: typeof fetch;
 
-  constructor(
-    logger: pino.Logger,
-    revokeToken: (token: string) => void,
-    private readonly sendRequest: typeof fetch = fetch,
-  ) {
-    this.logger = logger.child({ component: "push-service" });
-    this.revokeToken = revokeToken;
+  constructor(options: {
+    logger: pino.Logger;
+    revokeToken: (token: string) => void;
+    sendRequest?: typeof fetch;
+  }) {
+    this.logger = options.logger.child({ component: "push-service" });
+    this.revokeToken = options.revokeToken;
+    this.sendRequest = options.sendRequest ?? fetch;
   }
 
   async sendPush(tokens: string[], payload: PushPayload): Promise<void> {

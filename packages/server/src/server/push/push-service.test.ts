@@ -13,7 +13,11 @@ describe("PushService", () => {
         JSON.stringify({ data: messages.map(() => ({ status: "ok", id: "ticket" })) }),
       );
     };
-    const service = new PushService(pino({ level: "silent" }), () => undefined, sendRequest);
+    const service = new PushService({
+      logger: pino({ level: "silent" }),
+      revokeToken: () => undefined,
+      sendRequest,
+    });
     const tokens = Array.from({ length: 101 }, (_, index) => `ExponentPushToken[device-${index}]`);
 
     await service.sendPush(tokens, {
