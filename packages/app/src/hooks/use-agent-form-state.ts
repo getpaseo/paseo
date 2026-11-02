@@ -34,7 +34,7 @@ import {
   type FormState,
   type ProviderModelsByProvider,
 } from "@/provider-selection/resolve-agent-form";
-import { openAgentForm } from "@/provider-selection/agent-form-store";
+import { openAgentForm, type AgentFormCatalog } from "@/provider-selection/agent-form-store";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
@@ -83,6 +83,12 @@ export interface UseAgentFormStateResult {
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
 }
+
+const EMPTY_CATALOG: AgentFormCatalog = {
+  selectableProviders: new Map(),
+  models: new Map(),
+  providerPreferences: () => undefined,
+};
 
 function resolveSelectedProviderModes(input: {
   selectedEntry: ProviderSnapshotEntry | null;
@@ -175,7 +181,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [updatePreferences],
   );
 
-  const [formStore] = useState(openAgentForm);
+  // The store reads what the host offers when a command runs; each render publishes the latest.
+  const catalogRef = useRef<AgentFormCatalog>(EMPTY_CATALOG);
+  const [formStore] = useState(() => openAgentForm(() => catalogRef.current));
   const { form: formState, resolution } = useSyncExternalStore(
     formStore.subscribe,
     formStore.getState,
@@ -251,6 +259,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const providerDefinitionMap = snapshotProviderDefinitionMap;
   const selectableProviderDefinitionMap = snapshotSelectableProviderDefinitionMap;
   const allProviderModels = snapshotAllProviderModels;
+  catalogRef.current = {
+    selectableProviders: selectableProviderDefinitionMap,
+    models: allProviderModels,
+    providerPreferences: (provider) =>
+      preferenceOverlayRef.current.current().providerPreferences?.[provider],
+  };
   const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
@@ -287,23 +301,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const setProviderAndModelFromUser = useCallback(
     (provider: AgentProvider, modelId: string): boolean => {
-      if (!selectableProviderDefinitionMap.has(provider)) {
-        return false;
-      }
-      const providerDef = selectableProviderDefinitionMap.get(provider);
+      if (!formStore.setProviderAndModel(provider, modelId)) return false;
       const providerModels = allProviderModels.get(provider) ?? null;
-      const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
-      const normalizedModelId = normalizeSelectedModelId(modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(providerModels);
-
-      dispatch({
-        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
-        provider,
-        modelId,
-        providerDef,
-        providerModels,
-        providerPrefs,
-      });
+      const nextModelId =
+        normalizeSelectedModelId(modelId) || resolveDefaultModelId(providerModels);
       void updateCurrentPreferences((current) =>
         mergeSelectedComposerPreferences({
           preferences: current,
@@ -315,7 +316,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       );
       return true;
     },
-    [allProviderModels, dispatch, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, formStore, updateCurrentPreferences],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -395,33 +396,15 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [dispatch, formStore, updateCurrentPreferences],
   );
 
-  // Reads the form as it is now: a command that follows `setProviderAndModelFromUser` sees the new
-  // provider and its catalog. A catalog that has not arrived keeps the id as given; one that has
-  // arrived refuses an id it does not list.
   const setModelFromUser = useCallback(
     (modelId: string): boolean => {
+      if (!formStore.setModel(modelId)) return false;
       const { provider } = formStore.getState().form;
-      const listed = provider
-        ? filterSelectableModels(
-            (snapshotEntries ?? []).find((entry) => entry.provider === provider)?.models ?? null,
-          )
-        : null;
-      const models = listed?.length ? listed : null;
-      if (models && normalizeSelectedModelId(modelId) && !resolveEffectiveModel(models, modelId)) {
-        return false;
-      }
-      const providerPrefs = provider
-        ? preferenceOverlayRef.current.current().providerPreferences?.[provider]
-        : undefined;
-      dispatch({
-        type: "SET_MODEL_FROM_USER",
-        modelId,
-        availableModels: models,
-        providerPrefs,
-      });
       if (provider) {
-        const normalizedModelId = normalizeSelectedModelId(modelId);
-        const nextModelId = normalizedModelId || resolveDefaultModelId(models);
+        const listed = allProviderModels.get(provider);
+        const nextModelId =
+          normalizeSelectedModelId(modelId) ||
+          resolveDefaultModelId(listed?.length ? listed : null);
         void updateCurrentPreferences((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
@@ -434,7 +417,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       }
       return true;
     },
-    [dispatch, formStore, snapshotEntries, updateCurrentPreferences],
+    [allProviderModels, formStore, updateCurrentPreferences],
   );
 
   const setThinkingOptionFromUser = useCallback(

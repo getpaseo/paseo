@@ -5,14 +5,13 @@ import {
   draftControlsRequest,
   openDraftOptions,
   ownDraftOptions,
+  shownDraftOptions,
   viewDraftOptions,
 } from "@/agent-controls/draft-options-model";
 import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
-
-const EMPTY_OPTIONS: ProviderOptions = {};
 
 /**
  * Adapter between a draft's options model and the screen: it sends the model's complete options
@@ -40,7 +39,9 @@ export function useDraftProviderOptions(input: {
     thinkingOptionId,
     initialOptions,
   } = input;
-  const [model] = useState(() => openDraftOptions({ provider, seed: initialOptions }));
+  const [model] = useState(() =>
+    openDraftOptions({ provider, seed: initialOptions, currentProvider: getProvider }),
+  );
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
@@ -93,9 +94,8 @@ export function useDraftProviderOptions(input: {
   // An edit belongs to the provider the form has now, even before the render that shows it.
   const setOption = useCallback(
     (key: string, value: unknown) => {
-      const current = getProvider();
-      model.observeProvider(current);
       model.setOption(key, value);
+      const current = getProvider();
       if (!current) return;
       void updatePreferences((stored) =>
         mergeProviderPreferences({
@@ -122,7 +122,7 @@ export function useDraftProviderOptions(input: {
   );
 
   // What the draft will create with, the plugin's own edits included, before the daemon answers.
-  const shownOptions = viewOptions ?? ownOptions ?? EMPTY_OPTIONS;
+  const shownOptions = shownDraftOptions(state, { provider, requestKey });
 
   return {
     optionControls,
