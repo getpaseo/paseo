@@ -25,6 +25,7 @@ export interface TerminalSelectionBounds {
 export interface TerminalSelectionModel {
   begin(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
   update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
+  beginEndpointDrag(endpoint: "start" | "end", cols: number): void;
   clear(): TerminalSelectionSnapshot;
   sync(input: TerminalSelectionSyncInput): TerminalSelectionSnapshot;
   getSnapshot(): TerminalSelectionSnapshot;
@@ -252,6 +253,7 @@ export function resolveTerminalSelectionRects(
 
 export function createTerminalSelectionModel(): TerminalSelectionModel {
   let state: TerminalSelectionState = { anchor: null, range: null };
+  let drag: { endpoint: "start" | "end"; cols: number } | null = null;
 
   function snapshot(): TerminalSelectionSnapshot {
     return { range: state.range };
@@ -259,18 +261,31 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
 
   function setSelection(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
     const coordinate = clampCoordinate(input.coordinate, input.bounds);
-    const anchor = state.anchor ?? coordinate;
+    const fixed = state.anchor ?? coordinate;
+    let anchor = fixed;
+    if (drag?.endpoint === "start" && compareCoordinates(coordinate, fixed) > 0) {
+      anchor =
+        fixed.col + 1 < drag.cols
+          ? { row: fixed.row, col: fixed.col + 1 }
+          : { row: fixed.row + 1, col: 0 };
+    } else if (drag?.endpoint === "end" && compareCoordinates(coordinate, fixed) < 0) {
+      anchor =
+        fixed.col > 0
+          ? { row: fixed.row, col: fixed.col - 1 }
+          : { row: fixed.row - 1, col: drag.cols - 1 };
+    }
     const range = normalizeTerminalSelection({
       anchor,
       focus: coordinate,
       coordinateEpoch: input.bounds.coordinateEpoch,
     });
-    state = { anchor, range };
+    state = { anchor: fixed, range };
     return snapshot();
   }
 
   return {
     begin(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
+      drag = null;
       const coordinate = clampCoordinate(input.coordinate, input.bounds);
       state = {
         anchor: coordinate,
@@ -285,7 +300,14 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
     update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
       return setSelection(input);
     },
+    beginEndpointDrag(endpoint, cols) {
+      if (state.range) {
+        drag = { endpoint, cols };
+        state = { ...state, anchor: state.range[endpoint === "start" ? "end" : "start"] };
+      }
+    },
     clear(): TerminalSelectionSnapshot {
+      drag = null;
       state = { anchor: null, range: null };
       return snapshot();
     },
@@ -293,6 +315,7 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
       if (!state.range || rangeIsSafe(state.range, input.bounds)) {
         return snapshot();
       }
+      drag = null;
       state = { anchor: null, range: null };
       return snapshot();
     },

@@ -1415,12 +1415,14 @@ test("collapsing and expanding restores the real horizontal scroll offset", asyn
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
   await page.addInitScript(
     ({ settingsKey, fontSize }) => {
-      if (localStorage.getItem(settingsKey)) {
+      const settings = JSON.parse(localStorage.getItem(settingsKey) ?? "{}");
+      if (settings.codeFontSize !== undefined) {
         return;
       }
       localStorage.setItem(
         settingsKey,
         JSON.stringify({
+          ...settings,
           theme: "dark",
           sendBehavior: "interrupt",
           serviceUrlBehavior: "ask",

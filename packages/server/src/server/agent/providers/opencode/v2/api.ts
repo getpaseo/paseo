@@ -2,6 +2,7 @@ import type { OpenCodeClient } from "@opencode/client";
 
 export interface V2Api {
   server: OpenCodeClient["server"];
+  shell: Pick<OpenCodeClient["shell"], "list">;
   session: Pick<
     OpenCodeClient["session"],
     | "create"
@@ -20,6 +21,7 @@ export interface V2Api {
     | "revert"
     | "log"
   > & {
+    inbox: Pick<OpenCodeClient["session"]["inbox"], "list">;
     form: Pick<OpenCodeClient["session"]["form"], "list" | "reply" | "cancel">;
   };
   plugin: Pick<OpenCodeClient["plugin"], "list">;

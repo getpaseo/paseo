@@ -175,10 +175,14 @@ function resolveAgentScreenSync(args: {
   hadInitialSyncFailure: boolean;
 }): AgentScreenReadySyncState {
   const { input, hadInitialSyncFailure } = args;
-  if (input.isArchived) {
+  if (
+    input.isArchived &&
+    input.visibilityCatchUpStatus !== "error" &&
+    input.visibilityCatchUpStatus !== "retrying"
+  ) {
     return { status: "idle" };
   }
-  if (!input.isConnected) {
+  if (!input.isConnected && !input.isArchived) {
     return { status: "reconnecting" };
   }
   if (input.missingAgentState.kind === "error") {

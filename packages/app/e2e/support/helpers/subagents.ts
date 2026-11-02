@@ -3,7 +3,7 @@ import { startIsolatedHostDaemon } from "./isolated-host-daemon";
 import { seedWorkspace } from "./seed-client";
 import { getE2EDaemonPort } from "./daemon-port";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { daemonWsRoutePattern } from "./daemon-port";
 import type { SeededWorkspace } from "./seed-client";
 
@@ -151,10 +151,21 @@ export async function openSubagentsTrack(page: Page): Promise<void> {
   await expect(panel).toBeVisible({ timeout: 30_000 });
 }
 
-/** On compact the track opens as a sheet, which closes once a row is chosen. */
-export async function openSubagentFromCompactTrack(page: Page, childId: string): Promise<void> {
-  await page.getByTestId("subagents-track-header").click();
-  await page.getByTestId(`subagents-track-row-${childId}`).click();
+/**
+ * On compact the track opens as a sheet, and the chosen row opens in its place. `track` is the
+ * pane whose track to open, for when a subagent's sheet shows a track of its own.
+ */
+export async function openSubagentFromCompactTrack(
+  page: Page,
+  childId: string,
+  track: Page | Locator = page,
+): Promise<void> {
+  await track.getByTestId("subagents-track-header").click();
+  const row = page.getByTestId(`subagents-track-row-${childId}`);
+  // Tap the row once the sheet has brought it on screen, as a finger would. Clicking it while it is
+  // still below the fold makes Playwright scroll the sheet host, and every sheet then docks short.
+  await expect(row).toBeInViewport();
+  await row.click();
 }
 
 export async function expectSubagentRowVisible(page: Page, childId: string): Promise<void> {
@@ -188,7 +199,7 @@ export async function expectManagedSubagentArchived(
 }
 
 export async function archiveFinishedSubagents(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Archive finished subagents" }).click();
+  await page.getByRole("menuitem", { name: "Archive finished subagents" }).click();
 }
 
 export async function expectArchiveFinishedInProgress(
@@ -196,7 +207,7 @@ export async function expectArchiveFinishedInProgress(
   completed: number,
   total: number,
 ): Promise<void> {
-  await expect(page.getByRole("button", { name: "Archive finished subagents" })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Archive finished subagents" })).toBeDisabled();
   await expect(page.getByText(`${completed}/${total}`, { exact: true })).toBeVisible();
 }
 
@@ -206,7 +217,7 @@ export async function expectArchiveFinishedRetry(
   total: number,
 ): Promise<void> {
   await expect(page.getByText(`Retry (${failed}/${total})`, { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Archive finished subagents" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Archive finished subagents" })).toBeEnabled();
 }
 
 export async function holdManagedSubagentArchiveRequest(

@@ -164,9 +164,6 @@ function curateProjectedActivityEntries(
           break;
         }
         entries.push(formatToolCallEntry(item, options));
-        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
-          entries.push(activityEntry(item.detail.log.trim()));
-        }
         break;
       }
       case "todo":

@@ -12,6 +12,8 @@ export { MenuRoot, MenuTrigger, type MenuTriggerProps, type MenuTriggerState } f
 export {
   MenuSurface,
   useMenuSurface,
+  type MenuFillPageDefinition,
+  type MenuListPageDefinition,
   type MenuPageDefinition,
   type MenuSurfaceProps,
 } from "./menu-surface";

@@ -9,6 +9,7 @@ import {
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-store-hooks";
+import { useDirectoryDemand } from "@/hooks/use-directory-demand";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -110,6 +111,10 @@ function HostWorkspaceRouteContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(params.open);
+  // A restored workspace with no open chat has nothing else demanding its host's directory on a
+  // phone, where the sidebar only demands while its panel is active. Without demand the deck
+  // waits on workspace hydration that never starts.
+  useDirectoryDemand(serverId);
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;

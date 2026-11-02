@@ -90,6 +90,9 @@ export class V2Harness {
 
   readonly api: V2Api = {
     server: { info: unexpected },
+    shell: {
+      list: async () => ({ location: { directory: this.info.location.directory }, data: [] }),
+    },
     plugin: {
       list: async () => ({
         location: { directory: this.info.location.directory },
@@ -131,6 +134,7 @@ export class V2Harness {
     },
     permission: { list: async () => [], reply: unexpected },
     session: {
+      inbox: { list: async () => [] },
       form: { list: async () => [], reply: unexpected, cancel: unexpected },
       create: async (input = {}) => {
         this.creates.push(input);
@@ -168,6 +172,9 @@ export class V2Harness {
     event: { subscribe: (options) => this.events(options?.signal) },
   };
   readonly connection: V2Connection = {
+    bindSession: async () => {},
+    unbindSession: async () => {},
+    refreshLocation: async () => {},
     client: this.api,
     release: async () => {
       this.releases += 1;

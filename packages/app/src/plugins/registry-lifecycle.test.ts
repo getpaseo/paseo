@@ -219,7 +219,10 @@ test("locale snapshots preserve installation state and observations, then releas
   expect(after.paseo).toBe(before.paseo);
   expect(after.surfaces[0].Component).toBe(before.surfaces[0].Component);
   expect(h.open).toEqual(new Set(["notes"]));
+  const translatedSnapshot = h.plugins.getSnapshot();
   h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getSnapshot()).toBe(translatedSnapshot);
+  expect(h.plugins.getSnapshot()[0].locale).toBe("zh-CN");
   expect(h.plugins.getSnapshot()[0].i18n).toBe(before.i18n);
   h.plugins.removeHost("host");
   expect(listeners.size).toBe(0);

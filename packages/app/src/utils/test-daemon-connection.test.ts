@@ -76,6 +76,25 @@ describe("test-daemon-connection connectToDaemon", () => {
     probe = new FakeDaemonProbe();
   });
 
+  it.each([
+    { id: "direct:lan:6767", type: "directTcp" as const, endpoint: "lan:6767" },
+    {
+      id: "relay:test",
+      type: "relay" as const,
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pubkey",
+    },
+  ])("adoptable $type probe clients use the app WebSocket factory", async (connection) => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const { createAppWebSocketFactory } = await import("@/runtime/websocket-factory");
+    const result = await connectToDaemon(connection, { serverId: "srv_probe_test" }, probe.deps);
+    try {
+      expect(result.client.config.webSocketFactory).toBe(createAppWebSocketFactory());
+    } finally {
+      await result.client.close();
+    }
+  });
+
   it("reuses the app clientId for direct connections", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const first = await connectToDaemon(
@@ -127,6 +146,23 @@ describe("test-daemon-connection connectToDaemon", () => {
     await result.client.close();
 
     expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
+  });
+
+  it("keeps the bundle cache factory on a probe client that the host runtime can adopt", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const createPluginClientBundleStore = () => ({
+      async load() {
+        return [];
+      },
+      async replace() {},
+    });
+    const { client } = await connectToDaemon(
+      { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" },
+      { createPluginClientBundleStore },
+      probe.deps,
+    );
+    expect(client.config.createPluginClientBundleStore).toBe(createPluginClientBundleStore);
+    await client.close();
   });
 
   it("encodes the local socket target into the client config", async () => {

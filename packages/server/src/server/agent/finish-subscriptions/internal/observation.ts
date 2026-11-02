@@ -13,6 +13,8 @@ import type { FinishObservation } from "../index.js";
 export function createFinishObservation(input: {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  /** A child chosen for restart recovery reports its state only after its resume was sent. */
+  waitForResume(agentId: string, signal: AbortSignal): Promise<void>;
   messages(): AgentMessageDelivery;
   hosts(): ToolHosts;
   serverId: string;
@@ -24,6 +26,7 @@ export function createFinishObservation(input: {
     hosts: input.hosts,
     local: {
       async wait(agentId, signal) {
+        await input.waitForResume(agentId, signal);
         await input.messages().waitForDispatch(agentId, signal);
         signal.throwIfAborted();
         const live = agentManager.getAgent(agentId);
@@ -52,6 +55,7 @@ export function createFinishObservation(input: {
         };
       },
       async observe(agentId, handler, signal, onError) {
+        await input.waitForResume(agentId, signal);
         const stored = await agentStorage.get(agentId);
         let updates = Promise.resolve();
         const publish = (snapshot: AgentSnapshotPayload | null, event?: AgentStreamEvent) => {
