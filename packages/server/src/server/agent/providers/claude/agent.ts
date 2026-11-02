@@ -5037,6 +5037,7 @@ class ClaudeAgentSession implements AgentSession {
       "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
         ? message.errors.join("\n")
         : "Claude run failed";
+    if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
     events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
   }
