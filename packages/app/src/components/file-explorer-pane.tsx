@@ -436,7 +436,7 @@ export function FileExplorerPane({
 
   const {
     requestDirectoryListing,
-    discardDirectoryListings,
+    invalidateDirectoryListings,
     createEntry,
     renameEntry,
     duplicateEntry,
@@ -888,18 +888,11 @@ export function FileExplorerPane({
       refreshExplorerDirectories({
         hasWorkspaceScope,
         expandedPaths,
-        cachedDirectoryPaths: directories.keys(),
         showHiddenFiles: usePanelStore.getState().explorerShowHiddenFiles,
         requestDirectoryListing,
-        discardDirectoryListings,
+        invalidateDirectoryListings,
       }),
-    [
-      directories,
-      discardDirectoryListings,
-      expandedPaths,
-      hasWorkspaceScope,
-      requestDirectoryListing,
-    ],
+    [invalidateDirectoryListings, expandedPaths, hasWorkspaceScope, requestDirectoryListing],
   );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     queryKey: ["fileExplorerRefresh", serverId, workspaceStateKey],

@@ -232,20 +232,18 @@ export async function revealExplorerDirectory(input: {
 export async function refreshExplorerDirectories({
   hasWorkspaceScope,
   expandedPaths,
-  cachedDirectoryPaths,
   showHiddenFiles,
   requestDirectoryListing,
-  discardDirectoryListings,
+  invalidateDirectoryListings,
 }: {
   hasWorkspaceScope: boolean;
   expandedPaths: Set<string>;
-  cachedDirectoryPaths: Iterable<string>;
   showHiddenFiles: boolean;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<ExplorerDirectory | null>;
-  discardDirectoryListings: (paths: readonly string[]) => void;
+  invalidateDirectoryListings: (retainedPaths: readonly string[]) => void;
 }): Promise<null> {
   if (!hasWorkspaceScope) {
     return null;
@@ -256,10 +254,7 @@ export async function refreshExplorerDirectories({
   if (!directoryPaths.includes(".")) {
     directoryPaths.unshift(".");
   }
-  const refreshedPaths = new Set(directoryPaths);
-  discardDirectoryListings(
-    Array.from(cachedDirectoryPaths).filter((path) => !refreshedPaths.has(path)),
-  );
+  invalidateDirectoryListings(directoryPaths);
   await Promise.all(
     directoryPaths.map((path) =>
       requestDirectoryListing(path, {

@@ -10,6 +10,7 @@ import {
   openFileExplorer,
   openFileFromExplorer,
 } from "../support/helpers/file-explorer";
+import { delayDirectoryListingResponse } from "../support/helpers/directory-listing-gate";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
@@ -81,3 +82,19 @@ async function refreshFiles(page: import("@playwright/test").Page): Promise<void
 async function createFileOutsidePaseo(filePath: string): Promise<void> {
   await writeFile(path.join(workspace.repoPath, filePath), "# New output\n");
 }
+
+test("Files Refresh ignores an old reply for a folder collapsed while loading", async ({
+  page,
+}) => {
+  const reply = await delayDirectoryListingResponse(page, "docs");
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await expandFolder(page, "docs");
+  await reply.waitUntilHeld();
+  await collapseFolder(page, "docs");
+  await createFileOutsidePaseo("docs/DELAYED.md");
+  await refreshFiles(page);
+  await reply.release();
+  await expandFolder(page, "docs");
+  await expectExplorerEntryVisible(page, "DELAYED.md");
+});

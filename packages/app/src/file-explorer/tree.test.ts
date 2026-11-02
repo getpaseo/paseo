@@ -222,8 +222,9 @@ describe("refreshExplorerDirectories", () => {
         directories.set(path, listing);
         return listing;
       },
-      discardDirectoryListings: (paths: readonly string[]) => {
-        for (const path of paths) directories.delete(path);
+      invalidateDirectoryListings: (retainedPaths: readonly string[]) => {
+        const retained = new Set(retainedPaths);
+        for (const path of directories.keys()) if (!retained.has(path)) directories.delete(path);
       },
     };
   }
@@ -238,10 +239,9 @@ describe("refreshExplorerDirectories", () => {
     await refreshExplorerDirectories({
       hasWorkspaceScope: true,
       expandedPaths: new Set(["."]),
-      cachedDirectoryPaths: explorer.directories.keys(),
       showHiddenFiles: false,
       requestDirectoryListing: explorer.requestDirectoryListing,
-      discardDirectoryListings: explorer.discardDirectoryListings,
+      invalidateDirectoryListings: explorer.invalidateDirectoryListings,
     });
 
     // Expanding docs/ only fetches when it has no cached listing.
@@ -258,10 +258,9 @@ describe("refreshExplorerDirectories", () => {
     await refreshExplorerDirectories({
       hasWorkspaceScope: true,
       expandedPaths: new Set([".", "src"]),
-      cachedDirectoryPaths: explorer.directories.keys(),
       showHiddenFiles: false,
       requestDirectoryListing: explorer.requestDirectoryListing,
-      discardDirectoryListings: explorer.discardDirectoryListings,
+      invalidateDirectoryListings: explorer.invalidateDirectoryListings,
     });
 
     expect(explorer.directories.get("src")?.entries.map((entry) => entry.name)).toEqual([
