@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
+import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
+import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
 
@@ -78,6 +80,18 @@ export async function goToSetupStep(page: Page, label: string): Promise<void> {
 
 export function paseoToolsSwitch(scope: Page | Locator): Locator {
   return scope.getByRole("switch", { name: "Inject Paseo tools", exact: true });
+}
+
+/** Whether the host gives its agents Paseo tools, read from the host itself. */
+export async function hostGivesAgentsPaseoTools(host: { port: number }): Promise<boolean> {
+  const client = await connectDaemonClient<
+    Pick<InternalDaemonClient, "connect" | "close" | "getDaemonConfig">
+  >({ clientIdPrefix: "app-e2e-onboarding", port: host.port });
+  try {
+    return (await client.getDaemonConfig()).config.mcp.injectIntoAgents !== false;
+  } finally {
+    await client.close();
+  }
 }
 
 export async function finishSetup(page: Page): Promise<void> {

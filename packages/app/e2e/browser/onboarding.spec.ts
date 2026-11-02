@@ -8,6 +8,7 @@ import {
   expectSetupStep,
   finishSetup,
   goToSetupStep,
+  hostGivesAgentsPaseoTools,
   openAppAsNewUser,
   openRelayPairingFromSetup,
   closeRelayPairing,
@@ -229,6 +230,38 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await expect(paseoToolsSwitch(page)).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("7-settings-agents.png") });
     });
+  } finally {
+    await host.close();
+  }
+});
+
+test("in the compact layout, Finish on Orchestration applies its switches", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const host = await startSetupHost("compact");
+  // The compact sheet is the only surface on screen, and Orchestration is its last step.
+  const step = (title: string) =>
+    expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible({
+      timeout: 60_000,
+    });
+  const primary = (label: string) => page.getByRole("button", { name: label, exact: true });
+
+  try {
+    await openAppAsNewUser(page, host);
+    await step("Welcome to Paseo");
+    await primary("Continue").click();
+    await step("Your agents");
+    await primary("Continue").click();
+    await step("Add your projects");
+    await primary("Continue").click();
+
+    // The setup host starts with Paseo tools off; the switch starts on.
+    expect(await hostGivesAgentsPaseoTools(host)).toBe(false);
+    await step("Let agents use Paseo");
+    await expect(paseoToolsSwitch(page)).toBeChecked();
+    await primary("Finish").click();
+
+    await expect.poll(() => hostGivesAgentsPaseoTools(host), { timeout: 30_000 }).toBe(true);
+    await expect(page.getByRole("heading", { name: "Let agents use Paseo" })).toHaveCount(0);
   } finally {
     await host.close();
   }

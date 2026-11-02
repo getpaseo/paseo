@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useProjectRootPaths } from "@/stores/session-store-hooks";
@@ -34,7 +34,10 @@ export interface ProjectSuggestionsController {
   list: SuggestionList;
   checkedCount: number;
   isAdding: boolean;
-  /** Adds every checked folder. Resolves true when all of them were added. */
+  /**
+   * Adds every checked folder. Resolves true when all of them were added and no new row arrived
+   * checked meanwhile.
+   */
   addChecked: () => Promise<boolean>;
 }
 
@@ -77,9 +80,17 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
     mutationFn: (rootPaths: string[]) => addSuggestedProjects(rootPaths, openProject),
     onSuccess: setAddFailures,
   });
+  // A provider can answer while the add runs and bring in rows that start checked. Those were not
+  // part of the add, so the step stays put and offers to add them rather than moving on.
+  const latestChecked = useRef(checkedRootPaths);
+  useEffect(() => {
+    latestChecked.current = checkedRootPaths;
+  }, [checkedRootPaths]);
   const addChecked = useCallback(async () => {
+    const attempted = new Set(checkedRootPaths);
     const failures = await mutateAsync(checkedRootPaths);
-    return failures.size === 0;
+    const arrivedChecked = latestChecked.current.some((rootPath) => !attempted.has(rootPath));
+    return failures.size === 0 && !arrivedChecked;
   }, [mutateAsync, checkedRootPaths]);
 
   const list = useMemo((): SuggestionList => {

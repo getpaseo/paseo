@@ -1569,6 +1569,8 @@ export const ru: TranslationResources = {
         statusFailed: "Не удалось проверить состояние установки CLI.",
         installFailed: "Не удалось установить Paseo CLI.",
         uninstallFailed: "Не удалось удалить Paseo CLI.",
+        keptForeign:
+          "Команда paseo, установленная не Paseo, оставлена. Чтобы удалить её, сделайте это вручную.",
       },
     },
   },
@@ -2802,6 +2804,9 @@ export const ru: TranslationResources = {
         unsupported: "Обновите этот хост, чтобы управлять навыками оркестрации",
         updateAvailable: "Доступно обновление",
         updateTitle: "Обновить навыки Paseo?",
+        uninstallTitle: "Удалить навыки Paseo?",
+        uninstallMessage:
+          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude и ~/.codex на этом хосте.",
         choose: "Выбрать навыки",
         chooseAll: "Все навыки",
         chooseAllHint: "Устанавливать все встроенные навыки, включая добавленные позже.",
@@ -2819,6 +2824,7 @@ export const ru: TranslationResources = {
           update: "Обновить",
           working: "Выполняется...",
           remove: "Удалить",
+          uninstall: "Удалить",
           save: "Сохранить",
           saving: "Сохранение...",
           cancel: "Отмена",
@@ -2836,6 +2842,7 @@ export const ru: TranslationResources = {
           title: "Включить инструменты Paseo",
           hint: "Агенты смогут управлять worktree, агентами и расписаниями.",
           accessibilityLabel: "Добавить инструменты Paseo",
+          updateFailed: "Не удалось обновить инструменты Paseo.",
         },
         systemPrompt: {
           title: "Системный промпт",

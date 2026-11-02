@@ -1551,6 +1551,8 @@ export const ko: TranslationResources = {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
         uninstallFailed: "Paseo CLI를 제거할 수 없습니다.",
+        keptForeign:
+          "Paseo가 설치하지 않은 paseo 명령은 그대로 두었습니다. 제거하려면 직접 삭제하세요.",
       },
     },
   },
@@ -2764,6 +2766,9 @@ export const ko: TranslationResources = {
         description: "에이전트에게 Paseo 도구 사용법을 알려 줍니다",
         updateAvailable: "업데이트 사용 가능",
         updateTitle: "Paseo 스킬을 업데이트할까요?",
+        uninstallTitle: "Paseo 스킬을 제거할까요?",
+        uninstallMessage:
+          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
         choose: "스킬 선택",
         chooseAll: "모든 스킬",
         chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
@@ -2781,6 +2786,7 @@ export const ko: TranslationResources = {
           update: "업데이트",
           working: "작업 중...",
           remove: "제거",
+          uninstall: "제거",
           save: "저장",
           saving: "저장 중...",
           cancel: "취소",
@@ -2798,6 +2804,7 @@ export const ko: TranslationResources = {
           title: "Paseo 도구 활성화",
           hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
+          updateFailed: "Paseo 도구를 업데이트할 수 없습니다.",
         },
         systemPrompt: {
           title: "시스템 프롬프트",

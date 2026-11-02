@@ -42,24 +42,27 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
   }, [model]);
   const handleBack = useCallback(() => model.back(), [model]);
   const { visit } = state;
-  const handleNext = useCallback(() => model.next(visit), [model, visit]);
+  // Moving on from the last step finishes setup; any step's own work runs before that.
+  const handleAdvance = useCallback(() => {
+    if (isLast) void model.complete();
+    else model.next(visit);
+  }, [isLast, model, visit]);
   const handleAddSuggestions = useCallback(() => {
     void (async () => {
-      if (await addChecked()) model.next(visit);
+      if (await addChecked()) handleAdvance();
     })();
-  }, [addChecked, model, visit]);
+  }, [addChecked, handleAdvance]);
   const handleApplyOrchestration = useCallback(() => {
     void (async () => {
-      if (await applyOrchestration()) model.next(visit);
+      if (await applyOrchestration()) handleAdvance();
     })();
-  }, [applyOrchestration, model, visit]);
+  }, [applyOrchestration, handleAdvance]);
   const primary = usePrimaryAction({
     step,
     isLast,
     projectSuggestions,
     orchestration,
-    onFinish: handleComplete,
-    onNext: handleNext,
+    onAdvance: handleAdvance,
     onAddSuggestions: handleAddSuggestions,
     onApplyOrchestration: handleApplyOrchestration,
   });
@@ -150,15 +153,15 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
 /**
  * The footer's main button. On Projects, with folders checked, it adds them and moves on only once
  * every one was added. On Orchestration it applies the switches and moves on once they all took.
- * Otherwise it continues, or finishes on the last step.
+ * Otherwise it moves on. Moving on from the last step finishes setup, so that step's work still
+ * runs first; Orchestration is last in the compact layout.
  */
 function usePrimaryAction(input: {
   step: OnboardingStepId;
   isLast: boolean;
   projectSuggestions: ProjectSuggestionsController;
   orchestration: OrchestrationSetupController;
-  onFinish: () => void;
-  onNext: () => void;
+  onAdvance: () => void;
   onAddSuggestions: () => void;
   onApplyOrchestration: () => void;
 }): { label: string; busy: boolean; onPress: () => void } {
@@ -168,15 +171,12 @@ function usePrimaryAction(input: {
     isLast,
     projectSuggestions,
     orchestration,
-    onFinish,
-    onNext,
+    onAdvance,
     onAddSuggestions,
     onApplyOrchestration,
   } = input;
   const { checkedCount, isAdding } = projectSuggestions;
-  if (isLast) {
-    return { label: t("onboarding.setup.finish"), busy: false, onPress: onFinish };
-  }
+  const advanceLabel = isLast ? t("onboarding.setup.finish") : t("onboarding.setup.continue");
   // Rows leave the list as they are added, so the count can reach zero while adding.
   if (step === "projects" && (isAdding || checkedCount > 0)) {
     return {
@@ -188,13 +188,9 @@ function usePrimaryAction(input: {
     };
   }
   if (step === "orchestration") {
-    return {
-      label: t("onboarding.setup.continue"),
-      busy: orchestration.isApplying,
-      onPress: onApplyOrchestration,
-    };
+    return { label: advanceLabel, busy: orchestration.isApplying, onPress: onApplyOrchestration };
   }
-  return { label: t("onboarding.setup.continue"), busy: false, onPress: onNext };
+  return { label: advanceLabel, busy: false, onPress: onAdvance };
 }
 
 function StepRail({

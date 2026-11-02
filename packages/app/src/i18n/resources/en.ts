@@ -1566,6 +1566,8 @@ export const en = {
         statusFailed: "Unable to check CLI install status.",
         installFailed: "Unable to install the Paseo CLI.",
         uninstallFailed: "Unable to uninstall the Paseo CLI.",
+        keptForeign:
+          "Kept a paseo command that Paseo didn't install. Remove it yourself to uninstall it.",
       },
     },
   },
@@ -2883,6 +2885,9 @@ export const en = {
         saveSelectionFailed: "Unable to save the orchestration skills selection.",
         updateAvailable: "Update available",
         updateTitle: "Update Paseo skills?",
+        uninstallTitle: "Uninstall Paseo skills?",
+        uninstallMessage:
+          "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex on this host.",
         choose: "Choose skills",
         chooseAll: "All skills",
         chooseAllHint: "Keep every bundled skill installed, including ones added later.",
@@ -2896,6 +2901,7 @@ export const en = {
           update: "Update",
           working: "Working...",
           remove: "Remove",
+          uninstall: "Uninstall",
           save: "Save",
           saving: "Saving...",
           cancel: "Cancel",
@@ -2913,6 +2919,7 @@ export const en = {
           title: "Enable Paseo tools",
           hint: "Agents will be able to manage worktrees, agents and schedules",
           accessibilityLabel: "Inject Paseo tools",
+          updateFailed: "Unable to update Paseo tools.",
         },
         systemPrompt: {
           title: "System prompt",

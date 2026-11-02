@@ -1558,6 +1558,8 @@ export const ja: TranslationResources = {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
         uninstallFailed: "Paseo CLI をアンインストールできません。",
+        keptForeign:
+          "Paseoがインストールしていないpaseoコマンドは残しました。アンインストールするには手動で削除してください。",
       },
     },
   },
@@ -2777,6 +2779,9 @@ export const ja: TranslationResources = {
         description: "エージェントに Paseo ツールの使い方を教えます",
         updateAvailable: "更新が利用可能",
         updateTitle: "Paseoスキルを更新しますか？",
+        uninstallTitle: "Paseoスキルをアンインストールしますか？",
+        uninstallMessage:
+          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
         choose: "スキルを選択",
         chooseAll: "すべてのスキル",
         chooseAllHint:
@@ -2795,6 +2800,7 @@ export const ja: TranslationResources = {
           update: "更新",
           working: "処理中...",
           remove: "削除",
+          uninstall: "アンインストール",
           save: "保存",
           saving: "保存中...",
           cancel: "キャンセル",
@@ -2812,6 +2818,7 @@ export const ja: TranslationResources = {
           title: "Paseoツールを有効にする",
           hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
           accessibilityLabel: "Paseoツールを有効にする",
+          updateFailed: "Paseoツールを更新できませんでした。",
         },
         systemPrompt: {
           title: "システムプロンプト",

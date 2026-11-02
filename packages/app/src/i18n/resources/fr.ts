@@ -1583,6 +1583,8 @@ export const fr: TranslationResources = {
         statusFailed: "Impossible de vérifier l’installation de la CLI.",
         installFailed: "Impossible d’installer la CLI Paseo.",
         uninstallFailed: "Impossible de désinstaller la CLI Paseo.",
+        keptForeign:
+          "Une commande paseo qui n’a pas été installée par Paseo a été conservée. Supprimez-la vous-même pour la désinstaller.",
       },
     },
   },
@@ -2813,6 +2815,9 @@ export const fr: TranslationResources = {
         description: "Apprenez à vos agents à utiliser les outils Paseo",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les skills Paseo ?",
+        uninstallTitle: "Désinstaller les skills Paseo ?",
+        uninstallMessage:
+          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex sur cet hôte.",
         choose: "Choisir les skills",
         chooseAll: "Tous les skills",
         chooseAllHint:
@@ -2831,6 +2836,7 @@ export const fr: TranslationResources = {
           update: "Mettre à jour",
           working: "En cours…",
           remove: "Supprimer",
+          uninstall: "Désinstaller",
           save: "Enregistrer",
           saving: "Enregistrement…",
           cancel: "Annuler",
@@ -2848,6 +2854,7 @@ export const fr: TranslationResources = {
           title: "Activer les outils Paseo",
           hint: "Les agents pourront gérer les worktrees, les agents et les planifications",
           accessibilityLabel: "Injecter les outils Paseo",
+          updateFailed: "Impossible de mettre à jour les outils Paseo.",
         },
         systemPrompt: {
           title: "Prompt système",

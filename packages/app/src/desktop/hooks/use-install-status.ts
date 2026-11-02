@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { useToast } from "@/contexts/toast-context";
 import {
   getCliInstallStatus,
   installCli,
@@ -21,7 +22,10 @@ interface CliInstall {
   status: InstallStatus | null;
   isLoading: boolean;
   isWorking: boolean;
-  /** Installs or removes the CLI; resolves to whether it worked. Failures are reported. */
+  /**
+   * Installs or removes the CLI; resolves to whether it worked. Failures are reported. Removing
+   * keeps a paseo command this app did not install, says so, and resolves true.
+   */
   setInstalled: (installed: boolean) => Promise<boolean>;
   refresh: () => void;
 }
@@ -30,6 +34,7 @@ export function useCliInstall(): CliInstall {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const reportError = useDesktopIpcErrorReporter();
+  const toast = useToast();
   const available = shouldUseDesktopDaemon();
 
   const statusQuery = useQuery<InstallStatus, Error>({
@@ -64,13 +69,21 @@ export function useCliInstall(): CliInstall {
   });
   const { mutateAsync, isPending } = mutation;
 
+  // Removing only ever deletes the CLI this app installed. A paseo command put there some other way
+  // stays, and that still counts as done: the user is told rather than left with a switch that
+  // silently won't turn off.
   const setInstalled = useCallback(
     (installed: boolean) =>
       mutateAsync(installed).then(
-        (status) => status.installed === installed,
+        (status) => {
+          if (status.installed === installed) return true;
+          if (installed) return false;
+          toast.show(t("desktop.integrations.cli.keptForeign"));
+          return true;
+        },
         () => false,
       ),
-    [mutateAsync],
+    [mutateAsync, t, toast],
   );
   const refresh = useCallback(() => {
     void refetch();
