@@ -4517,6 +4517,41 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test.each([
+    { exitCode: 1, stderr: "", message: "Command exited with code 1" },
+    { exitCode: null, stderr: "", message: "Command failed" },
+    { exitCode: 1, stderr: "Invocation denied", message: "Invocation denied" },
+  ])("reports exec notification failure: $message", async ({ exitCode, stderr, message }) => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("codex/event/exec_command_begin", {
+      msg: { type: "exec_command_begin", call_id: "search", command: "rg missing existing.txt" },
+    });
+    await asInternals(session).handleNotification("codex/event/exec_command_end", {
+      msg: {
+        type: "exec_command_end",
+        call_id: "search",
+        command: "rg missing existing.txt",
+        aggregated_output: "diagnostic output",
+        exit_code: exitCode,
+        success: false,
+        stderr,
+      },
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "search",
+        status: "failed",
+        error: { message },
+        detail: { type: "shell", command: "rg missing existing.txt", output: "diagnostic output" },
+      },
+    });
+  });
+
   test("routes msg-scoped legacy Codex events to their child thread", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -5074,6 +5109,51 @@ describe("Codex app-server provider", () => {
         description: "Validate the child agent result.",
       },
     });
+  });
+
+  test("replays failed command exit codes and invocation errors from Codex history", async () => {
+    const session = createSession();
+    session.client = {
+      request: async () => ({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "commandExecution",
+                  id: "history-exit",
+                  status: "failed",
+                  command: "rg missing existing.txt",
+                  exitCode: 1,
+                },
+                {
+                  type: "commandExecution",
+                  id: "history-invocation",
+                  status: "failed",
+                  command: "pwd",
+                  exitCode: -1,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    };
+
+    const history: AgentTimelineItem[] = [];
+    for await (const event of session.streamHistory()) {
+      if (event.type === "timeline") history.push(event.item);
+    }
+
+    expect(history).toMatchObject([
+      {
+        callId: "history-exit",
+        status: "failed",
+        error: { message: "Command exited with code 1" },
+        detail: { type: "shell", exitCode: 1 },
+      },
+      { callId: "history-invocation", status: "failed", error: { message: "Tool call failed" } },
+    ]);
   });
 
   test("loads Codex persisted history from the app-server thread", async () => {

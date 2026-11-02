@@ -107,12 +107,13 @@ function toToolCallTimelineItem(envelope: CodexResolvedToolCall): ToolCallTimeli
       : parsedDetail;
 
   if (envelope.status === "failed") {
+    const exitMessage = detail.type === "shell" ? commandExitMessage(detail.exitCode) : null;
     return {
       type: "tool_call",
       callId: envelope.callId,
       name,
       status: "failed",
-      error: envelope.error ?? { message: "Tool call failed" },
+      error: envelope.error ?? { message: exitMessage ?? "Tool call failed" },
       detail,
       ...(envelope.metadata ? { metadata: envelope.metadata } : {}),
     };
@@ -1037,6 +1038,13 @@ function mapThreadItemToNormalizedEnvelope(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+export function commandExitMessage(exitCode: number | null | undefined): string | null {
+  if (typeof exitCode === "number" && exitCode >= 0) {
+    return `Command exited with code ${exitCode}`;
+  }
+  return null;
+}
 
 export function mapCodexToolCallFromThreadItem(
   item: unknown,
