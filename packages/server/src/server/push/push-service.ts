@@ -33,7 +33,11 @@ export class PushService {
   private readonly logger: pino.Logger;
   private readonly revokeToken: (token: string) => void;
 
-  constructor(logger: pino.Logger, revokeToken: (token: string) => void) {
+  constructor(
+    logger: pino.Logger,
+    revokeToken: (token: string) => void,
+    private readonly sendRequest: typeof fetch = fetch,
+  ) {
     this.logger = logger.child({ component: "push-service" });
     this.revokeToken = revokeToken;
   }
@@ -66,7 +70,7 @@ export class PushService {
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {
     try {
-      const response = await fetch(EXPO_PUSH_URL, {
+      const response = await this.sendRequest(EXPO_PUSH_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,42 +1,37 @@
-import type pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import pino from "pino";
+import { describe, expect, test } from "vitest";
 
 import { PushService } from "./push-service.js";
 
-function createLogger(): pino.Logger {
-  const logger = {
-    child: () => logger,
-    debug: () => undefined,
-    info: () => undefined,
-    warn: () => undefined,
-    error: () => undefined,
-  };
-  return logger as unknown as pino.Logger;
-}
-
 describe("PushService", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  test("requests high priority for every notification across batches", async () => {
+    const requests: Record<string, unknown>[][] = [];
+    const sendRequest: typeof fetch = async (_url, init) => {
+      const messages = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+      requests.push(messages);
+      return new Response(
+        JSON.stringify({ data: messages.map(() => ({ status: "ok", id: "ticket" })) }),
+      );
+    };
+    const service = new PushService(pino({ level: "silent" }), () => undefined, sendRequest);
+    const tokens = Array.from({ length: 101 }, (_, index) => `ExponentPushToken[device-${index}]`);
 
-  test("sends high priority so Android delivers while the device dozes", async () => {
-    const requests: unknown[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init: RequestInit) => {
-        requests.push(JSON.parse(String(init.body)));
-        return new Response(JSON.stringify({ data: [{ status: "ok", id: "ticket" }] }));
-      }),
-    );
-    const service = new PushService(createLogger(), () => undefined);
-
-    await service.sendPush(["ExponentPushToken[android-device]"], {
+    await service.sendPush(tokens, {
       title: "Agent finished",
       body: "Done",
+      data: { agentId: "agent" },
     });
 
-    expect(requests).toEqual([
-      [expect.objectContaining({ to: "ExponentPushToken[android-device]", priority: "high" })],
-    ]);
+    expect(requests.map((batch) => batch.length)).toEqual([100, 1]);
+    expect(requests.flat()).toEqual(
+      tokens.map((token) => ({
+        to: token,
+        priority: "high",
+        title: "Agent finished",
+        body: "Done",
+        data: { agentId: "agent" },
+        sound: "default",
+      })),
+    );
   });
 });
