@@ -372,17 +372,13 @@ export async function discover(): Promise<UsageAccount[]> {
     { store: "credentials", locator: join(homedir(), ".mmx", "credentials.json") },
     { store: "config", locator: join(homedir(), ".mmx", "config.json") },
   ];
+  // Every readable input becomes another login on the same account. The
+  // registry tries an account's logins in order and keeps the first usable
+  // report, so an expired legacy credential cannot hide a working CLI login.
+  const inputs = [...candidates, ...(await discoverOAuthLogins())];
   const accounts: UsageAccount[] = [];
-  for (const input of candidates)
+  for (const input of inputs) {
     if (await readAuth(input)) accounts.push({ key: "default", input });
-  if (accounts.length > 0) return accounts;
-
-  const oauthInputs = await discoverOAuthLogins();
-  for (const input of oauthInputs) {
-    if (await readAuth(input)) {
-      accounts.push({ key: "default", input });
-      break;
-    }
   }
   return accounts;
 }

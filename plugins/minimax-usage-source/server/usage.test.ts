@@ -235,6 +235,43 @@ describe("minimax usage source", () => {
     expect(accounts[0]?.input).toMatchObject({ baseUrl: "https://api.minimax.io" });
   });
 
+  it("keeps a working CLI login discoverable next to an expired credentials file", async () => {
+    writeMiniMaxCredentials(homeDir, "stale_access_token", "2020-01-01T00:00:00.000Z");
+    const authPath = writeMiniMaxOAuthLogin(homeDir, { accessToken: "mmoat_fixture_token" });
+
+    const accounts = await discover();
+
+    expect(accounts).toEqual([
+      {
+        key: "default",
+        input: {
+          store: "credentials",
+          locator: join(homeDir, ".mmx", "credentials.json"),
+        },
+      },
+      {
+        key: "default",
+        input: {
+          store: "oauth",
+          locator: authPath,
+          baseUrl: "https://api.minimaxi.com",
+        },
+      },
+    ]);
+  });
+
+  it("keeps every CLI login so the registry can fall back past a failing one", async () => {
+    const first = writeMiniMaxOAuthLogin(homeDir, { region: "cn", clientId: "mcode-cn" });
+    const second = writeMiniMaxOAuthLogin(homeDir, { region: "en", clientId: "mcode-en" });
+
+    const accounts = await discover();
+
+    expect(accounts.map((account) => account.input)).toEqual([
+      { store: "oauth", locator: first, baseUrl: "https://api.minimaxi.com" },
+      { store: "oauth", locator: second, baseUrl: "https://api.minimax.io" },
+    ]);
+  });
+
   it("fetches MiniMax usage from the CLI OAuth login", async () => {
     writeMiniMaxOAuthLogin(homeDir, { accessToken: "mmoat_fixture_token" });
     let requestedUrl: string | null = null;
@@ -456,9 +493,17 @@ describe("minimax usage source", () => {
 });
 
 it("discovery returns a locator when fetch finds minimax credentials", async () => {
+  // Discovery now always looks for CLI logins too, so pin the home directory
+  // instead of letting whatever is installed on this machine join the result.
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(tmpdir(), "usage-env-"));
   const previous = process.env["MINIMAX_API_KEY"];
+  const previousHome = process.env["HOME"];
+  const previousProfile = process.env["USERPROFILE"];
   try {
     process.env["MINIMAX_API_KEY"] = "fixture-token";
+    process.env["HOME"] = directory;
+    process.env["USERPROFILE"] = directory;
     let requested = false;
     await fetchFirst(async () => {
       requested = true;
@@ -471,6 +516,11 @@ it("discovery returns a locator when fetch finds minimax credentials", async () 
   } finally {
     if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
     else process.env["MINIMAX_API_KEY"] = previous;
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
+    if (previousProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = previousProfile;
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
