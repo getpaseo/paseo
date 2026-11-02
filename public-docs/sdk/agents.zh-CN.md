@@ -188,6 +188,26 @@ unsubscribe();
 await directory.subscription.release();
 ```
 
+## 读取 Agent 的账号用量 {#read-account-usage-for-an-agent}
+
+```ts
+const { reports, usageRevision } = await agent.listUsageReports({ forceRefresh: true });
+```
+
+报告描述当前 Provider 启动会话所关联账号的配额，不是该 Agent 单独消耗的 Token。
+报告保留用量来源、账号标签、报告 ID 和可用状态。没有活动用量会话的 Agent 返回空列表，
+版本为 `null`；不会退回到主机的默认账号。
+
+观察 Agent 快照中的 `usageRevision`。版本变化时清除缓存，版本非空时重新查询。
+显示响应前，将响应版本与最新快照比较。重新加载或恢复会话可以改变版本，同时保留
+Agent ID 和 Provider 对话 ID。查询期间账号归属发生变化时，请求会失败；应根据新快照
+重新查询。移除 Agent 或替换观察订阅后，丢弃尚未完成的旧请求响应。
+
+此版本标识启动会话的账号归属，不表示配额的新鲜度。`forceRefresh` 绕过报告缓存，
+但不会修改凭据，也不会检测同一 Provider 启动会话中的凭据文件变更。
+账号路由插件必须重新打开 Provider 会话才能改变归属。此方法要求主机支持
+`server_info.features.agentUsageRevision`；旧主机会返回需要更新主机的错误。
+
 ## 列出会话加载的命令 {#list-the-commands-a-session-loaded}
 
 ```ts
