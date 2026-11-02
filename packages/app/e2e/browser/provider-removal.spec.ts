@@ -10,16 +10,29 @@ import {
   openSettingsHost,
   openSettingsHostSection,
 } from "../support/helpers/settings";
+import { copyPluginExample } from "../support/helpers/plugin-fixture";
 
 const CUSTOM_PROVIDER = {
   id: "junie",
   name: "Junie",
 } as const;
 
+const PLUGIN_PROVIDER = {
+  id: "direct-example",
+  name: "Direct provider example",
+  pluginId: "provider-direct-example",
+} as const;
+
 interface ProviderRemovalDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
-  patchDaemonConfig(config: { removeProviders?: string[] }): Promise<unknown>;
+  getDaemonConfig(): Promise<{ config: { pluginsEnabled?: boolean } }>;
+  patchDaemonConfig(config: {
+    removeProviders?: string[];
+    pluginsEnabled?: boolean;
+  }): Promise<unknown>;
+  installDirectoryPlugin(path: string): Promise<unknown>;
+  removePlugin(pluginId: string): Promise<void>;
   getProvidersSnapshot(): Promise<{
     entries: Array<{ provider: string; source?: "builtin" | "custom" }>;
   }>;
@@ -91,6 +104,47 @@ test.describe("provider removal", () => {
     } finally {
       await removeCustomProvider(client).catch(() => undefined);
       await client.close().catch(() => undefined);
+    }
+  });
+
+  test("does not offer Remove for a plugin-registered provider", async ({ page }) => {
+    test.setTimeout(120_000);
+    const client = await connectDaemonClient<ProviderRemovalDaemonClient>({
+      clientIdPrefix: "provider-removal-e2e",
+    });
+
+    const plugin = await copyPluginExample("provider-direct");
+    try {
+      const previous = await client.getDaemonConfig();
+      try {
+        await client.patchDaemonConfig({ pluginsEnabled: true });
+        await client.installDirectoryPlugin(plugin.directory);
+
+        await gotoAppShell(page);
+        await openSettings(page);
+        await openSettingsHost(page, getServerId());
+        await openSettingsHostSection(page, getServerId(), "providers");
+
+        const pluginProviderRow = page.getByRole("button", {
+          name: `${PLUGIN_PROVIDER.name} provider details`,
+          exact: true,
+        });
+        await expect(pluginProviderRow).toBeVisible();
+        await expect(page.getByTestId(`provider-actions-${PLUGIN_PROVIDER.id}`)).toHaveCount(0);
+
+        // The provider survives a removeProviders patch pointed at it: the
+        // plugin, not config.json, owns the definition.
+        await client.patchDaemonConfig({ removeProviders: [PLUGIN_PROVIDER.id] });
+        await expect(pluginProviderRow).toBeVisible();
+      } finally {
+        await client.removePlugin(PLUGIN_PROVIDER.pluginId).catch(() => undefined);
+        await client
+          .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled })
+          .catch(() => undefined);
+      }
+    } finally {
+      await client.close().catch(() => undefined);
+      await plugin.cleanup();
     }
   });
 });

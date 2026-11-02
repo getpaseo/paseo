@@ -1,0 +1,17 @@
+context platform=ios timeout=90000 retries=1
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-new-tab-button\"" 30000
+press "id=\"workspace-new-tab-button\""
+wait "id=\"workspace-new-tab-menu-terminal\"" 10000
+press "id=\"workspace-new-tab-menu-terminal\""
+wait "id=\"terminal-virtual-keyboard-native-wide\"" 10000
+is visible "id=\"terminal-key-esc\""
+is visible "id=\"terminal-key-enter\""
+is visible "id=\"terminal-paste\""
+press "id=\"terminal-keyboard-toggle\""
+type "printf '__AD_IOS_%s__\\n' KEY_OK" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "text" "__AD_IOS_KEY_OK__" 10000
+close

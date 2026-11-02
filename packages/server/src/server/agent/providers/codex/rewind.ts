@@ -8,6 +8,7 @@ import {
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
 } from "./app-server-transport.js";
+import { readCodexThreadHistoryMode } from "./thread-history.js";
 
 export interface CodexRewindClient {
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
@@ -18,26 +19,6 @@ export interface CodexRewindClient {
 export interface CodexUserMessageTurnIndex {
   resolve(messageId: string): { index: number; turnId: string | null } | null;
   count(): number;
-}
-
-type CodexThreadHistoryMode = "legacy" | "paginated";
-
-async function readCodexThreadHistoryMode(
-  client: CodexRewindClient,
-  threadId: string,
-): Promise<CodexThreadHistoryMode> {
-  const response = await client.request("thread/read", { threadId, includeTurns: false });
-  if (typeof response !== "object" || response === null || !("thread" in response)) {
-    throw new Error("Codex thread/read did not return thread metadata");
-  }
-  const thread = response.thread;
-  if (typeof thread !== "object" || thread === null || !("historyMode" in thread)) {
-    return "legacy";
-  }
-  if (thread.historyMode === "legacy" || thread.historyMode === "paginated") {
-    return thread.historyMode;
-  }
-  throw new Error(`Codex thread/read returned unknown history mode ${String(thread.historyMode)}`);
 }
 
 async function forkCodexThread(
@@ -67,7 +48,9 @@ export async function revertCodexConversation(input: {
   cwd?: string | null;
   model?: string | null;
   serviceTier?: string | null;
+  config?: Record<string, unknown> | null;
   userMessageTurns: CodexUserMessageTurnIndex;
+  threadRollbackAvailable: boolean;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
   if (!input.threadId) {
@@ -85,34 +68,38 @@ export async function revertCodexConversation(input: {
     throw new Error(`Codex user message ${input.messageId} is outside the current thread`);
   }
 
-  const historyMode = await readCodexThreadHistoryMode(input.client, input.threadId);
-  if (historyMode === "paginated") {
+  // Codex does not carry the parent thread's config into a fork; without it the
+  // forked thread falls back to the default model provider.
+  const forkParams: CodexThreadForkParams = {
+    threadId: input.threadId,
+    cwd: input.cwd ?? null,
+    model: input.model ?? null,
+    serviceTier: input.serviceTier ?? null,
+    ...(input.config ? { config: input.config } : {}),
+    // Paseo re-reads the rewound thread through paged history, not the fork reply.
+    excludeTurns: true,
+    persistExtendedHistory: true,
+  };
+
+  if (
+    !input.threadRollbackAvailable ||
+    (await readCodexThreadHistoryMode(input.client, input.threadId)) === "paginated"
+  ) {
     if (!targetTurn.turnId) {
       throw new Error(`Codex could not find the turn containing user message ${input.messageId}`);
     }
     const forked = await forkCodexThread(input.client, {
-      threadId: input.threadId,
+      ...forkParams,
       beforeTurnId: targetTurn.turnId,
-      cwd: input.cwd ?? null,
-      model: input.model ?? null,
-      serviceTier: input.serviceTier ?? null,
-      excludeTurns: false,
-      persistExtendedHistory: true,
     });
     await input.setThreadId(forked.thread.id);
     return;
   }
 
-  // Fork is non-destructive: the old thread file stays on disk and remains
+  // Legacy threads on Codex before 0.156 fork and then roll back. Fork is
+  // non-destructive: the old thread file stays on disk and remains
   // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
-  const forked = await forkCodexThread(input.client, {
-    threadId: input.threadId,
-    cwd: input.cwd ?? null,
-    model: input.model ?? null,
-    serviceTier: input.serviceTier ?? null,
-    excludeTurns: false,
-    persistExtendedHistory: true,
-  });
+  const forked = await forkCodexThread(input.client, forkParams);
   const forkedThreadId = forked.thread.id;
 
   // Codex rollback is chat-only by design. File edits from rewound turns stay

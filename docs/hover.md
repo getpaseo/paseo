@@ -135,7 +135,7 @@ Heuristic: if your hover state is going to be `useState`'d and read by anything 
 
 Sometimes the revealed content can't live inside the trigger — a hover card portals into a different layer, a tooltip floats above other content, a popover renders into a `Portal`. There's a real visual gap the user has to cross with the cursor.
 
-For this case, use `useHoverSafeZone` (`packages/app/src/hooks/use-hover-safe-zone.ts`). It computes a rectangular "bridge" between the trigger and the content; while the pointer is inside trigger, content, or the bridge, the card stays open. A short grace timer absorbs jitter at the edges. The canonical caller is `packages/app/src/components/workspace-hover-card.tsx`.
+For a card whose content the user can point at or press, use `HoverCard` (`packages/app/src/components/ui/hover-card.tsx`). It is built on `useHoverSafeZone` (`packages/app/src/hooks/use-hover-safe-zone.ts`), which computes a rectangular "bridge" across the gap between the trigger and the content, whether the card sits beside, above, or below the trigger. While the pointer is inside trigger, content, or the bridge, the card stays open. A short grace timer absorbs jitter at the edges. `Tooltip` takes no pointer events and closes as soon as the pointer leaves the trigger. If the trigger has no focusable child, give `HoverCardTrigger` `focusable` and an accessible label so keyboard users can open the same content.
 
 Don't roll your own. The math is annoying, the edge cases (pointer leaves window, drag in progress, content unmounts) are subtle, and we already paid for the hook.
 
@@ -150,5 +150,5 @@ Before opening a PR that touches hover:
 - [ ] Revealed content inside the trigger uses `opacity` + `pointerEvents`, not conditional rendering, if mounting it would reflow the trigger.
 - [ ] Visibility on native and compact layouts works without hover (`isHovered || isNative || isCompact`).
 - [ ] A menu opened from the revealed trigger keeps the trigger rendered while it is open, so losing hover can't strand it.
-- [ ] If the revealed content sits in a separate layer (portal, floating panel), `useHoverSafeZone` is wired up.
+- [ ] If the revealed content sits in a separate layer (portal, floating panel) and the user can point at it, it is a `HoverCard`.
 - [ ] You opened the dev server, hovered the trigger, and slowly moved the mouse along **every** revealed element — including any visible gaps — without losing hover state.

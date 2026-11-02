@@ -3,6 +3,10 @@ import { piExtensions } from "./registry.js";
 import type { Logger } from "pino";
 import type { PiExtension } from "./contract.js";
 
+export const piExtensionRuntimeBridge = piExtensions
+  .flatMap((extension) => extension.runtimeBridge ?? [])
+  .join("\n");
+
 export type { PiExtensionHost } from "./host.js";
 export type { PiExtensionEventOutput } from "./host.js";
 

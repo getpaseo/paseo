@@ -130,7 +130,102 @@ try {
   }
 
   {
-    console.log("Test 1d: compatibility agent-target schedules remain deletable");
+    console.log("Test 1d: schedule update clears limits with negated flags");
+    const created = await ctx.paseo([
+      "schedule",
+      "create",
+      "Review scheduled work",
+      "--cron",
+      "0 0 1 1 *",
+      "--provider",
+      "claude",
+      "--cwd",
+      ctx.workDir,
+      "--max-runs",
+      "3",
+      "--expires-in",
+      "1h",
+      "--json",
+    ]);
+    assert.strictEqual(created.exitCode, 0, created.stderr);
+    const { id } = JSON.parse(created.stdout);
+
+    const inspect = async () => {
+      const result = await ctx.paseo(["schedule", "inspect", id, "--json"]);
+      assert.strictEqual(result.exitCode, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    const initial = await inspect();
+    assert.strictEqual(initial.maxRuns, 3);
+    assert.strictEqual(typeof initial.expiresAt, "string");
+
+    const renamed = await ctx.paseo([
+      "schedule",
+      "update",
+      id,
+      "--name",
+      "renamed-review",
+      "--json",
+    ]);
+    assert.strictEqual(renamed.exitCode, 0, renamed.stderr);
+    const afterRename = await inspect();
+    assert.strictEqual(afterRename.name, "renamed-review");
+    assert.strictEqual(afterRename.maxRuns, initial.maxRuns);
+    assert.strictEqual(afterRename.expiresAt, initial.expiresAt);
+
+    const clearedMaxRuns = await ctx.paseo(["schedule", "update", id, "--no-max-runs", "--json"]);
+    assert.strictEqual(clearedMaxRuns.exitCode, 0, clearedMaxRuns.stderr);
+    const withoutMaxRuns = await inspect();
+    assert.strictEqual(withoutMaxRuns.maxRuns, null);
+    assert.strictEqual(withoutMaxRuns.expiresAt, initial.expiresAt);
+
+    const clearedExpiration = await ctx.paseo([
+      "schedule",
+      "update",
+      id,
+      "--no-expires-in",
+      "--json",
+    ]);
+    assert.strictEqual(clearedExpiration.exitCode, 0, clearedExpiration.stderr);
+    const withoutExpiration = await inspect();
+    assert.strictEqual(withoutExpiration.maxRuns, null);
+    assert.strictEqual(withoutExpiration.expiresAt, null);
+
+    const updatedLimits = await ctx.paseo([
+      "schedule",
+      "update",
+      id,
+      "--max-runs",
+      "5",
+      "--expires-in",
+      "2h",
+      "--json",
+    ]);
+    assert.strictEqual(updatedLimits.exitCode, 0, updatedLimits.stderr);
+    const withLimits = await inspect();
+    assert.strictEqual(withLimits.maxRuns, 5);
+    assert.strictEqual(typeof withLimits.expiresAt, "string");
+
+    const clearedBoth = await ctx.paseo([
+      "schedule",
+      "update",
+      id,
+      "--no-max-runs",
+      "--no-expires-in",
+      "--json",
+    ]);
+    assert.strictEqual(clearedBoth.exitCode, 0, clearedBoth.stderr);
+    const withoutLimits = await inspect();
+    assert.strictEqual(withoutLimits.maxRuns, null);
+    assert.strictEqual(withoutLimits.expiresAt, null);
+
+    const deleted = await ctx.paseo(["schedule", "delete", id, "--json"]);
+    assert.strictEqual(deleted.exitCode, 0, deleted.stderr);
+    console.log("schedule update clears limits\n");
+  }
+
+  {
+    console.log("Test 1e: compatibility agent-target schedules remain deletable");
     const created = await ctx.paseo(
       [
         "schedule",

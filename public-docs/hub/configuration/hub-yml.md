@@ -90,17 +90,17 @@ An environment is a complete named object. A step selects its name; objects are 
 
 Each agent is one complete provider configuration:
 
-| Field              | Required | Notes                                                            |
-| ------------------ | -------- | ---------------------------------------------------------------- |
-| `provider`         | yes      | Provider ID.                                                     |
-| `model`            | no       | Provider model ID.                                               |
-| `mode`             | no       | Paseo mode ID.                                                   |
-| `thinkingOptionId` | no       | Provider thinking option.                                        |
-| `options`          | no       | JSON-safe provider-native options, preserving names and nesting. |
+| Field              | Required | Notes                                                                  |
+| ------------------ | -------- | ---------------------------------------------------------------------- |
+| `provider`         | yes      | Provider ID. Hub runs unattended, so `claude`, `codex`, or `opencode`. |
+| `model`            | no       | Provider model ID.                                                     |
+| `mode`             | no       | Paseo mode ID.                                                         |
+| `thinkingOptionId` | no       | Provider thinking option.                                              |
+| `options`          | no       | JSON-safe provider-native options, preserving names and nesting.       |
 
 A named selection preserves the complete object, including structured options. Named agents have no parent, patch, or per-step override.
 
-Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
+Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema when the trigger is saved or deployed, so a value it does not offer is refused then rather than at the first run; Hub does not translate provider-native options. See [Saving checks the agent against the daemon](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
 
 ## Workflow files
 
@@ -141,14 +141,15 @@ steps:
 
 Use one of these semantic event names for new GitHub workflows:
 
-| `on`                                  | Matches                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| `github.issue_created`                | An `issues` delivery whose action is `opened`.                            |
-| `github.pull_request_created`         | A `pull_request` delivery whose action is `opened`.                       |
-| `github.issue_comment_created`        | An `issue_comment` delivery whose action is `created`, on an issue.       |
-| `github.pull_request_comment_created` | An `issue_comment` delivery whose action is `created`, on a pull request. |
-| `github.issue_label_added`            | An `issues` delivery whose action is `labeled`.                           |
-| `github.pull_request_label_added`     | A `pull_request` delivery whose action is `labeled`.                      |
+| `on`                                   | Matches                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `github.issue_created`                 | An `issues` delivery whose action is `opened`.                            |
+| `github.pull_request_created`          | A `pull_request` delivery whose action is `opened`.                       |
+| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.                          |
+| `github.issue_comment_created`         | An `issue_comment` delivery whose action is `created`, on an issue.       |
+| `github.pull_request_comment_created`  | An `issue_comment` delivery whose action is `created`, on a pull request. |
+| `github.issue_label_added`             | An `issues` delivery whose action is `labeled`.                           |
+| `github.pull_request_label_added`      | A `pull_request` delivery whose action is `labeled`.                      |
 
 Existing configurations may continue to use `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. These legacy events retain their existing behavior.
 

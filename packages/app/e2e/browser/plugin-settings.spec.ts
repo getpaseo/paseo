@@ -14,6 +14,7 @@ import {
   expectConflictPreservesDraft,
   discardTitle,
   returnAndReopenSettings,
+  returnToPluginsPage,
   expectSettingsUnavailable,
 } from "../support/helpers/plugin-settings";
 
@@ -41,6 +42,11 @@ test("another client's save preserves a conflicting draft", async ({ page }) => 
   await saveTitle(page);
   await expectConflictPreservesDraft(page, "Unsaved title");
   await discardTitle(page);
+});
+
+test("Back to plugins returns from a plugin settings screen", async ({ page }) => {
+  await openDisplaySettings(page);
+  await returnToPluginsPage(page);
 });
 
 test.describe("compact plugin settings", () => {

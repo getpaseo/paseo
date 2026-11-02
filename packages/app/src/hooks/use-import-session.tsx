@@ -1,10 +1,9 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { type Href, useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useHostChooser } from "@/hosts/host-chooser";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { buildHostAgentDetailRoute } from "@/utils/host-routes";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useOpenProject } from "@/hooks/use-open-project";
 
 interface UseImportSessionOptions {
@@ -31,7 +30,6 @@ interface ImportedAgentTarget {
 export function useNavigateToImportedAgent(
   serverId: string | null | undefined,
 ): (agent: ImportedAgentTarget) => Promise<void> {
-  const router = useRouter();
   const normalizedServerId = serverId?.trim() || null;
   const openProject = useOpenProject(normalizedServerId);
 
@@ -40,10 +38,10 @@ export function useNavigateToImportedAgent(
       if (!normalizedServerId) return;
       const project = await openProject(agent.cwd);
       if (project.ok) {
-        router.push(buildHostAgentDetailRoute(normalizedServerId, agent.id) as Href);
+        navigateToAgent({ serverId: normalizedServerId, agentId: agent.id });
       }
     },
-    [normalizedServerId, openProject, router],
+    [normalizedServerId, openProject],
   );
 }
 

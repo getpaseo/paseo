@@ -13,6 +13,10 @@ import { writeFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
 
 type Observer = (snapshot: CreationSnapshot) => void;
+export interface CreatedAgent {
+  agent: AgentSnapshotPayload;
+  initialPromptStarted: boolean;
+}
 interface CreationRequest {
   key: string;
   request: { [key: string]: unknown };
@@ -28,7 +32,7 @@ interface CreationRequest {
     agentId: string,
     workspace: WorkspaceDescriptorPayload | undefined,
     onReady: (agent: AgentSnapshotPayload) => Promise<void>,
-  ) => Promise<AgentSnapshotPayload>;
+  ) => Promise<CreatedAgent>;
 }
 export type CreationInput = CreationRequest &
   (
@@ -167,7 +171,7 @@ export class CreationService {
       if (input.hasAgent && input.createAgent && !record.snapshot.agent) {
         record.inFlight = "agent";
         await this.write(identity, record);
-        const agent = await input.createAgent(
+        const { agent, initialPromptStarted } = await input.createAgent(
           record.snapshot.agentId!,
           record.snapshot.workspace,
           async (readyAgent) => {
@@ -180,7 +184,7 @@ export class CreationService {
           },
         );
         record.inFlight = null;
-        if (input.hasPrompt)
+        if (initialPromptStarted)
           await this.publish(identity, record, { phase: "prompt_started", agent });
         else record.snapshot = { ...record.snapshot, agent };
       }

@@ -1,3 +1,5 @@
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
+import type { TerminalCharacterWidths } from "../character-widths";
 import {
   Terminal as HeadlessTerminal,
   type IBufferCell,
@@ -17,11 +19,12 @@ export interface NativeHeadlessTerminalOptions {
   rows: number;
   cols: number;
   scrollbackLines?: number;
+  /** Defaults to `graphemes`, the table current daemons use. */
+  characterWidths?: TerminalCharacterWidths;
 }
 
 export interface NativeHeadlessTerminal {
   write(data: NativeTerminalWriteData): Promise<void>;
-  getState(): TerminalState;
   getViewportState(input?: TerminalViewportStateInput): TerminalViewportState;
   getInputModeState(): NativeHeadlessTerminalInputModeState;
   getBufferBounds(): TerminalBufferBounds;
@@ -165,35 +168,6 @@ function extractRow(
   return rowCells;
 }
 
-function extractGrid(terminal: HeadlessTerminalInstance): TerminalCellRow[] {
-  const grid: TerminalCellRow[] = [];
-  const baseY = terminal.buffer.active.baseY;
-  const reusableCell = terminal.buffer.active.getNullCell();
-  for (let row = 0; row < terminal.rows; row += 1) {
-    grid.push(extractRow(terminal, baseY + row, reusableCell));
-  }
-  return grid;
-}
-
-function extractScrollback(
-  terminal: HeadlessTerminalInstance,
-  options: { scrollbackLines?: number },
-): TerminalCellRow[] {
-  const scrollback: TerminalCellRow[] = [];
-  const scrollbackLines = terminal.buffer.active.baseY;
-  const startRow =
-    typeof options.scrollbackLines === "number"
-      ? Math.max(0, scrollbackLines - options.scrollbackLines)
-      : 0;
-  const reusableCell = terminal.buffer.active.getNullCell();
-
-  for (let row = startRow; row < scrollbackLines; row += 1) {
-    scrollback.push(extractRow(terminal, row, reusableCell));
-  }
-
-  return scrollback;
-}
-
 function extractBufferWindow(
   terminal: HeadlessTerminalInstance,
   oldestRow: number,
@@ -290,19 +264,6 @@ function extractInputModeState(
   };
 }
 
-function extractState(
-  terminal: HeadlessTerminalInstance,
-  options: { scrollbackLines?: number },
-): TerminalState {
-  return {
-    rows: terminal.rows,
-    cols: terminal.cols,
-    grid: extractGrid(terminal),
-    scrollback: extractScrollback(terminal, options),
-    cursor: extractCursorState(terminal),
-  };
-}
-
 function extractViewportState(
   terminal: HeadlessTerminalInstance,
   coordinateEpoch: number,
@@ -340,6 +301,12 @@ export function createNativeHeadlessTerminal(
     scrollback: options.scrollbackLines ?? 1000,
     allowProposedApi: true,
   });
+  // Grapheme widths give each emoji cluster one two-column cell, the width the
+  // native renderer draws it at. Legacy hosts measure with xterm's default
+  // table, so their cursor reports and replay stay consistent with it.
+  if ((options.characterWidths ?? "graphemes") === "graphemes") {
+    terminal.loadAddon(new UnicodeGraphemesAddon());
+  }
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
   const coordinateStorage = new Map<object, TerminalCoordinateStorage>();
@@ -379,9 +346,6 @@ export function createNativeHeadlessTerminal(
           resolve();
         });
       });
-    },
-    getState(): TerminalState {
-      return extractState(terminal, { scrollbackLines: options.scrollbackLines });
     },
     getViewportState(input?: TerminalViewportStateInput): TerminalViewportState {
       return extractViewportState(

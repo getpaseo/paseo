@@ -88,6 +88,7 @@ describe("OpenCodeServerManager generations", () => {
     const acquisition = await manager.acquireCurrent();
 
     expect(runtime.spawnCalls[0]?.options.baseEnv).toEqual(baseEnv);
+    expect(acquisition.environment).toBe(runtime.spawnCalls[0]?.options.baseEnv);
     await acquisition.release();
   });
 

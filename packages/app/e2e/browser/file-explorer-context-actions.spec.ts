@@ -2,10 +2,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
-import { openFileExplorer } from "../support/helpers/file-explorer";
+import { downloadFileFromExplorer, openFileExplorer } from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 let workspace: SeededWorkspace;
@@ -443,4 +443,26 @@ test("hides unsupported file operations and revert actions", async ({ page }) =>
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-duplicate")).toHaveCount(0);
   await expect(page.getByTestId("diff-file-0-revert")).toHaveCount(0);
+});
+
+test("downloads a file over direct TCP with its original filename and bytes", async ({
+  page,
+}, testInfo) => {
+  const fileName = "rapport données.bin";
+  const source = Buffer.from([0, 1, 2, 127, 128, 255, 10]);
+  await writeFile(path.join(workspace.workspaceDirectory, fileName), source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const downloaded = await downloadFileFromExplorer(page, fileName);
+  const url = new URL(downloaded.url());
+  expect(url.protocol).toBe("http:");
+  expect(url.port).toBe(getE2EDaemonPort());
+  expect(url.pathname).toBe("/api/files/download");
+  expect(url.searchParams.get("token")).toBeTruthy();
+  expect(downloaded.suggestedFilename()).toBe(fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await downloaded.failure()).toBeNull();
+  expect(await readFile(savedFile)).toEqual(source);
 });

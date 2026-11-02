@@ -8,6 +8,7 @@ import { AgentManager } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 import {
   MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
+  MOCK_LOAD_TEST_HANDLED_COMMAND,
   MockLoadTestAgentClient,
 } from "./mock-load-test-agent.js";
 
@@ -47,6 +48,18 @@ describe("MockLoadTestAgentClient", () => {
         intervalMs: 40,
       },
     });
+  });
+
+  test("lists the command it handles without starting a turn", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({ provider: "mock", cwd: process.cwd() });
+
+    const commands = (await session.listCommands?.()) ?? [];
+
+    expect(commands.map((command) => `/${command.name} ${command.argumentHint}`)).toEqual([
+      MOCK_LOAD_TEST_HANDLED_COMMAND,
+    ]);
+    expect(session.tryHandleOutOfBand?.(MOCK_LOAD_TEST_HANDLED_COMMAND)).not.toBeNull();
   });
 
   test("rejects the configured number of prompts before starting a retry", async () => {
@@ -447,6 +460,18 @@ describe("MockLoadTestAgentClient", () => {
     ).toEqual([]);
     await session.interrupt();
     unsubscribe();
+  });
+
+  test("emits distinct configured responses across consecutive fixture turns", async () => {
+    const session = await new MockLoadTestAgentClient().createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+      featureValues: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
+    });
+    await session.run("Emit a synthetic turn failure.");
+    expect((await session.run("First prompt")).finalText).toBe("First response");
+    expect((await session.run("Second prompt")).finalText).toBe("![Second](second.png)");
   });
 
   test("emits a settled assistant Markdown image path selected by prompt", async () => {

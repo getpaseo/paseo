@@ -2,11 +2,17 @@ import { expect, test } from "../support/fixtures";
 import { openCommandCenter } from "../support/helpers/command-center";
 import {
   delayDirectorySuggestionResponses,
+  holdDirectorySuggestionResponses,
   expectOneLineTruncatedFileResult,
   expectStableCommandCenterLayout,
   failDirectorySuggestionRequests,
   startCommandCenterLayoutObservation,
 } from "../support/helpers/command-center-file-search";
+import {
+  scrollCommandCenterAwayFromSelection,
+  expectCommandCenterScrollToStayAt,
+  expectKeyboardNavigationToResume,
+} from "../support/helpers/command-center-scroll";
 import { expectFileTabOpen } from "../support/helpers/file-explorer";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -136,4 +142,95 @@ test("unscoped command search keeps commands visible and reports file-search fai
   } finally {
     await Promise.allSettled(seeded.map((workspace) => workspace.cleanup()));
   }
+});
+
+test("manual scrolling cancels a pending file-search reveal and query editing restores it", async ({
+  page,
+}) => {
+  const seeded = await seedWorkspace({
+    repoPrefix: "command-center-delayed-scroll-",
+    title: "Delayed file search scroll",
+    repo: { files: paseoSizedFiles() },
+  });
+  try {
+    const responses = await holdDirectorySuggestionResponses(page);
+    await gotoWorkspace(page, seeded.workspaceId);
+    await page.keyboard.press("Meta+P");
+    const panel = page.getByTestId("command-center-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByTestId("command-center-input").fill("index");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    responses.hold();
+    await panel.getByTestId("command-center-input").fill("index.");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeVisible();
+    const offset = await scrollCommandCenterAwayFromSelection(page, panel);
+    await responses.release();
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expectCommandCenterScrollToStayAt(panel, offset);
+    await expectKeyboardNavigationToResume(page, panel, offset);
+
+    const nextOffset = await scrollCommandCenterAwayFromSelection(page, panel);
+    await panel.getByTestId("command-center-input").fill("index.ts");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expect
+      .poll(() => panel.getByTestId("command-center-results").evaluate((el) => el.scrollTop))
+      .toBeLessThan(nextOffset);
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+P");
+    await expect(panel.getByTestId("command-center-input")).toHaveValue("");
+    await panel.getByTestId("command-center-input").fill("index");
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeInViewport({ ratio: 1 });
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test.describe("Compact file search context", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("a file result opens a sheet above the left sidebar", async ({ page }) => {
+    const seeded = await seedWorkspace({
+      repoPrefix: "compact-search-file-",
+      title: "Compact file lookup",
+      repo: { files: [{ path: "lookup.ts", content: "export const lookup = true;\n" }] },
+    });
+    try {
+      await page.goto(`/h/${process.env.E2E_SERVER_ID}/workspace/${seeded.workspaceId}`);
+      await page.getByRole("button", { name: "Open menu", exact: true }).click();
+      const search = await openCommandCenter(page);
+      await search.getByTestId("command-center-input").fill("lookup.ts");
+      await search.getByRole("button", { name: "lookup.ts", exact: true }).click();
+      await expect(page.getByTestId("sheet-tab-body")).toBeVisible();
+      await expect(page.getByTestId("sheet-tab-header")).toContainText("lookup.ts");
+      await page
+        .getByTestId("sheet-tab-header")
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+      await expect(page.getByTestId("sheet-tab-body")).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await expect(page.getByTestId("sidebar-search")).toBeVisible();
+    } finally {
+      await seeded.cleanup();
+    }
+  });
 });

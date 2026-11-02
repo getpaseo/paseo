@@ -1,9 +1,5 @@
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import type {
-  ModalComponent,
-  ModalContentProps,
-  ModalProps,
-} from "@getpaseo/plugin/client/react-native";
+import type { ModalComponent, ModalContentProps, ModalProps } from "@getpaseo/plugin/client/ui";
 import { usePluginRuntimeContextBridge } from "@getpaseo/plugin/client/host";
 import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react";
 import { ToastApiProvider, useToast as useAppToast } from "@/contexts/toast-api-context";

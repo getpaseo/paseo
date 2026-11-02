@@ -1,3 +1,4 @@
+import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
@@ -8,11 +9,7 @@ const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
 type CheckoutDiffWorkspace = Pick<
   WorkspaceGitService,
-  | "getCheckoutDiff"
-  | "getSnapshot"
-  | "peekSnapshot"
-  | "registerWorkspace"
-  | "requestWorkingTreeWatch"
+  "getCheckoutDiff" | "getSnapshot" | "registerWorkspace" | "requestWorkingTreeWatch"
 >;
 
 export type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest["compare"];
@@ -63,14 +60,17 @@ export interface CheckoutDiffSubscription {
 
 export class CheckoutDiffManager {
   private readonly workspaceGitService: CheckoutDiffWorkspace;
+  private readonly workspaceRuntimeStore: WorkspaceRuntimeStore;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
 
   constructor(options: {
     logger: pino.Logger;
     paseoHome: string;
     workspaceGitService: CheckoutDiffWorkspace;
+    workspaceRuntimeStore: WorkspaceRuntimeStore;
   }) {
     this.workspaceGitService = options.workspaceGitService;
+    this.workspaceRuntimeStore = options.workspaceRuntimeStore;
   }
 
   async read(
@@ -158,15 +158,15 @@ export class CheckoutDiffManager {
     }
     const trimmedBaseRef = compare.baseRef?.trim();
     return trimmedBaseRef
-      ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace }
-      : { mode: "base", ignoreWhitespace };
+      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace }
+      : { mode: compare.mode, ignoreWhitespace };
   }
 
   private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
     return JSON.stringify([
       cwd,
       compare.mode,
-      compare.mode === "base" ? (compare.baseRef ?? "") : "",
+      compare.mode !== "uncommitted" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
     ]);
   }
@@ -364,9 +364,9 @@ export class CheckoutDiffManager {
   }
 
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
-    if (target.compare.mode === "base") {
+    if (target.compare.mode !== "uncommitted") {
       const snapshot =
-        this.workspaceGitService.peekSnapshot(target.cwd) ??
+        this.workspaceRuntimeStore.get(target.cwd) ??
         (await this.workspaceGitService.getSnapshot(target.cwd, { includeForge: false }));
       target.diffCwd = snapshot.git.repoRoot ?? target.cwd;
       if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
@@ -382,7 +382,7 @@ export class CheckoutDiffManager {
         return;
       }
       target.workspaceGitUnsubscribe = workspaceSubscription.unsubscribe;
-      return;
+      if (target.compare.mode === "base") return;
     }
 
     const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(

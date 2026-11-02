@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -298,8 +299,8 @@ describe("custom skill selection", () => {
       available: ["paseo", "paseo-advisor", "paseo-loop"],
       installed: ["paseo", "paseo-loop"],
     });
-    expect(await installedIn(sandbox.targets, "paseo")).toEqual([true, true, true]);
-    expect(await installedIn(sandbox.targets, "paseo-loop")).toEqual([true, true, true]);
+    expect(await installedIn(sandbox.targets, "paseo")).toEqual([true, true, false]);
+    expect(await installedIn(sandbox.targets, "paseo-loop")).toEqual([true, true, false]);
     expect(await installedIn(sandbox.targets, "paseo-advisor")).toEqual([false, false, false]);
   });
 
@@ -322,7 +323,7 @@ describe("custom skill selection", () => {
     const status = await installSkills(sandbox.targets, only("paseo"));
 
     expect(status.state).toBe("up-to-date");
-    expect(await installedIn(sandbox.targets, "paseo")).toEqual([true, true, true]);
+    expect(await installedIn(sandbox.targets, "paseo")).toEqual([true, true, false]);
     expect(await installedIn(sandbox.targets, "paseo-loop")).toEqual([false, false, false]);
     expect(await installedIn(sandbox.targets, "paseo-advisor")).toEqual([false, false, false]);
   });
@@ -395,7 +396,7 @@ describe("installSkills / updateSkills", () => {
     await fs.rm(sandbox.root, { recursive: true, force: true });
   });
 
-  it("installs from a clean machine, populates all three targets, and leaves user dirs alone", async () => {
+  it("installs into shared and Claude roots without duplicating Codex discovery", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     await writeOnDiskSkill(sandbox.targets.agentsDir, "unslop", { "SKILL.md": "user-unslop" });
 
@@ -411,14 +412,106 @@ describe("installSkills / updateSkills", () => {
       expect(
         await fs.readFile(path.join(sandbox.targets.agentsDir, name, "SKILL.md"), "utf-8"),
       ).toBe(name === "paseo" ? "paseo-v1" : "loop-v1");
-      expect(
-        await fs.readFile(path.join(sandbox.targets.codexDir, name, "SKILL.md"), "utf-8"),
-      ).toBe(name === "paseo" ? "paseo-v1" : "loop-v1");
+      expect(await pathExists(path.join(sandbox.targets.codexDir, name, "SKILL.md"))).toBe(false);
       expect(await pathExists(path.join(sandbox.targets.claudeDir, name))).toBe(true);
     }
     expect(
       await fs.readFile(path.join(sandbox.targets.agentsDir, "unslop", "SKILL.md"), "utf-8"),
     ).toBe("user-unslop");
+  });
+
+  it("retires unchanged managed Codex copies while preserving personal files", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await installSkills(sandbox.targets, ALL_SKILLS);
+    const legacy = path.join(sandbox.targets.codexDir, "paseo");
+    const managed = { "SKILL.md": "paseo-v1", "references/old.md": "bundled reference" };
+    const hashes = Object.fromEntries(
+      Object.entries(managed).map(([name, content]) => [
+        name,
+        createHash("sha256").update(content).digest("hex"),
+      ]),
+    );
+    await writeFiles(legacy, {
+      ...managed,
+      "notes/mine.md": "personal notes",
+      ".paseo-managed-files.json": JSON.stringify({ version: 1, files: hashes }),
+    });
+    const status = await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS);
+    expect(status.state).toBe("up-to-date");
+    expect(status.ops).toEqual([]);
+    expect(await pathExists(path.join(legacy, "SKILL.md"))).toBe(false);
+    expect(await pathExists(path.join(legacy, "references/old.md"))).toBe(false);
+    expect(await fs.readFile(path.join(legacy, "notes/mine.md"), "utf8")).toBe("personal notes");
+    expect(await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS)).toEqual(status);
+  });
+
+  it("keeps edited or untracked Codex skill definitions", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await installSkills(sandbox.targets, ALL_SKILLS);
+    const originalHash = createHash("sha256").update("paseo-v1").digest("hex");
+    await writeOnDiskSkill(sandbox.targets.codexDir, "paseo", {
+      "SKILL.md": "personalized skill",
+      ".paseo-managed-files.json": JSON.stringify({
+        version: 1,
+        files: { "SKILL.md": originalHash },
+      }),
+    });
+    await writeOnDiskSkill(sandbox.targets.codexDir, "paseo-loop", {
+      "SKILL.md": "untracked skill",
+    });
+    expect((await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS)).state).toBe("up-to-date");
+    expect(
+      await fs.readFile(path.join(sandbox.targets.codexDir, "paseo", "SKILL.md"), "utf8"),
+    ).toBe("personalized skill");
+    expect(
+      await fs.readFile(path.join(sandbox.targets.codexDir, "paseo-loop", "SKILL.md"), "utf8"),
+    ).toBe("untracked skill");
+  });
+
+  it.each([
+    { alias: "codex", target: "agents" },
+    { alias: "codex", target: "claude" },
+    { alias: "claude", target: "codex" },
+  ] as const)(
+    "keeps installed skills when the $alias root links to the $target root",
+    async ({ alias, target }) => {
+      await writeCurrentBundle(sandbox.targets.sourceDir);
+      const rootOf = { agents: "agentsDir", claude: "claudeDir", codex: "codexDir" } as const;
+      const aliasRoot = sandbox.targets[rootOf[alias]];
+      const targetRoot = sandbox.targets[rootOf[target]];
+      await fs.mkdir(targetRoot, { recursive: true });
+      await fs.mkdir(path.dirname(aliasRoot), { recursive: true });
+      await fs.symlink(targetRoot, aliasRoot, "dir");
+
+      const installed = await installSkills(sandbox.targets, ALL_SKILLS);
+      const updated = await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS);
+
+      expect(installed.state).toBe("up-to-date");
+      expect(updated.state).toBe("up-to-date");
+      for (const name of ["paseo", "paseo-loop"]) {
+        expect(await installedIn(sandbox.targets, name)).toEqual([true, true, true]);
+      }
+    },
+  );
+
+  it("keeps an installed skill when its Codex directory links to the shared copy", async () => {
+    await writeCurrentBundle(sandbox.targets.sourceDir);
+    await fs.mkdir(path.join(sandbox.targets.agentsDir, "paseo"), { recursive: true });
+    await fs.mkdir(sandbox.targets.codexDir, { recursive: true });
+    await fs.symlink(
+      path.join(sandbox.targets.agentsDir, "paseo"),
+      path.join(sandbox.targets.codexDir, "paseo"),
+      "dir",
+    );
+
+    const installed = await installSkills(sandbox.targets, ALL_SKILLS);
+    const updated = await autoUpdateInstalledSkills(sandbox.targets, ALL_SKILLS);
+
+    expect(installed.state).toBe("up-to-date");
+    expect(updated.state).toBe("up-to-date");
+    expect(
+      await fs.readFile(path.join(sandbox.targets.agentsDir, "paseo", "SKILL.md"), "utf8"),
+    ).toBe("paseo-v1");
   });
 
   it("repairs missing and edited skills without deleting a legacy directory", async () => {

@@ -1,3 +1,4 @@
+import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import { useCallback, useMemo } from "react";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import { resolveFocusedChatTarget } from "@/composer/focused-chat-target";
@@ -12,7 +13,6 @@ export function useAddFileToChat(input: { serverId: string; workspaceId?: string
   const layout = useWorkspaceLayoutStore((state) =>
     workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined,
   );
-  const focusTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const focusedChat = useMemo(
     () => resolveFocusedChatTarget({ serverId: input.serverId, layout }),
     [input.serverId, layout],
@@ -26,9 +26,9 @@ export function useAddFileToChat(input: { serverId: string; workspaceId?: string
         draftKey: focusedChat.draftKey,
         attachment: createWorkspaceFileAttachment({ path: filePath }),
       });
-      focusTab(workspaceKey, focusedChat.tabId);
+      revealWorkspaceTab(workspaceKey, focusedChat.tabId);
     },
-    [focusTab, focusedChat, workspaceKey],
+    [focusedChat, workspaceKey],
   );
   return { addFile, canAddToChat: focusedChat !== null };
 }

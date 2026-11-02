@@ -656,6 +656,29 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    {
+      type: "commandExecution",
+      id: "codex-declined-command",
+      status: "declined",
+      command: "printf ok > /outside/permission.txt",
+      cwd: "/tmp/repo",
+      aggregatedOutput: null,
+      exitCode: null,
+    },
+    {
+      type: "fileChange",
+      id: "codex-declined-patch",
+      status: "declined",
+      changes: [],
+    },
+  ])("settles a declined $type as failed instead of running", (threadItem) => {
+    const item = expectMapped(mapCodexToolCallFromThreadItem(threadItem));
+
+    expect(item.callId).toBe(threadItem.id);
+    expect(item.status).toBe("failed");
+  });
+
   it("maps unknown tools to unknown detail with raw payloads", () => {
     const item = expectMapped(
       mapCodexToolCallEnvelope({

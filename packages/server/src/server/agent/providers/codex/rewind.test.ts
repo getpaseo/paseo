@@ -96,6 +96,7 @@ describe("Codex Rewind", () => {
       model: "gpt-5.4-mini",
       serviceTier: null,
       userMessageTurns,
+      threadRollbackAvailable: true,
       setThreadId: (threadId) => {
         reboundThreadId = threadId;
       },
@@ -107,7 +108,7 @@ describe("Codex Rewind", () => {
         cwd: "/workspace/project",
         model: "gpt-5.4-mini",
         serviceTier: null,
-        excludeTurns: false,
+        excludeTurns: true,
         persistExtendedHistory: true,
       },
     ]);
@@ -131,6 +132,7 @@ describe("Codex Rewind", () => {
       threadId: "source-thread",
       messageId: "codex-second",
       userMessageTurns,
+      threadRollbackAvailable: true,
       setThreadId: (threadId) => {
         reboundThreadId = threadId;
       },
@@ -175,6 +177,7 @@ describe("Codex Rewind", () => {
       model: "gpt-5.4-mini",
       serviceTier: null,
       userMessageTurns,
+      threadRollbackAvailable: true,
       setThreadId: (threadId) => {
         reboundThreadId = threadId;
       },
@@ -187,7 +190,7 @@ describe("Codex Rewind", () => {
         cwd: "/workspace/project",
         model: "gpt-5.4-mini",
         serviceTier: null,
-        excludeTurns: false,
+        excludeTurns: true,
         persistExtendedHistory: true,
       },
     ]);
@@ -218,6 +221,7 @@ describe("Codex Rewind", () => {
         model: "gpt-5.4-mini",
         serviceTier: null,
         userMessageTurns,
+        threadRollbackAvailable: true,
         setThreadId: (threadId) => {
           reboundThreadId = threadId;
         },
@@ -239,6 +243,7 @@ describe("Codex Rewind", () => {
         threadId: "source-thread",
         messageId: "missing-message",
         userMessageTurns,
+        threadRollbackAvailable: true,
         setThreadId: () => undefined,
       }),
     ).rejects.toThrow("Codex could not find user message missing-message");

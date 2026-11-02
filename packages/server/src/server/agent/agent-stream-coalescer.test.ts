@@ -723,6 +723,57 @@ describe("AgentStreamCoalescer", () => {
     ]);
   });
 
+  test("keeps a known tool call detail when a later update in the window has none", () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+
+    coalescer.handle(
+      "agent-1",
+      timeline({
+        type: "tool_call",
+        callId: "agent-call",
+        name: "Task",
+        status: "running",
+        error: null,
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "List files",
+          log: "",
+          actions: [],
+        },
+      }),
+    );
+    coalescer.handle(
+      "agent-1",
+      timeline({
+        type: "tool_call",
+        callId: "agent-call",
+        name: "Agent",
+        status: "completed",
+        error: null,
+        detail: { type: "unknown", input: { description: "List files" }, output: null },
+      }),
+    );
+
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      {
+        type: "tool_call",
+        callId: "agent-call",
+        name: "Agent",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "List files",
+          log: "",
+          actions: [],
+        },
+      },
+    ]);
+  });
+
   test("preserves mixed text and tool call arrival order within a flush", async () => {
     const { coalescer, flushes } = createHarness();
     primeLeadingEdge(coalescer, flushes);

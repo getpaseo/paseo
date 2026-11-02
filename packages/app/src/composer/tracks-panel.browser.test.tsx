@@ -1,7 +1,8 @@
-import React, { act, type ReactNode } from "react";
+import React, { act, useCallback, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RetainedPanelActivity } from "@/components/retained-panel";
 import { ComposerTrackPill, ComposerTrackRow, type ComposerTrackPillSegment } from "./tracks";
 
 const SUBAGENT_SEGMENTS: ComposerTrackPillSegment[] = [{ bucket: null, text: "3 subagents" }];
@@ -109,6 +110,43 @@ describe("composer track panel", () => {
     expect(row("row")).not.toBeNull();
   });
 
+  it("closes for good when the panel it belongs to leaves the screen", () => {
+    const onPress = vi.fn();
+    function Harness() {
+      const [active, setActive] = useState(true);
+      const hide = useCallback(() => setActive(false), []);
+      const show = useCallback(() => setActive(true), []);
+      return (
+        <>
+          <Pressable accessibilityRole="button" testID="hide" onPress={hide} />
+          <Pressable accessibilityRole="button" testID="show" onPress={show} />
+          <RetainedPanelActivity active={active}>
+            <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
+              <ComposerTrackRow
+                accessibilityLabel="Subagent one"
+                testID="row"
+                closeOnSelect={false}
+                onPress={onPress}
+              >
+                <Text>Subagent one</Text>
+              </ComposerTrackRow>
+            </ComposerTrackPill>
+          </RetainedPanelActivity>
+        </>
+      );
+    }
+    mount(<Harness />);
+
+    openPanel();
+    expect(isPanelOpen()).toBe(true);
+
+    click(row("hide") as Element);
+    click(row("show") as Element);
+
+    expect(isPanelOpen()).toBe(false);
+    expect(row("row")).toBeNull();
+  });
+
   it("leaves the panel alone when a row's own action button is pressed", () => {
     const onPress = vi.fn();
     const onAction = vi.fn();
@@ -124,11 +162,33 @@ describe("composer track panel", () => {
     );
 
     openPanel();
+    expect(document.querySelector("button button")).toBeNull();
+    expect(row("row")?.getAttribute("role")).toBe("menuitem");
     click(row("row-archive") as Element);
 
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onPress).not.toHaveBeenCalled();
     expect(isPanelOpen()).toBe(true);
+  });
+
+  it.each(["Enter", " "])("selects a track row with %j", (key) => {
+    const select = vi.fn();
+    mount(
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
+        <ComposerTrackRow accessibilityLabel="Subagent one" testID="row" onPress={select}>
+          <Text>Subagent one</Text>
+        </ComposerTrackRow>
+      </ComposerTrackPill>,
+    );
+    openPanel();
+    const target = row("row") as HTMLElement;
+    act(() => {
+      target.focus();
+      target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      target.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+    });
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(isPanelOpen()).toBe(false);
   });
 });
 

@@ -1,70 +1,74 @@
 import { useCallback, useMemo } from "react";
 import { useAppSettings } from "@/hooks/use-settings";
+import type { AppSettings } from "@/hooks/use-settings/storage";
 import { useInstalledPlugins } from "@/plugins/registry";
-import { groupPluginSidebarContributions } from "@/plugins/sidebar-groups";
+import { groupPluginSidebarItems } from "@/plugins/sidebar-groups";
 import {
   moveSidebarNavItem,
   resolveSidebarNavItems,
   setSidebarNavItemVisible,
   type SidebarNavItem,
+  type SidebarSection,
 } from "./model";
 
-export interface UseSidebarNavItemsReturn {
-  /** Every top-level item in display order, hidden ones included. */
-  items: SidebarNavItem[];
+const PREFERENCE_FIELDS = {
+  header: "sidebarNavItems",
+  footer: "sidebarFooterItems",
+} as const satisfies Record<SidebarSection, keyof AppSettings>;
+
+export interface UseSidebarNavItemsReturn<Section extends SidebarSection> {
+  /** Every item in the section in display order, hidden ones included. */
+  items: SidebarNavItem<Section>[];
   setVisible: (key: string, visible: boolean) => void;
   move: (key: string, direction: "up" | "down") => void;
 }
 
-export function useSidebarNavItems(): UseSidebarNavItemsReturn {
+export function useSidebarNavItems<Section extends SidebarSection>(
+  section: Section,
+): UseSidebarNavItemsReturn<Section> {
   const plugins = useInstalledPlugins();
   const { settings, updateSettings } = useAppSettings();
-  const preferences = settings.sidebarNavItems;
-  const pluginGroups = useMemo(() => groupPluginSidebarContributions(plugins), [plugins]);
+  const field = PREFERENCE_FIELDS[section];
+  const preferences = settings[field];
+  const pluginGroups = useMemo(() => groupPluginSidebarItems(plugins, section), [plugins, section]);
 
   const items = useMemo(
-    () =>
-      resolveSidebarNavItems({
-        pluginGroups,
-        preferences,
-      }),
-    [pluginGroups, preferences],
+    () => resolveSidebarNavItems({ section, pluginGroups, preferences }),
+    [pluginGroups, preferences, section],
   );
 
   const setVisible = useCallback(
     (key: string, visible: boolean) => {
       void updateSettings((current) => {
-        const previous = current.sidebarNavItems;
-        const currentItems = resolveSidebarNavItems({ pluginGroups, preferences: previous });
+        const previous = current[field];
+        const currentItems = resolveSidebarNavItems({
+          section,
+          pluginGroups,
+          preferences: previous,
+        });
         return {
-          sidebarNavItems: setSidebarNavItemVisible({
-            items: currentItems,
-            key,
-            visible,
-            previous,
-          }),
+          [field]: setSidebarNavItemVisible({ items: currentItems, key, visible, previous }),
         };
       });
     },
-    [pluginGroups, updateSettings],
+    [field, pluginGroups, section, updateSettings],
   );
 
   const move = useCallback(
     (key: string, direction: "up" | "down") => {
       void updateSettings((current) => {
-        const previous = current.sidebarNavItems;
-        const currentItems = resolveSidebarNavItems({ pluginGroups, preferences: previous });
+        const previous = current[field];
+        const currentItems = resolveSidebarNavItems({
+          section,
+          pluginGroups,
+          preferences: previous,
+        });
         return {
-          sidebarNavItems: moveSidebarNavItem({
-            items: currentItems,
-            key,
-            direction,
-            previous,
-          }),
+          [field]: moveSidebarNavItem({ items: currentItems, key, direction, previous }),
         };
       });
     },
-    [pluginGroups, updateSettings],
+    [field, pluginGroups, section, updateSettings],
   );
 
   return { items, setVisible, move };

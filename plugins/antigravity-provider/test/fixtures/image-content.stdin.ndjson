@@ -1,0 +1,1 @@
+{"t_ms": 294, "stream": "stdin", "data": {"event": "user", "message": {"content": [{"type": "text", "text": "Describe this image."}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII="}}]}}}

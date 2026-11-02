@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
+import { ToastApiProvider } from "@/contexts/toast-api-context";
 
 const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
   () => ({
@@ -233,7 +234,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("@/components/provider-icons", () => ({
-  getProviderIcon: (provider: string) => () =>
+  useProviderIcon: (provider: string) => () =>
     React.createElement("span", { "data-icon": `provider-${provider}` }),
 }));
 
@@ -280,6 +281,12 @@ vi.mock("@/utils/confirm-dialog", () => ({
 }));
 
 import { ProvidersSection } from "./providers-section";
+
+function unexpectedToast(): never {
+  throw new Error("Provider row interactions should not display a toast");
+}
+
+const toastApi = { show: unexpectedToast, copied: unexpectedToast, error: unexpectedToast };
 
 const claudeEntry: ProviderSnapshotEntry = {
   provider: "claude",
@@ -366,7 +373,11 @@ describe("ProvidersSection", () => {
 
   function render(): void {
     act(() => {
-      root?.render(<ProvidersSection serverId="server-1" />);
+      root?.render(
+        <ToastApiProvider api={toastApi}>
+          <ProvidersSection serverId="server-1" />
+        </ToastApiProvider>,
+      );
     });
   }
 

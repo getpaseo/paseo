@@ -1,4 +1,5 @@
 import { classifyCheck, type CheckPresentation } from "@/git/check-presentation";
+import type { TFunction } from "i18next";
 import type { PrPaneCheck } from "./data";
 
 /**
@@ -16,27 +17,10 @@ const PRESENTATION_ORDER = [
   "ignored",
 ] as const satisfies readonly CheckPresentation[];
 
-/** How each status reads inside a count phrase: "2 failing", "4 in progress". */
-const PRESENTATION_NOUN: Record<CheckPresentation, string> = {
-  actionRequired: "needs action",
-  warning: "warning",
-  failure: "failing",
-  pending: "in progress",
-  manual: "manual",
-  success: "successful",
-  ignored: "skipped",
-};
-
 /** The worst thing happening in the run, which is what the headline and the ring report. */
 export type ChecksOutcome = "actionRequired" | "failure" | "pending" | "success" | "none";
 
-const OUTCOME_HEADLINE: Record<ChecksOutcome, string> = {
-  actionRequired: "Some checks need your attention",
-  failure: "Some checks were not successful",
-  pending: "Some checks haven't completed yet",
-  success: "All checks have passed",
-  none: "No checks",
-};
+const COPY = "workspace.git.pr.checksOverview";
 
 export interface ChecksCountPart {
   status: CheckPresentation;
@@ -58,8 +42,12 @@ export interface ChecksSummary {
   headline: string;
   /** The count phrases behind `detail`, kept apart so the header can label each one. */
   parts: readonly ChecksCountPart[];
-  /** The noun closing the detail line — "checks", or "check" for a run of one. */
-  countNoun: string;
+  /**
+   * The words around the count phrases in `detail`: "" and " checks" in English, where the noun
+   * closes the line, while other languages lead with it.
+   */
+  detailLead: string;
+  detailTrail: string;
   /** The whole line: "2 failing, 4 in progress, 1 successful checks". Empty with no checks. */
   detail: string;
   total: number;
@@ -72,7 +60,7 @@ export interface ChecksSummary {
  * header, the ring, and the grouped list all read from one derivation instead of each
  * filtering the array again with its own idea of what counts.
  */
-export function summarizeChecks(checks: readonly PrPaneCheck[]): ChecksSummary {
+export function summarizeChecks(checks: readonly PrPaneCheck[], t: TFunction): ChecksSummary {
   const groups: ChecksGroup[] = [];
   const parts: ChecksCountPart[] = [];
 
@@ -83,24 +71,27 @@ export function summarizeChecks(checks: readonly PrPaneCheck[]): ChecksSummary {
     }
     groups.push({
       status,
-      label: `${matching.length} ${PRESENTATION_NOUN[status]} ${countNoun(matching.length)}`,
+      label: t(`${COPY}.${matching.length === 1 ? "groupOne" : "groupMany"}.${status}`, {
+        count: matching.length,
+      }),
       checks: matching,
     });
     parts.push({
       status,
       count: matching.length,
-      text: `${matching.length} ${PRESENTATION_NOUN[status]}`,
+      text: t(`${COPY}.count.${status}`, { count: matching.length }),
     });
   }
 
   const outcome = selectOutcome(checks);
-  const noun = countNoun(checks.length);
+  const { lead, trail } = detailFrame(checks.length, t);
   return {
     outcome,
-    headline: OUTCOME_HEADLINE[outcome],
+    headline: t(`${COPY}.headline.${outcome}`),
     parts,
-    countNoun: noun,
-    detail: parts.length === 0 ? "" : `${parts.map((part) => part.text).join(", ")} ${noun}`,
+    detailLead: lead,
+    detailTrail: trail,
+    detail: parts.length === 0 ? "" : `${lead}${parts.map((part) => part.text).join(", ")}${trail}`,
     total: checks.length,
     groups,
   };
@@ -131,6 +122,13 @@ function selectOutcome(checks: readonly PrPaneCheck[]): ChecksOutcome {
   return "success";
 }
 
-function countNoun(count: number): string {
-  return count === 1 ? "check" : "checks";
+/**
+ * The header renders each count phrase on its own, so the translated line is split around
+ * where the phrases go.
+ */
+function detailFrame(total: number, t: TFunction): { lead: string; trail: string } {
+  const marker = "\u0000";
+  const line = t(`${COPY}.${total === 1 ? "detailOne" : "detailMany"}`, { parts: marker });
+  const [lead = "", trail = ""] = line.split(marker);
+  return { lead, trail };
 }

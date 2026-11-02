@@ -35,6 +35,7 @@ import { features } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
+import { SessionUsage } from "./usage.js";
 
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
@@ -45,6 +46,7 @@ export class OpenCodeV2Session implements AgentSession {
   private readonly permissions: SessionPermissions;
   private readonly turns: SessionTurns;
   private readonly children: SessionChildren;
+  private readonly usage: SessionUsage;
   private stream: Promise<void> | null = null;
   private streamAbort = new AbortController();
   private exited = false;
@@ -91,10 +93,30 @@ export class OpenCodeV2Session implements AgentSession {
         await this.reconcile();
         return { info: this.info, history: this.history };
       },
+      reportReconciliationError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode turn reconciliation failed; retrying",
+        ),
       clearPermissions: async () => {
         for (const request of this.permissions.list())
-          await this.permissions.respondToPermission(request.id, { behavior: "deny" });
+          await this.permissions.respondToPermission(request.id, {
+            behavior: "deny",
+            message:
+              "The user answered with a message instead of approving. Their message follows.",
+          });
       },
+    });
+    this.usage = new SessionUsage({
+      client: () => this.client,
+      cwd: config.cwd,
+      info: () => this.info,
+      emit: (event) => this.emit(event),
+      reportError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode context usage update failed",
+        ),
     });
   }
   get id() {
@@ -113,7 +135,7 @@ export class OpenCodeV2Session implements AgentSession {
     await this.configureConnection();
     const location = { directory: this.config.cwd };
     this.modes = modesFromV2((await this.client.agent.list({ location })).data);
-    this.timeline.messages(await messages(this.client, this.id));
+    await this.timeline.messages(await messages(this.client, this.id), () => {});
     await this.startStream();
     await this.children.reconcile(this.id);
   }
@@ -128,6 +150,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   private async configureConnection() {
     const location = { directory: this.config.cwd };
+    await this.connection.bindSession(this.id, this.config.cwd);
     await waitForLocationReady({ client: this.client, location, signal: this.abort.signal });
     if (this.requiresPaseoPlugin)
       await awaitPaseoPlugin({ client: this.client, location, signal: this.abort.signal });
@@ -189,6 +212,11 @@ export class OpenCodeV2Session implements AgentSession {
     if (!this.acquire) throw new Error("OpenCode helper server exited");
     await this.stream;
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     const next = await this.acquire();
     if (this.closed) {
       await next.release();
@@ -243,7 +271,11 @@ export class OpenCodeV2Session implements AgentSession {
   async *streamHistory() {
     await this.reconnectIfExited();
     const history = new V2Timeline(false);
-    yield* history.messages(await messages(this.client, this.id));
+    const events: AgentStreamEvent[] = [];
+    await history.messages(await messages(this.client, this.id), (event) => {
+      events.push(event);
+    });
+    yield* events;
   }
   async getRuntimeInfo() {
     await this.reconnectIfExited();
@@ -276,25 +308,48 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async setModel(model: string | null) {
     await this.reconnectIfExited();
-    const selected = model
-      ? modelRef(model, this.config.thinkingOptionId)
-      : (await this.client.model.default({ location: { directory: this.config.cwd } })).data;
+    const location = { directory: this.config.cwd };
+    const selected = model ? modelRef(model) : (await this.client.model.default({ location })).data;
     if (!selected) throw new Error("OpenCode has no default model");
-    await this.client.session.switchModel({
-      sessionID: this.id,
-      model: {
-        id: selected.id,
-        providerID: selected.providerID,
-        variant: this.config.thinkingOptionId,
-      },
-    });
+    const catalog = await this.client.model.list({ location });
+    const target = catalog.data.find(
+      (entry) =>
+        entry.enabled && entry.providerID === selected.providerID && entry.id === selected.id,
+    );
+    if (!target)
+      throw new Error(`OpenCode model unavailable: ${selected.providerID}/${selected.id}`);
+    const retainedVariant = this.config.thinkingOptionId;
+    const variant =
+      retainedVariant !== "default" && target.variants.some((entry) => entry.id === retainedVariant)
+        ? retainedVariant
+        : undefined;
+    const nextModel = {
+      id: selected.id,
+      providerID: selected.providerID,
+      ...(variant ? { variant } : {}),
+    };
+    await this.client.session.switchModel({ sessionID: this.id, model: nextModel });
+    this.info.model = nextModel;
     this.config.model = model ?? undefined;
+    this.config.thinkingOptionId = variant;
+    this.emit({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: variant ?? null,
+    });
     this.emit({
       type: "model_changed",
       provider: "opencode",
-      runtimeInfo: await this.getRuntimeInfo(),
+      runtimeInfo: {
+        provider: "opencode",
+        sessionId: this.id,
+        model: `${selected.providerID}/${selected.id}`,
+        modeId: this.info.agent ?? null,
+        thinkingOptionId: variant ?? null,
+      },
     });
   }
+
   async setThinkingOption(variant: string | null) {
     await this.reconnectIfExited();
     const model = this.info.model;
@@ -341,6 +396,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions) {
     await this.reconnectIfExited();
+    await this.connection.bindSession(this.id, this.config.cwd);
     return this.turns.startTurn(prompt, options);
   }
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
@@ -364,7 +420,10 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async respondToPermission(requestId: string, response: AgentPermissionResponse) {
     await this.reconnectIfExited();
+    const deniesOwnRequest =
+      response.behavior === "deny" && this.permissions.isOwnedBy(requestId, this.id);
     await this.permissions.respondToPermission(requestId, response);
+    if (deniesOwnRequest) this.turns.requestDenied();
   }
   private async reconcileSnapshot() {
     const [info, history] = await Promise.all([
@@ -373,7 +432,7 @@ export class OpenCodeV2Session implements AgentSession {
     ]);
     this.info = info;
     this.history = history;
-    for (const event of this.timeline.messages(history)) this.emitTimeline(event);
+    await this.timeline.messages(history, (event) => this.emitTimeline(event));
     await this.permissions.reconcile(this.id);
   }
   private async reconcile() {
@@ -388,14 +447,14 @@ export class OpenCodeV2Session implements AgentSession {
     }
   }
   private async reconcileConnection() {
+    await this.connection.bindSession(this.id, this.config.cwd);
     // Session environments are process-local. Reapply this agent's snapshot before
     // reconciling a new connection, including event-stream reconnections.
     if (this.launchEnv)
       await this.client.session.environment({ sessionID: this.id, variables: this.launchEnv });
     await this.reconcile();
     await this.children.reconcile(this.id);
-    const active = await this.client.session.active();
-    if (active[this.id]) this.turns.observeActiveTurn();
+    await this.turns.reconcile();
   }
   private scheduleReconcile() {
     if (this.refreshTimer || this.closed) return;
@@ -438,11 +497,9 @@ export class OpenCodeV2Session implements AgentSession {
       return;
     }
     this.permissions.observe(event);
-    if (event.type === "session.execution.failed")
-      this.turns.executionError = event.data.error.message;
+    this.usage.observe(event);
+    this.turns.observe(event);
     this.scheduleReconcile();
-    if (event.type !== "session.execution.started" || this.turns.id) return;
-    this.turns.observeActiveTurn();
   }
   private async consume(ready: () => void, fail: (error: unknown) => void) {
     const signal = AbortSignal.any([this.abort.signal, this.streamAbort.signal]);
@@ -475,15 +532,51 @@ export class OpenCodeV2Session implements AgentSession {
       await delay(100, undefined, { signal }).catch(() => undefined);
     }
   }
+  async canStopRuntime(): Promise<boolean> {
+    if (this.closed || this.exited || this.reconnecting || this.turns.id || this.dirty)
+      return false;
+    const request = { signal: AbortSignal.timeout(10_000) };
+    // Active executions are server-wide. Releasing the last lease must not stop an
+    // autonomous execution merely because it belongs to another session or location.
+    if (Object.keys(await this.client.session.active(request)).length > 0) return false;
+    const family = new Map([[this.info.id, this.info]]);
+    const directories = new Set<string>();
+    for (const info of family.values()) {
+      if ((await this.client.session.inbox.list({ sessionID: info.id }, request)).length)
+        return false;
+      directories.add(info.location.directory);
+      let cursor: string | undefined;
+      do {
+        const page = await this.client.session.list(
+          { ...(cursor ? { cursor } : { parentID: info.id }), limit: 100 },
+          request,
+        );
+        for (const child of page.data) family.set(child.id, child);
+        cursor = page.cursor.next ?? undefined;
+      } while (cursor);
+    }
+    for (const directory of directories) {
+      const shells = await this.client.shell.list({ location: { directory } }, request);
+      if (shells.data.some((shell) => shell.status === "running")) return false;
+    }
+    return !this.turns.id && !this.dirty;
+  }
+
   async close() {
     if (this.closed) return;
     this.closed = true;
     this.abort.abort();
+    this.turns.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     await this.stream;
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     this.unbind?.();
     try {
       if (!this.persist) await this.client.session.remove({ sessionID: this.id });

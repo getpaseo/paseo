@@ -1,6 +1,6 @@
-import { join } from "node:path";
+import { basename } from "node:path";
 
-import { getPaseoWorktreesRoot, isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
+import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
   resolveWorkspaceIdAtPath,
@@ -45,10 +45,7 @@ export interface CreatePaseoWorktreeCommandDependencies<
   createPaseoWorktreeWorkflow?: CreatePaseoWorktreeWorkflow<Result>;
 }
 
-export type CreatePaseoWorktreeCommandInput = Omit<
-  CreatePaseoWorktreeInput,
-  "paseoHome" | "runSetup"
-> & {
+export type CreatePaseoWorktreeCommandInput = Omit<CreatePaseoWorktreeInput, "paseoHome"> & {
   paseoHome?: string;
   worktreesRoot?: string;
 };
@@ -75,7 +72,7 @@ export async function createPaseoWorktreeCommand<Result extends CreatePaseoWorkt
 
     const createdWorktree = await dependencies.createPaseoWorktreeWorkflow({
       ...input,
-      runSetup: false,
+
       paseoHome: input.paseoHome ?? dependencies.paseoHome,
       worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
     });
@@ -93,7 +90,10 @@ export interface ArchiveCommandDependencies extends Omit<
   ArchiveDependencies,
   "workspaceGitService"
 > {
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    "getSnapshot" | "listWorktrees" | "invalidateWorktrees"
+  >;
 }
 
 export interface ArchiveCommandInput {
@@ -208,10 +208,18 @@ async function resolveWorktreeSlugPath(
   repoRoot: string,
   worktreeSlug: string,
 ): Promise<string> {
-  const worktreesRoot = await getPaseoWorktreesRoot(
-    repoRoot,
-    dependencies.paseoHome,
-    dependencies.paseoWorktreesBaseRoot,
-  );
-  return join(worktreesRoot, worktreeSlug);
+  // Worktrees can live anywhere (legacy root or wherever
+  // a plugin placed them), so a slug resolves against the
+  // discovered worktree list for the repo, never a guessed path.
+  const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot);
+  const match = worktrees.find((entry) => basename(entry.path) === worktreeSlug);
+  if (!match) {
+    const found = worktrees.map((entry) => basename(entry.path));
+    throw new Error(
+      found.length > 0
+        ? `Paseo worktree not found for slug ${worktreeSlug}: found ${found.join(", ")}`
+        : `Paseo worktree not found for slug ${worktreeSlug}`,
+    );
+  }
+  return match.path;
 }

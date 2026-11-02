@@ -15,7 +15,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-import type { GitAction, GitActions } from "@/git/policy";
+import { actionsWithoutPrimary, type GitAction, type GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
@@ -129,14 +129,10 @@ export function GitActionsSplitButton({
     [theme.colors.surface2],
   );
 
-  const menuOnlyActions = useMemo(
-    () => [
-      ...(gitActions.primary ? [gitActions.primary] : []),
-      ...gitActions.secondary,
-      ...gitActions.menu,
-    ],
-    [gitActions.menu, gitActions.primary, gitActions.secondary],
-  );
+  const menuOnlyActions = [
+    ...(gitActions.primary ? [gitActions.primary] : []),
+    ...actionsWithoutPrimary(gitActions),
+  ];
 
   if (menuOnly) {
     if (menuOnlyActions.length === 0) {

@@ -104,6 +104,7 @@ function transformSourceItem(
     const projected: PluginTimelineStreamItem = {
       kind: "plugin",
       id: `${pluginItem.pluginId}/${pluginItem.id}`,
+      sourceId: item.id,
       timestamp: item.timestamp,
       pluginId: pluginItem.pluginId,
       pluginItemId: pluginItem.id,

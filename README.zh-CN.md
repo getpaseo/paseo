@@ -53,6 +53,17 @@
 - **跨设备：** 支持 iOS、Android、桌面端、Web 和 CLI。在桌前开始工作，用手机查看进度，也可以从终端脚本化操作。
 - **隐私优先：** Paseo 没有遥测、追踪，也不会强制登录。
 
+## 赞助商
+
+<!-- Sponsors: one cell per sponsor in the order of packages/website/src/data/sponsors.ts, then "become a sponsor" cells up to three. -->
+<table>
+  <tr>
+    <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Cloud coding agents</sub></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/zh-CN/sponsor">成为 Paseo 赞助商</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/zh-CN/sponsor">成为 Paseo 赞助商</a></td>
+  </tr>
+</table>
+
 ## 快速开始
 
 Paseo 会运行一个名为 daemon 的本地服务，用来管理你的 coding agents。桌面 app、移动 app、Web app 和 CLI 等客户端都会连接到它。
@@ -69,7 +80,7 @@ Paseo 会运行一个名为 daemon 的本地服务，用来管理你的 coding a
 
 ### 桌面 app（推荐）
 
-从 [paseo.sh/download](https://paseo.sh/download) 或 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
+从 [paseo.sh/download](https://paseo.sh/zh-CN/download) 或 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
 
 如果要从手机连接，在 Settings 中扫描显示的二维码。
 
@@ -86,8 +97,8 @@ paseo
 
 完整安装和配置见：
 
-- [文档](https://paseo.sh/docs)
-- [配置参考](https://paseo.sh/docs/configuration)
+- [文档](https://paseo.sh/zh-CN/docs)
+- [配置参考](https://paseo.sh/zh-CN/docs/configuration)
 
 ## CLI
 
@@ -105,7 +116,7 @@ paseo send abc123 "also add tests" # 发送后续任务
 paseo --host workstation.local:6767 run "run the full test suite"
 ```
 
-更多内容见[完整 CLI 参考](https://paseo.sh/docs/cli)。
+更多内容见[完整 CLI 参考](https://paseo.sh/zh-CN/docs/cli)。
 
 ## Skills
 
@@ -151,11 +162,9 @@ npm run build:server
 npm run typecheck
 ```
 
-## 赞助
+## 支持 Paseo
 
-Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/sponsor#spot)，logo 会展示在这里和 paseo.sh 首页上。
-
-<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
+Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/zh-CN/sponsor#spot)，logo 会展示在本 README 顶部，以及 paseo.sh 的首页和文档中。
 
 ## 相关项目
 

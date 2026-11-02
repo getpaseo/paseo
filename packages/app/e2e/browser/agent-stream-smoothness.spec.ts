@@ -1,6 +1,13 @@
 import { test, expect } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
-import { startRunningMockAgent } from "../support/helpers/composer";
+import { startRunningMockAgent, submitMessage } from "../support/helpers/composer";
+import {
+  seedLongMockAgentTimeline,
+  openAgentTimeline,
+  scrollTimelineUntilOlderHistoryIsReachable,
+  scrollTimelineToNewestLoadedEdge,
+  expectTimelinePromptVisible,
+} from "../support/helpers/timeline-pagination";
 import {
   sampleStreamFrames,
   summarizeStreamSmoothness,
@@ -98,6 +105,40 @@ agentStreamPerfDescribe("Agent stream smoothness", () => {
         reactReport.actualDurationP95Ms,
         `React commits should stay below ${REACT_COMMIT_P95_BUDGET_MS}ms at p95`,
       ).toBeLessThan(REACT_COMMIT_P95_BUDGET_MS);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("keeps streaming work bounded after revealing older history", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await page.addInitScript(() => {
+      Reflect.set(globalThis, "__PASEO_RENDER_PROFILE_ENABLED__", true);
+    });
+    const agent = await seedLongMockAgentTimeline({ turns: 80, liveTurns: "thirty-minute-stream" });
+    try {
+      await openAgentTimeline(page, agent);
+      await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
+      await scrollTimelineUntilOlderHistoryIsReachable(page, agent.oldestPrompt);
+      await expectTimelinePromptVisible(page, agent.oldestPrompt);
+      await scrollTimelineToNewestLoadedEdge(page);
+      await submitMessage(page, "Stream a long answer after reading older messages.");
+      await awaitAssistantMessage(page);
+
+      for (let sample = 0; sample < 3; sample += 1) {
+        await page.evaluate(() => globalThis.__PASEO_RESET_RENDER_PROFILE__?.());
+        const frames = await sampleStreamFrames(page, { sampleWindowMs: SAMPLE_WINDOW_MS });
+        const smoothness = summarizeStreamSmoothness(frames, SAMPLE_WINDOW_MS);
+        const react = summarizeReactCommits(await readStreamReactCommits(page));
+        await testInfo.attach(`revealed-history-stream-${sample}`, {
+          body: JSON.stringify({ smoothness, react }, null, 2),
+          contentType: "application/json",
+        });
+        console.log(`[perf] Revealed history stream: ${JSON.stringify({ smoothness, react })}`);
+        expect(smoothness.growthFrames).toBeGreaterThan(20);
+        expect(react.count).toBeGreaterThan(20);
+        expect(react.actualDurationP95Ms).toBeLessThan(REACT_COMMIT_P95_BUDGET_MS);
+      }
     } finally {
       await agent.cleanup();
     }

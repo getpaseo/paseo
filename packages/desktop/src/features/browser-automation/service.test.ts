@@ -41,6 +41,7 @@ class FakeTab implements TabContents {
   public readonly actions: string[] = [];
   public readonly capturedViewports: AbortSignal[] = [];
   public readonly debugCommands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+  public readonly insertedText: string[] = [];
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   private readonly captureStartWaiters: Array<() => void> = [];
   private readonly deferredCaptures: Array<(image: TabImage) => void> = [];
@@ -229,6 +230,10 @@ class FakeTab implements TabContents {
 
   public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
     this.inputEvents.push(event);
+  }
+
+  public async insertText(text: string): Promise<void> {
+    this.insertedText.push(text);
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -1104,15 +1109,29 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
-    expect(browser.tab.debugCommands.at(-1)).toEqual({
-      command: "Input.insertText",
-      params: { text: "Ada" },
-    });
-    expect(browser.tab.debugCommands.slice(0, 3).map((entry) => entry.command)).toEqual([
+    expect(browser.tab.insertedText).toEqual(["Ada"]);
+    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
     ]);
+  });
+
+  test("type inserts text through the tab, not the window-wide debugger input", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    const action = await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, text: "Ada" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-type",
+      ok: true,
+      result: { command: "type", browserId: BROWSER_A },
+    });
+    expect(browser.tab.insertedText).toEqual(["Ada"]);
+    expect(browser.tab.debugCommands).toEqual([]);
   });
 
   test("keypress dispatches a trusted key to the focused element when ref is omitted", async () => {

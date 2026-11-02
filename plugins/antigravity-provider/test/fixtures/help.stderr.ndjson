@@ -1,0 +1,39 @@
+{"t_ms": 195, "stream": "stderr", "data": "Usage of agy:"}
+{"t_ms": 195, "stream": "stderr", "data": "  --add-dir                       Add a directory to the workspace (repeatable) (default [])"}
+{"t_ms": 195, "stream": "stderr", "data": "  --agent                         Agent for the current CLI session"}
+{"t_ms": 195, "stream": "stderr", "data": "  -c                              Short alias for --continue"}
+{"t_ms": 195, "stream": "stderr", "data": "  --continue                      Continue the most recent conversation"}
+{"t_ms": 195, "stream": "stderr", "data": "  --conversation                  Resume a previous conversation by ID"}
+{"t_ms": 195, "stream": "stderr", "data": "  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting"}
+{"t_ms": 195, "stream": "stderr", "data": "  --disable-slash-commands        Disable slash command and skill expansion in print mode"}
+{"t_ms": 195, "stream": "stderr", "data": "  --effort                        Reasoning effort for the current CLI session (low|medium|high|max)"}
+{"t_ms": 195, "stream": "stderr", "data": "  -i                              Short alias for --prompt-interactive"}
+{"t_ms": 195, "stream": "stderr", "data": "  --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)"}
+{"t_ms": 195, "stream": "stderr", "data": "  --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)"}
+{"t_ms": 195, "stream": "stderr", "data": "  --log-file                      Override CLI log file path"}
+{"t_ms": 196, "stream": "stderr", "data": "  --mode                          Set the agent execution mode for this session (accept-edits, plan)"}
+{"t_ms": 196, "stream": "stderr", "data": "  --model                         Model for the current CLI session"}
+{"t_ms": 196, "stream": "stderr", "data": "  --new-project                   Create a new project for this session"}
+{"t_ms": 196, "stream": "stderr", "data": "  --output-format                 Output format for print mode (text, json, stream-json) (default text)"}
+{"t_ms": 196, "stream": "stderr", "data": "  -p                              Short alias for --print"}
+{"t_ms": 196, "stream": "stderr", "data": "  --print                         Run a single prompt non-interactively and print the response"}
+{"t_ms": 196, "stream": "stderr", "data": "  --print-timeout                 Optional time limit for print mode; 0 waits until the turn completes (default 0s)"}
+{"t_ms": 196, "stream": "stderr", "data": "  --project                       Project ID or project name for the current CLI session"}
+{"t_ms": 196, "stream": "stderr", "data": "  --prompt                        Alias for --print"}
+{"t_ms": 196, "stream": "stderr", "data": "  --prompt-interactive            Run an initial prompt interactively and continue the session"}
+{"t_ms": 196, "stream": "stderr", "data": "  --remote-control                Create a remote connection for the CLI session on start up"}
+{"t_ms": 196, "stream": "stderr", "data": "  --sandbox                       Run in a sandbox with terminal restrictions enabled"}
+{"t_ms": 196, "stream": "stderr", "data": ""}
+{"t_ms": 196, "stream": "stderr", "data": "Available subcommands:"}
+{"t_ms": 196, "stream": "stderr", "data": "  agent           List available agents"}
+{"t_ms": 196, "stream": "stderr", "data": "  agents          List available agents"}
+{"t_ms": 196, "stream": "stderr", "data": "  changelog       Show changelog and release notes"}
+{"t_ms": 196, "stream": "stderr", "data": "  help            Show help for subcommands"}
+{"t_ms": 196, "stream": "stderr", "data": "  install         Configure environment paths and shell settings"}
+{"t_ms": 196, "stream": "stderr", "data": "  mcp             Manage MCP servers (add, remove, list, enable, disable)"}
+{"t_ms": 196, "stream": "stderr", "data": "  mic-serve       Serve this machine's microphone to a CLI on another host"}
+{"t_ms": 196, "stream": "stderr", "data": "  models          List available models"}
+{"t_ms": 196, "stream": "stderr", "data": "  plugin          Manage plugins (install, uninstall, list, enable, disable)"}
+{"t_ms": 196, "stream": "stderr", "data": "  plugins         Alias for plugin"}
+{"t_ms": 196, "stream": "stderr", "data": "  remote-control  Manage the remote-control background daemon (start, status, stop)"}
+{"t_ms": 196, "stream": "stderr", "data": "  update          Update CLI"}

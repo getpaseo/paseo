@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include "include/ports/SkFontMgr_android.h"
+#include "include/ports/SkFontScanner_FreeType.h"
 #include "modules/skunicode/include/SkUnicode.h"
 
 namespace {
@@ -86,7 +87,7 @@ extern "C" JNIEXPORT jdoubleArray JNICALL METHOD(prepareDocument)(
     const auto fontFamily = SkUnicode::convertUtf16ToUtf8(copyString(env, family));
     const double copyMs = elapsed(copyStart);
     const auto layoutStart = Clock::now();
-    paseo::diff::prepare(*document, SkFontMgr_New_Android(nullptr), fontFamily.c_str(), size, job->cancelled);
+    paseo::diff::prepare(*document, SkFontMgr_New_Android(nullptr, SkFontScanner_Make_FreeType()), fontFamily.c_str(), size, job->cancelled);
     const double layoutMs = elapsed(layoutStart);
     {
       std::lock_guard lock(mutex);

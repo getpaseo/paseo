@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { StreamItem } from "@/types/stream";
+import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
-import { getStreamItemMessageId } from "./presentation";
 
 // Callers reveal a message, not a row: an assistant message is several block rows and
 // the window has to open at the first of them.
@@ -70,10 +69,11 @@ export function useStreamHistoryWindow(input: {
     boundaryItemId: initialBoundaryItemId,
     initialized: items.length > 0,
   }));
-  const boundaryIndex =
-    window.agentId === agentId && window.boundaryItemId !== null
-      ? items.findIndex((item) => item.id === window.boundaryItemId)
-      : -1;
+  const boundaryItemId = window.agentId === agentId ? window.boundaryItemId : null;
+  const boundaryIndex = useMemo(
+    () => (boundaryItemId === null ? -1 : items.findIndex((item) => item.id === boundaryItemId)),
+    [boundaryItemId, items],
+  );
   let start = initialStart;
   if (window.agentId === agentId && window.initialized) {
     if (window.boundaryItemId === null) {

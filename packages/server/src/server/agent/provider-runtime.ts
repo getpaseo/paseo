@@ -9,7 +9,7 @@ import type { PaseoToolCatalog } from "./tools/types.js";
 
 export interface AgentProviderRuntime {
   snapshotManager: ProviderSnapshotManager;
-  setPaseoToolCatalog(catalog: PaseoToolCatalog | null): void;
+  setPaseoToolCatalog(catalog: Pick<PaseoToolCatalog, "tools"> | null): void;
   shutdown(): Promise<void>;
 }
 
@@ -22,7 +22,12 @@ interface CreateAgentProviderRuntimeOptions {
 export async function createAgentProviderRuntime(
   options: CreateAgentProviderRuntimeOptions,
 ): Promise<AgentProviderRuntime> {
-  const bridge = new OpenCodeBridge({ paseoHome: options.paseoHome, logger: options.logger });
+  const configuredPort =
+    options.snapshotManager.runtimeSettings?.opencode?.env?.PASEO_OPENCODE_BRIDGE_PORT;
+  const port = configuredPort === undefined ? undefined : Number(configuredPort);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535))
+    throw new Error("PASEO_OPENCODE_BRIDGE_PORT must be an integer between 1 and 65535");
+  const bridge = new OpenCodeBridge({ paseoHome: options.paseoHome, logger: options.logger, port });
   try {
     await bridge.start();
     const snapshotManager = new ProviderSnapshotManager({

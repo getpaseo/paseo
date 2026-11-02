@@ -154,6 +154,28 @@ describe("JsonlRpcProcess", () => {
     }
   });
 
+  test("publishes unmatched responses without publishing the response that settles a request", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const messages: Record<string, unknown>[] = [];
+    transport.onMessage((message) => messages.push(message));
+
+    try {
+      const { id, promise } = transport.startRequest({ type: "prompt" });
+      const response = { id, type: "response", command: "prompt" };
+      const rejection = { ...response, success: false, error: "rejected after acknowledgement" };
+      const unknownResponse = { ...response, id: "unknown-request", success: true };
+      child.stdout.write(`${JSON.stringify({ ...response, success: true })}\n`);
+      child.stdout.write(`${JSON.stringify(rejection)}\n`);
+      child.stdout.write(`${JSON.stringify(unknownResponse)}\n`);
+
+      await expect(promise).resolves.toBeUndefined();
+      expect(messages).toEqual([rejection, unknownResponse]);
+    } finally {
+      await transport.close();
+    }
+  });
+
   test("rejects unsuccessful responses", async () => {
     const transport = startProcess();
 
@@ -447,5 +469,27 @@ describe("JsonlRpcProcess", () => {
     } finally {
       await transport.close();
     }
+  });
+});
+
+describe("JSONL stdout byte admission", () => {
+  test("fails pending requests and publishes the typed failure to live-turn consumers", async () => {
+    const child = createInMemoryChildProcess();
+    const process = startProcess({ child });
+    const exit = new Promise<JsonlRpcExit>((resolve) => process.onExit(resolve));
+    const request = process.request({ type: "hang" }, 1000).catch((error: Error) => error);
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    child.stdout.write('{"type":"notice","text":"');
+    for (let index = 0; index < 1024; index++) child.stdout.write(chunk);
+    const error = await request;
+    expect(error).toMatchObject({
+      name: "ProviderStreamLimitError",
+      code: "PROVIDER_STREAM_LINE_TOO_LARGE",
+      limitBytes: 64 * 1024 * 1024,
+    });
+    expect((await exit).error).toBe(error);
+    await process.close();
+    child.stdout.end();
+    child.stderr.end();
   });
 });

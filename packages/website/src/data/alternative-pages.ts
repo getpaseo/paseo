@@ -1,30 +1,17 @@
+import type { Locale } from "~/i18n";
+import { groupTranslations, inLocale, parseFrontmatter } from "~/markdown-content";
+
 export interface AlternativePage {
   slug: string;
   name: string;
+  /** The language-neutral page path. */
   href: string;
   title: string;
   description: string;
   content: string;
+  /** The language `content` is written in. */
+  locale: Locale;
   order: number;
-}
-
-function parseFrontmatter(raw: string): { data: Record<string, string>; content: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { data: {}, content: raw };
-
-  const data: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const value = line
-      .slice(colonIdx + 1)
-      .trim()
-      .replace(/^["']|["']$/g, "");
-    data[key] = value;
-  }
-
-  return { data, content: match[2] };
 }
 
 const alternativeModules = import.meta.glob("../content/alternatives/*.md", {
@@ -33,13 +20,16 @@ const alternativeModules = import.meta.glob("../content/alternatives/*.md", {
   import: "default",
 }) as Record<string, string>;
 
-function loadAlternativePages(): AlternativePage[] {
+const alternativeTranslations = groupTranslations(alternativeModules);
+
+function loadAlternativePages(locale: Locale): AlternativePage[] {
   const pages: AlternativePage[] = [];
 
-  for (const [path, raw] of Object.entries(alternativeModules)) {
-    const fileName = path.split("/").pop() ?? "";
+  for (const group of alternativeTranslations) {
+    const fileName = group.path.split("/").pop() ?? "";
     const slug = fileName.replace(/\.md$/, "");
-    const { data, content } = parseFrontmatter(raw);
+    const localized = inLocale(group, locale);
+    const { data, content } = parseFrontmatter(localized.raw);
     const order = Number.parseInt(data.order ?? "999", 10);
 
     pages.push({
@@ -49,6 +39,7 @@ function loadAlternativePages(): AlternativePage[] {
       title: data.title ?? slug,
       description: data.description ?? "",
       content,
+      locale: localized.locale,
       order: Number.isFinite(order) ? order : 999,
     });
   }
@@ -57,15 +48,17 @@ function loadAlternativePages(): AlternativePage[] {
   return pages;
 }
 
-let cached: AlternativePage[] | undefined;
+const cached = new Map<Locale, AlternativePage[]>();
 
-export function getAlternativePages(): AlternativePage[] {
-  if (!cached) cached = loadAlternativePages();
-  return cached;
+export function getAlternativePages(locale: Locale): AlternativePage[] {
+  let pages = cached.get(locale);
+  if (!pages) {
+    pages = loadAlternativePages(locale);
+    cached.set(locale, pages);
+  }
+  return pages;
 }
 
-export function getAlternativePage(slug: string): AlternativePage | undefined {
-  return getAlternativePages().find((p) => p.slug === slug);
+export function getAlternativePage(slug: string, locale: Locale): AlternativePage | undefined {
+  return getAlternativePages(locale).find((p) => p.slug === slug);
 }
-
-export const ALTERNATIVE_PAGE_SLUGS: readonly string[] = getAlternativePages().map((p) => p.slug);

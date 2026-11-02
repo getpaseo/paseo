@@ -29,28 +29,3 @@ export function getAutocompleteNextIndex(args: {
 }): number {
   return getNextActiveIndex(args);
 }
-
-export function getAutocompleteScrollOffset(args: {
-  currentOffset: number;
-  viewportHeight: number;
-  itemTop: number;
-  itemHeight: number;
-}): number {
-  if (args.viewportHeight <= 0) {
-    return args.currentOffset;
-  }
-
-  const itemBottom = args.itemTop + args.itemHeight;
-  const viewportTop = args.currentOffset;
-  const viewportBottom = args.currentOffset + args.viewportHeight;
-
-  if (args.itemTop < viewportTop) {
-    return Math.max(0, args.itemTop);
-  }
-
-  if (itemBottom > viewportBottom) {
-    return Math.max(0, itemBottom - args.viewportHeight);
-  }
-
-  return args.currentOffset;
-}

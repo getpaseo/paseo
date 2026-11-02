@@ -1,0 +1,2 @@
+{"t_ms": 971, "stream": "stdin", "data": {"event": "user", "message": {"content": "Write a 500-word essay about primes. No tools."}}}
+{"t_ms": 997, "stream": "stdin", "data": {"event": "user", "message": {"content": "Reply with exactly PHASE0_QUEUED. No tools."}}}

@@ -1,13 +1,14 @@
+import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type {
   PluginAgentPanelProps,
-  PluginHostProps,
   PluginWorkspacePanelProps,
+  PluginTab,
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import { CircleAlert } from "lucide-react-native";
-import { useMemo } from "react";
-import { Platform, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -21,24 +22,32 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
-import { resolvePluginIcon } from "../icons";
+import { pluginIconComponent } from "../icons";
 import { useInstalledPlugin } from "../registry";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
+import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
+import { resolvePluginPlatform } from "../platform";
 
 const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
 });
 
-function resolvePlatform(): PluginHostProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
-
 function PluginPanelBody({ theme }: { theme: PluginTheme }) {
-  const { serverId, workspaceId, target } = usePaneContext();
+  const {
+    serverId,
+    workspaceId,
+    target,
+    state: tabState,
+    setCurrentTabState,
+    panelRevision,
+  } = usePaneContext();
+  const [modified, setModified] = useState(false);
+  usePublishPanelInstanceAttributes({ modified });
+  const tab = useMemo<PluginTab>(
+    () => ({ state: tabState, setState: setCurrentTabState, setModified }),
+    [tabState, setCurrentTabState],
+  );
   invariant(target.kind === "plugin", "PluginPanel requires plugin target");
   const plugin = useInstalledPlugin(serverId, target.pluginId);
   const contribution = resolvePluginWorkspacePanel(plugin, target);
@@ -57,7 +66,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const navigation = usePluginHostNavigation(serverId);
 
@@ -72,7 +81,11 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   let Surface: unknown;
   if (contribution.context === "workspace") {
     const props: PluginWorkspacePanelProps = {
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       context: "workspace",
+      params: {},
+      revision: panelRevision ?? 0,
+      tab,
       theme,
       host,
       layout,
@@ -84,12 +97,17 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
     panel = <Component {...props} />;
   } else if (agentExists && target.context === "agent") {
     const props: PluginAgentPanelProps = {
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       context: "agent",
+      params: { agentId: target.agentId },
+      revision: panelRevision ?? 0,
+      tab,
       theme,
       host,
       layout,
       navigation,
       workspaceId,
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       agentId: target.agentId,
     };
     const Component = contribution.Component;
@@ -105,9 +123,9 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       Surface={Surface}
       key={`${serverId}/${target.pluginId}/${target.panelId}/${target.context}`}
     >
-      <PluginRuntimeBoundary plugin={plugin} client={client}>
+      <PluginInstallationProvider plugin={plugin}>
         <PluginClientStateProvider source={stateSource}>{panel}</PluginClientStateProvider>
-      </PluginRuntimeBoundary>
+      </PluginInstallationProvider>
     </SurfaceErrorBoundary>
   );
 }
@@ -149,11 +167,11 @@ function usePluginPanelDescriptor(
     };
   }
   return {
-    label: panel.title,
+    label: plugin!.i18n.resolve(panel.title, plugin!.locale),
     subtitle: target.pluginId,
-    tooltip: panel.title,
+    tooltip: plugin!.i18n.resolve(panel.title, plugin!.locale),
     titleState: "ready",
-    icon: resolvePluginIcon(panel.icon),
+    icon: pluginIconComponent(panel.icon),
     statusBucket: null,
   };
 }

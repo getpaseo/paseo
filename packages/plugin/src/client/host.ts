@@ -1,3 +1,4 @@
+import type { PluginText } from "../text.js";
 import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export {
@@ -10,7 +11,7 @@ import { PaseoApiProvider } from "./paseo-context.js";
 import { callPluginRpc } from "../rpc.js";
 
 export async function searchPluginAttachments(
-  source: PluginAttachmentSourceContribution,
+  source: PluginAttachmentSourceContribution<PluginText>,
   invoke: (method: string, input: unknown) => Promise<unknown>,
   query: string,
 ) {
@@ -19,3 +20,12 @@ export async function searchPluginAttachments(
 }
 
 export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
+
+export {
+  PluginTranslationRuntime,
+  PluginTranslationProvider,
+  usePluginTranslationRuntime,
+  requirePluginText,
+  isPluginMessage,
+} from "./translations.js";
+export type { PluginLocaleSource } from "./translations.js";

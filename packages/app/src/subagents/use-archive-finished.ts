@@ -1,3 +1,4 @@
+import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useSessionStore } from "@/stores/session-store";
@@ -32,8 +33,16 @@ export function useArchiveFinishedSubagents({
     () =>
       createArchiveFinishedSubagents([], {
         parentAgentId,
-        getManagedSubagent: (id) => useSessionStore.getState().sessions[serverId]?.agents.get(id),
-        archiveManagedSubagent: (id) => archiveAgent({ serverId, agentId: id }),
+        getManagedSubagent: (address) => {
+          const agent = useSessionStore
+            .getState()
+            .sessions[address.serverId]?.agents.get(address.agentId);
+          if (!agent) return undefined;
+          const parent = getParentAddressFromLabels(agent.labels, address.serverId);
+          if (parent?.serverId !== serverId || parent.agentId !== parentAgentId) return undefined;
+          return { ...agent, parentAgentId: parent.agentId };
+        },
+        archiveManagedSubagent: archiveAgent,
         dismissProviderSubagents: (ids) => {
           useProviderSubagentStore.getState().hideFromTrack(serverId, parentAgentId, ids);
         },

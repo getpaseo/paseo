@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { DiffStat } from "./atoms";
 import { CodexIcon } from "./icons";
 
@@ -219,14 +220,18 @@ export function Composer({
   showProgress?: boolean;
   busy?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="shrink-0 px-[27px] pt-[16px] pb-[17px]">
       <div className={showProgress ? "pb-[13px]" : ""}>
         {showProgress ? (
           <div className="flex items-center gap-[8px]">
-            <ComposerPill>6/6 tasks</ComposerPill>
             <ComposerPill>
-              <CircleDot size={12} className="text-mock-dot-running" />3 subagents
+              {t("landing.mockup.app.tasksProgress", { completed: 6, total: 6 })}
+            </ComposerPill>
+            <ComposerPill>
+              <CircleDot size={12} className="text-mock-dot-running" />
+              {t("landing.mockup.app.subagents", { count: 3 })}
             </ComposerPill>
             <ComposerPill>
               <DiffStat add="1.9k" remove="684" />
@@ -238,7 +243,7 @@ export function Composer({
         <div className="px-[14px] pt-[13px] pb-[12px]">
           <div className="flex items-start gap-[10px]">
             <span className="min-w-0 flex-1 text-[13px] text-mock-surface4">
-              Message the agent, tag @files, or use /commands and /skills
+              {t("landing.mockup.app.composerPlaceholder")}
             </span>
           </div>
           <div className="flex items-center gap-[17px] pt-[26px]">

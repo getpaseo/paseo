@@ -1,3 +1,4 @@
+import { WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface MockNotificationOptions {
@@ -132,7 +133,7 @@ describe("sendOsNotification", () => {
     (globalThis as { dispatchEvent?: unknown }).dispatchEvent = dispatchEvent;
     (globalThis as { location?: unknown }).location = { assign };
 
-    const { sendOsNotification, WEB_NOTIFICATION_CLICK_EVENT } = await loadModuleForPlatform("web");
+    const { sendOsNotification } = await loadModuleForPlatform("web");
 
     const sent = await sendOsNotification({
       title: "Agent finished",
@@ -159,7 +160,7 @@ describe("sendOsNotification", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it("falls back to route navigation when no listener handles the click", async () => {
+  it("leaves navigation to the app when no listener handles the click", async () => {
     const created: MockNotificationInstance[] = [];
 
     class MockNotification implements MockNotificationInstance {
@@ -207,9 +208,7 @@ describe("sendOsNotification", () => {
     expect(clicked.clickListeners).toHaveLength(1);
     clicked.clickListeners[0]?.({} as Event);
 
-    expect(assign).toHaveBeenCalledWith(
-      "/h/srv%20with%20space/workspace/workspace-1?open=agent%3Aagent%2F1",
-    );
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("returns false when the Notification API is unavailable", async () => {

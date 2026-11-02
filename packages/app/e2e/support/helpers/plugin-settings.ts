@@ -3,6 +3,8 @@ import { expect, test as base, type Page } from "../fixtures";
 import { gotoAppShell, openSettings } from "./app";
 import { goBackInSettings, openCompactSettings, openHostSection } from "./settings";
 import { getServerId } from "./server-id";
+import { expectAppRoute } from "./route-assertions";
+import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 
 type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
@@ -104,6 +106,13 @@ export async function returnAndReopenSettings(page: Page) {
   await actions.click();
   await page.getByRole("menuitem", { name: "Display", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
+}
+export async function returnToPluginsPage(page: Page) {
+  await page.getByRole("button", { name: "Back to plugins", exact: true }).click();
+  await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "plugins"));
+  await expect(
+    page.getByRole("button", { name: "Actions for settings-example", exact: true }),
+  ).toBeVisible();
 }
 export async function expectSettingsUnavailable(page: Page) {
   await expect(

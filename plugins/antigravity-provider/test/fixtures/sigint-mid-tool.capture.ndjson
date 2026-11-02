@@ -1,0 +1,3 @@
+{"t_ms": 0, "stream": "capture", "data": {"argv": ["<HOME>/.local/opt/agy/1.2.13/agy", "--input-format", "stream-json", "--output-format", "stream-json", "--add-dir", "<WORKSPACE>", "--dangerously-skip-permissions"], "cwd": "<WORKSPACE>", "home": "<HOME>", "settings": {"modelProvider": "gemini"}, "env": {"GEMINI_API_KEY": "<DUMMY_KEY>", "GOOGLE_GEMINI_BASE_URL": "http://127.0.0.1:<PORT>"}}}
+{"t_ms": 4486, "stream": "capture", "data": {"signal": "SIGINT", "trigger": {"conversation_id": "b3c8b9d6-c0ca-4444-8fd3-8bc86de8e6ba", "step_index": 2, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command", "tool_info": {"name": "run_command", "parameters": {"CommandLine": "sleep 30; printf FINISHED"}}}}}
+{"t_ms": 4716, "stream": "capture", "data": {"exit_code": 1}}

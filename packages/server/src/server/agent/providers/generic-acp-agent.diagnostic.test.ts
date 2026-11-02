@@ -1,3 +1,4 @@
+import { buildProviderRegistry } from "../provider-registry.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -254,22 +255,28 @@ describe("GenericACPAgentClient diagnostics", () => {
   test("sends configured client capabilities in catalog and live session initialization", async () => {
     await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
       const initializeTracePath = path.join(testDir, "initialize.jsonl");
-      const client = new GenericACPAgentClient({
-        logger: createTestLogger(),
-        command: [process.execPath, scriptPath, mode, "", initializeTracePath],
-        providerParams: {
-          clientCapabilities: {
-            fs: {
-              readTextFile: true,
-              writeTextFile: true,
+      const logger = createTestLogger();
+      const registry = buildProviderRegistry(logger, {
+        providerOverrides: {
+          "configured-acp": {
+            extends: "acp",
+            label: "Configured ACP",
+            command: [process.execPath, scriptPath, mode, "", initializeTracePath],
+            options: {
+              supportsMcpServers: false,
+              clientCapabilities: {
+                fs: { readTextFile: true, writeTextFile: true },
+                terminal: true,
+              },
             },
-            terminal: true,
           },
         },
       });
+      const client = registry["configured-acp"].createClient(logger);
 
       await client.fetchCatalog({ scope: "workspace", cwd: testDir, force: true });
-      const session = await client.createSession({ provider: "acp", cwd: testDir });
+      const session = await client.createSession({ provider: "configured-acp", cwd: testDir });
+      expect(session.capabilities.supportsMcpServers).toBe(false);
       await session.close();
 
       const initializeRequests = parseInitializeTrace(await readFile(initializeTracePath, "utf8"));

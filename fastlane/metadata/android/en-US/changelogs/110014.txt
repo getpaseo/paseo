@@ -1,0 +1,8 @@
+Added
+- Added Claude Haiku 5.5 for Claude Code 2.1.293 and newer
+
+Fixed
+- Fixed Claude tool calls that run longer than 30 seconds, such as WebFetch or MCP tools, showing up as subagents
+- Fixed subagents that finish while the app is disconnected staying "working" until one is opened
+
+Full notes: https://paseo.sh/changelog

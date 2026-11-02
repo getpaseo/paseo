@@ -105,6 +105,17 @@ export class OmpUsagePoller {
     this.publishUsage(usage, turnId);
   }
 
+  async refresh(): Promise<void> {
+    let usage: AgentUsage | undefined;
+    try {
+      usage = toAgentUsage(await this.options.readStats());
+    } catch (error) {
+      if (!this.closed) this.options.onPollError(error);
+      return;
+    }
+    if (!this.closed) this.publishUsage(usage);
+  }
+
   close(): void {
     this.closed = true;
     this.active = false;

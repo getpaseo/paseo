@@ -1,12 +1,17 @@
 import type { ToolCallTimelineItem } from "./agent-types.js";
-import { getPaseoToolLeafName, isPaseoToolName } from "./tool-name-normalization.js";
+import {
+  buildAgentMessageDisplay,
+  buildPaseoToolDisplay,
+} from "./paseo-tool-presentation/index.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
   ToolCallTimelineItem,
-  "name" | "status" | "error" | "metadata" | "detail"
+  "name" | "status" | "error" | "metadata" | "detail" | "agentMessage"
 > & {
   cwd?: string;
+  /** Title of the agent a Paseo call targets, when the caller knows it. */
+  targetAgentTitle?: string;
 };
 
 export interface ToolCallDisplayModel {
@@ -32,12 +37,6 @@ function humanizeToolName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) {
     return name;
-  }
-  if (isPaseoToolName(trimmed)) {
-    const leaf = getPaseoToolLeafName(trimmed);
-    if (leaf) {
-      return humanizeToolName(leaf);
-    }
   }
   if (/[:./]/.test(trimmed) || trimmed.includes("__")) {
     return trimmed;
@@ -151,6 +150,21 @@ function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay 
 }
 
 export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCallDisplayModel {
+  const errorText = input.status === "failed" ? formatErrorText(input.error) : undefined;
+  const paseoDisplay = input.agentMessage
+    ? buildAgentMessageDisplay(input.agentMessage)
+    : buildPaseoToolDisplay({
+        toolName: input.name,
+        detail: input.detail,
+        targetAgentTitle: input.targetAgentTitle,
+      });
+  if (paseoDisplay) {
+    return {
+      displayName: paseoDisplay.displayName,
+      ...(paseoDisplay.summary ? { summary: paseoDisplay.summary } : {}),
+      ...(errorText ? { errorText } : {}),
+    };
+  }
   const canonicalDisplay = buildCanonicalDetailDisplay(input);
   const unknownDetailOverride = buildUnknownDetailOverride(input);
   const displayName =
@@ -158,7 +172,6 @@ export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCall
     canonicalDisplay.displayName ??
     humanizeToolName(input.name);
   const summary = unknownDetailOverride.summary ?? canonicalDisplay.summary;
-  const errorText = input.status === "failed" ? formatErrorText(input.error) : undefined;
 
   return {
     displayName,

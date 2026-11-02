@@ -12,13 +12,15 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { runGitCommand } from "../../utils/run-git-command.js";
+import { describe, expect, it, vi } from "vitest";
+import { runGitCommand, snapshotGitCommandRuntimeMetrics } from "../../utils/run-git-command.js";
 import {
   createExplorerEntry,
   deleteExplorerEntry,
   duplicateExplorerEntry,
   getExplorerFileVersion,
+  getDownloadableFileInfo,
+  readExplorerFileBytes,
   readExplorerFile,
   renameExplorerEntry,
   streamExplorerFile,
@@ -132,6 +134,62 @@ describe("file explorer service", () => {
     }
   });
 
+  it("classifies a file version from its extension and first bytes", async () => {
+    const root = await createTempDir("paseo-file-version-kind-");
+    try {
+      await writeFile(path.join(root, "notes.md"), "# Notes\n", "utf8");
+      await writeFile(path.join(root, "pixel.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      await writeFile(path.join(root, "report.pdf"), "%PDF-1.4\n", "utf8");
+      await writeFile(path.join(root, "blob.dat"), Buffer.from([0x00, 0x01, 0x02]));
+      // A multi-byte character split by the sample boundary is still text.
+      await writeFile(path.join(root, "wide.txt"), `${"a".repeat(8191)}é tail`, "utf8");
+
+      const kinds = await Promise.all(
+        ["notes.md", "pixel.png", "report.pdf", "blob.dat", "wide.txt"].map(
+          async (relativePath) => {
+            const version = await getExplorerFileVersion({ root, relativePath });
+            return version.status === "ready" ? [version.kind, version.mimeType] : version.status;
+          },
+        ),
+      );
+
+      expect(kinds).toEqual([
+        ["text", "text/plain"],
+        ["image", "image/png"],
+        ["binary", "application/pdf"],
+        ["binary", "application/octet-stream"],
+        ["text", "text/plain"],
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes base64 content as bytes, including over a binary file", async () => {
+    const root = await createTempDir("paseo-file-write-bytes-");
+    try {
+      const filePath = path.join(root, "blob.dat");
+      await writeFile(filePath, Buffer.from([0x00, 0x01, 0x02]));
+      const current = await getExplorerFileVersion({ root, relativePath: "blob.dat" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "blob.dat",
+        content: Buffer.from([0xff, 0x00, 0xfe]).toString("base64"),
+        contentEncoding: "base64",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: current.revision,
+      });
+
+      expect(result).toMatchObject({ status: "written", size: 3 });
+      expect([...(await readFile(filePath))]).toEqual([0xff, 0x00, 0xfe]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("never creates a missing file through the write API", async () => {
     const root = await createTempDir("paseo-file-missing-");
     try {
@@ -187,6 +245,36 @@ describe("file explorer service", () => {
       expect(result.encoding).toBe("utf-8");
       expect(result.mimeType).toBe("text/plain");
       expect(result.content).toBe(content);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["report.pdf", Buffer.from("%PDF-1.4\n%\x00\xff\n%%EOF", "binary")],
+    ["report.PDF", Buffer.from("%PDF-1.4\n%%EOF")],
+  ])("reports application/pdf for %s across file reads and downloads", async (name, bytes) => {
+    const root = await createTempDir("paseo-file-pdf-");
+    try {
+      await writeFile(path.join(root, name), bytes);
+      const target = { root, relativePath: name };
+      expect(await readExplorerFile(target)).toMatchObject({
+        kind: "binary",
+        mimeType: "application/pdf",
+      });
+      expect(await readExplorerFileBytes(target)).toMatchObject({
+        kind: "binary",
+        mimeType: "application/pdf",
+        bytes,
+      });
+      await streamExplorerFile(target, async (file) => {
+        expect(file.kind).toBe("binary");
+        expect(file.mimeType).toBe("application/pdf");
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of file.chunks) chunks.push(chunk);
+        expect(Buffer.concat(chunks)).toEqual(bytes);
+      });
+      expect(await getDownloadableFileInfo(target)).toMatchObject({ mimeType: "application/pdf" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -516,6 +604,129 @@ describe("file explorer service", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("renames an untracked bracketed filename without matching a tracked sibling", async () => {
+    const root = await createTempDir("paseo-entry-literal-rename-");
+    try {
+      await runGitCommand(["init"], { cwd: root });
+      await writeFile(path.join(root, "i.tsx"), "tracked\n", "utf8");
+      await runGitCommand(["add", "i.tsx"], { cwd: root });
+      await writeFile(path.join(root, "[id].tsx"), "untracked\n", "utf8");
+
+      snapshotGitCommandRuntimeMetrics();
+      const result = await renameExplorerEntry({
+        root,
+        relativePath: "[id].tsx",
+        name: "renamed.tsx",
+      });
+
+      expect(result).toEqual({ status: "ok", path: "renamed.tsx" });
+      expect(snapshotGitCommandRuntimeMetrics().operationsTop).toEqual([
+        ["ls-files", 1],
+        ["rev-parse", 1],
+      ]);
+      expect(await readFile(path.join(root, "renamed.tsx"), "utf8")).toBe("untracked\n");
+      await expect(stat(path.join(root, "[id].tsx"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(path.join(root, "i.tsx"), "utf8")).toBe("tracked\n");
+      expect((await runGitCommand(["ls-files", "-z"], { cwd: root })).stdout).toBe("i.tsx\0");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renames an untracked bracketed folder without matching a tracked sibling", async () => {
+    const root = await createTempDir("paseo-folder-literal-rename-");
+    try {
+      await runGitCommand(["init"], { cwd: root });
+      await mkdir(path.join(root, "i"));
+      await writeFile(path.join(root, "i", "route.tsx"), "tracked\n", "utf8");
+      await runGitCommand(["add", "i"], { cwd: root });
+      await mkdir(path.join(root, "[id]"));
+      await writeFile(path.join(root, "[id]", "route.tsx"), "untracked\n", "utf8");
+
+      const result = await renameExplorerEntry({ root, relativePath: "[id]", name: "route" });
+
+      expect(result).toEqual({ status: "ok", path: "route" });
+      expect(await readFile(path.join(root, "route", "route.tsx"), "utf8")).toBe("untracked\n");
+      await expect(stat(path.join(root, "[id]"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(path.join(root, "i", "route.tsx"), "utf8")).toBe("tracked\n");
+      expect((await runGitCommand(["ls-files", "-z"], { cwd: root })).stdout).toBe("i/route.tsx\0");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses Git to rename a tracked bracketed filename and preserves its tracked sibling", async () => {
+    const root = await createTempDir("paseo-tracked-literal-rename-");
+    try {
+      await runGitCommand(["init"], { cwd: root });
+      await writeFile(path.join(root, "[id].tsx"), "tracked route\n", "utf8");
+      await writeFile(path.join(root, "i.tsx"), "tracked sibling\n", "utf8");
+      await runGitCommand(["add", "--", "[id].tsx", "i.tsx"], { cwd: root });
+
+      const result = await renameExplorerEntry({
+        root,
+        relativePath: "[id].tsx",
+        name: "renamed.tsx",
+      });
+
+      expect(result).toEqual({ status: "ok", path: "renamed.tsx" });
+      expect(await readFile(path.join(root, "renamed.tsx"), "utf8")).toBe("tracked route\n");
+      await expect(stat(path.join(root, "[id].tsx"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(path.join(root, "i.tsx"), "utf8")).toBe("tracked sibling\n");
+      expect((await runGitCommand(["ls-files", "-z"], { cwd: root })).stdout).toBe(
+        "i.tsx\0renamed.tsx\0",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      sourcePath: "[id].tsx",
+      sourceFile: "[id].tsx",
+      targetName: "renamed.tsx",
+      targetFile: "renamed.tsx",
+    },
+    {
+      sourcePath: "[id]",
+      sourceFile: "[id]/route.tsx",
+      targetName: "route",
+      targetFile: "route/route.tsx",
+    },
+  ])(
+    "keeps tracked renames in the index with inherited literal pathspecs ($sourcePath)",
+    async ({ sourcePath, sourceFile, targetName, targetFile }) => {
+      const root = await createTempDir("paseo-inherited-literal-rename-");
+      try {
+        vi.stubEnv("GIT_LITERAL_PATHSPECS", "1");
+        await runGitCommand(["init"], { cwd: root });
+        await mkdir(path.dirname(path.join(root, sourceFile)), { recursive: true });
+        await writeFile(path.join(root, sourceFile), "tracked route\n", "utf8");
+        await writeFile(path.join(root, "i.tsx"), "tracked sibling\n", "utf8");
+        await runGitCommand(["add", "."], { cwd: root });
+
+        const result = await renameExplorerEntry({
+          root,
+          relativePath: sourcePath,
+          name: targetName,
+        });
+
+        expect(result).toEqual({ status: "ok", path: targetName });
+        expect(await readFile(path.join(root, targetFile), "utf8")).toBe("tracked route\n");
+        await expect(stat(path.join(root, sourcePath))).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await readFile(path.join(root, "i.tsx"), "utf8")).toBe("tracked sibling\n");
+        expect((await runGitCommand(["ls-files", "-z"], { cwd: root })).stdout).toBe(
+          `i.tsx\0${targetFile}\0`,
+        );
+        expect(process.env.GIT_LITERAL_PATHSPECS).toBe("1");
+      } finally {
+        vi.unstubAllEnvs();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("supports case-only renames for tracked and untracked files", async () => {
     const root = await createTempDir("paseo-entry-case-rename-");

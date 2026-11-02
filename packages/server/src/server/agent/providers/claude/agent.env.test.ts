@@ -1,10 +1,11 @@
+import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
-import type { ClaudeQueryInput } from "./query.js";
+import { claudeQuery, type ClaudeQueryInput } from "./query.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -29,8 +30,58 @@ function createQueryMock(events: unknown[]): Query {
 }
 
 describe("Claude SDK env", () => {
+  test.each(
+    ["node", "bun", process.execPath].flatMap((command) =>
+      [undefined, "Paseo", "custom-client"].map((entrypoint) => ({ command, entrypoint })),
+    ),
+  )(
+    "preserves explicit launch identity $entrypoint in $command while clearing inherited session env",
+    async ({ command, entrypoint }) => {
+      let output = "";
+      let exited = Promise.resolve<unknown[]>([]);
+      const query = claudeQuery(
+        { prompt: "", options: {} },
+        {
+          runtimeSettings: { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" } },
+          launchEnv: entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: entrypoint },
+          queryFactory: ({ options }) => {
+            if (!options.spawnClaudeCodeProcess) {
+              throw new Error("Missing Claude process launcher");
+            }
+            const child = options.spawnClaudeCodeProcess({
+              command,
+              args: [
+                "-e",
+                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null }))",
+              ],
+              cwd: process.cwd(),
+              env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts", CLAUDECODE: "1" },
+              signal: new AbortController().signal,
+            });
+            child.stdout.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+            });
+            exited = once(child, "close");
+            return createQueryMock([]);
+          },
+        },
+      );
+
+      try {
+        expect(await exited).toEqual([0, null]);
+        expect(JSON.parse(output)).toEqual({
+          ...(entrypoint === undefined ? {} : { entrypoint }),
+          parentSession: null,
+        });
+      } finally {
+        query.close();
+      }
+    },
+  );
+
   test("forwards launch-context env through Claude process env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
+    let capturedPerTaskStopAffordance: boolean | undefined;
     const launchContext: AgentLaunchContext = {
       env: {
         PASEO_AGENT_ID: "00000000-0000-4000-8000-000000000201",
@@ -39,6 +90,7 @@ describe("Claude SDK env", () => {
     };
     const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
       capturedEnv = options.env;
+      capturedPerTaskStopAffordance = options.perTaskStopAffordance;
       return createQueryMock([
         {
           type: "system",
@@ -90,8 +142,14 @@ describe("Claude SDK env", () => {
       expect(capturedEnv?.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
       expect(capturedEnv?.MCP_TIMEOUT).toBe("claude-startup-timeout");
       expect(capturedEnv?.MCP_TOOL_TIMEOUT).toBe("claude-tool-timeout");
+      expect(session.usageSession?.()?.env).toBe(capturedEnv);
+      // Paseo reads session_state_changed to know when an autonomous turn is over.
+      expect(capturedEnv?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe("1");
+      // Without it, Stop and replace kill every background subagent along with the turn.
+      expect(capturedPerTaskStopAffordance).toBe(true);
     } finally {
       await session.close();
+      expect(session.usageSession?.()).toBeNull();
     }
   });
 
@@ -150,12 +208,19 @@ describe("Claude SDK env", () => {
     );
 
     try {
+      const descriptor = session.usageSession?.();
+      expect(descriptor?.env.PASEO_TEST_FLAG).toBe("resume-launch-value");
+      expect(descriptor?.sessionKey).toEqual(expect.any(String));
+      expect(queryFactory).not.toHaveBeenCalled();
       const result = await session.run("resume env check");
+      expect(session.usageSession?.()?.sessionKey).toBe(descriptor?.sessionKey);
+      expect(capturedEnv).toBe(descriptor?.env);
       expect(result.sessionId).toBe("persisted-session");
       expect(capturedEnv?.PASEO_AGENT_ID).toBe(launchContext.env?.PASEO_AGENT_ID);
       expect(capturedEnv?.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
     } finally {
       await session.close();
+      expect(session.usageSession?.()).toBeNull();
     }
   });
 });

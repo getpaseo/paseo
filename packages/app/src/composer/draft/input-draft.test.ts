@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hasDraftContent, resolveDraftKey } from "./input-draft-core";
 import {
-  buildDraftCommandConfig,
+  buildDraftCommandTarget,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
 } from "@/provider-selection/provider-selection";
@@ -124,46 +124,55 @@ describe("resolveEffectiveComposerThinkingOptionId", () => {
   });
 });
 
-describe("buildDraftComposerCommandConfig", () => {
-  it("returns undefined when cwd is empty", () => {
+describe("buildDraftCommandTarget", () => {
+  const codexSelection = {
+    provider: "codex",
+    modelId: "gpt-5.4",
+    modeId: "auto",
+    thinkingOptionId: "high",
+    availableModels: [],
+    modeOptions: [{ id: "auto", label: "Auto" }],
+  };
+
+  it("needs a project when cwd is empty", () => {
     expect(
-      buildDraftCommandConfig({
-        selection: {
-          provider: "codex",
-          modelId: "gpt-5.4",
-          modeId: "",
-          thinkingOptionId: "",
-          availableModels: [],
-          modeOptions: [],
-        },
+      buildDraftCommandTarget({
+        selection: codexSelection,
         cwd: "  ",
         effectiveModelId: "gpt-5.4",
         effectiveThinkingOptionId: "high",
       }),
-    ).toBeUndefined();
+    ).toEqual({ status: "needs-project" });
+  });
+
+  it("needs a provider when none is selected", () => {
+    expect(
+      buildDraftCommandTarget({
+        selection: { ...codexSelection, provider: null },
+        cwd: "/repo",
+        effectiveModelId: "",
+        effectiveThinkingOptionId: "",
+      }),
+    ).toEqual({ status: "needs-provider" });
   });
 
   it("builds the draft command config from derived composer state", () => {
     expect(
-      buildDraftCommandConfig({
-        selection: {
-          provider: "codex",
-          modelId: "gpt-5.4",
-          modeId: "auto",
-          thinkingOptionId: "high",
-          availableModels: [],
-          modeOptions: [{ id: "auto", label: "Auto" }],
-        },
+      buildDraftCommandTarget({
+        selection: codexSelection,
         cwd: "/repo",
         effectiveModelId: "gpt-5.4",
         effectiveThinkingOptionId: "high",
       }),
     ).toEqual({
-      provider: "codex",
-      cwd: "/repo",
-      modeId: "auto",
-      model: "gpt-5.4",
-      thinkingOptionId: "high",
+      status: "ready",
+      config: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: "auto",
+        model: "gpt-5.4",
+        thinkingOptionId: "high",
+      },
     });
   });
 });

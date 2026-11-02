@@ -1,4 +1,4 @@
-import net from "node:net";
+import { connectToLocalService } from "./local-service-connection.js";
 import type { ServiceProxyHealthTarget, ServiceProxySubsystem } from "./service-proxy.js";
 
 export type ScriptHealthState = "pending" | "healthy" | "unhealthy";
@@ -208,7 +208,7 @@ export class ScriptHealthMonitor {
 
   private probeRoute(port: number): Promise<boolean> {
     return new Promise((resolve) => {
-      const socket = net.connect({ host: "127.0.0.1", port });
+      const socket = connectToLocalService(port);
       let settled = false;
 
       const finish = (healthy: boolean) => {

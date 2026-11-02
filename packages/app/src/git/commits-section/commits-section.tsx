@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { treeRowPaddingLeft } from "@/components/tree-primitives";
@@ -40,11 +39,9 @@ function CommitsSectionSkeleton() {
 
 function CommitsSectionContent({
   query,
-  now,
   onCommitPress,
 }: {
   query: Exclude<CheckoutCommitsQueryResult, { status: "unsupported" }>;
-  now: Date;
   onCommitPress: (sha: string) => void;
 }) {
   const { t } = useTranslation();
@@ -77,7 +74,6 @@ function CommitsSectionContent({
           commit={commit}
           isFirst={index === 0}
           isLast={index === workspaceCommits.length - 1}
-          now={now}
           onCommitPress={onCommitPress}
         />
       ))}
@@ -94,9 +90,6 @@ export function CommitsSection({
 }: CommitsSectionProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const isPanelActive = useRetainedPanelActive();
-  const [now, setNow] = useState(() => new Date());
-  const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
     serverId,
     cwd,
@@ -104,19 +97,8 @@ export function CommitsSection({
   });
 
   const handleToggleSection = useCallback(() => {
-    if (collapsed) {
-      setNow(new Date());
-    }
     onCollapsedChange?.(!collapsed);
   }, [collapsed, onCollapsedChange]);
-
-  useEffect(() => {
-    if (collapsed || !isPanelActive) {
-      return;
-    }
-    const interval = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(interval);
-  }, [collapsed, isPanelActive]);
 
   const headerChevronStyle = useMemo(
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
@@ -160,9 +142,7 @@ export function CommitsSection({
           </Text>
         )}
       </Pressable>
-      {collapsed ? null : (
-        <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
-      )}
+      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
     </View>
   );
 }

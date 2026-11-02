@@ -9,11 +9,14 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type {
+  AgentClient,
   AgentLaunchContext,
+  AgentPermissionRequest,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
   AgentStreamEvent,
+  AgentTimelineItem,
 } from "../agent-sdk-types.js";
 import {
   buildCodexAppServerEnv,
@@ -85,7 +88,9 @@ describe("Codex executable discovery", () => {
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
+  fakeCodexThreadHistory,
   type FakeCodexAppServer,
+  waitForNextEvent,
   waitForNextPermission,
   waitForNextTimelineItem,
   waitForProviderSubagent,
@@ -93,6 +98,7 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
+import { AgentManager } from "../agent-manager.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {
@@ -110,8 +116,7 @@ interface CodexSessionTestAccess {
   };
   ensureThreadLoaded(): Promise<void>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
-  handleNotification(method: string, params: unknown): void;
-  loadPersistedHistory(client: CodexClientLike | null): Promise<void>;
+  handleNotification(method: string, params: unknown): Promise<void>;
   refreshResolvedCollaborationMode(): void;
   serviceTier: "fast" | null;
   planModeEnabled: boolean;
@@ -209,6 +214,7 @@ async function startPublicSteeringSession(
   const started = await session.startTurn("first");
   await appServer.waitForTurnStart();
   appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setTimeout(resolve, 0));
   return { session, paseoTurnId: started.turnId };
 }
@@ -222,6 +228,64 @@ function deferred<T>() {
 }
 
 describe("Codex active-turn steering admission", () => {
+  test("steers an accepted turn whose native id arrives after startTurn returns", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      const { turnId } = await session.startTurn("FIRST");
+      const steer = session.steerActiveTurn("SECOND", { expectedTurnId: turnId });
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+
+      await expect(steer).resolves.toEqual({ status: "accepted" });
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/start"),
+      ).toHaveLength(1);
+      expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+        [],
+      );
+      expect(appServer.requests().find((request) => request.method === "turn/steer")).toMatchObject(
+        {
+          params: {
+            threadId: "thread-1",
+            expectedTurnId: "native-A",
+            input: [{ type: "text", text: "SECOND" }],
+          },
+        },
+      );
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("releases a waiting steer when the accepted turn ends before identification", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      const { turnId } = await session.startTurn("FIRST");
+      const steer = session.steerActiveTurn("SECOND", { expectedTurnId: turnId });
+      appServer.completeTurn();
+
+      await expect(steer).resolves.toEqual({ status: "unavailable" });
+      expect(appServer.requests().filter((request) => request.method === "turn/steer")).toEqual([]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a steer without the clearing contract leaves permissions open", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/steer": () => ({ turn: { id: "native-A" } }),
@@ -351,9 +415,11 @@ describe("Codex active-turn steering admission", () => {
     });
     await resolverEntered.promise;
     appServer.completeTurn({ threadId: "thread-1" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setTimeout(resolve, 0));
     const startedB = await session.startTurn("second");
     appServer.startsTurn({ threadId: "thread-1", turnId: "native-B" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setTimeout(resolve, 0));
     commandResolution.resolve(null);
 
@@ -475,6 +541,7 @@ async function startCompactionTurnTest(): Promise<{
 
   await session.startTurn("exercise compaction lifecycle");
   appServer.startsTurn({ threadId: "thread-1", turnId: "codex-turn-1" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
   return { appServer, session, events, terminalEvent };
 }
 
@@ -496,12 +563,87 @@ function archivedThreadErrorMessage(threadId: string): string {
   );
 }
 
+function codexUserItem(id: string, text: string) {
+  return { type: "userMessage", id, content: [{ type: "text", text }] };
+}
+
+function codexAgentItem(text: string) {
+  return { type: "agentMessage", id: `agent-${text}`, text };
+}
+
+// An AgentManager over a real Codex provider whose every spawn gets a fresh fake
+// app-server serving `threads` from thread/read.
+function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
+  const appServers: FakeCodexAppServer[] = [];
+  const provider = new CodexAppServerAgentClient(createTestLogger());
+  const internals = castInternals<{
+    goalsEnabledPromise: Promise<boolean> | null;
+    autoReviewEnabledPromise: Promise<boolean> | null;
+    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  }>(provider);
+  internals.goalsEnabledPromise = Promise.resolve(false);
+  internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.spawnAppServer = async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => {
+        const { threadId } = params as { threadId: string };
+        return { thread: { id: threadId, turns: threads[threadId] ?? [] } };
+      },
+    });
+    appServers.push(appServer);
+    return appServer.child;
+  };
+  // The fake app-server stands in for the Codex CLI, which test machines may not have.
+  const client: AgentClient = {
+    provider: "codex",
+    capabilities: provider.capabilities,
+    isAvailable: async () => true,
+    fetchCatalog: async () => ({ models: [], modes: [] }),
+    createSession: async () => {
+      throw new Error("Unexpected create");
+    },
+    resumeSession: (...args) => provider.resumeSession(...args),
+  };
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+  const agentId = "00000000-0000-4000-8000-000000000001";
+  const handle = { provider: "codex", sessionId: "saved-thread" };
+  const config = createConfig({ cwd: process.cwd() });
+
+  async function open(): Promise<void> {
+    await manager.resumeAgentFromPersistence(handle, config, agentId);
+    await manager.hydrateTimelineFromProvider(agentId);
+  }
+
+  return {
+    manager,
+    agentId,
+    latestAppServer: () => appServers[appServers.length - 1],
+    threadMethods: (index: number) =>
+      appServers[index]
+        .requests()
+        .map((request) => request.method)
+        .filter((method) => typeof method === "string" && method.startsWith("thread/")),
+    // Cold-loads the agent, closes its runtime, and reopens it while Paseo keeps its timeline.
+    async loadCloseAndReopen(): Promise<AgentTimelineItem[]> {
+      await open();
+      const projected = manager.getTimeline(agentId);
+      await manager.closeAgent(agentId);
+      await open();
+      return projected;
+    },
+    async close(): Promise<void> {
+      await manager.closeAgent(agentId);
+      for (const appServer of appServers) appServer.assertNoErrors();
+    },
+  };
+}
+
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
 }
 
 function markdownImageSource(markdown: string): string {
-  const match = markdown.match(/^!\[[^\]]*]\((.*)\)$/);
+  const match = markdown.trim().match(/^!\[[^\]]*]\((.*)\)$/);
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
@@ -617,6 +759,131 @@ process.stdin.on("data", (chunk) => {
   }
 }
 
+async function withCustomCodexProviderHome<T>(
+  run: (input: {
+    session: AgentSession;
+    readCaptured: () => CapturedFakeCodexRecord[];
+  }) => Promise<T>,
+  providerPrompts: Record<string, string> = {},
+): Promise<T> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "codex-provider-home-"));
+  const daemonCodexHome = path.join(tempDir, "daemon-codex-home");
+  const providerCodexHome = path.join(tempDir, "provider-codex-home");
+  const fakeAppServerPath = path.join(tempDir, "fake-codex-app-server.cjs");
+  const capturedRequestsPath = path.join(tempDir, "requests.jsonl");
+  mkdirSync(path.join(daemonCodexHome, "prompts"), { recursive: true });
+  mkdirSync(path.join(providerCodexHome, "prompts"), { recursive: true });
+  writeFileSync(
+    path.join(daemonCodexHome, "prompts", "probe-default.md"),
+    "---\ndescription: Daemon home prompt\n---\nfrom the daemon home\n",
+  );
+  writeFileSync(
+    path.join(providerCodexHome, "prompts", "probe-profile.md"),
+    "---\ndescription: Provider home prompt\n---\nfrom the provider home\n",
+  );
+  for (const [name, content] of Object.entries(providerPrompts)) {
+    writeFileSync(path.join(providerCodexHome, "prompts", `${name}.md`), content);
+  }
+  writeFileSync(
+    fakeAppServerPath,
+    `
+const fs = require("node:fs");
+
+const capturePath = process.env.PASEO_FAKE_CODEX_CAPTURE;
+let buffer = "";
+
+fs.appendFileSync(capturePath, JSON.stringify({ kind: "env", CODEX_HOME: process.env.CODEX_HOME }) + "\\n");
+
+function resultFor(method) {
+  if (method === "collaborationMode/list") return { data: [] };
+  if (method === "skills/list") return { data: [] };
+  if (method === "model/list") return { data: [{ id: "profile-model", isDefault: true }] };
+  if (method === "thread/start") return { thread: { id: "thread-1" } };
+  return {};
+}
+
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (;;) {
+    const newlineIndex = buffer.indexOf("\\n");
+    if (newlineIndex === -1) break;
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    fs.appendFileSync(capturePath, JSON.stringify({ kind: "request", method: message.method, params: message.params }) + "\\n");
+    process.stdout.write(JSON.stringify({ id: message.id, result: resultFor(message.method) }) + "\\n");
+  }
+});
+`,
+  );
+
+  vi.stubEnv("CODEX_HOME", daemonCodexHome);
+  const registry = buildProviderRegistry(createTestLogger(), {
+    providerOverrides: {
+      "profile-codex": {
+        extends: "codex",
+        label: "Profile Codex",
+        command: [process.execPath, fakeAppServerPath],
+        env: {
+          CODEX_HOME: providerCodexHome,
+          PASEO_FAKE_CODEX_CAPTURE: capturedRequestsPath,
+        },
+      },
+    },
+  });
+  const session = await registry["profile-codex"].createClient(createTestLogger()).createSession({
+    provider: "profile-codex",
+    cwd: tempDir,
+    modeId: "auto",
+  });
+
+  try {
+    expect(session.usageSession?.()).toMatchObject({
+      provider: "codex",
+      env: { CODEX_HOME: providerCodexHome },
+    });
+    expect(session.usageSession?.()?.sessionKey).toBe(session.usageSession?.()?.sessionKey);
+    return await run({
+      session,
+      readCaptured: () =>
+        readFileSync(capturedRequestsPath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as CapturedFakeCodexRecord),
+    });
+  } finally {
+    await session.close();
+    expect(session.usageSession?.()).toBeNull();
+    vi.unstubAllEnvs();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function listPromptCommandsFromCustomCodexHome(): Promise<string[]> {
+  return withCustomCodexProviderHome(async ({ session }) => {
+    const commands = await session.listCommands!();
+    return commands.map((command) => command.name).filter((name) => name.startsWith("prompts:"));
+  });
+}
+
+async function runPromptFromCustomCodexHome(
+  prompt: string,
+  providerPrompts: Record<string, string> = {},
+): Promise<CapturedFakeCodexRecord[]> {
+  return withCustomCodexProviderHome(async ({ session, readCaptured }) => {
+    await session.startTurn(prompt);
+    return readCaptured();
+  }, providerPrompts);
+}
+
+async function expandCustomPrompt(template: string, args: string): Promise<string> {
+  const records = await runPromptFromCustomCodexHome(`/prompts:template ${args}`, { template });
+  const turnStart = records.find((record) => record.method === "turn/start");
+  const params = turnStart?.params as { input: Array<{ text: string }> };
+  return params.input[0].text;
+}
+
 function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown {
   const threadStart = records.find((record) => record.method === "thread/start");
   const params = threadStart?.params as Record<string, unknown> | undefined;
@@ -647,6 +914,7 @@ let buffer = "";
 function resultFor(method, params) {
   if (method === "initialize") return {};
   if (method === "collaborationMode/list") return { data: [] };
+  if (method === "model/list") return { data: [] };
   if (method === "skills/list") {
     const cwds = params && params.cwds;
     const projectCwd = ${JSON.stringify(projectCwd)};
@@ -1013,6 +1281,108 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("keeps the default effort when a session without one is resumed after a restart", async () => {
+    const beforeRestart = createFakeCodexAppServer();
+    const firstSession = await createProviderWithFakeAppServer(beforeRestart).createSession(
+      createConfig({ thinkingOptionId: undefined }),
+    );
+    await firstSession.startTurn("first turn");
+    await expect(beforeRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
+    const saved = waitForNextEvent(firstSession, "thread_started");
+    beforeRestart.startsTurn({ threadId: "thread-1" });
+    await saved;
+    const handle = firstSession.describePersistence()!;
+    await firstSession.close();
+
+    const afterRestart = createFakeCodexAppServer();
+    // The daemon resumes with the stored agent config, which never recorded an effort.
+    const resumed = await createProviderWithFakeAppServer(afterRestart).resumeSession(handle, {
+      model: "gpt-5.4",
+      thinkingOptionId: undefined,
+    });
+
+    try {
+      await expect(resumed.getRuntimeInfo()).resolves.toMatchObject({
+        thinkingOptionId: "medium",
+      });
+      await resumed.startTurn("turn after restart");
+      await expect(afterRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
+      beforeRestart.assertNoErrors();
+      afterRestart.assertNoErrors();
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("provider persistence leaves options owned by the stored agent config", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.createSession(
+      createConfig({ providerOptions: { sandbox_mode: "read-only", approval_policy: "never" } }),
+    );
+    try {
+      await session.startTurn("persist the configured session");
+      await appServer.waitForTurnStart();
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await saved;
+      const handle = session.describePersistence()!;
+      expect(handle.metadata).not.toHaveProperty("providerOptions");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a new thread only after Codex announces its first turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(createConfig());
+    try {
+      // Codex has started the thread but writes its rollout at the first turn, so another
+      // app-server could not resume it yet.
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: null });
+      expect(session.describePersistence()).toBeNull();
+      expect(
+        appServer.requests().filter((request) => request.method === "thread/start"),
+      ).toHaveLength(1);
+
+      await session.startTurn("first prompt");
+      await appServer.waitForTurnStart();
+      expect(session.describePersistence()).toBeNull();
+
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await expect(saved).resolves.toMatchObject({
+        type: "thread_started",
+        provider: "codex",
+        sessionId: "thread-1",
+      });
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "thread-1",
+        nativeHandle: "thread-1",
+      });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a resumed thread before its next turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).resumeSession(
+      { provider: "codex", sessionId: "saved-thread" },
+      createConfig(),
+    );
+    try {
+      expect(session.describePersistence()).toMatchObject({ sessionId: "saved-thread" });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "saved-thread" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
@@ -1196,6 +1566,75 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("answers each concurrent command approval callback that shares one item", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const requested: AgentPermissionRequest[] = [];
+    session.subscribe((event) => {
+      if (event.type === "permission_requested") requested.push(event.request);
+    });
+
+    try {
+      await session.connect();
+
+      const firstPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-a",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add a.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand a",
+      });
+      await firstPermission;
+      const secondPermission = waitForNextPermission(session);
+      appServer.requestCommandApproval({
+        itemId: "shared-item",
+        approvalId: "callback-b",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "git add b.txt",
+        cwd: "/workspace/project",
+        reason: "subcommand b",
+      });
+      await secondPermission;
+
+      expect(requested.map((request) => request.input?.command)).toEqual([
+        "git add a.txt",
+        "git add b.txt",
+      ]);
+      expect(new Set(requested.map((request) => request.id)).size).toBe(2);
+      expect(session.getPendingPermissions()).toHaveLength(2);
+
+      await session.respondToPermission(requested[0]!.id, { behavior: "allow" });
+      await session.respondToPermission(requested[1]!.id, {
+        behavior: "deny",
+        message: "not b",
+      });
+
+      await expect(appServer.waitForCommandApprovalDecision("callback-a")).resolves.toEqual({
+        decision: "accept",
+      });
+      await expect(appServer.waitForCommandApprovalDecision("callback-b")).resolves.toEqual({
+        decision: "decline",
+      });
+      expect(session.getPendingPermissions()).toHaveLength(0);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("shows a successful shell command that produces no output", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -1215,7 +1654,9 @@ describe("Codex app-server provider", () => {
         command: "gh pr merge 2030 --squash",
         cwd: "/workspace/project",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({ threadId: "thread-1", text: "Merged." });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(nextTimelineItem).resolves.toEqual({
         type: "timeline",
@@ -1259,6 +1700,7 @@ describe("Codex app-server provider", () => {
         command: "gh pr merge 2030 --squash",
         cwd: "/workspace/project",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(nextTimelineItem).resolves.toEqual({
         type: "timeline",
@@ -1303,6 +1745,7 @@ describe("Codex app-server provider", () => {
         processId: "4242",
         text: "gh pr merge 2030 --squash\n",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(nextTimelineItem).resolves.toEqual({
         type: "timeline",
@@ -1331,6 +1774,7 @@ describe("Codex app-server provider", () => {
         command: "sleep 30",
         output: "Process running with session id 4242",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(relabeledTerminal).resolves.toEqual({
         type: "timeline",
@@ -1358,6 +1802,53 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test.each(["python3 -i", "/usr/bin/zsh -lc 'python3 -i'"])(
+    "labels a terminal write started as %s with the command that started the terminal",
+    async (command) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+
+      try {
+        await session.connect();
+        appServer.startsTerminalCommand({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "interactive-shell",
+          processId: "73",
+          command,
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        const terminalWrite = waitForTimelineToolCall(session, "terminal-session-73-1");
+        appServer.typesIntoTerminal({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "interactive-shell",
+          processId: "73",
+          text: "print(1)\n",
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        await expect(terminalWrite).resolves.toMatchObject({
+          item: {
+            callId: "terminal-session-73-1",
+            name: "terminal",
+            detail: { type: "plain_text", label: "python3 -i", text: "print(1)\n" },
+            metadata: { processId: "73" },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("keeps repeated writes to one terminal as separate timeline rows", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -1378,7 +1869,9 @@ describe("Codex app-server provider", () => {
         processId: "4242",
         text: "git status\n",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
+      await firstTimelineItem;
       const secondTimelineItem = waitForNextTimelineItem(session);
       appServer.typesIntoTerminal({
         threadId: "thread-1",
@@ -1387,6 +1880,7 @@ describe("Codex app-server provider", () => {
         processId: "4242",
         text: "git push\n",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const [first, second] = await Promise.all([firstTimelineItem, secondTimelineItem]);
       expect(first.item).toMatchObject({
@@ -1510,6 +2004,28 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("resumed session exposes usage before connecting and not after close", async () => {
+    let spawns = 0;
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      { sessionId: "saved-thread" },
+      createTestLogger(),
+      async () => {
+        spawns++;
+        throw new Error("unexpected spawn");
+      },
+      { environment: { HOME: "/fixture/codex", CODEX_HOME: "/fixture/profile" } },
+    );
+    expect(session.usageSession()).toMatchObject({
+      provider: "codex",
+      env: { CODEX_HOME: "/fixture/profile" },
+      sessionKey: expect.any(String),
+    });
+    expect(spawns).toBe(0);
+    await session.close();
+    expect(session.usageSession()).toBeNull();
+  });
+
   test("loads archived Codex history without resuming the native thread", async () => {
     const threadRequests: string[] = [];
     const appServer = createFakeCodexAppServer({
@@ -1532,7 +2048,7 @@ describe("Codex app-server provider", () => {
       purpose: "history",
     });
 
-    expect(threadRequests).toEqual(["thread/read"]);
+    expect(threadRequests).toEqual(["thread/read", "thread/read"]);
     await session.close();
     appServer.assertNoErrors();
   });
@@ -1571,10 +2087,146 @@ describe("Codex app-server provider", () => {
       "thread/resume",
       "thread/unarchive",
       "thread/resume",
-      "thread/read",
     ]);
     await session.close();
     appServer.assertNoErrors();
+  });
+
+  test("resumes a Codex thread without asking for its turns", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const session = await provider.resumeSession({ sessionId: "saved-thread" });
+
+    expect(
+      appServer
+        .requests()
+        .filter((request) => request.method === "thread/resume")
+        .map((request) => request.params),
+    ).toEqual([expect.objectContaining({ threadId: "saved-thread", excludeTurns: true })]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("reopening an agent whose timeline Paseo still holds does not read Codex history", async () => {
+    const codex = createReopenableCodexAgent({
+      "saved-thread": [
+        { id: "turn-1", items: [codexUserItem("user-1", "Hello"), codexAgentItem("Hi there.")] },
+      ],
+    });
+    try {
+      const projected = await codex.loadCloseAndReopen();
+
+      expect(projected).toEqual([
+        expect.objectContaining({ type: "user_message", messageId: "user-1", text: "Hello" }),
+        expect.objectContaining({ type: "assistant_message", text: "Hi there." }),
+      ]);
+      expect(codex.threadMethods(0)).toEqual([
+        "thread/loaded/list",
+        "thread/resume",
+        "thread/read",
+        "thread/read",
+      ]);
+      expect(codex.threadMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
+      expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
+    } finally {
+      await codex.close();
+    }
+  });
+
+  test("rewinds an agent reopened without reading its Codex history", async () => {
+    const firstTurn = {
+      id: "turn-1",
+      items: [codexUserItem("user-1", "First"), codexAgentItem("First answer.")],
+    };
+    const codex = createReopenableCodexAgent({
+      "saved-thread": [
+        firstTurn,
+        { id: "turn-2", items: [codexUserItem("user-2", "Second"), codexAgentItem("Second.")] },
+      ],
+      "forked-thread": [firstTurn],
+    });
+    try {
+      await codex.loadCloseAndReopen();
+
+      await codex.manager.rewind(codex.agentId, "user-2", "conversation");
+
+      expect(codex.latestAppServer().recordedRollbacks).toEqual([
+        { threadId: "forked-thread", numTurns: 1 },
+      ]);
+      expect(codex.manager.getTimeline(codex.agentId)).toEqual([
+        expect.objectContaining({ type: "user_message", messageId: "user-1", text: "First" }),
+        expect.objectContaining({ type: "assistant_message", text: "First answer." }),
+      ]);
+    } finally {
+      await codex.close();
+    }
+  });
+
+  test("keeps a reopened agent's interaction with an earlier sub-agent on its original card", async () => {
+    const codex = createReopenableCodexAgent({
+      "saved-thread": [
+        {
+          id: "turn-1",
+          items: [
+            codexUserItem("user-1", "Delegate"),
+            {
+              type: "subAgentActivity",
+              id: "spawn-child",
+              kind: "started",
+              agentThreadId: "child-thread",
+              agentPath: "/root/child",
+            },
+          ],
+        },
+      ],
+      "child-thread": [{ id: "child-turn-1", items: [codexAgentItem("Child started.")] }],
+    });
+    try {
+      await codex.loadCloseAndReopen();
+      const appServer = codex.latestAppServer();
+
+      const run = codex.manager.runAgent(codex.agentId, "Ask the child again");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "saved-thread", turnId: "turn-2" });
+      appServer.beginsSubAgentActivity({
+        callId: "interact-child",
+        threadId: "child-thread",
+        parentThreadId: "saved-thread",
+        kind: "interacted",
+        agentPath: "/root/child",
+      });
+      appServer.says({ threadId: "child-thread", itemId: "child-reply", text: "Child replied." });
+      appServer.completesSubAgentActivity({
+        callId: "interact-child",
+        threadId: "child-thread",
+        parentThreadId: "saved-thread",
+        kind: "interacted",
+        agentPath: "/root/child",
+      });
+      appServer.completeTurn({ threadId: "saved-thread" });
+      await run;
+
+      const toolCalls = codex.manager
+        .getTimeline(codex.agentId)
+        .filter((item) => item.type === "tool_call");
+      expect(new Set(toolCalls.map((item) => item.callId))).toEqual(new Set(["spawn-child"]));
+      expect(toolCalls.at(-1)).toMatchObject({ callId: "spawn-child", status: "completed" });
+      expect(codex.manager.getProviderSubagent(codex.agentId, "child-thread")).toMatchObject({
+        toolCallId: "spawn-child",
+        status: "completed",
+      });
+      expect(
+        codex.manager
+          .fetchProviderSubagentTimeline(codex.agentId, "child-thread")
+          .rows.map((row) => row.item),
+      ).toEqual([
+        expect.objectContaining({ type: "assistant_message", text: "Child started." }),
+        expect.objectContaining({ type: "assistant_message", text: "Child replied." }),
+      ]);
+    } finally {
+      await codex.close();
+    }
   });
 
   test("closes Codex app-server when an interactive resume fails", async () => {
@@ -1763,9 +2415,13 @@ describe("Codex app-server provider", () => {
     await session.startTurn("remember first");
     emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
     appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await session.startTurn("remember second");
     emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
     appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     await session.revertConversation({ messageId: "codex-first" });
 
@@ -1777,10 +2433,75 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("rewinds a legacy conversation with a bounded fork on Codex without thread/rollback", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
+      "thread/read": () => ({
+        thread: { id: "thread-1", historyMode: "legacy", turns: [] },
+      }),
+      "thread/rollback": () => ({
+        __jsonRpcError: {
+          code: -32600,
+          message: "Invalid request: unknown variant `thread/rollback`",
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
+    appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, {
+      id: "codex-second",
+      text: "remember second",
+      turnId: "turn-second",
+    });
+    appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await session.revertConversation({ messageId: "codex-second" });
+
+    const forkRequests = appServer
+      .requests()
+      .filter((request) => request.method === "thread/fork")
+      .map((request) => request.params);
+    expect(forkRequests).toEqual([
+      {
+        threadId: "thread-1",
+        beforeTurnId: "turn-second",
+        cwd: "/workspace/project",
+        model: "gpt-5.4",
+        serviceTier: null,
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(appServer.recordedRollbacks).toEqual([]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      sessionId: "forked-thread",
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds a paginated conversation through the public session capability", async () => {
     const appServer = createFakeCodexAppServer({
-      "thread/read": () => ({
-        thread: { id: "thread-1", historyMode: "paginated", turns: [] },
+      ...fakeCodexThreadHistory({
+        "thread-1": { historyMode: "paginated", turns: [] },
+        "forked-thread": { historyMode: "paginated", turns: [] },
       }),
       "thread/rollback": () => {
         throw new Error("paginated threads do not support thread/rollback");
@@ -1800,6 +2521,8 @@ describe("Codex app-server provider", () => {
       turnId: "turn-first",
     });
     appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await session.startTurn("remember second");
     emitCodexUserMessage(appServer, {
       id: "codex-second",
@@ -1807,6 +2530,8 @@ describe("Codex app-server provider", () => {
       turnId: "turn-second",
     });
     appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     await session.revertConversation({ messageId: "codex-first" });
 
@@ -1821,7 +2546,7 @@ describe("Codex app-server provider", () => {
         cwd: "/workspace/project",
         model: "gpt-5.4",
         serviceTier: null,
-        excludeTurns: false,
+        excludeTurns: true,
         persistExtendedHistory: true,
       },
     ]);
@@ -1832,6 +2557,82 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
     await session.close();
   });
+
+  test.each(["legacy", "paginated"] as const)(
+    "rewinds a %s thread onto a fork that keeps the custom provider and runtime MCP servers",
+    async (historyMode) => {
+      const appServer = createFakeCodexAppServer(
+        historyMode === "paginated"
+          ? fakeCodexThreadHistory({
+              "thread-1": { historyMode: "paginated", turns: [] },
+              "forked-thread": { historyMode: "paginated", turns: [] },
+            })
+          : undefined,
+      );
+      const customCodexConfig = {
+        model_provider: "codex-custom",
+        model_providers: {
+          "codex-custom": {
+            name: "Custom Codex",
+            base_url: "https://custom-relay.example.com/v1",
+            env_key: "OPENAI_API_KEY",
+            requires_openai_auth: false,
+            wire_api: "responses",
+          },
+        },
+      };
+      const session = new CodexAppServerAgentSession(
+        createConfig({
+          cwd: "/workspace/project",
+          mcpServers: {
+            paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          },
+        }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+        { customCodexConfig },
+      );
+
+      await session.startTurn("remember first");
+      emitCodexUserMessage(appServer, {
+        id: "codex-first",
+        text: "remember first",
+        turnId: "turn-first",
+      });
+      appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.startTurn("remember second");
+      emitCodexUserMessage(appServer, {
+        id: "codex-second",
+        text: "remember second",
+        turnId: "turn-second",
+      });
+      appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      await session.revertConversation({ messageId: "codex-first" });
+
+      const forkConfigs = appServer
+        .requests()
+        .filter((request) => request.method === "thread/fork")
+        .map((request) => (request.params as { config?: unknown }).config);
+      expect(forkConfigs).toEqual([
+        expect.objectContaining({
+          ...customCodexConfig,
+          mcp_servers: {
+            paseo: expect.objectContaining({
+              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            }),
+          },
+        }),
+      ]);
+      appServer.assertNoErrors();
+      await session.close();
+    },
+  );
 
   test("correlates a Codex user message with the submitting client message", async () => {
     const appServer = createFakeCodexAppServer();
@@ -1845,7 +2646,7 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     await session.startTurn("remember this", { clientMessageId: "client-message" });
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       threadId: "thread-1",
       turn: { id: "turn-1" },
     });
@@ -1859,8 +2660,15 @@ describe("Codex app-server provider", () => {
         clientMessageId: "client-message",
       },
     });
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
+    // The first turn of a new thread also reports the thread, now that Codex has saved it.
+    expect(events.slice(0, 3).map((event) => event.type)).toEqual([
+      "thread_started",
+      "turn_started",
+      "timeline",
+    ]);
     appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await session.close();
   });
 
@@ -1876,9 +2684,9 @@ describe("Codex app-server provider", () => {
       OPENAI_BASE_URL: "https://custom-relay.example.com",
     });
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
-      model_provider: "codex-iisb",
+      model_provider: "paseo:codex-iisb",
       model_providers: {
-        "codex-iisb": {
+        "paseo:codex-iisb": {
           name: "Custom Codex",
           base_url: "https://custom-relay.example.com/v1",
           env_key: "OPENAI_API_KEY",
@@ -1896,10 +2704,25 @@ describe("Codex app-server provider", () => {
     );
 
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
-      model_provider: "codex-custom",
+      model_provider: "paseo:codex-custom",
       model_providers: {
-        "codex-custom": expect.objectContaining({
+        "paseo:codex-custom": expect.objectContaining({
           base_url: "https://custom-relay.example.com/v1",
+        }),
+      },
+    });
+  });
+
+  test("namespaces provider ids that collide with Codex built-ins", async () => {
+    // `ollama` is a reserved Codex provider id: without namespacing, Codex rejects
+    // the generated config outright and the agent never starts.
+    const capturedRequests = await runCustomCodexProviderTurn("ollama", "https://ollama.com");
+
+    expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      model_provider: "paseo:ollama",
+      model_providers: {
+        "paseo:ollama": expect.objectContaining({
+          base_url: "https://ollama.com/v1",
         }),
       },
     });
@@ -1969,7 +2792,12 @@ describe("Codex app-server provider", () => {
       throw new Error(`resumeSession timed out; thread requests: ${threadRequests.join(", ")}`);
     }
 
-    expect(threadRequests).toEqual(["config/read", "thread/loaded/list", "thread/resume"]);
+    expect(threadRequests).toEqual([
+      "model/list",
+      "config/read",
+      "thread/loaded/list",
+      "thread/resume",
+    ]);
     expect(outcome).toBe("rejected");
     appServer.assertNoErrors();
   });
@@ -1989,7 +2817,9 @@ describe("Codex app-server provider", () => {
     };
 
     try {
-      await expect(listCodexSkills(cwd, workspaceGitService)).resolves.toContainEqual({
+      await expect(
+        listCodexSkills(cwd, path.join(tempDir, "codex-home"), workspaceGitService),
+      ).resolves.toContainEqual({
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
@@ -2141,6 +2971,71 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps an output field named properties as a field", () => {
+    const input = {
+      type: "object",
+      properties: { properties: { type: "string" } },
+      required: ["properties"],
+      additionalProperties: false,
+    };
+
+    expect(normalizeCodexOutputSchema(input)).toEqual(input);
+  });
+
+  test("normalizes schemas under keywords and leaves literal values alone", () => {
+    const literal = { type: "object", properties: { type: "string" } };
+    const input = {
+      type: "object",
+      properties: {
+        result: { $ref: "#/$defs/result" },
+        choice: { anyOf: [{ type: "object", properties: { id: { type: "string" } } }] },
+      },
+      $defs: {
+        properties: { type: "string" },
+        result: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          default: literal,
+          examples: [literal],
+          enum: [literal],
+          const: literal,
+        },
+      },
+    };
+
+    expect(normalizeCodexOutputSchema(input)).toEqual({
+      type: "object",
+      properties: {
+        result: { $ref: "#/$defs/result" },
+        choice: {
+          anyOf: [
+            {
+              type: "object",
+              properties: { id: { type: "string" } },
+              required: ["id"],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      required: ["result", "choice"],
+      additionalProperties: false,
+      $defs: {
+        properties: { type: "string" },
+        result: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          default: literal,
+          examples: [literal],
+          enum: [literal],
+          const: literal,
+          required: ["value"],
+          additionalProperties: false,
+        },
+      },
+    });
+  });
+
   test("passes a normalized output schema to turn/start", async () => {
     const session = createSession();
     const request = vi.fn(async (method: string) => {
@@ -2248,6 +3143,45 @@ describe("Codex app-server provider", () => {
       argumentHint: "",
       kind: "skill",
     });
+  });
+
+  test("lists custom prompts from the CODEX_HOME a custom provider runs Codex with", async () => {
+    await expect(listPromptCommandsFromCustomCodexHome()).resolves.toEqual([
+      "prompts:probe-profile",
+    ]);
+  });
+
+  test("runs a custom prompt from the CODEX_HOME a custom provider runs Codex with", async () => {
+    const records = await runPromptFromCustomCodexHome("/prompts:probe-profile");
+
+    expect(records.find((record) => record.kind === "env")?.CODEX_HOME).toMatch(
+      /provider-codex-home$/,
+    );
+    const turnStart = records.find((record) => record.method === "turn/start");
+    expect(JSON.stringify(turnStart?.params)).toContain("from the provider home");
+  });
+
+  test("inserts custom prompt arguments literally", async () => {
+    await expect(
+      expandCustomPrompt("Implement this exact request: $ARGUMENTS", "Preserve $1 unchanged"),
+    ).resolves.toBe("Implement this exact request: Preserve $1 unchanged");
+    await expect(
+      expandCustomPrompt("Treat this as literal replacement text: $VALUE.", 'VALUE="$&"'),
+    ).resolves.toBe("Treat this as literal replacement text: $&.");
+    await expect(expandCustomPrompt("$1 then $2", '"$2" two')).resolves.toBe("$2 then two");
+    await expect(expandCustomPrompt("$A and $B", 'A="$B" B=b')).resolves.toBe("$B and b");
+    await expect(
+      expandCustomPrompt("$ARGUMENTS", "keep __CODEX_DOLLAR_PLACEHOLDER__ as typed"),
+    ).resolves.toBe("keep __CODEX_DOLLAR_PLACEHOLDER__ as typed");
+  });
+
+  test("expands custom prompt placeholders and escapes", async () => {
+    await expect(
+      expandCustomPrompt("$1/$2 $NAME costs $$5, all: $ARGUMENTS, $MISSING", "one NAME=n two"),
+    ).resolves.toBe("one/two n costs $5, all: one NAME=n two, $MISSING");
+    await expect(
+      expandCustomPrompt("$$ARGUMENTS $$1 $$NAME $9|$NAME_SUFFIX", "first NAME=value"),
+    ).resolves.toBe("$ARGUMENTS $1 $NAME |$NAME_SUFFIX");
   });
 
   test("deduplicates Codex skill slash commands returned from multiple skill roots", async () => {
@@ -2625,12 +3559,12 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("converts Codex collab agent notifications through the normal timeline path", () => {
+  test("converts Codex collab agent notifications through the normal timeline path", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -2666,12 +3600,12 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("folds child-thread Codex activity into the parent sub-agent tool call", () => {
+  test("keeps child-thread Codex activity out of the parent sub-agent card", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -2685,12 +3619,12 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "child-thread-1",
       itemId: "child-message-1",
       delta: "Found",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-1",
       item: {
         type: "agentMessage",
@@ -2698,13 +3632,12 @@ describe("Codex app-server provider", () => {
         text: "Found the path.",
       },
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       threadId: "child-thread-1",
       turn: { status: "completed" },
     });
 
     const timelineEvents = events.filter((event) => event.type === "timeline");
-    expect(timelineEvents).toHaveLength(4);
     expect(timelineEvents.every((event) => event.item.type === "tool_call")).toBe(true);
     const finalItem = timelineEvents.at(-1)?.item;
     expect(finalItem).toMatchObject({
@@ -2716,7 +3649,7 @@ describe("Codex app-server provider", () => {
         type: "sub_agent",
         subAgentType: "Sub-agent",
         description: "Report findings.",
-        log: "[Assistant] Found the path.",
+        log: "",
         actions: [],
       },
     });
@@ -2776,12 +3709,15 @@ describe("Codex app-server provider", () => {
         threadId: "settled-child-thread",
         agentPath: "/root/settled-child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn({ threadId: "settled-child-thread" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "settled-child-thread",
         itemId: "late-child-message",
         text: "Late trailing output.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const providerUpserts = events.flatMap((event) =>
         event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
@@ -2790,13 +3726,9 @@ describe("Codex app-server provider", () => {
         id: "settled-child-thread",
         status: "completed",
       });
-      expect(events.at(-1)).toMatchObject({
+      expect(events.findLast((event) => event.type === "timeline")).toMatchObject({
         type: "timeline",
-        item: {
-          callId: "call-settled-child",
-          status: "completed",
-          detail: { type: "sub_agent", log: "[Assistant] Late trailing output." },
-        },
+        item: { callId: "call-settled-child", status: "completed" },
       });
 
       appServer.completesSubAgentActivity({
@@ -2805,6 +3737,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/settled-child",
         kind: "interacted",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(
         events.findLast(
           (event) => event.type === "provider_subagent" && event.event.type === "upsert",
@@ -2815,6 +3748,7 @@ describe("Codex app-server provider", () => {
         threadId: "settled-child-thread",
         turnId: "next-child-turn",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(
         events.findLast(
           (event) => event.type === "provider_subagent" && event.event.type === "upsert",
@@ -2822,7 +3756,9 @@ describe("Codex app-server provider", () => {
       ).toMatchObject({ event: { id: "settled-child-thread", status: "running" } });
 
       appServer.completeTurn({ threadId: "settled-child-thread" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
       appServer.assertNoErrors();
     } finally {
@@ -2830,12 +3766,12 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("updates a registered child with its later native activity name", () => {
+  test("updates a registered child with its later native activity name", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -2849,7 +3785,7 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -2884,11 +3820,11 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("renders child MCP image results in the provider subagent timeline", () => {
+  test("renders child MCP image results in the provider subagent timeline", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -2899,7 +3835,7 @@ describe("Codex app-server provider", () => {
       },
     });
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "image-child-thread",
       item: {
         id: "child-mcp-image",
@@ -2932,11 +3868,11 @@ describe("Codex app-server provider", () => {
     rmSync(source, { force: true });
   });
 
-  test("renders a child user message once across lifecycle notifications", () => {
+  test("renders a child user message once across lifecycle notifications", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -2952,11 +3888,11 @@ describe("Codex app-server provider", () => {
       content: [{ type: "text", text: "Inspect this path." }],
     };
 
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "user-child-thread",
       item: childUserMessage,
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "user-child-thread",
       item: childUserMessage,
     });
@@ -2990,19 +3926,24 @@ describe("Codex app-server provider", () => {
         threadId: "child-thread-1",
         agentPath: "/root/child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "child-thread-1",
         itemId: "child-message-1",
         text: "Child findings.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn({ threadId: "child-thread-1" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "thread-1",
         itemId: "parent-message-1",
         text: "Parent report.",
         chunks: ["Parent ", "report."],
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       expect(result.finalText).toBe("Parent report.");
@@ -3036,13 +3977,16 @@ describe("Codex app-server provider", () => {
         itemId: "first-parent-message",
         text: "First report.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "thread-1",
         itemId: "second-parent-message",
         text: "Second report.",
         chunks: ["", "Second report."],
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       expect(result.finalText).toBe("Second report.");
@@ -3067,8 +4011,11 @@ describe("Codex app-server provider", () => {
       await appServer.waitForTurnStart();
 
       appServer.says({ threadId: "thread-1", text: "First report." });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({ threadId: "thread-1", text: "Second report." });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       expect(result.finalText).toBe("Second report.");
@@ -3086,29 +4033,37 @@ describe("Codex app-server provider", () => {
       createTestLogger(),
       async () => appServer.child,
     );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
     try {
       const resultPromise = session.run("Delegate the investigation, then report the result.");
       await appServer.waitForTurnStart();
 
       appServer.startsTurn({ threadId: "child-thread-early" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "child-thread-early",
         itemId: "child-message-early",
         text: "Early child findings.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn({ threadId: "child-thread-early" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.startsSubAgent({
         callId: "spawn-child-early",
         threadId: "child-thread-early",
         agentPath: "/root/early-child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "thread-1",
         itemId: "parent-message-after-early-child",
         text: "Parent report after replay.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       expect(result.finalText).toBe("Parent report after replay.");
@@ -3123,11 +4078,18 @@ describe("Codex app-server provider", () => {
         type: "tool_call",
         callId: "spawn-child-early",
         status: "completed",
-        detail: {
-          type: "sub_agent",
-          log: "[Assistant] Early child findings.",
-        },
+        detail: { type: "sub_agent", log: "" },
       });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "timeline",
+            id: "child-thread-early",
+            item: expect.objectContaining({ type: "assistant_message" }),
+          }),
+        }),
+      );
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -3152,36 +4114,43 @@ describe("Codex app-server provider", () => {
         threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.beginsSubAgentActivity({
         callId: "message-child-stable",
         threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
         kind: "interacted",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesSubAgentActivity({
         callId: "message-child-stable",
         threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
         kind: "interacted",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.says({
         threadId: "child-thread-stable",
         itemId: "stable-child-message",
         text: "Still on the same card.",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.beginsSubAgentActivity({
         callId: "interrupt-child-stable",
         threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
         kind: "interrupted",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesSubAgentActivity({
         callId: "interrupt-child-stable",
         threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
         kind: "interrupted",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
@@ -3191,10 +4160,7 @@ describe("Codex app-server provider", () => {
       expect(toolCalls.at(-1)).toMatchObject({
         callId: "spawn-child-stable",
         status: "canceled",
-        detail: {
-          type: "sub_agent",
-          log: "[Assistant] Still on the same card.",
-        },
+        detail: { type: "sub_agent", log: "" },
       });
       appServer.assertNoErrors();
     } finally {
@@ -3216,6 +4182,7 @@ describe("Codex app-server provider", () => {
       await appServer.waitForTurnStart();
 
       appServer.completeTurn({ threadId: "child-thread-fast" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const activity = {
         callId: "spawn-child-fast",
         threadId: "child-thread-fast",
@@ -3223,8 +4190,11 @@ describe("Codex app-server provider", () => {
         kind: "started" as const,
       };
       appServer.beginsSubAgentActivity(activity);
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesSubAgentActivity(activity);
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
@@ -3253,24 +4223,27 @@ describe("Codex app-server provider", () => {
       await appServer.waitForTurnStart();
 
       appServer.completeTurn({ threadId: "child-late-compaction" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesCompaction({
         threadId: "child-late-compaction",
         itemId: "late-child-compaction",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.startsSubAgent({
         callId: "spawn-child-late-compaction",
         threadId: "child-late-compaction",
         agentPath: "/root/late-compaction",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
-      expect(toolCalls.map((item) => item.status)).toEqual(["running", "completed", "completed"]);
+      expect(toolCalls.map((item) => item.status)).toEqual(["running", "completed"]);
       expect(toolCalls.at(-1)).toMatchObject({
         callId: "spawn-child-late-compaction",
         status: "completed",
-        detail: { type: "sub_agent", log: "[Compacted]" },
       });
       appServer.assertNoErrors();
     } finally {
@@ -3278,7 +4251,7 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("projects legacy child tools into one stable sub-agent log", async () => {
+  test("routes legacy child tools to the child timeline", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
       createConfig({ cwd: "/workspace/project" }),
@@ -3286,6 +4259,8 @@ describe("Codex app-server provider", () => {
       createTestLogger(),
       async () => appServer.child,
     );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
     try {
       const resultPromise = session.run("Delegate the implementation.");
@@ -3296,6 +4271,7 @@ describe("Codex app-server provider", () => {
         threadId: "legacy-tool-child",
         agentPath: "/root/legacy-tool-child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const command = {
         threadId: "legacy-tool-child",
         callId: "legacy-child-command",
@@ -3303,15 +4279,20 @@ describe("Codex app-server provider", () => {
         output: "child output",
       };
       appServer.runsLegacyCommand(command);
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesCommand(command);
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.appliesLegacyPatch({
         threadId: "legacy-tool-child",
         callId: "legacy-child-patch",
         path: "/workspace/project/src/child.ts",
         diff: "@@\n-old\n+new\n",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn({ threadId: "legacy-tool-child" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const result = await resultPromise;
       const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
@@ -3322,24 +4303,31 @@ describe("Codex app-server provider", () => {
       expect(finalToolCall).toMatchObject({
         callId: "spawn-legacy-tool-child",
         status: "completed",
-        detail: { type: "sub_agent" },
+        detail: { type: "sub_agent", log: "" },
       });
-      if (finalToolCall?.detail.type === "sub_agent") {
-        expect(finalToolCall.detail.log.match(/\[Shell\]/g)).toHaveLength(1);
-        expect(finalToolCall.detail.log).toContain("[Edit]");
-      }
+      const childToolCalls = events.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.id === "legacy-tool-child" &&
+        event.event.item.type === "tool_call"
+          ? [event.event.item]
+          : [],
+      );
+      expect(new Set(childToolCalls.map((item) => item.detail.type))).toEqual(
+        new Set(["shell", "edit"]),
+      );
       appServer.assertNoErrors();
     } finally {
       await session.close();
     }
   });
 
-  test("keeps nested MultiAgentV2 output inside the root sub-agent card", () => {
+  test("keeps nested MultiAgentV2 output out of the root sub-agent card", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3349,7 +4337,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/child",
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-root",
       item: {
         type: "subAgentActivity",
@@ -3359,12 +4347,12 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/child/grandchild",
       },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "grandchild-thread",
       itemId: "grandchild-message",
       delta: "Grandchild findings.",
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       threadId: "grandchild-thread",
       turn: { status: "completed" },
     });
@@ -3394,10 +4382,24 @@ describe("Codex app-server provider", () => {
     expect(beforeParentCompletes.at(-1)).toMatchObject({
       callId: "spawn-child-root",
       status: "running",
-      detail: { type: "sub_agent", log: expect.stringContaining("Grandchild findings.") },
+      detail: { type: "sub_agent", log: "" },
     });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: {
+          type: "timeline",
+          id: "grandchild-thread",
+          item: {
+            type: "assistant_message",
+            messageId: "grandchild-message",
+            text: "Grandchild findings.",
+          },
+        },
+      }),
+    );
 
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       threadId: "child-thread-root",
       turn: { status: "completed" },
     });
@@ -3407,12 +4409,12 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("keeps a nested child under its spawning parent after a root interaction", () => {
+  test("keeps a nested child under its spawning parent after a root interaction", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3422,7 +4424,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/child",
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-root",
       item: {
         type: "subAgentActivity",
@@ -3432,7 +4434,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/child/grandchild",
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -3445,7 +4447,7 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "grandchild-thread",
       itemId: "grandchild-after-wait",
       delta: "Still nested.",
@@ -3462,37 +4464,44 @@ describe("Codex app-server provider", () => {
       "child-thread-root",
       "child-thread-root",
     ]);
-    expect(events.at(-1)).toMatchObject({
-      type: "timeline",
-      item: {
-        callId: "spawn-child-root",
-        detail: { type: "sub_agent", log: expect.stringContaining("Still nested.") },
-      },
-    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: {
+          type: "timeline",
+          id: "grandchild-thread",
+          item: {
+            type: "assistant_message",
+            messageId: "grandchild-after-wait",
+            text: "Still nested.",
+          },
+        },
+      }),
+    );
   });
 
-  test("never treats an unmapped foreign terminal as the root terminal", () => {
+  test("never treats an unmapped foreign terminal as the root terminal", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       threadId: "unmapped-child-thread",
       turn: { status: "completed" },
     });
     expect(events).toEqual([]);
 
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       threadId: "test-thread",
       turn: { status: "completed" },
     });
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       threadId: "test-thread",
       turn: { id: "next-root-turn" },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3508,12 +4517,12 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("routes msg-scoped legacy Codex events to their child thread", () => {
+  test("routes msg-scoped legacy Codex events to their child thread", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3523,7 +4532,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/legacy-envelope-child",
       },
     });
-    asInternals(session).handleNotification("codex/event/exec_command_begin", {
+    await asInternals(session).handleNotification("codex/event/exec_command_begin", {
       msg: {
         type: "exec_command_begin",
         threadId: "legacy-envelope-child",
@@ -3531,7 +4540,7 @@ describe("Codex app-server provider", () => {
         command: "pwd",
       },
     });
-    asInternals(session).handleNotification("codex/event/task_complete", {
+    await asInternals(session).handleNotification("codex/event/task_complete", {
       msg: {
         type: "task_complete",
         thread_id: "legacy-envelope-child",
@@ -3569,7 +4578,7 @@ describe("Codex app-server provider", () => {
       },
     });
 
-    asInternals(session).handleNotification("codex/event/task_complete", {
+    await asInternals(session).handleNotification("codex/event/task_complete", {
       msg: { type: "task_complete" },
     });
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
@@ -3591,11 +4600,13 @@ describe("Codex app-server provider", () => {
       const spawn = waitForTimelineToolCall(session, "spawn-legacy-only-child");
 
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-with-legacy-only-child" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.startsLegacyOnlySubAgent({
         callId: "spawn-legacy-only-child",
         threadId: "legacy-only-child-thread",
         agentPath: "/root/legacy-only-child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(child).resolves.toMatchObject({
         type: "provider_subagent",
@@ -3623,6 +4634,7 @@ describe("Codex app-server provider", () => {
       });
 
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
       appServer.assertNoErrors();
     } finally {
@@ -3647,10 +4659,12 @@ describe("Codex app-server provider", () => {
       const resultPromise = session.run("Wait for the child.");
       await appServer.waitForTurnStart();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-waiting-for-child" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(session.interrupt()).rejects.toThrow("A foreground turn is already active");
 
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
       appServer.assertNoErrors();
     } finally {
@@ -3675,10 +4689,12 @@ describe("Codex app-server provider", () => {
       const resultPromise = session.run("Wait for the child.");
       await appServer.waitForTurnStart();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-already-idle" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(session.interrupt()).resolves.toBeUndefined();
 
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
       appServer.assertNoErrors();
     } finally {
@@ -3707,10 +4723,12 @@ describe("Codex app-server provider", () => {
 
       const interruptPromise = session.interrupt();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-identified-late" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await interruptPromise;
 
       expect(interruptedTurns).toEqual([{ threadId: "thread-1", turnId: "turn-identified-late" }]);
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
       appServer.assertNoErrors();
     } finally {
@@ -3738,6 +4756,7 @@ describe("Codex app-server provider", () => {
       await appServer.waitForTurnStart();
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await expect(interruptPromise).resolves.toBeUndefined();
       await resultPromise;
@@ -3797,7 +4816,9 @@ describe("Codex app-server provider", () => {
       const nativeStart = await appServer.waitForTurnStart().catch(() => null);
       if (nativeStart) {
         appServer.startsTurn({ threadId: "thread-1", turnId: "cleanup-turn" });
+        await new Promise<void>((resolve) => setImmediate(resolve));
         appServer.completeTurn();
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
       await resultPromise.catch(() => undefined);
       await session.close();
@@ -3815,7 +4836,7 @@ describe("Codex app-server provider", () => {
       },
     };
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       threadId: "test-thread",
       turn: { id: "autonomous-turn" },
     });
@@ -3831,13 +4852,13 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("never replaces the root identity with an early child thread start", () => {
+  test("never replaces the root identity with an early child thread start", async () => {
     const session = createSession();
 
-    asInternals(session).handleNotification("thread/started", {
+    await asInternals(session).handleNotification("thread/started", {
       thread: { id: "child-thread-started-early" },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3851,12 +4872,12 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("test-thread");
   });
 
-  test("does not leak aggregate child telemetry into the root timeline", () => {
+  test("does not leak aggregate child telemetry into the root timeline", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3868,7 +4889,7 @@ describe("Codex app-server provider", () => {
     });
     const eventCountAfterSpawn = events.length;
 
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       threadId: "child-thread-telemetry",
       plan: [{ step: "Child-only plan", status: "inProgress" }],
     });
@@ -3876,12 +4897,12 @@ describe("Codex app-server provider", () => {
     expect(events).toHaveLength(eventCountAfterSpawn);
   });
 
-  test("keeps child context compaction inside the child card", () => {
+  test("keeps child context compaction on the child timeline", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -3891,11 +4912,11 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/compacting-child",
       },
     });
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "child-thread-compaction",
       item: { type: "contextCompaction", id: "child-compaction" },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-compaction",
       item: { type: "contextCompaction", id: "child-compaction" },
     });
@@ -3909,18 +4930,78 @@ describe("Codex app-server provider", () => {
         (item) => item.type === "tool_call" && item.callId === "spawn-child-compaction",
       ),
     ).toBe(true);
-    expect(timelineItems.at(-1)).toMatchObject({
-      type: "tool_call",
-      detail: { type: "sub_agent", log: "[Compacted]" },
-    });
+    expect(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
+      ),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "child-thread-compaction",
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        id: "child-thread-compaction",
+        item: { type: "compaction", status: "completed" },
+      },
+    ]);
   });
 
-  test("keeps the parent sub-agent running when a child command fails during the child turn", () => {
+  test("settles a child compaction once when the item completion is missing or duplicated", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    for (const child of ["compacted-child", "turn-ended-child"]) {
+      await asInternals(session).handleNotification("item/completed", {
+        threadId: "test-thread",
+        item: {
+          type: "subAgentActivity",
+          id: `spawn-${child}`,
+          kind: "started",
+          agentThreadId: child,
+          agentPath: `/root/${child}`,
+        },
+      });
+      await asInternals(session).handleNotification("item/started", {
+        threadId: child,
+        item: { type: "contextCompaction", id: `${child}-compaction` },
+      });
+    }
+    await asInternals(session).handleNotification("thread/compacted", {
+      threadId: "compacted-child",
+    });
+    await asInternals(session).handleNotification("item/completed", {
+      threadId: "compacted-child",
+      item: { type: "contextCompaction", id: "compacted-child-compaction" },
+    });
+    await asInternals(session).handleNotification("turn/completed", {
+      threadId: "turn-ended-child",
+      turn: { status: "completed" },
+    });
+
+    const compactions = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "timeline"
+        ? [
+            `${event.event.id} ${event.event.item.type === "compaction" ? event.event.item.status : ""}`,
+          ]
+        : [],
+    );
+    expect(compactions).toEqual([
+      "compacted-child loading",
+      "turn-ended-child loading",
+      "compacted-child completed",
+      "turn-ended-child completed",
+    ]);
+  });
+
+  test("keeps the parent sub-agent running when a child command fails during the child turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -3934,7 +5015,7 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "child-thread-1",
       item: {
         type: "commandExecution",
@@ -3947,7 +5028,7 @@ describe("Codex app-server provider", () => {
       },
     });
 
-    expect(events.at(-1)?.item).toMatchObject({
+    expect(events.findLast((event) => event.type === "timeline")?.item).toMatchObject({
       type: "tool_call",
       callId: "call-sub-agent-child-command-failure",
       name: "Sub-agent",
@@ -3961,12 +5042,12 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("does not synthesize a parent sub-agent failure from child error state alone", () => {
+  test("does not synthesize a parent sub-agent failure from child error state alone", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
@@ -4028,14 +5109,13 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    await asInternals(session).loadPersistedHistory(session.client);
-
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
       history.push(event);
     }
 
     expect(requests.map((request) => [request.method, request.params])).toEqual([
+      ["thread/read", { threadId: "test-thread", includeTurns: false }],
       ["thread/read", { threadId: "test-thread", includeTurns: true }],
     ]);
     expect(history).toEqual([
@@ -4082,7 +5162,7 @@ describe("Codex app-server provider", () => {
       })),
     };
 
-    await asInternals(session).loadPersistedHistory(session.client);
+    await Array.fromAsync(session.streamHistory());
 
     expect(asInternals(session).codexUserMessageTurns().resolve("message-history")).toEqual({
       index: 0,
@@ -4151,8 +5231,6 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    await asInternals(session).loadPersistedHistory(session.client);
-
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
       history.push(event);
@@ -4217,11 +5295,11 @@ describe("Codex app-server provider", () => {
 
     const liveEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => liveEvents.push(event));
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       threadId: "v2-child-thread",
       turn: { id: "v2-child-turn-after-resume" },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "subAgentActivity",
@@ -4231,7 +5309,7 @@ describe("Codex app-server provider", () => {
         agentPath: "/root/v2-child",
       },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "v2-child-thread",
       itemId: "v2-child-message-after-resume",
       delta: "More findings after resume.",
@@ -4245,25 +5323,25 @@ describe("Codex app-server provider", () => {
     );
     expect(liveToolCalls.at(-1)).toMatchObject({
       status: "running",
-      detail: { type: "sub_agent", log: "[Assistant] More findings after resume." },
+      detail: { type: "sub_agent", log: "" },
     });
 
     liveEvents.length = 0;
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       threadId: "legacy-child-thread",
       turn: { id: "legacy-child-turn-after-resume" },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "legacy-child-thread",
       itemId: "legacy-child-message-after-resume",
       delta: "Legacy findings after resume.",
     });
-    expect(liveEvents.at(-1)).toMatchObject({
+    expect(liveEvents.findLast((event) => event.type === "timeline")).toMatchObject({
       type: "timeline",
       item: {
         callId: "legacy-spawn-history",
         status: "running",
-        detail: { type: "sub_agent", log: "[Assistant] Legacy findings after resume." },
+        detail: { type: "sub_agent", log: "" },
       },
     });
   });
@@ -4312,8 +5390,6 @@ describe("Codex app-server provider", () => {
         };
       }),
     };
-
-    await asInternals(session).loadPersistedHistory(session.client);
 
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
@@ -4377,8 +5453,6 @@ describe("Codex app-server provider", () => {
         };
       }),
     };
-
-    await asInternals(session).loadPersistedHistory(session.client);
 
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
@@ -4502,6 +5576,7 @@ describe("Codex app-server provider", () => {
         threadId: "child-thread",
         agentPath: "/root/child",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await child;
       appServer.beginsSubAgentActivity({
         callId: "parent-interacted",
@@ -4510,7 +5585,9 @@ describe("Codex app-server provider", () => {
         kind: "interacted",
         agentPath: "/root",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await resultPromise;
 
       expect(providerSubagentIds).toEqual(new Set(["child-thread"]));
@@ -4551,8 +5628,6 @@ describe("Codex app-server provider", () => {
         };
       }),
     };
-
-    await asInternals(session).loadPersistedHistory(session.client);
 
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
@@ -4613,8 +5688,6 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    await asInternals(session).loadPersistedHistory(session.client);
-
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
       history.push(event);
@@ -4642,7 +5715,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("captures live Codex user message ids from item events", () => {
+  test("captures live Codex user message ids from item events", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -4653,11 +5726,11 @@ describe("Codex app-server provider", () => {
       content: [{ type: "text", text: "Use the native Codex id." }],
     };
 
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: userMessageItem,
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: userMessageItem,
     });
@@ -4676,19 +5749,19 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits Codex context compaction markers from live thread items", () => {
+  test("emits Codex context compaction markers from live thread items", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: {
         type: "contextCompaction",
         id: "compact-live",
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "contextCompaction",
@@ -4726,7 +5799,9 @@ describe("Codex app-server provider", () => {
         threadId: "thread-1",
         itemId: "compact-without-completion",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await terminalEvent;
 
       expect(
@@ -4748,11 +5823,14 @@ describe("Codex app-server provider", () => {
         threadId: "thread-1",
         itemId: "compact-completed-normally",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesCompaction({
         threadId: "thread-1",
         itemId: "compact-completed-normally",
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await terminalEvent;
 
       expect(
@@ -4771,8 +5849,11 @@ describe("Codex app-server provider", () => {
 
     try {
       appServer.startsCompaction({ threadId: "thread-1", itemId: "current-compaction" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completesCompaction({ threadId: "thread-1", itemId: "older-compaction" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await terminalEvent;
 
       expect(
@@ -4794,10 +5875,12 @@ describe("Codex app-server provider", () => {
 
     try {
       appServer.startsCompaction({ threadId: "thread-1", itemId: `compact-${status}` });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       appServer.completeTurn({
         status,
         error: status === "failed" ? { message: "Compaction failed" } : null,
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
       await terminalEvent;
 
       expect(
@@ -4811,17 +5894,17 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("emits and dedupes Codex thread/compacted notifications", () => {
+  test("emits and dedupes Codex thread/compacted notifications", async () => {
     const session = createSession();
     session.activeForegroundTurnId = null;
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("thread/compacted", {
+    await asInternals(session).handleNotification("thread/compacted", {
       threadId: "test-thread",
       turnId: "legacy-compact-turn",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "contextCompaction",
@@ -4842,17 +5925,17 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits consecutive Codex thread/compacted notifications", () => {
+  test("emits consecutive Codex thread/compacted notifications", async () => {
     const session = createSession();
     session.activeForegroundTurnId = null;
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("thread/compacted", {
+    await asInternals(session).handleNotification("thread/compacted", {
       threadId: "test-thread",
       turnId: "legacy-compact-turn-1",
     });
-    asInternals(session).handleNotification("thread/compacted", {
+    await asInternals(session).handleNotification("thread/compacted", {
       threadId: "test-thread",
       turnId: "legacy-compact-turn-2",
     });
@@ -4906,7 +5989,10 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: { threadId: "archived-thread-id", excludeTurns: true },
+      },
     ]);
   });
 
@@ -4978,14 +6064,14 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     await handler?.run({ emit: (event) => events.push(event) });
-    asInternals(session).handleNotification("item/started", {
+    await asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: {
         type: "contextCompaction",
         id: "manual-compact",
       },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
         type: "contextCompaction",
@@ -5100,23 +6186,23 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("emits a synthetic plan approval permission after a successful Codex plan turn", () => {
+  test("emits a synthetic plan approval permission after a successful Codex plan turn", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-1" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [
         { step: "Inspect the existing auth flow", status: "completed" },
         { step: "Implement the button behavior", status: "pending" },
       ],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5170,24 +6256,24 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("does not complete Codex plan timeline cards while plan approval is pending", () => {
+  test("does not complete Codex plan timeline cards while plan approval is pending", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-thread-item" },
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "plan-item-1",
         type: "plan",
         text: "- Inspect README\n- Add a short note",
       },
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5216,28 +6302,28 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("replaces a pending synthetic plan approval when a later plan completes", () => {
+  test("replaces a pending synthetic plan approval when a later plan completes", async () => {
     const session = createSession({
       featureValues: { plan_mode: true },
     });
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-first" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the first plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-second" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the revised plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5256,13 +6342,13 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-pending" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
@@ -5296,13 +6382,13 @@ describe("Codex app-server provider", () => {
       featureValues: { plan_mode: true },
     });
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-pending" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
@@ -5350,13 +6436,13 @@ describe("Codex app-server provider", () => {
       featureValues: { plan_mode: true },
     });
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-pending" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5381,10 +6467,10 @@ describe("Codex app-server provider", () => {
 
     const startTurn = session.startTurn("Revise the plan");
     await promptRequested;
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the newer plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
     acceptPrompt?.();
@@ -5400,13 +6486,13 @@ describe("Codex app-server provider", () => {
       featureValues: { plan_mode: true },
     });
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-pending" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the original plan", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
     const pendingPlan = session.getPendingPermissions()[0];
@@ -5426,12 +6512,12 @@ describe("Codex app-server provider", () => {
     expect(session.getPendingPermissions()).toEqual([]);
   });
 
-  test("emits imageView paths with spaces as valid assistant markdown images", () => {
+  test("emits imageView paths with spaces as valid assistant markdown images", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "image-view-1",
         type: "imageView",
@@ -5446,7 +6532,7 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
-          text: "![Image](file:///tmp/paseo%20image.png)",
+          text: "\n\n![Image](file:///tmp/paseo%20image.png)\n\n",
         },
       },
     ]);
@@ -5457,12 +6543,12 @@ describe("Codex app-server provider", () => {
     ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "file:///tmp/generated-snake.png"],
   ])(
     "emits imageGeneration thread items with %s as assistant markdown images",
-    (_fieldName, imageFields, expectedPath) => {
+    async (_fieldName, imageFields, expectedPath) => {
       const session = createSession();
       const events: AgentStreamEvent[] = [];
       session.subscribe((event) => events.push(event));
 
-      asInternals(session).handleNotification("item/completed", {
+      await asInternals(session).handleNotification("item/completed", {
         item: {
           id: `image-generation-${_fieldName}`,
           type: "imageGeneration",
@@ -5478,19 +6564,19 @@ describe("Codex app-server provider", () => {
           turnId: "test-turn",
           item: {
             type: "assistant_message",
-            text: `![Image](${expectedPath})`,
+            text: `\n\n![Image](${expectedPath})\n\n`,
           },
         },
       ]);
     },
   );
 
-  test("materializes imageGeneration base64 results before rendering markdown", () => {
+  test("materializes imageGeneration base64 results before rendering markdown", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "image-generation-base64",
         type: "imageGeneration",
@@ -5638,21 +6724,22 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("ignores incomplete imageGeneration thread items without failing the turn", () => {
+  test("ignores incomplete imageGeneration thread items without failing the turn", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    expect(() =>
-      asInternals(session).handleNotification("item/completed", {
-        item: {
-          id: "image-generation-incomplete",
-          type: "imageGeneration",
-          status: "in_progress",
-        },
-      }),
+    expect(
+      async () =>
+        await asInternals(session).handleNotification("item/completed", {
+          item: {
+            id: "image-generation-incomplete",
+            type: "imageGeneration",
+            status: "in_progress",
+          },
+        }),
     ).not.toThrow();
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5666,12 +6753,111 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits usage_updated on token usage updates and keeps usage on turn completion", () => {
+  test.each([
+    [
+      "a usage limit",
+      { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: 1786150800 },
+      { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: 1786150800 },
+    ],
+    ["no failure details", null, { message: "Image generation failed" }],
+  ])(
+    "emits failed imageGeneration items with %s as failed tool calls",
+    async (_label, failure, expectedError) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await asInternals(session).handleNotification("item/completed", {
+        item: {
+          id: "image-generation-failed",
+          type: "imageGeneration",
+          status: "failed",
+          revisedPrompt: "paint a blue whale",
+          result: "",
+          transparentBackground: null,
+          failure,
+          savedPath: null,
+        },
+      });
+
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: "test-turn",
+          item: {
+            type: "tool_call",
+            callId: "image-generation-failed",
+            name: "image_generation",
+            status: "failed",
+            error: expectedError,
+            detail: {
+              type: "unknown",
+              input: { prompt: "paint a blue whale" },
+              output: null,
+            },
+          },
+        },
+      ]);
+    },
+  );
+
+  test("keeps failed imageGeneration items in persisted history", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async () => ({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "imageGeneration",
+                  id: "image-generation-failed",
+                  status: "failed",
+                  revisedPrompt: "paint a blue whale",
+                  result: "",
+                  transparentBackground: null,
+                  failure: { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: null },
+                  savedPath: null,
+                },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "image-generation-failed",
+          name: "image_generation",
+          status: "failed",
+          error: { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: null },
+          detail: {
+            type: "unknown",
+            input: { prompt: "paint a blue whale" },
+            output: null,
+          },
+        },
+      },
+    ]);
+  });
+
+  test("emits usage_updated on token usage updates and keeps usage on turn completion", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("thread/tokenUsage/updated", {
+    await asInternals(session).handleNotification("thread/tokenUsage/updated", {
       tokenUsage: {
         model_context_window: 200000,
         last: {
@@ -5682,7 +6868,7 @@ describe("Codex app-server provider", () => {
         },
       },
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5712,20 +6898,20 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("streams Codex assistant message deltas and does not replay completed text", () => {
+  test("streams Codex assistant message deltas and does not replay completed text", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-1",
       delta: "Hel",
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-1",
       delta: "lo",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "assistant-item-1",
         type: "agentMessage",
@@ -5749,20 +6935,20 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits only the missing assistant suffix when completed text extends streamed deltas", () => {
+  test("emits only the missing assistant suffix when completed text extends streamed deltas", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-2",
       delta: "Hel",
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-2",
       delta: "lo",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "assistant-item-2",
         type: "agentMessage",
@@ -5792,24 +6978,24 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits a markdown divider when a new Codex assistant item starts after the previous one completed", () => {
+  test("emits a markdown divider when a new Codex assistant item starts after the previous one completed", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-3",
       delta:
         "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "assistant-item-3",
         type: "agentMessage",
         text: "I’m in the waiting phase now. The next read is intentionally delayed so we get meaningful CI state instead of churn.",
       },
     });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
+    await asInternals(session).handleNotification("item/agentMessage/delta", {
       itemId: "assistant-item-4",
       delta:
         "CI is still cooking. I’m staying on the current run rather than jumping around, because the first red job will tell us exactly whether anything else needs work.",
@@ -5839,20 +7025,20 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("streams Codex reasoning deltas and does not replay completed reasoning", () => {
+  test("streams Codex reasoning deltas and does not replay completed reasoning", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+    await asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
       itemId: "reasoning-item-1",
       delta: "Think",
     });
-    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+    await asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
       itemId: "reasoning-item-1",
       delta: "ing",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "reasoning-item-1",
         type: "reasoning",
@@ -5876,20 +7062,20 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("emits only the missing reasoning suffix when completed reasoning extends streamed deltas", () => {
+  test("emits only the missing reasoning suffix when completed reasoning extends streamed deltas", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+    await asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
       itemId: "reasoning-item-2",
       delta: "Think",
     });
-    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+    await asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
       itemId: "reasoning-item-2",
       delta: "ing",
     });
-    asInternals(session).handleNotification("item/completed", {
+    await asInternals(session).handleNotification("item/completed", {
       item: {
         id: "reasoning-item-2",
         type: "reasoning",
@@ -5926,13 +7112,13 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-2" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the new flow", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -5980,13 +7166,13 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-3" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the safe flow", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -6048,13 +7234,13 @@ describe("Codex app-server provider", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    asInternals(session).handleNotification("turn/started", {
+    await asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-4" },
     });
-    asInternals(session).handleNotification("turn/plan/updated", {
+    await asInternals(session).handleNotification("turn/plan/updated", {
       plan: [{ step: "Implement the fast flow", status: "pending" }],
     });
-    asInternals(session).handleNotification("turn/completed", {
+    await asInternals(session).handleNotification("turn/completed", {
       turn: { status: "completed", error: null },
     });
 
@@ -6238,9 +7424,21 @@ describe("Codex importable sessions", () => {
   const threadsByModelProvider = [
     { id: "stock-thread", cwd: "/workspace/project-a", modelProvider: "openai", updatedAt: 2 },
     { id: "custom-thread", cwd: "/workspace/project-a", modelProvider: "my-codex", updatedAt: 1 },
+    {
+      id: "new-custom-thread",
+      cwd: "/workspace/project-a",
+      modelProvider: "paseo:my-codex",
+      updatedAt: 3,
+    },
+    {
+      id: "other-custom-thread",
+      cwd: "/workspace/project-a",
+      modelProvider: "paseo-my-codex",
+      updatedAt: 4,
+    },
   ];
 
-  test("a custom Codex provider lists the threads it created", async () => {
+  test("a custom Codex provider lists its old and namespaced threads without other providers", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/list": providerFilteringThreadListHandler(threadsByModelProvider),
     });
@@ -6253,9 +7451,39 @@ describe("Codex importable sessions", () => {
 
     const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
 
-    expect(sessions.map((session) => session.providerHandleId)).toEqual(["custom-thread"]);
+    expect(sessions.map((session) => session.providerHandleId)).toEqual([
+      "custom-thread",
+      "new-custom-thread",
+    ]);
     appServer.assertNoErrors();
   });
+
+  test.each(["openai", "ollama", "lmstudio", "amazon-bedrock", "amazon-bedrock-runtime", "gcp"])(
+    "a custom provider named %s excludes native built-in sessions",
+    async (providerId) => {
+      const appServer = createFakeCodexAppServer({
+        "thread/list": providerFilteringThreadListHandler([
+          { id: "native-thread", cwd: "/workspace/project-a", modelProvider: providerId },
+          {
+            id: "custom-thread",
+            cwd: "/workspace/project-a",
+            modelProvider: `paseo:${providerId}`,
+          },
+        ]),
+      });
+      const provider = createProviderWithFakeAppServer(appServer, {
+        runtimeSettings: {
+          env: { OPENAI_BASE_URL: "https://llm.example.test/v1", OPENAI_API_KEY: "test-key" },
+        },
+        customProvider: { id: providerId, label: "Custom Codex", extends: "codex" },
+      });
+
+      const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
+
+      expect(sessions.map((session) => session.providerHandleId)).toEqual(["custom-thread"]);
+      appServer.assertNoErrors();
+    },
+  );
 
   test("stock Codex keeps listing only its own threads", async () => {
     const appServer = createFakeCodexAppServer({
@@ -6417,4 +7645,186 @@ describe("Codex denied plan approvals", () => {
       metadata: { approved: false },
     });
   });
+});
+
+describe("Codex interactive resume startup", () => {
+  test("delivers an autonomous turn that starts during resume to the first subscriber", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => ({}),
+      "thread/resume": () => {
+        appServer.startsTurn({ threadId: "saved-thread", turnId: "autonomous-turn" });
+        appServer.says({ threadId: "saved-thread", text: "Working on the goal" });
+        return { thread: { id: "saved-thread" } };
+      },
+      "thread/read": () => ({ thread: { turns: [] } }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "saved-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      expect(events.some((event) => event.type === "turn_started")).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("Working on the goal"),
+        ),
+      ).toBe(true);
+      await session.interrupt();
+      expect(
+        appServer.requests().find((request) => request.method === "turn/interrupt"),
+      ).toMatchObject({ params: { threadId: "saved-thread", turnId: "autonomous-turn" } });
+      unsubscribe();
+      const laterEvents: AgentStreamEvent[] = [];
+      session.subscribe((event) => laterEvents.push(event));
+      expect(laterEvents).toEqual([]);
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  });
+  test.each([false, true])(
+    "applies resumed goal events before returning (completed during resume: %s)",
+    async (completedDuringResume) => {
+      const appServer = createFakeCodexAppServer({
+        "thread/resume": () => {
+          appServer.startsTurn({ threadId: "saved-thread", turnId: "autonomous-turn" });
+          if (completedDuringResume) appServer.completeTurn({ threadId: "saved-thread" });
+          return { thread: { id: "saved-thread" } };
+        },
+        "thread/read": () => ({ thread: { turns: [] } }),
+      });
+      const session = new CodexAppServerAgentSession(
+        createConfig({ title: "Resumed goal", cwd: process.cwd() }),
+        { sessionId: "saved-thread" },
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const client: AgentClient = {
+        provider: "codex",
+        capabilities: session.capabilities,
+        isAvailable: async () => true,
+        fetchCatalog: async () => ({ models: [], modes: [] }),
+        createSession: async () => {
+          throw new Error("Unexpected create");
+        },
+        resumeSession: async () => {
+          await session.connect();
+          return session;
+        },
+      };
+      const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+      let id: string | undefined;
+      try {
+        const resumed = await manager.resumeAgentFromPersistence(
+          { provider: "codex", sessionId: "saved-thread" },
+          createConfig({ title: "Resumed goal", cwd: process.cwd() }),
+        );
+        id = resumed.id;
+        expect(resumed.lifecycle).toBe(completedDuringResume ? "idle" : "running");
+        expect(manager.getAgent(id)?.lifecycle).toBe(completedDuringResume ? "idle" : "running");
+      } finally {
+        if (id) await manager.closeAgent(id);
+        await session.close();
+        appServer.assertNoErrors();
+      }
+    },
+  );
+});
+
+test("Codex runtime safety queries live terminals and retains unsupported app servers", async () => {
+  let response: unknown = { data: [], nextCursor: null };
+  const appServer = createFakeCodexAppServer({ "thread/backgroundTerminals/list": () => response });
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  try {
+    await session.startTurn("hello");
+    await appServer.waitForTurnStart();
+    expect(await session.canStopRuntime()).toBe(false);
+    appServer.completeTurn({ threadId: "thread-1" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await expect.poll(() => session.canStopRuntime()).toBe(true);
+    response = { data: [{ processId: "shell-1" }], nextCursor: null };
+    expect(await session.canStopRuntime()).toBe(false);
+    response = {};
+    await expect(session.canStopRuntime()).rejects.toThrow();
+    response = { __jsonRpcError: { code: -32601, message: "Method not found" } };
+    await expect(session.canStopRuntime()).rejects.toThrow("Method not found");
+    expect(
+      appServer
+        .requests()
+        .findLast((request) => request.method === "thread/backgroundTerminals/list"),
+    ).toMatchObject({ params: { threadId: "thread-1" } });
+    appServer.assertNoErrors();
+  } finally {
+    await session.close();
+  }
+});
+
+test("publishes a materialized image before dispatching the following turn completion", async () => {
+  const appServer = createFakeCodexAppServer();
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("generate an image");
+    const data = Buffer.alloc(1024 * 1024, 47).toString("base64");
+    const imageFrame =
+      JSON.stringify({
+        method: "item/completed",
+        params: {
+          item: {
+            id: "ordered-image",
+            type: "imageGeneration",
+            status: "completed",
+            result: { data, mimeType: "image/png" },
+          },
+        },
+      }) + "\n";
+    const completed = new Promise<void>((resolve) =>
+      session.subscribe((event) => {
+        if (event.type === "turn_completed") resolve();
+      }),
+    );
+    appServer.child.stdout.write(imageFrame);
+    appServer.child.stdout.write(
+      JSON.stringify({
+        method: "turn/completed",
+        params: { turn: { status: "completed", error: null } },
+      }) + "\n",
+    );
+    await completed;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const imageIndex = events.findIndex(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "assistant_message" &&
+        event.item.text.includes("![Image]"),
+    );
+    const completedIndex = events.findIndex((event) => event.type === "turn_completed");
+    expect(imageIndex).toBeGreaterThanOrEqual(0);
+    expect(imageIndex).toBeLessThan(completedIndex);
+    const imageEvent = events[imageIndex];
+    if (imageEvent.type !== "timeline" || imageEvent.item.type !== "assistant_message")
+      throw new Error("Expected image");
+    expect(existsSync(markdownImageSource(imageEvent.item.text))).toBe(true);
+  } finally {
+    await session.close();
+  }
 });

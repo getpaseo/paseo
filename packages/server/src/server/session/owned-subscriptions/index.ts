@@ -51,6 +51,8 @@ export interface OwnedSubscription {
   readonly signal: AbortSignal;
   emit(message: SessionOutboundMessage): void;
   emitBinary(frame: Uint8Array): void;
+  emitAndWait(message: SessionOutboundMessage): Promise<void>;
+  emitBinaryAndWait(frame: Uint8Array): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -67,8 +69,14 @@ export class SessionDelivery {
   private closing?: Promise<void>;
 
   constructor(
-    private readonly send: (source: object, message: SessionOutboundMessage) => void,
-    private readonly sendBinary: (source: object, frame: Uint8Array) => void = () => {},
+    private readonly send: (
+      source: object,
+      message: SessionOutboundMessage,
+    ) => void | Promise<void>,
+    private readonly sendBinary: (
+      source: object,
+      frame: Uint8Array,
+    ) => void | Promise<void> = () => {},
     private readonly project: (
       source: object,
       message: SessionOutboundMessage,
@@ -319,7 +327,18 @@ export class SessionDelivery {
       emitBinary: (frame) => {
         if (!owner.active || !source.active) return;
         this.proofs.set(frame, owner);
-        this.sendBinary(source.socket, frame);
+        void Promise.resolve(this.sendBinary(source.socket, frame)).catch(() => {});
+      },
+      emitAndWait: async (message) => {
+        if (!owner.active || !source.active) throw new Error("Subscription source is closed");
+        const projected = this.project(source.socket, withSubscriptionId(message, responseId));
+        this.proofs.set(projected, owner);
+        await this.send(source.socket, projected);
+      },
+      emitBinaryAndWait: async (frame) => {
+        if (!owner.active || !source.active) throw new Error("Subscription source is closed");
+        this.proofs.set(frame, owner);
+        await this.sendBinary(source.socket, frame);
       },
       release: () => this.releaseOwner(owner),
     };
@@ -414,7 +433,7 @@ export class SessionDelivery {
   private sendOwned(owner: DeliveryOwner, message: SessionOutboundMessage): void {
     const projected = this.project(owner.source.socket, message);
     this.proofs.set(projected, owner);
-    this.send(owner.source.socket, projected);
+    void Promise.resolve(this.send(owner.source.socket, projected)).catch(() => {});
   }
 
   private releaseOwner(owner: RetainedOwner): Promise<void> {

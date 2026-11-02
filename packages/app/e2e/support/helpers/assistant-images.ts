@@ -26,16 +26,13 @@ export interface AssistantImageFixture {
 
 export async function createSmallAssistantPng(
   workspace: SeededWorkspace,
-  input: { alt: string; fileName: string },
+  input: { alt: string; fileName: string; width?: number; height?: number },
 ): Promise<AssistantImageFixture> {
-  await writeFile(path.join(workspace.repoPath, input.fileName), SMALL_PNG);
-  return {
-    alt: input.alt,
-    height: 1,
-    relativePath: input.fileName,
-    size: SMALL_PNG.byteLength,
-    width: 1,
-  };
+  const width = input.width ?? 1;
+  const height = input.height ?? 1;
+  const bytes = width === 1 && height === 1 ? SMALL_PNG : encodeDeterministicPng(width, height);
+  await writeFile(path.join(workspace.repoPath, input.fileName), bytes);
+  return { alt: input.alt, height, relativePath: input.fileName, size: bytes.byteLength, width };
 }
 
 export async function createNearTenMegabyteAssistantPng(
@@ -61,6 +58,7 @@ export async function createNearTenMegabyteAssistantPng(
 export async function createSettledMockAgent(
   workspace: SeededWorkspace,
   title: string,
+  markdown?: string,
 ): Promise<ArchiveTabAgent> {
   const agent = await workspace.client.createAgent({
     provider: "mock",
@@ -69,6 +67,7 @@ export async function createSettledMockAgent(
     cwd: workspace.repoPath,
     workspaceId: workspace.workspaceId,
     title,
+    featureValues: markdown === undefined ? undefined : { mockAssistantResponse: markdown },
   });
   await workspace.client.waitForAgentUpsert(
     agent.id,
@@ -87,10 +86,11 @@ export async function emitSettledAssistantImage(
   client: SeedDaemonClient,
   agent: ArchiveTabAgent,
   image: AssistantImageFixture,
+  destination: string = image.relativePath,
 ): Promise<void> {
   await client.sendAgentMessage(
     agent.id,
-    `Emit settled assistant image Markdown: ![${image.alt}](${image.relativePath})`,
+    `Emit settled assistant image Markdown: ![${image.alt}](${destination})`,
   );
   const result = await client.waitForFinish(agent.id, 30_000);
   if (result.status !== "idle" || result.final?.lastError) {
@@ -123,7 +123,7 @@ export async function expectAssistantImageRendered(
   page: Page,
   image: AssistantImageFixture,
 ): Promise<void> {
-  const rendered = page.getByRole("img", { name: image.alt }).first();
+  const rendered = page.getByRole("button", { name: image.alt }).first();
   await expect(rendered).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(async () =>
@@ -171,14 +171,14 @@ export async function expectAssistantImageNotMounted(
   page: Page,
   image: AssistantImageFixture,
 ): Promise<void> {
-  await expect(page.getByRole("img", { name: image.alt })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: image.alt })).toHaveCount(0);
 }
 
 export async function userPagesUntilAssistantImageRenders(
   page: Page,
   image: AssistantImageFixture,
 ): Promise<void> {
-  const rendered = page.getByRole("img", { name: image.alt });
+  const rendered = page.getByRole("button", { name: image.alt });
   for (let attempt = 0; attempt < 10; attempt += 1) {
     if ((await rendered.count()) > 0) {
       await expectAssistantImageRendered(page, image);
@@ -252,8 +252,8 @@ async function beginVisibleImageStabilityObservation(
         );
         const imageTab = document.querySelector(`[data-testid="${tabTestId}"]`);
         if (imageTab?.getAttribute("aria-selected") !== "true") return;
-        const imageVisible = Array.from(document.querySelectorAll('[role="img"]')).some(
-          (element) => element.getAttribute("aria-label") === accessibleName && isVisible(element),
+        const imageVisible = Array.from(document.querySelectorAll("img[alt]")).some(
+          (element) => element.getAttribute("alt") === accessibleName && isVisible(element),
         );
         record.missingSeen ||= !imageVisible;
       };

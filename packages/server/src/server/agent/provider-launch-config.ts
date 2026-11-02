@@ -43,6 +43,7 @@ export interface ResolvedProviderLaunch {
   command: string;
   args: string[];
   source: ProviderLaunchSource;
+  env?: ProcessEnvRecord;
 }
 
 export interface ProviderLaunchAvailability {
@@ -64,8 +65,8 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string): Promise<string | null> {
-  const found = await findExecutable(command);
+async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
+  const found = await findExecutable(command, { env });
   if (found) {
     return found;
   }
@@ -120,7 +121,7 @@ export async function checkProviderLaunchAvailable(
   const resolvedPath =
     defaultBinary && launch.source !== "override"
       ? await resolveDefaultLaunchPath(defaultBinary)
-      : await resolveLaunchPath(launch.command);
+      : await resolveLaunchPath(launch.command, launch.env);
   return {
     available: resolvedPath !== null,
     resolvedPath,

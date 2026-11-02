@@ -8,7 +8,7 @@ import {
   type RenderedDiagram,
 } from "./render-model";
 import { containsUnsafeMermaidSource } from "./source-policy";
-import type { MarkdownPhase } from "../types";
+import type { MarkdownPhase } from "./types";
 
 const renderCache = new Map<string, RenderedDiagram>();
 const RENDER_CACHE_LIMIT = 50;

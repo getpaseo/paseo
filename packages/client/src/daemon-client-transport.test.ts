@@ -10,17 +10,9 @@ import {
   extractRelayMessage,
 } from "./daemon-client-transport.js";
 
-const createClientChannelMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@getpaseo/relay/e2ee", () => ({
-  createClientChannel: createClientChannelMock,
-}));
-
 describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
-    createClientChannelMock.mockReset();
-    createClientChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
-
+    // An unusable daemon key fails the handshake before any frame is sent.
     const connection: { open: (() => void) | null } = { open: null };
     const close = vi.fn();
 
@@ -40,8 +32,7 @@ describe("daemon-client transport helpers", () => {
         onError: () => () => {},
         onMessage: () => () => {},
       },
-      "daemon-public-key",
-      { warn: vi.fn() },
+      { daemonPublicKeyB64: "not-a-key", logger: { warn: vi.fn() } },
     );
 
     expect(connection.open).not.toBeNull();
@@ -183,4 +174,19 @@ describe("daemon-client transport helpers", () => {
     expect(decodeMessageData(bytes.buffer)).toBe("hello");
     expect(decodeMessageData(bytes)).toBe("hello");
   });
+});
+
+test("native drain capability survives WebSocket and encryption wrappers", async () => {
+  const { nativeWebSocketFactory } = await import("./daemon-client-websocket-transport.js");
+  expect(nativeWebSocketFactory.supportsDrain).toBe(false);
+  const factory = Object.assign(() => ({ readyState: 1, send() {}, close() {} }), {
+    supportsDrain: false,
+  });
+  const base = createWebSocketTransportFactory(factory)({ url: "ws://test" });
+  expect(base.supportsDrain).toBe(false);
+  const encrypted = createEncryptedTransport(base, {
+    daemonPublicKeyB64: "unused-key",
+    logger: { warn() {} },
+  });
+  expect(encrypted.supportsDrain).toBe(false);
 });

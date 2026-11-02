@@ -1,4 +1,4 @@
-import type { NativeHeadlessTerminal } from "./headless-terminal-state";
+import type { NativeHeadlessTerminal, NativeTerminalCell } from "./headless-terminal-state";
 import type { TerminalGridCellMetrics } from "./terminal-grid-metrics";
 
 export interface TerminalBufferCoordinate {
@@ -25,6 +25,7 @@ export interface TerminalSelectionBounds {
 export interface TerminalSelectionModel {
   begin(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
   update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
+  beginEndpointDrag(endpoint: "start" | "end", cols: number): void;
   clear(): TerminalSelectionSnapshot;
   sync(input: TerminalSelectionSyncInput): TerminalSelectionSnapshot;
   getSnapshot(): TerminalSelectionSnapshot;
@@ -100,6 +101,10 @@ interface TerminalSelectionState {
 }
 
 const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
+
+function isTerminalWordSeparator(cell: NativeTerminalCell): boolean {
+  return cell.width !== 0 && TERMINAL_WORD_SEPARATORS.includes(cell.char || " ");
+}
 
 function compareCoordinates(
   left: TerminalBufferCoordinate,
@@ -183,8 +188,7 @@ export function resolveTerminalWordSelection(
   if (!cells || input.coordinate.col < 0 || input.coordinate.col >= cells.length) {
     return null;
   }
-  const target = cells[input.coordinate.col]?.char || " ";
-  if (TERMINAL_WORD_SEPARATORS.includes(target)) {
+  if (isTerminalWordSeparator(cells[input.coordinate.col])) {
     return {
       start: input.coordinate,
       end: input.coordinate,
@@ -195,13 +199,11 @@ export function resolveTerminalWordSelection(
   let startCol = input.coordinate.col;
   let endCol = input.coordinate.col;
   while (startCol > 0) {
-    const previous = cells[startCol - 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(previous)) break;
+    if (isTerminalWordSeparator(cells[startCol - 1])) break;
     startCol -= 1;
   }
   while (endCol + 1 < cells.length) {
-    const next = cells[endCol + 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(next)) break;
+    if (isTerminalWordSeparator(cells[endCol + 1])) break;
     endCol += 1;
   }
 
@@ -251,6 +253,7 @@ export function resolveTerminalSelectionRects(
 
 export function createTerminalSelectionModel(): TerminalSelectionModel {
   let state: TerminalSelectionState = { anchor: null, range: null };
+  let drag: { endpoint: "start" | "end"; cols: number } | null = null;
 
   function snapshot(): TerminalSelectionSnapshot {
     return { range: state.range };
@@ -258,18 +261,31 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
 
   function setSelection(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
     const coordinate = clampCoordinate(input.coordinate, input.bounds);
-    const anchor = state.anchor ?? coordinate;
+    const fixed = state.anchor ?? coordinate;
+    let anchor = fixed;
+    if (drag?.endpoint === "start" && compareCoordinates(coordinate, fixed) > 0) {
+      anchor =
+        fixed.col + 1 < drag.cols
+          ? { row: fixed.row, col: fixed.col + 1 }
+          : { row: fixed.row + 1, col: 0 };
+    } else if (drag?.endpoint === "end" && compareCoordinates(coordinate, fixed) < 0) {
+      anchor =
+        fixed.col > 0
+          ? { row: fixed.row, col: fixed.col - 1 }
+          : { row: fixed.row - 1, col: drag.cols - 1 };
+    }
     const range = normalizeTerminalSelection({
       anchor,
       focus: coordinate,
       coordinateEpoch: input.bounds.coordinateEpoch,
     });
-    state = { anchor, range };
+    state = { anchor: fixed, range };
     return snapshot();
   }
 
   return {
     begin(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
+      drag = null;
       const coordinate = clampCoordinate(input.coordinate, input.bounds);
       state = {
         anchor: coordinate,
@@ -284,7 +300,14 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
     update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
       return setSelection(input);
     },
+    beginEndpointDrag(endpoint, cols) {
+      if (state.range) {
+        drag = { endpoint, cols };
+        state = { ...state, anchor: state.range[endpoint === "start" ? "end" : "start"] };
+      }
+    },
     clear(): TerminalSelectionSnapshot {
+      drag = null;
       state = { anchor: null, range: null };
       return snapshot();
     },
@@ -292,6 +315,7 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
       if (!state.range || rangeIsSafe(state.range, input.bounds)) {
         return snapshot();
       }
+      drag = null;
       state = { anchor: null, range: null };
       return snapshot();
     },
@@ -324,10 +348,17 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const cells = window.rows[offset] ?? [];
     const startsOnThisRow = row === selection.start.row;
     const endsOnThisRow = row === selection.end.row;
-    const startCol = startsOnThisRow ? selection.start.col : 0;
+    let startCol = Math.max(0, startsOnThisRow ? selection.start.col : 0);
+    // Selecting either half highlights the whole wide character, so copy its leading cell too.
+    if (startCol > 0 && cells[startCol]?.width === 0) {
+      startCol -= 1;
+    }
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
-    const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
-    const line = selectedCells.map((cell) => cell.char || " ").join("");
+    const selectedCells = cells.slice(startCol, Math.max(0, endCol) + 1);
+    const line = selectedCells
+      .filter((cell) => cell.width !== 0)
+      .map((cell) => cell.char)
+      .join("");
     if (offset > 0 && window.wrappedRows[offset] !== true) {
       text += "\n";
     }

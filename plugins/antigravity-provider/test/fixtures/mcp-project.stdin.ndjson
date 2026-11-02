@@ -1,0 +1,1 @@
+{"t_ms": 286, "stream": "stdin", "data": {"event": "user", "message": {"content": "Call the phase0 MCP echo tool with text PHASE0_MCP. Do not use shell. If unavailable say UNAVAILABLE."}}}

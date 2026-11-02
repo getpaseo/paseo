@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const { toCheckoutErrorMock } = vi.hoisted(() => ({
@@ -67,7 +68,7 @@ function createPendingManager() {
   const workspaceGitService = {
     getCheckoutDiff: async () => ({ diff: "", structured: [] }),
     getSnapshot: async () => createWorkspaceSnapshot(),
-    peekSnapshot: () => null,
+
     registerWorkspace: () => ({ unsubscribe: () => {} }),
     requestWorkingTreeWatch: (cwd: string, onChange: () => void) => {
       const pending = createDeferred<{ repoRoot: string | null; unsubscribe: () => void }>();
@@ -90,6 +91,7 @@ function createPendingManager() {
   };
   const logger = { child: () => logger, warn: () => {} };
   const manager = new CheckoutDiffManager({
+    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
     logger: logger as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
     workspaceGitService,
@@ -125,7 +127,7 @@ describe("CheckoutDiffManager", () => {
 
     const workspaceGitService = {
       subscribe: vi.fn(),
-      peekSnapshot: vi.fn(),
+
       registerWorkspace: vi.fn(
         (_params: { cwd: string }, listener: (snapshot: WorkspaceGitRuntimeSnapshot) => void) => {
           onWorkspaceSnapshot = listener;
@@ -147,6 +149,7 @@ describe("CheckoutDiffManager", () => {
     };
 
     const manager = new CheckoutDiffManager({
+      workspaceRuntimeStore: createWorkspaceRuntimeStore(),
       logger: logger as unknown as pino.Logger,
       paseoHome: "/tmp/paseo-test",
       workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,

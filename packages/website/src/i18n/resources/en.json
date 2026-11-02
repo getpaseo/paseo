@@ -1,0 +1,787 @@
+{
+  "common": {
+    "breadcrumb": "Breadcrumb",
+    "untranslated": "This page has not been translated into your language yet, so it is shown in English.",
+    "notFound": "Page not found.",
+    "notFoundTitle": "Not Found - Paseo",
+    "more": "+{{count}} more",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "loading": "Loading…",
+    "copyToClipboard": "Copy to clipboard",
+    "backHome": "Go to the homepage"
+  },
+  "languageSelector": {
+    "label": "Language",
+    "current": "Language: {{language}}",
+    "names": {
+      "en": "English",
+      "zh-CN": "Simplified Chinese"
+    }
+  },
+  "nav": {
+    "plugins": "Plugins",
+    "blog": "Blog",
+    "docs": "Docs",
+    "changelog": "Changelog",
+    "download": "Download",
+    "sponsor": "Sponsor",
+    "hub": "Hub",
+    "githubStars": "GitHub, {{stars}} stars"
+  },
+  "footer": {
+    "product": "Product",
+    "blog": "Blog",
+    "docs": "Docs",
+    "plugins": "Plugins",
+    "changelog": "Changelog",
+    "hub": "Hub",
+    "cli": "CLI",
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "sponsor": "Sponsor",
+    "agents": "Agents",
+    "allProviders": "All providers",
+    "alternatives": "Alternatives",
+    "community": "Community",
+    "download": "Download",
+    "desktop": "Desktop",
+    "webApp": "Web App"
+  },
+  "docs": {
+    "headingAnchor": "Link to this section",
+    "onThisPage": "On this page",
+    "copyMarkdown": "Copy as markdown",
+    "copied": "Copied",
+    "viewMarkdown": "View as markdown",
+    "viewOnGitHub": "View on GitHub",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "notFound": "Doc not found.",
+    "notFoundTitle": "Not Found - Paseo Docs",
+    "pageTitle": "{{title}} - Paseo Docs",
+    "categories": {
+      "Getting started": "Getting started",
+      "Workspaces": "Workspaces",
+      "Providers": "Providers",
+      "Orchestration": "Orchestration",
+      "Browser": "Browser",
+      "Schedules": "Schedules",
+      "Configuration": "Configuration",
+      "Plugins": "Plugins",
+      "TypeScript SDK": "TypeScript SDK",
+      "Hub": "Hub",
+      "Troubleshooting": "Troubleshooting"
+    }
+  },
+  "agentPages": {
+    "claude-code": {
+      "title": "Open source app for Claude Code",
+      "subtitle": "Run Claude Code on your machine, drive it from your phone or desktop. Launch agents, watch them work, review and merge from anywhere.",
+      "metaTitle": "Claude Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Claude Code. Run agents on your machine, monitor progress, review diffs, and merge from anywhere. Self-hosted, your code stays local."
+    },
+    "codex": {
+      "title": "Open source app for Codex",
+      "subtitle": "Run OpenAI's Codex on your machine, drive it from your phone or desktop. Same setup, same machine, no laptop required.",
+      "metaTitle": "Codex Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for OpenAI Codex. Launch agents on your machine, monitor progress, and ship code from anywhere. Self-hosted."
+    },
+    "opencode": {
+      "title": "Open source app for OpenCode",
+      "subtitle": "Run OpenCode on your machine, drive it from your phone or desktop. Open source on both ends, your code stays local.",
+      "metaTitle": "OpenCode Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for OpenCode. Launch agents on your machine, watch them work, ship code from anywhere. Self-hosted."
+    },
+    "pi": {
+      "title": "Open source app for the Pi coding agent",
+      "subtitle": "Run the Pi coding agent on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+      "metaTitle": "Pi Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for the Pi coding agent. Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted."
+    },
+    "omp": {
+      "title": "Open source app for OMP (Oh My Pi)",
+      "subtitle": "Run OMP (Oh My Pi) on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+      "metaTitle": "OMP (Oh My Pi) Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for OMP (Oh My Pi). Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted."
+    },
+    "cursor": {
+      "title": "Open source app for Cursor",
+      "subtitle": "Send tasks to Cursor on your machine, drive it from your phone or desktop. Review the diff anywhere.",
+      "metaTitle": "Cursor Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Cursor. Launch tasks on your machine, monitor output, review diffs, and merge from anywhere. Self-hosted."
+    },
+    "muse-code": {
+      "title": "Open source app for Muse Code",
+      "subtitle": "Run Meta's Muse Code on your machine, drive it from your phone or desktop. Choose models, review tool calls, and answer approvals from anywhere.",
+      "metaTitle": "Muse Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Meta Muse Code. Run your installed Muse CLI, watch streamed turns, and answer approvals. See setup and version limitations in the docs."
+    },
+    "antigravity": {
+      "title": "Open source app for Antigravity",
+      "subtitle": "Run your installed Antigravity CLI on your machine and drive it from your phone or desktop.",
+      "metaTitle": "Antigravity Mobile and Desktop App, Open Source",
+      "metaDescription": "Run your installed Antigravity CLI through Paseo. Watch agents work and review changes from your phone or desktop. Self-hosted, your code stays on your machine."
+    },
+    "copilot": {
+      "title": "Open source app for GitHub Copilot",
+      "subtitle": "Drive GitHub Copilot from your phone or desktop. Same account, same machine, ship without sitting down at your desk.",
+      "metaTitle": "GitHub Copilot Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for GitHub Copilot. Launch sessions on your machine, monitor progress, merge from anywhere."
+    },
+    "gemini": {
+      "title": "Open source app for Gemini CLI",
+      "subtitle": "Run Google's Gemini CLI on your machine, drive it from your phone or desktop. Real coding work, no laptop required.",
+      "metaTitle": "Gemini CLI Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Google's Gemini CLI. Launch agents on your machine, monitor progress, and ship from anywhere. Self-hosted."
+    },
+    "hermes": {
+      "title": "Open source app for the Hermes agent",
+      "subtitle": "Run Nous Research's Hermes Agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Hermes Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Nous Research's Hermes Agent. Launch sessions on your machine, monitor progress, ship code from anywhere."
+    },
+    "qwen-code": {
+      "title": "Open source app for Qwen Code",
+      "subtitle": "Run Alibaba's Qwen Code on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Qwen Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Alibaba's Qwen Code. Launch agents on your machine, monitor progress, and merge from anywhere."
+    },
+    "kimi": {
+      "title": "Open source app for Kimi Code CLI",
+      "subtitle": "Run Moonshot AI's Kimi Code CLI on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Kimi Code CLI Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Moonshot AI's Kimi Code CLI. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "amp": {
+      "title": "Open source app for the Amp coding agent",
+      "subtitle": "Run Sourcegraph's Amp on your machine, drive it from your phone or desktop. Frontier coding, no laptop required.",
+      "metaTitle": "Amp Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Amp, Sourcegraph's frontier coding agent. Launch tasks on your machine, monitor progress, ship from anywhere."
+    },
+    "auggie": {
+      "title": "Open source app for Auggie CLI",
+      "subtitle": "Run Augment Code's Auggie CLI on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Auggie CLI Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Augment Code's Auggie CLI. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "cline": {
+      "title": "Open source app for the Cline coding agent",
+      "subtitle": "Run the Cline coding agent on your machine, drive it from your phone or desktop. Watch it work, jump in when needed.",
+      "metaTitle": "Cline Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Cline, the autonomous coding agent. Launch tasks, monitor output, review diffs from anywhere."
+    },
+    "codebuddy": {
+      "title": "Open source app for Codebuddy Code",
+      "subtitle": "Run Tencent Cloud's Codebuddy on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Codebuddy Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Tencent Cloud's Codebuddy Code. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "cortex-code": {
+      "title": "Open source app for Cortex Code",
+      "subtitle": "Run Snowflake's Cortex Code on your machine, drive it from your phone or desktop. No laptop required.",
+      "metaTitle": "Cortex Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Snowflake's Cortex Code. Launch agents on your machine, monitor progress, ship from anywhere."
+    },
+    "corust": {
+      "title": "Open source app for the Corust agent",
+      "subtitle": "Build Rust with the Corust agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Corust Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for the Corust Rust-focused coding agent. Launch tasks on your machine, ship from anywhere."
+    },
+    "crow": {
+      "title": "Open source app for crow-cli",
+      "subtitle": "Run crow-cli, the minimal ACP-native coding agent, on your machine. Drive it from your phone or desktop.",
+      "metaTitle": "Crow-CLI Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for crow-cli, the minimal ACP-native coding agent. Launch tasks on your machine, monitor from anywhere."
+    },
+    "deepagents": {
+      "title": "Open source app for DeepAgents",
+      "subtitle": "Run LangChain's DeepAgents on your machine, drive it from your phone or desktop. Batteries included.",
+      "metaTitle": "DeepAgents Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for the LangChain DeepAgents coding agent. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "deepseek-tui": {
+      "title": "Open source app for CodeWhale",
+      "subtitle": "Run CodeWhale's DeepSeek V4 terminal coding agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "CodeWhale Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for CodeWhale. Launch coding sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "dimcode": {
+      "title": "Open source app for DimCode",
+      "subtitle": "Leading models, one command. Run DimCode on your machine, drive it from your phone or desktop.",
+      "metaTitle": "DimCode Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for DimCode, the multi-model coding agent. Launch tasks on your machine, ship from anywhere."
+    },
+    "dirac": {
+      "title": "Open source app for the Dirac coding agent",
+      "subtitle": "Run Dirac's hash-anchored parallel edits on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Dirac Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for the Dirac coding agent. Hash-anchored parallel edits, AST manipulation, ship from anywhere."
+    },
+    "factory-droid": {
+      "title": "Open source app for Factory Droid",
+      "subtitle": "Run Factory's Droid coding agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Factory Droid Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Factory AI's Droid coding agent. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "fast-agent": {
+      "title": "Open source app for fast-agent",
+      "subtitle": "Run fast-agent, the multi-provider coding agent, on your machine. Drive it from your phone or desktop.",
+      "metaTitle": "Fast-Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for fast-agent, the multi-provider coding agent. Launch tasks on your machine, monitor from anywhere."
+    },
+    "glm": {
+      "title": "Open source app for the GLM agent",
+      "subtitle": "Run Zhipu AI's GLM coding agent on your machine, drive it from your phone or desktop. Streaming, mid-session model switching.",
+      "metaTitle": "GLM Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Zhipu AI's GLM coding agent. Launch sessions on your machine, monitor progress, ship code from anywhere."
+    },
+    "goose": {
+      "title": "Open source app for the goose coding agent",
+      "subtitle": "Run Block's goose on your machine, drive it from your phone or desktop. Local, extensible, open source.",
+      "metaTitle": "Goose Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Block's goose, the local open-source AI agent. Launch tasks on your machine, ship from anywhere."
+    },
+    "junie": {
+      "title": "Open source app for the Junie coding agent",
+      "subtitle": "Run JetBrains' Junie on your machine, drive it from your phone or desktop. Real work, no IDE required.",
+      "metaTitle": "Junie Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for JetBrains' Junie coding agent. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "kilo": {
+      "title": "Open source app for Kilo Code",
+      "subtitle": "Run Kilo Code on your machine, drive it from your phone or desktop. Send tasks, watch them ship.",
+      "metaTitle": "Kilo Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Kilo Code. Launch tasks on your machine via Kilo CLI, monitor progress, merge from anywhere."
+    },
+    "minion-code": {
+      "title": "Open source app for Minion Code",
+      "subtitle": "Run Minion Code's framework agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Minion Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Minion Code, the Minion-framework coding agent. Launch sessions on your machine, ship from anywhere."
+    },
+    "mistral-vibe": {
+      "title": "Open source app for Mistral Vibe",
+      "subtitle": "Run Mistral's open-source Vibe assistant on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Mistral Vibe Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Mistral's Vibe coding assistant. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "nova": {
+      "title": "Open source app for the Nova coding agent",
+      "subtitle": "Run Compass AI's Nova on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Nova Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Compass AI's Nova coding agent. Launch sessions on your machine, monitor progress, merge from anywhere."
+    },
+    "poolside": {
+      "title": "Open source app for the Poolside coding agent",
+      "subtitle": "Drive Poolside's coding agent from your phone or desktop. Kick off the work, watch it land.",
+      "metaTitle": "Poolside Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Poolside's coding agent. Launch tasks on your machine, monitor progress, ship from anywhere."
+    },
+    "qoder": {
+      "title": "Open source app for Qoder CLI",
+      "subtitle": "Run the Qoder agentic coding assistant on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Qoder CLI Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Qoder, the agentic coding assistant. Launch sessions on your machine, ship from anywhere."
+    },
+    "sigit": {
+      "title": "Open source app for siGit Code",
+      "subtitle": "Run siGit's local-first coding agent on your machine, drive it from your phone or desktop. Optional on-device LLM inference.",
+      "metaTitle": "SiGit Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for siGit Code, the local-first coding agent. Launch sessions on your machine, ship from anywhere."
+    },
+    "stakpak": {
+      "title": "Open source app for the Stakpak DevOps agent",
+      "subtitle": "Run Stakpak's Rust-based DevOps agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Stakpak DevOps Agent Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Stakpak, the Rust-based DevOps agent. Launch tasks on your machine, monitor from anywhere."
+    },
+    "vtcode": {
+      "title": "Open source app for VT Code",
+      "subtitle": "Run VT Code's multi-provider coding agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "VT Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for VT Code, the multi-provider coding agent. Launch sessions on your machine, ship from anywhere."
+    },
+    "agoragentic": {
+      "title": "Open source app for Agoragentic",
+      "subtitle": "Run Agoragentic's 174+ AI capabilities on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Agoragentic Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Agoragentic, the AI agent marketplace. Launch sessions on your machine, ship from anywhere."
+    },
+    "autohand": {
+      "title": "Open source app for Autohand Code",
+      "subtitle": "Run Autohand AI's coding agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Autohand Code Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Autohand AI's coding agent. Launch sessions on your machine, monitor progress, ship from anywhere."
+    },
+    "grok": {
+      "title": "Open source app for Grok",
+      "subtitle": "Run xAI's Grok Build coding agent on your machine, drive it from your phone or desktop.",
+      "metaTitle": "Grok Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for xAI's Grok Build coding agent. Launch sessions on your machine, monitor progress, and ship from anywhere. Self-hosted."
+    }
+  },
+  "home": {
+    "metaTitle": "Paseo – Run Claude Code, Codex, Copilot, OpenCode from anywhere",
+    "metaDescription": "Open source app for Claude Code, Codex, OpenCode, Pi, and 30+ more coding agents. Run many agents in parallel on your machines. Editor, terminals, diffs, pull requests, and a browser in one window. One download on desktop. The full app on iOS and Android.",
+    "title": "The agentic development<br/>environment",
+    "subtitle": "Run many coding agents at once,<mobileBreak/><wideSpace/>on any machine.<br/>From your desk and from your phone."
+  },
+  "agents": {
+    "metaTitle": "Supported agents – Every coding agent Paseo runs",
+    "metaDescription": "Run Claude Code, Codex, OpenCode, Pi, OMP, Cursor, Muse Code, Antigravity, and dozens more coding agents from your phone. Self-hosted, your code stays on your machine.",
+    "title": "Supported agents",
+    "intro": "Paseo supports many agents natively, it can run any <acp>ACP agent</acp> and you can implement new providers via <plugins>plugins</plugins>."
+  },
+  "landing": {
+    "socialProof": {
+      "title": "Loved by developers",
+      "description": "See what developers are saying about Paseo",
+      "readPost": "Read {{name}}'s original post"
+    },
+    "providers": {
+      "title": "Works with your tools",
+      "description": "Bring your subscriptions, skills and configuration"
+    },
+    "runAnywhere": {
+      "title": "Run it anywhere",
+      "description": "Use Paseo locally, from another machine, or with a team",
+      "desktopTitle": "Desktop app",
+      "desktopDescription": "The one click experience, download the app and it just works, no server required",
+      "mobileTitle": "Mobile",
+      "mobileDescription": "Full client and native, not a WebView",
+      "mobileCta": "Download",
+      "remoteTitle": "Remote machines",
+      "remoteDescription": "Run Paseo on a home lab, or a cloud machine",
+      "remoteCta": "Docs",
+      "teamsTitle": "Teams and triggers",
+      "teamsDescription": "Share access or start work from GitHub, Slack, and Discord",
+      "teamsCta": "Paseo Hub"
+    },
+    "automation": {
+      "title": "Built for automation",
+      "description": "Use MCP, the CLI, or the TypeScript SDK to automate Paseo",
+      "mcpCaption": "From another agent",
+      "cliCaption": "From the terminal",
+      "sdkCaption": "From code",
+      "mcpDocs": "MCP docs",
+      "cliDocs": "CLI docs",
+      "sdkDocs": "SDK docs",
+      "transcriptRequest": "Take the open GitHub issues labeled ready and fan them out to separate worktree agents.",
+      "transcriptPlan": "I found two ready issues. I will run each in its own worktree.",
+      "transcriptDone": "Done, two agents are running. I will let you know when they finish.",
+      "otherHostComment": "# Target another host"
+    },
+    "plugins": {
+      "title": "Extend it with plugins",
+      "description": "Add new panels and functionality that work in desktop, web and mobile",
+      "lead": "Plugins",
+      "browse": "Browse plugins",
+      "docs": "Plugin docs",
+      "license": "Paseo is Apache 2.0.",
+      "fork": "Fork the repo",
+      "uiTitle": "UI",
+      "uiDescription": "Screens, workspace panels, sidebar items, slash commands, and themes",
+      "lifecycleTitle": "Agent lifecycle",
+      "lifecycleDescription": "Change config and MCP servers, answer permissions, and follow up",
+      "providersTitle": "Providers",
+      "providersDescription": "Add a coding agent as a provider, used like the built-in ones"
+    },
+    "philosophy": {
+      "title": "Philosophy",
+      "description": "What Paseo stands for, and what every feature is built on",
+      "privateTitle": "Private",
+      "privateDescription": "No telemetry, tracking, or forced login. Code stays on your machine.",
+      "independentTitle": "Independent",
+      "independentDescription": "Paseo doesn't answer to investors. Its users guide what gets built.",
+      "polishedTitle": "Polished",
+      "polishedDescription": "Install the app and start working. No need to know what a daemon is.",
+      "unifiedTitle": "Unified",
+      "unifiedDescription": "Every coding agent, used the same way. Switch providers any time.",
+      "composableTitle": "Composable",
+      "composableDescription": "Run agents on a laptop or a server, and connect from any device.",
+      "extensibleTitle": "Extensible",
+      "extensibleDescription": "If Paseo doesn't fit how you work, change it with a plugin or fork."
+    },
+    "getStarted": {
+      "supports": "Supports",
+      "downloadFor": "Download for {{platform}}",
+      "getStoreApp": "Get the {{store}} app",
+      "desktopApp": "Desktop app",
+      "serverInstallLabel": "Install the daemon on a remote machine",
+      "serverInstallTitle": "Run agents on a remote machine",
+      "serverInstallDescription": "For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon",
+      "serverInstallFootnote": "Requires Node.js 18+. Run <code>paseo</code> to start the daemon."
+    },
+    "showcase": {
+      "heading": "When you want to step away from your desk, you can.",
+      "subheading": "The native mobile app has full feature parity with desktop.",
+      "sidebarLabel": "Paseo workspace drawer",
+      "chatLabel": "Paseo agent chat",
+      "diffLabel": "Paseo diff view"
+    },
+    "faq": {
+      "title": "FAQ",
+      "freeQuestion": "Is this free?",
+      "freeAnswer": "Yes. Paseo is free and open source. You need agent providers installed with your own credentials. Voice is local-first by default and can optionally use cloud speech providers if you configure them.",
+      "codeQuestion": "Does my code leave my machine?",
+      "codeAnswer": "Paseo doesn't send your code anywhere. Agents run locally and talk to their own APIs as they normally would. For remote access, you can use the optional <relay>end-to-end encrypted relay</relay>, connect directly over your local network, or use your own tunnel.",
+      "agentsQuestion": "What agents does it support?",
+      "agentsAnswer": "Paseo supports many providers. It has custom implementations for Claude, Codex, OpenCode, Pi, OMP, Antigravity, and Muse Code, and supports many more via ACP. See the full list here: <agents>all supported providers</agents>. See <muse>Muse Code setup and limitations</muse>.",
+      "providersQuestion": "How does Paseo run providers?",
+      "providersAnswer": "Paseo runs the providers installed on your machine as you'd normally run them. Paseo doesn't modify or change their behavior.",
+      "desktopQuestion": "Do I need the desktop app?",
+      "desktopAnswer": "No. You can run the daemon headless and use any client to connect. The desktop app just bundles the daemon with a UI.",
+      "voiceQuestion": "How does voice work?",
+      "voiceAnswer": "Voice runs locally on your device by default. You talk, the app transcribes and sends it to your agent as text. Optionally, you can configure OpenAI speech providers for higher-quality transcription and text-to-speech. See the <voice>voice docs</voice>.",
+      "networkQuestion": "Can I connect from outside my network?",
+      "networkAnswer": "Yes. You can use the hosted relay (end-to-end encrypted, Paseo can't read your traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the daemon port directly. See <configuration>configuration</configuration>.",
+      "gitQuestion": "Do I need git or GitHub?",
+      "gitAnswer": "No. Paseo works in any directory. Worktrees are optional and only relevant if you use git. You can run agents anywhere you'd normally work.",
+      "banQuestion": "Can I get banned for using Paseo?",
+      "banAnswer": "Paseo is designed to use each provider's officially supported integration and does not attempt to bypass its terms of service. It doesn't extract tokens or call inference APIs directly.",
+      "worktreesQuestion": "How do worktrees work?",
+      "worktreesAnswer": "When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo creates a git worktree and runs the agent inside it. The agent works on an isolated branch without touching your main working directory. See the <worktrees>worktrees docs</worktrees>."
+    },
+    "mockup": {
+      "alt": "Paseo desktop app with coding agents, a conversation, and a code diff open side by side",
+      "build": "Build",
+      "review": "Review",
+      "ship": "Ship",
+      "extend": "Extend",
+      "app": {
+        "newWorkspace": "New workspace",
+        "history": "History",
+        "schedules": "Schedules",
+        "pinned": "Pinned",
+        "readyToReview": "Ready to review",
+        "working": "Working",
+        "done": "Done",
+        "addProject": "Add project",
+        "files": "Files",
+        "changes": "Changes",
+        "uncommitted": "Uncommitted",
+        "commits": "Commits",
+        "viewPr": "View",
+        "prOpen": "Open",
+        "checksPassed": "All checks have passed",
+        "checksDetail": "{{successful}} successful, {{skipped}} skipped checks",
+        "successfulChecks": "{{count}} successful checks",
+        "activity": "Activity",
+        "noActivity": "No activity yet",
+        "tasksProgress": "{{completed}}/{{total}} tasks",
+        "composerPlaceholder": "Message the agent, tag @files, or use /commands and /skills",
+        "mobileComposerPlaceholder": "Message, @files, /commands",
+        "plugin": "plugin",
+        "mergedWeek": "Merged · 7d",
+        "inReview": "In review",
+        "failing": "Failing",
+        "mergesWeek": "Merges · last 7 days",
+        "recentlyMerged": "Recently merged",
+        "minutesAgo": "{{count}}m ago",
+        "hoursAgo": "{{count}}h ago",
+        "reviewing": "reviewing",
+        "subagents": "{{count}} subagents",
+        "checksPassedShort": "passed"
+      }
+    }
+  },
+  "sponsor": {
+    "metaTitle": "Sponsor Paseo",
+    "metaDescription": "Paseo is an independent project used by tens of thousands of developers daily, maintained by one person, shaped by the community, with no investors. Sponsor the work on GitHub Sponsors, Open Collective or Buy Me a Coffee, or sponsor it as a company.",
+    "title": "Sponsor Paseo",
+    "sponsors": "Sponsors",
+    "becomeSponsor": "Become a sponsor",
+    "maintainer": "<maintainer>Mo</maintainer>, maintainer",
+    "note": {
+      "independent": "Paseo is an independent project used by tens of thousands of developers daily.",
+      "maintained": "It is maintained by one person, full time, and shaped by the community. There are no investors, no board and no company behind it. I have turned down funding offers to keep it that way.",
+      "community": "The community helps Paseo grow through feedback, testing, bug reports, code contributions and plugins. Your sponsorship helps me keep improving and maintaining it.",
+      "neutral": "A tool that sits between you and your code, your keys and your machines has to stay neutral, and that gets hard once someone else owns a return on it. Funding creates pressure to monetize, and that pressure changes what gets built.",
+      "selfFunded": "Paseo is self-funded: the work is paid for by sponsorship and by <hub>Paseo Hub</hub>, an optional hosted service. Your support is what lets me keep working on it."
+    },
+    "shortNote": {
+      "maintained": "It is maintained by one person, full time, and shaped by the community. There are no investors and no company behind it. I have turned down funding to keep it that way. A tool that sits between you and your code, your keys and your machines has to stay neutral, and funding creates pressure to monetize.",
+      "selfFunded": "Paseo is self-funded through sponsorship and <hub>Paseo Hub</hub>. Your support is what lets me keep working on it."
+    },
+    "company": {
+      "title": "Sponsor as a company",
+      "description": "Support Paseo financially and get visibility for your company",
+      "perMonth": "a month",
+      "homepage": "Your logo on the paseo.sh homepage and docs, around 70,000 visitors a month",
+      "readme": "Your logo in the GitHub README, around 30,000 visitors a month",
+      "discord": "An announcement in the Discord, around 2,000 members",
+      "x": "An announcement from me on X",
+      "emailFirst": "Or email me first",
+      "emailWhenOpen": "Email me to hear when a spot opens"
+    }
+  },
+  "download": {
+    "metaTitle": "Download Paseo for macOS, Windows, Linux, iOS, and Android",
+    "metaDescription": "Install Paseo on every platform. Native desktop apps for macOS, Windows, and Linux. Mobile apps for iOS and Android. Self-hosted, open source, free to download.",
+    "title": "Download",
+    "whatsNew": "What's new",
+    "desktop": "Desktop",
+    "desktopDescription": "Recommended, bundles everything you need",
+    "macRequirement": "Requires macOS 13 or newer",
+    "download": "Download",
+    "mobile": "Mobile",
+    "web": "Web",
+    "webDescription": "Connect to a server from any browser",
+    "webApp": "Web App",
+    "open": "Open",
+    "server": "Server",
+    "serverDescription": "Run the Paseo server anywhere, connect from any client",
+    "allReleases": "All releases are available on <github>GitHub</github>.",
+    "releaseChannel": "Release channel",
+    "stable": "Stable",
+    "beta": "Beta",
+    "betaWarning": "Beta builds ship ahead of stable and can break.",
+    "betaSettings": "Already running the desktop app? Set <setting>Settings → Release channel → Beta</setting> and it updates itself from here on."
+  },
+  "thanks": {
+    "metaTitle": "Thanks for downloading Paseo",
+    "metaDescription": "Your Paseo download is starting. Join the community on Discord, GitHub, and Reddit, or sponsor Paseo.",
+    "title": "Thanks for downloading Paseo",
+    "intro": "Get help, share feedback, and follow along.",
+    "didNotStart": "Download didn't start?",
+    "tryAgain": "Try again",
+    "discord": "Get help and share feedback.",
+    "github": "Star, report issues, contribute.",
+    "reddit": "Workflows and questions."
+  },
+  "hub": {
+    "metaTitle": "Paseo Hub - GitHub, Slack, and Discord triggers",
+    "metaDescription": "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
+    "title": "Paseo Hub",
+    "intro": "An optional service that sits above your daemons and gives them extra capabilities.",
+    "runIt": "Run it yourself or use the hosted service.",
+    "pricing": {
+      "title": "Choose how to run Hub",
+      "unavailable": "The plan comparison is temporarily unavailable.",
+      "selfHost": "Self-host Hub",
+      "selfHosted": "Self-hosted",
+      "free": "Free",
+      "openSource": "/ open source",
+      "getStarted": "Get started",
+      "operateHub": "You operate Hub",
+      "ownApps": "Provider apps you create and control",
+      "openSourceFeature": "Open source",
+      "unlimitedRuns": "Unlimited agent runs",
+      "runsPerMonth": "{{value}} agent runs a month",
+      "unlimitedUnits": "Unlimited {{unit}}s",
+      "units_one": "{{value}} {{unit}}",
+      "units_other": "{{value}} {{unit}}s",
+      "perMonth": "/ month",
+      "perMonths": "/ {{count}} months",
+      "perUnitMonth": "per {{unit}} / month",
+      "perUnitMonths": "per {{unit}} / {{count}} months",
+      "seat": "seat"
+    },
+    "triggers": {
+      "title": "Triggers, running on your machines",
+      "description": "Mention the bot in GitHub, Slack, or Discord and an agent starts on your daemon.",
+      "github": "Issues, PRs, and reviews.",
+      "slack": "Channels and threads.",
+      "discord": "Channels and threads."
+    },
+    "demo": {
+      "showIssues": "<mention/> show me the latest P0 issues",
+      "issuesOpen": "Three P0 issues are open:",
+      "createPr": "<mention/> create a pull request for the first one",
+      "ranOn": "Ran on <host>macbook-pro</host>. Opened <pr>getpaseo/paseo#1234</pr> with a fix for the terminal writes.",
+      "filesChanged": "3 files changed",
+      "testsPassed": "tests passed",
+      "bot": "Bot",
+      "caption": "The agent ran on your daemon, with your keys."
+    },
+    "agents": {
+      "title": "Runs the agents you already have",
+      "description": "The Hub ships no agent of its own, so your team works with the providers, subscriptions, and skills already configured on your daemons."
+    },
+    "shape": {
+      "title": "Works with your existing infrastructure",
+      "description": "The Hub connects to the daemons you already run, and your apps keep connecting to those same daemons.",
+      "triggersRow": "Triggers and teammates",
+      "yourTeam": "Your team",
+      "futureIntegrations": "Future integrations",
+      "webhooks": "webhooks and mentions",
+      "hub": "Hub",
+      "hubHosting": "Self-hosted or managed",
+      "sameRpcs": "the same RPCs the app and CLI use",
+      "daemonsRow": "Your daemons",
+      "directOrRelay": "direct connection or relay",
+      "appsRow": "Paseo apps",
+      "desktop": "Desktop",
+      "web": "Web",
+      "mobile": "Mobile",
+      "cli": "CLI"
+    },
+    "faq": {
+      "title": "FAQ",
+      "whatQuestion": "What is the Hub?",
+      "whatAnswer": "A separate service that sits above your Paseo daemons. You connect one or more daemons to it and it gives them GitHub, Slack, and Discord triggers, with collaboration features planned. Paseo works fully without it.",
+      "separateQuestion": "Why is it a separate service instead of part of the daemon?",
+      "separateAnswer1": "The daemon stays one lean executable on one machine. The Hub talks to daemons over the same RPCs the app and the CLI use, so anyone can build their own hub on top of Paseo.",
+      "separateAnswer2": "It also has a different job. The Hub is meant to be exposed to the internet, shared with a team, and run multi-tenant. None of that belongs in a single machine daemon.",
+      "selfHostQuestion": "Can I run it myself?",
+      "selfHostAnswer": "Yes. Run <code>npx @getpaseo/hub</code> and complete setup in the browser. The source is available on <github>GitHub</github>, and the <guide>self-hosting guide</guide> covers more involved deployments.",
+      "needQuestion": "What do I need to run it?",
+      "needAnswer": "Node.js and a running Paseo daemon. Hub guides you through connecting the provider apps you want.",
+      "hostedQuestion": "Is there a hosted version?",
+      "hostedAnswer": "Yes. The hosted service runs the same Hub software you can self-host.",
+      "plannedQuestion": "What else is planned?",
+      "plannedIntro": "Not built yet, listed so you know where this is going.",
+      "plannedProvisioning": "Provisioning daemons for your team",
+      "plannedSharing": "Sharing settings and skills across a team",
+      "plannedIntegrations": "More integrations",
+      "moveQuestion": "Do I have to move my team to a new tool?",
+      "moveAnswer": "No. The Hub works in the Slack or Discord your team already uses, and on the daemons you already run. When the work gets serious you switch to the Paseo app on those same daemons.",
+      "agentsQuestion": "Which agents does it run?",
+      "agentsAnswer": "Whichever ones your daemons have configured, with your own subscriptions and skills. The Hub ships no agent of its own.",
+      "codeQuestion": "Can the Hub run code on my machines?",
+      "codeAnswer": "Yes, on the daemons you connect to it and nowhere else. That is the whole point of triggers, and it's why access to the beta stays small and trusted.",
+      "accessQuestion": "How do I get access?",
+      "accessAnswer": "You can self-host today or <hosted>sign in to Hosted Hub</hosted> for a free account. When you want more agent runs or more seats, upgrade from Billing inside Hub."
+    }
+  },
+  "changelog": {
+    "metaTitle": "Changelog - Paseo",
+    "metaDescription": "Product updates, bug fixes, and improvements shipped in each Paseo release. Track new agent providers, mobile features, and daemon changes over time.",
+    "title": "Changelog",
+    "linkTo": "Link to Paseo {{version}}",
+    "untranslatedRelease": "These release notes have not been translated yet, so they are shown in English."
+  },
+  "blog": {
+    "metaTitle": "Blog – Updates and announcements from the Paseo team",
+    "metaDescription": "Product updates, technical posts, and announcements from the Paseo team. Notes on building a self-hosted, multi-agent dev environment for your phone.",
+    "postTitle": "{{title}} - Paseo",
+    "notFoundTitle": "Not Found - Paseo",
+    "notFound": "Post not found.",
+    "draft": "DRAFT",
+    "showingDrafts": "Showing draft posts",
+    "noPosts": "No posts yet."
+  },
+  "legal": {
+    "lastUpdated": "Last updated: {{date}}"
+  },
+  "plugins": {
+    "meta": {
+      "indexTitle": "Plugins – Extend Paseo with community plugins",
+      "indexDescription": "Themes, providers, panels, and automations built by the Paseo community. Install any of them with one command.",
+      "allTitle": "All plugins – Paseo plugins",
+      "allDescription": "Every community plugin for Paseo, by installs or newest first.",
+      "categoryTitle": "{{category}} – Paseo plugins",
+      "authorTitle": "{{author}} – Paseo plugins",
+      "authorDescription": "Paseo plugins published by {{author}}.",
+      "pluginTitle": "{{name}} – Paseo plugin",
+      "authorNotFoundTitle": "Author not found – Paseo",
+      "authorNotFoundDescription": "Author not found.",
+      "pluginNotFoundTitle": "Plugin not found – Paseo",
+      "pluginNotFoundDescription": "Plugin not found.",
+      "categoryNotFoundTitle": "Category not found – Paseo",
+      "categoryNotFoundDescription": "Category not found."
+    },
+    "title": "Plugins",
+    "pluginCount_one": "{{count}} plugin",
+    "pluginCount_other": "{{count}} plugins",
+    "authorCount_one": "{{count}} author",
+    "authorCount_other": "{{count}} authors",
+    "counts": "{{plugins}} by {{authors}}",
+    "lead": "Browse community plugins that extend Paseo with new functionality.",
+    "readDocs": "Read the docs",
+    "submit": "Submit a plugin",
+    "buildTitle": "Build your own plugin",
+    "buildDescription": "Plugins add themes, workspace panels, slash commands, and agent hooks to Paseo. Write one with the plugin docs, then submit it to get it listed here.",
+    "featured": "Featured",
+    "featuredDescription": "A selection of hand picked plugins",
+    "seeAll": "See all",
+    "whatsNew": "What’s new",
+    "recentlyUpdated": "Recently updated",
+    "categoriesTitle": "Categories",
+    "mostInstalled": "Most installed",
+    "newest": "Newest",
+    "allPlugins": "All plugins",
+    "allChip": "All",
+    "results": "Results for “{{term}}”",
+    "resultsInCategory": "Results for “{{term}}” in {{category}}",
+    "clear": "Clear",
+    "noMatches": "No plugins match.",
+    "clearFilters": "Clear filters",
+    "noneUpdated": "No plugins have been updated since they were listed.",
+    "noneInCategory": "No plugins in this category yet.",
+    "window": {
+      "label": "Time window",
+      "week": "This week",
+      "month": "This month",
+      "all": "All time"
+    },
+    "search": "Search plugins",
+    "clearSearch": "Clear search",
+    "installs": "installs",
+    "back": "Plugins",
+    "reportBug": "Report a bug",
+    "source": "Source",
+    "screenshot": "{{name}} screenshot {{index}}",
+    "video": "{{name}} video {{index}}",
+    "previous": "Previous",
+    "next": "Next",
+    "untranslatedOverview": "This plugin’s overview has not been translated into your language yet, so it is shown in English.",
+    "notFound": {
+      "crumb": "Not found",
+      "browseAll": "Browse all plugins",
+      "authorTitle": "Author not found",
+      "authorBody": "Nobody with that GitHub owner has a plugin listed.",
+      "pluginTitle": "Plugin not found",
+      "pluginBody": "There is no plugin listed at this address.",
+      "categoryTitle": "Category not found",
+      "categoryBody": "There is no plugin category here."
+    },
+    "ago": {
+      "today": "today",
+      "yesterday": "yesterday",
+      "days": "{{count}}d ago",
+      "weeks": "{{count}}w ago"
+    },
+    "categories": {
+      "daemon-management": {
+        "label": "Daemon management",
+        "description": "Manage hosts, daemon jobs, resources, approvals, and MCP servers."
+      },
+      "themes": {
+        "label": "Themes",
+        "description": "Change the app color scheme."
+      },
+      "providers": {
+        "label": "Providers",
+        "description": "Connect coding agents, ACP servers, and model routers, with account and quota fallback."
+      },
+      "orchestration": {
+        "label": "Orchestration",
+        "description": "Coordinate agents, delegate work, and send messages across hosts."
+      },
+      "git": {
+        "label": "Git",
+        "description": "Work with branches, worktrees, pull requests, stacks, diffs, and reviews."
+      },
+      "workspaces": {
+        "label": "Workspaces",
+        "description": "Add workspace panels and tabs for boards, browsers, documents, and terminals."
+      },
+      "sidebar": {
+        "label": "Sidebar",
+        "description": "Add sidebar items and panels for usage, notifications, pricing, and links."
+      },
+      "extras": {
+        "label": "Extras",
+        "description": "Add presence, pets, puzzles, wellbeing reminders, and demos."
+      },
+      "utils": {
+        "label": "Utils",
+        "description": "Extend the composer and timeline with commands, prompts, skills, and small helpers."
+      }
+    }
+  }
+}

@@ -37,7 +37,11 @@ import {
   closeLocalTransportSession,
 } from "./local-transport.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
-import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
+import {
+  ExternalCliCommandError,
+  runExternalCliJsonCommand,
+  runExternalCliTextCommand,
+} from "./cli/external.js";
 import {
   createDesktopSettingsCommandHandlers,
   type DesktopCommandHandler,
@@ -224,6 +228,12 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
   const home = getPaseoHome();
 
   try {
+    // The app polls this while no local daemon runs. Answer that case in-process,
+    // since launching the CLI once per poll keeps spawning processes while idle.
+    if (!(await readDaemonInstance(home))) {
+      return statusFromDaemonProbe({ localDaemon: "stopped" }, home);
+    }
+
     const payload = (await runExternalCliJsonCommand([
       "daemon",
       "status",
@@ -234,7 +244,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
     return statusFromDaemonProbe(payload, home);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logDesktopDaemonLifecycle("resolveStatus CLI command failed", { error: errorMessage });
+    logDesktopDaemonLifecycle("resolveStatus failed", { error: errorMessage });
     return {
       serverId: "",
       status: "errored",
@@ -342,16 +352,82 @@ export async function stopDesktopDaemon(
       "Daemon changed since confirmation; inspect its current home and PID before stopping it.",
     );
   if (!instance || (!owned && !explicit)) return resolveDesktopDaemonStatus();
-  logDesktopDaemonLifecycle("stopping captured supervisor", { reason, pid: instance.pid, owned });
-  await stopDaemonInstance(home, {
-    instance,
-    timeoutMs: 15_000,
-    requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
-    },
+  const keepTerminals = keepsTerminalsOnStop(reason, process.platform);
+  logDesktopDaemonLifecycle("stopping captured supervisor", {
+    reason,
+    pid: instance.pid,
+    owned,
+    keepTerminals,
   });
+  await stopCapturedDaemon({ home, instance, reason, keepTerminals });
   if (owned) ownedLaunch = null;
   return resolveDesktopDaemonStatus();
+}
+
+export interface StopCapturedDaemonInput {
+  home: string;
+  instance: DaemonInstance;
+  reason: DesktopDaemonStopReason;
+  keepTerminals: boolean;
+  stopInstance?: typeof stopDaemonInstance;
+  runCliJson?: typeof runExternalCliJsonCommand;
+  log?: typeof logDesktopDaemonLifecycle;
+}
+
+/** Stops the supervisor desktop captured, keeping its terminals when asked and supported. */
+export async function stopCapturedDaemon(input: StopCapturedDaemonInput): Promise<void> {
+  const stopInstance = input.stopInstance ?? stopDaemonInstance;
+  const runCliJson = input.runCliJson ?? runExternalCliJsonCommand;
+  const logLifecycle = input.log ?? logDesktopDaemonLifecycle;
+  const stop = (keep: boolean) =>
+    stopInstance(input.home, {
+      instance: input.instance,
+      timeoutMs: 15_000,
+      keepTerminals: keep,
+      requestShutdown: async (ready) => {
+        await runCliJson([
+          "daemon",
+          "stop",
+          "--host",
+          ready.listen,
+          ...(keep ? ["--keep-terminals"] : []),
+          "--json",
+        ]);
+      },
+    });
+  try {
+    await stop(input.keepTerminals);
+  } catch (error) {
+    // The CLI refuses a keep stop before sending anything when the daemon predates the feature;
+    // that daemon closes terminals on every stop, as every upgrade did before.
+    if (
+      !input.keepTerminals ||
+      !(error instanceof ExternalCliCommandError) ||
+      error.code !== "TERMINALS_KEEP_UNSUPPORTED"
+    ) {
+      throw error;
+    }
+    const version = typeof error.error?.version === "string" ? error.error.version : "unknown";
+    logLifecycle(`daemon v${version} cannot keep terminals; stopping it and closing them`, {
+      reason: input.reason,
+      pid: input.instance.pid,
+    });
+    await stop(false);
+  }
+}
+
+/**
+ * Whether a desktop stop keeps the daemon's terminals running for the daemon that replaces it.
+ * Only when one comes straight back (an app update, a version-mismatch restart), and never on
+ * Windows: a surviving terminal worker runs Paseo.exe and would lock the install folder the
+ * update replaces. Quit, Settings, host removal and manual stops close terminals.
+ */
+export function keepsTerminalsOnStop(
+  reason: DesktopDaemonStopReason,
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === "win32") return false;
+  return reason === "app_update" || reason === "version_mismatch";
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {

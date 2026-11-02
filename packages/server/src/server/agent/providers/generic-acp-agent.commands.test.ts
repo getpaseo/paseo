@@ -8,20 +8,26 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 describe("GenericACPAgentClient slash commands", () => {
-  test("lists commands an agent advertises right after session/new", async () => {
+  test("preserves argument hints in commands advertised right after session/new", async () => {
     await withFakeACPAgent("commands-after-session-new", async (command, cwd) => {
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
         command,
-        // Long enough that the update always lands inside the wait, however slowly
-        // the fake agent is scheduled.
-        initialCommandsWaitTimeoutMs: 60_000,
+        initialCommandsWaitTimeoutMs: 1_500,
       });
       const session = await client.createSession({ provider: "acp", cwd });
       try {
-        await expect(session.listCommands?.()).resolves.toEqual([
-          { name: "review", description: "Review the diff", argumentHint: "", kind: "command" },
-        ]);
+        const commands = [
+          {
+            name: "review",
+            description: "Review the diff",
+            argumentHint: "query",
+            kind: "command",
+          },
+          { name: "status", description: "Show status", argumentHint: "", kind: "command" },
+        ];
+        await expect(session.listCommands?.()).resolves.toEqual(commands);
+        await expect(session.listCommands?.()).resolves.toEqual(commands);
       } finally {
         await session.close();
       }
@@ -83,20 +89,29 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "session/new") {
-    write({ id: message.id, result: { sessionId: "session-1" } });
     if (mode === "commands-after-session-new") {
-      setTimeout(() => {
-        write({
-          method: "session/update",
-          params: {
-            sessionId: "session-1",
-            update: {
-              sessionUpdate: "available_commands_update",
-              availableCommands: [{ name: "review", description: "Review the diff" }],
+      process.stdout.write(
+        [
+          { id: message.id, result: { sessionId: "session-1" } },
+          {
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: {
+                sessionUpdate: "available_commands_update",
+                availableCommands: [
+                  { name: "review", description: "Review the diff", input: { hint: "query" } },
+                  { name: "status", description: "Show status" },
+                ],
+              },
             },
           },
-        });
-      }, 0);
+        ]
+          .map((entry) => JSON.stringify({ jsonrpc: "2.0", ...entry }) + "\\n")
+          .join(""),
+      );
+    } else {
+      write({ id: message.id, result: { sessionId: "session-1" } });
     }
     return;
   }

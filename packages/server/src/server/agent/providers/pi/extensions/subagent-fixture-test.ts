@@ -54,8 +54,6 @@ export async function verifySubagentFixture(
   try {
     await session.startTurn("Delegate work");
     for (const event of fixture.events) pi.latestSession().emit(event);
-    const immediate = live.filter((event) => event.type === "provider_subagent");
-    expect(immediate.some((event) => event.event.type === "timeline")).toBe(false);
     pi.latestSession().finishTurn();
     const replay: AgentStreamEvent[] = [];
     for await (const event of streamPiHistory("pi", fixture.messages)) replay.push(event);
@@ -65,16 +63,46 @@ export async function verifySubagentFixture(
     });
     for (const message of fixture.messages) {
       if (message.role !== "custom" || typeof message.content !== "string") continue;
-      const assistantText = {
-        type: "assistant_message" as const,
-        text: message.content,
-      };
-      expect(live).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
-      expect(replay).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
+      for (const events of [live, replay]) {
+        const tools = events.flatMap((event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.detail.type === "plain_text" &&
+          event.item.detail.text === message.content
+            ? [event.item]
+            : [],
+        );
+        expect(tools).toEqual(
+          message.display === false
+            ? []
+            : [
+                {
+                  type: "tool_call",
+                  callId: expect.stringMatching(/^pi-custom-/),
+                  name: message.customType ?? "custom-message",
+                  status: "completed",
+                  detail: {
+                    type: "plain_text",
+                    text: message.content,
+                  },
+                  metadata: {
+                    synthetic: true,
+                    customType: message.customType ?? "custom-message",
+                    ...(message.details === undefined ? {} : { details: message.details }),
+                  },
+                  error: null,
+                },
+              ],
+        );
+        expect(
+          events.filter(
+            (event) =>
+              event.type === "timeline" &&
+              event.item.type === "assistant_message" &&
+              event.item.text === message.content,
+          ),
+        ).toEqual([]);
+      }
     }
     const liveSubagents = live.filter((event) => event.type === "provider_subagent");
     const firstTimeline = liveSubagents.findIndex((event) => event.event.type === "timeline");

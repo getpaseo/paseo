@@ -1,0 +1,1 @@
+{"t_ms": 296, "stream": "stderr", "data": "error: invalid model selection (--model \"gemini-3.8-flash-high\" --effort \"low\"): --model gemini-3.8-flash-high conflicts with --effort=low"}

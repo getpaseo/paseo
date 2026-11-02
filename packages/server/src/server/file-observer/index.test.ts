@@ -236,7 +236,8 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const deletions = expectFileChanges(removedPaths, "delete");
   const movedFiles = expectFileChanges(movedPaths);
   const recovery = expectFileChanges([sentinel]);
-  const subscription = await subscribeToFileChanges(root, (error, events) => {
+  const observer = createObserver();
+  const subscription = await observer.subscribe(root, (error, events) => {
     expect(error).toBeNull();
     for (const event of events) {
       population.record(event);
@@ -254,9 +255,18 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
   await writes.complete;
 
-  // A native watcher may recover coalesced paths through its safety audit.
-  // Completion comes from the delivered deletions, not an idle diagnostic or
-  // a deadline shorter than that recovery cycle.
+  // The first notice for each write can arrive before its remaining
+  // classifications. Drain those deliveries before starting a separate deletion
+  // phase, so a late create cannot coalesce with the expected delete as update.
+  await expect
+    .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
+    .toMatchObject({
+      pendingEventCount: 0,
+      pendingClassificationCount: 0,
+      reconciliationInFlightCount: 0,
+    });
+
+  // Completion still requires the delivered deletion notices.
   await Promise.all(removedPaths.map((path) => rm(path)));
   await deletions.complete;
 

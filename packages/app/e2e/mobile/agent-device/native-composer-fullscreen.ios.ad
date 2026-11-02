@@ -1,0 +1,18 @@
+context platform=ios timeout=60000 retries=0
+# Start with an empty composer in an idle chat or new-agent draft on an iPhone with the software keyboard enabled.
+# Expand a long draft with the keyboard open; Exit fullscreen must remain reachable.
+open sh.paseo.debug
+wait "editable=true" 60000
+fill "editable=true" "iOS fullscreen composer smoke.\n\nLine 1: Check that the composer keeps this draft when expanded and collapsed.\nLine 2: Check that the composer keeps this draft when expanded and collapsed.\nLine 3: Check that the composer keeps this draft when expanded and collapsed.\nLine 4: Check that the composer keeps this draft when expanded and collapsed.\nLine 5: Check that the composer keeps this draft when expanded and collapsed.\nLine 6: Check that the composer keeps this draft when expanded and collapsed.\nLine 7: Check that the composer keeps this draft when expanded and collapsed.\nLine 8: Check that the composer keeps this draft when expanded and collapsed.\nLine 9: Check that the composer keeps this draft when expanded and collapsed.\nLine 10: Check that the composer keeps this draft when expanded and collapsed.\nLine 11: Check that the composer keeps this draft when expanded and collapsed.\nLine 12: Check that the composer keeps this draft when expanded and collapsed.\nLine 13: Check that the composer keeps this draft when expanded and collapsed.\nLine 14: Check that the composer keeps this draft when expanded and collapsed."
+press "label=\"Fullscreen\""
+wait "label=\"Exit fullscreen\" role=button" 5000
+is visible "label=\"Exit fullscreen\" role=button"
+press "label=\"Exit fullscreen\" role=button"
+wait "label=\"Fullscreen\" role=button" 5000
+is visible "label=\"Fullscreen\" role=button"
+press "label=\"Fullscreen\""
+wait "label=\"Exit fullscreen\" role=button" 5000
+is visible "label=\"Exit fullscreen\" role=button"
+press "label=\"Exit fullscreen\" role=button"
+wait "label=\"Fullscreen\" role=button" 5000
+is visible "label=\"Fullscreen\" role=button"

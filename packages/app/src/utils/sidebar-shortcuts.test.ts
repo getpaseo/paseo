@@ -1,9 +1,11 @@
+import { i18n } from "@/i18n/i18next";
 import { describe, expect, it } from "vitest";
 import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
+import { routeKeyboardShortcut } from "@/keyboard/route-shortcut";
 
 import {
   buildSidebarShortcutModel,
@@ -64,6 +66,46 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
 }
 
 describe("buildSidebarShortcutModel", () => {
+  it.each([
+    [9, 1, 10],
+    [10, -1, 9],
+    [12, 1, 1],
+    [1, -1, 12],
+  ] as const)(
+    "navigates from workspace %i by %i to workspace %i across the full visible sidebar",
+    (current, delta, next) => {
+      const workspaces = Array.from({ length: 12 }, (_, index) =>
+        workspace({
+          serverId: "s",
+          workspaceId: `ws-${index + 1}`,
+          workspaceDirectory: `/repo/w${index + 1}`,
+          name: `w${index + 1}`,
+        }),
+      );
+      const model = buildSidebarShortcutModel({
+        projects: [project("p", workspaces)],
+        collapsedProjectKeys: new Set<string>(),
+      });
+
+      expect(
+        routeKeyboardShortcut(
+          { action: "workspace.navigate.relative", payload: { delta } },
+          {
+            pathname: `/h/s/workspace/ws-${current}`,
+            isMobile: false,
+            sidebarShortcutTargets: model.shortcutTargets,
+            navigationActiveWorkspace: null,
+            commandCenterOpen: false,
+            shortcutsDialogOpen: false,
+          },
+        ),
+      ).toEqual({ kind: "navigate-workspace", serverId: "s", workspaceId: `ws-${next}` });
+      expect(model.shortcutIndexByWorkspaceKey.size).toBe(9);
+      expect(model.shortcutIndexByWorkspaceKey.get("s:ws-9")).toBe(9);
+      expect(model.shortcutIndexByWorkspaceKey.has("s:ws-10")).toBe(false);
+    },
+  );
+
   it("builds shortcut targets in visual order and excludes collapsed projects", () => {
     const projects = [
       project("p1", [
@@ -110,7 +152,7 @@ describe("buildSidebarShortcutModel", () => {
     expect(model.shortcutIndexByWorkspaceKey.get("s1:ws-repo2-main")).toBeUndefined();
   });
 
-  it("limits shortcuts to 9", () => {
+  it("keeps all traversal targets while numbering only the first 9", () => {
     const workspaces = Array.from({ length: 20 }, (_, index) =>
       workspace({
         serverId: "s",
@@ -126,9 +168,11 @@ describe("buildSidebarShortcutModel", () => {
       collapsedProjectKeys: new Set<string>(),
     });
 
-    expect(model.shortcutTargets).toHaveLength(9);
-    expect(model.shortcutTargets[0]).toEqual({ serverId: "s", workspaceId: "ws-1" });
+    expect(model.shortcutTargets).toHaveLength(20);
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "ws-9" });
+    expect(model.shortcutTargets[9]).toEqual({ serverId: "s", workspaceId: "ws-10" });
+    expect(model.shortcutIndexByWorkspaceKey.get("s:ws-9")).toBe(9);
+    expect(model.shortcutIndexByWorkspaceKey.get("s:ws-10")).toBeUndefined();
   });
 
   it("excludes a collapsed project's workspaces regardless of project kind", () => {
@@ -211,6 +255,7 @@ describe("buildStatusSidebarShortcutModel", () => {
           ["p1", "Project 1"],
           ["p2", "Project 2"],
         ]),
+        i18n.t,
       ),
     });
 
@@ -247,7 +292,7 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]])),
+      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]]), i18n.t),
       collapsedStatusGroupKeys: new Set(["needs_input"]),
     });
 

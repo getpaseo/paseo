@@ -1,0 +1,40 @@
+appId: sh.paseo.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: workspace-tabs-scroll
+    timeout: 30000
+- tapOn:
+    id: workspace-tab-agent_${AGENT_ID}
+- longPressOn:
+    id: workspace-tab-agent_${AGENT_ID}
+- assertVisible:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- tapOn:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- assertNotVisible:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- longPressOn:
+    id: workspace-tab-agent_${AGENT_ID}
+- assertVisible:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- tapOn:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- assertNotVisible:
+    id: workspace-tab-context-${TAB_ID}-copy-agent-id
+- tapOn:
+    id: sidebar-workspace-kebab-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-menu-rename-${WORKSPACE_KEY}
+- assertVisible:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}-cancel
+- assertNotVisible:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-kebab-${WORKSPACE_KEY}
+- assertVisible:
+    id: sidebar-workspace-menu-rename-${WORKSPACE_KEY}
+- stopApp

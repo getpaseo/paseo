@@ -6,7 +6,7 @@ import {
   TextInput,
   copyText,
   useToast,
-} from "@getpaseo/plugin/client/react-native";
+} from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Pressable,

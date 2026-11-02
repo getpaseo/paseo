@@ -1,6 +1,7 @@
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
   daemonInstallOriginRuntime,
+  resolveNpmGlobalPrefix,
   validateDaemonInstallOrigin,
   type DaemonInstallOriginRuntime,
 } from "./install-origin.js";
@@ -63,7 +64,12 @@ export class DaemonSelfUpdater {
     this.inProgress = true;
     try {
       input.onProgress("starting");
-      const install = await this.runtime.npm.inspect();
+      const npmOptions = {
+        prefix: resolveNpmGlobalPrefix(
+          this.runtime.installOrigin.resolveCurrentServerPackageRoot(),
+        ),
+      };
+      const install = await this.runtime.npm.inspect(npmOptions);
       const unsupportedReason = validateDaemonInstallOrigin(
         install,
         input.daemonVersion,
@@ -76,7 +82,7 @@ export class DaemonSelfUpdater {
       input.onProgress("downloading");
       input.onProgress("installing");
 
-      const result = await this.runtime.npm.installLatest();
+      const result = await this.runtime.npm.installLatest(npmOptions);
       if (result.exitCode !== 0) {
         const error =
           result.stderr.trim() || result.stdout.trim() || `npm exited with code ${result.exitCode}`;
@@ -87,7 +93,7 @@ export class DaemonSelfUpdater {
         return { success: false, error, newVersion: null };
       }
 
-      const updatedInstall = await this.runtime.npm.inspect().catch((error: unknown) => {
+      const updatedInstall = await this.runtime.npm.inspect(npmOptions).catch((error: unknown) => {
         input.logger.warn({ err: error }, "Unable to read updated npm package version");
         return null;
       });

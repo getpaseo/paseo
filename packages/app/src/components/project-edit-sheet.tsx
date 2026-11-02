@@ -126,9 +126,6 @@ export function ProjectEditSheet({
       onClose={handleClose}
       footer={footer}
       desktopMaxWidth={440}
-      // Bound the compact scroller to the live snap height so the footer stays
-      // on screen instead of being pushed past the bottom of the sheet.
-      sizeContentToCurrentSnapPoint
       testID="project-edit-sheet"
     >
       <Field

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  AgentTimelineItemPayloadSchema,
+  SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -520,3 +522,52 @@ describe("viewed timeline subscription messages", () => {
     });
   });
 });
+
+test("agent messages are an optional semantic payload on existing tool rows", () => {
+  const legacy = {
+    type: "tool_call",
+    callId: "delivery",
+    name: "agent_message",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", text: "Done" },
+  };
+  const agentMessage = {
+    event: "finished",
+    sender: { id: "server::worker", title: "Reviewer" },
+    text: "Done",
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  expect(AgentTimelineItemPayloadSchema.parse({ ...legacy, agentMessage })).toEqual({
+    ...legacy,
+    agentMessage,
+  });
+  expect(
+    AgentTimelineItemPayloadSchema.safeParse({
+      ...legacy,
+      agentMessage: { ...agentMessage, sender: { id: 42 } },
+    }).success,
+  ).toBe(false);
+});
+
+test.each(["all", "base", "uncommitted"] as const)(
+  "preserves %s review attachments while ignoring unknown attachments",
+  (mode) => {
+    const attachment = {
+      type: "review",
+      mimeType: "application/paseo-review",
+      cwd: "/repo",
+      mode,
+      baseRef: "main",
+      comments: [],
+    };
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "review",
+      agentId: "agent",
+      text: "Review",
+      attachments: [{ type: "future_attachment" }, attachment],
+    });
+    expect(parsed.attachments).toEqual([attachment]);
+  },
+);

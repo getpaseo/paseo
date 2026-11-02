@@ -144,7 +144,6 @@ describe("worktree shell selection", () => {
       await runWorktreeSetupCommands({
         worktreePath,
         branchName: "main",
-        cleanupOnFailure: false,
         runtimeEnv: {
           PASEO_SOURCE_CHECKOUT_PATH: worktreePath,
           PASEO_ROOT_PATH: worktreePath,

@@ -28,6 +28,9 @@ interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
+  /** Parents whose list this client asked for, so a resubscribed update feed can catch them up. */
+  trackedParents: Set<string>;
+  trackParent(serverId: string, parentAgentId: string): void;
   hideFromTrack(serverId: string, parentAgentId: string, subagentIds: readonly string[]): void;
   replaceList(
     serverId: string,
@@ -84,6 +87,7 @@ export function refreshProviderSubagents(
   const pending = clientRequests.get(requestKey);
   if (pending) return pending;
 
+  useProviderSubagentStore.getState().trackParent(serverId, parentAgentId);
   const request = client
     .listProviderSubagents(parentAgentId)
     .then((payload) => {
@@ -99,6 +103,27 @@ export function refreshProviderSubagents(
 
 function parentPrefix(serverId: string, parentAgentId: string): string {
   return `${serverId}\0${parentAgentId}\0`;
+}
+
+/**
+ * Updates are not replayed across a reconnect, so a child that finished or started while the
+ * update feed was down stays stale until its parent is listed again. Call this once the feed has
+ * resubscribed, so every update after the list is delivered.
+ */
+export async function resyncProviderSubagents(
+  client: ProviderSubagentListClient,
+  serverId: string,
+): Promise<void> {
+  const serverPrefix = `${serverId}\0`;
+  const parentAgentIds = [...useProviderSubagentStore.getState().trackedParents]
+    .filter((key) => key.startsWith(serverPrefix))
+    .map((key) => key.slice(serverPrefix.length, -1));
+  await Promise.all(
+    parentAgentIds.map((parentAgentId) =>
+      // A parent that was archived meanwhile has nothing left to catch up.
+      refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined),
+    ),
+  );
 }
 
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
@@ -147,6 +172,14 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
+  trackedParents: new Set(),
+  trackParent(serverId, parentAgentId) {
+    set((state) => {
+      const prefix = parentPrefix(serverId, parentAgentId);
+      if (state.trackedParents.has(prefix)) return state;
+      return { trackedParents: new Set(state.trackedParents).add(prefix) };
+    });
+  },
   hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
       const hiddenFromTrack = new Set(state.hiddenFromTrack);

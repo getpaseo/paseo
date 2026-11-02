@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { TerminalStateSchema } from "../messages.js";
 
+export const TerminalReplayMetadataSchema = z.object({
+  rows: z.number().int().positive(),
+  cols: z.number().int().positive(),
+  retainedHistoryLines: z.number().int().nonnegative(),
+});
+
 export const TerminalStreamResizeSchema = z.object({
   rows: z.number().int().positive(),
   cols: z.number().int().positive(),
@@ -13,6 +19,9 @@ export const TerminalStreamOpcode = {
   Resize: 0x03,
   Snapshot: 0x04,
   Restore: 0x05,
+  ReplayBegin: 0x06,
+  ReplayData: 0x07,
+  ReplayEnd: 0x08,
 } as const;
 
 export type TerminalStreamOpcode = (typeof TerminalStreamOpcode)[keyof typeof TerminalStreamOpcode];
@@ -58,6 +67,9 @@ function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {
     value === TerminalStreamOpcode.Input ||
     value === TerminalStreamOpcode.Resize ||
     value === TerminalStreamOpcode.Snapshot ||
+    value === TerminalStreamOpcode.ReplayBegin ||
+    value === TerminalStreamOpcode.ReplayData ||
+    value === TerminalStreamOpcode.ReplayEnd ||
     value === TerminalStreamOpcode.Restore
   );
 }
