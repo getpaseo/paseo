@@ -1,19 +1,37 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
-  CADENCE_PRESET_OPTIONS,
+  getCadencePresetOptions,
   normalizeScheduleFormCadence,
+  resolveCronPresetDisplay,
   resolveCronPresetId,
 } from "./schedule-cadence-options";
 
+const english = i18n.getFixedT("en");
+const chinese = i18n.getFixedT("zh-CN");
+
 describe("schedule cadence form options", () => {
   it("offers the approved cron preset vocabulary", () => {
-    expect(CADENCE_PRESET_OPTIONS.map((option) => option.label)).toEqual([
+    expect(getCadencePresetOptions(english).map((option) => option.label)).toEqual([
       "Every minute",
       "Every hour",
       "Daily 9:00",
       "Weekdays 9:00",
       "Mondays 9:00",
     ]);
+  });
+
+  it("labels presets and custom cron in the app language", () => {
+    expect(getCadencePresetOptions(chinese).map((option) => option.label)).toEqual([
+      "每分钟",
+      "每小时",
+      "每天 9:00",
+      "工作日 9:00",
+      "每周一 9:00",
+    ]);
+    expect(resolveCronPresetDisplay({ type: "cron", expression: "*/5 * * * *" }, chinese)).toEqual({
+      label: "自定义 cron",
+    });
   });
 
   it("maps interval cadences to cron cadences for the form", () => {
