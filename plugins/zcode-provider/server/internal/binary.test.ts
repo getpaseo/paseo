@@ -109,4 +109,40 @@ describe("ZCode binary discovery", () => {
     });
     expect(result?.[0]).toBe(binary);
   });
+
+  test("finds a Windows executable on PATH by its extension", async () => {
+    // Windows resolves an executable through PATHEXT, so a search for the
+    // bare name never finds `zcode.exe`.
+    const root = await mkdtemp(join(tmpdir(), "zcode-bin-"));
+    const binary = join(root, "zcode.exe");
+    await writeFile(binary, "MZ");
+    const launch = await resolveZCodeLaunch({
+      pathEntries: [root],
+      env: {},
+      desktopRoots: [],
+      platform: "win32",
+    });
+    expect(launch?.command).toBe(binary);
+  });
+
+  test("runs a JavaScript override through Node", async () => {
+    // A CommonJS file cannot be launched directly: Windows refuses it as an
+    // executable, and a POSIX build is not executable either.
+    const root = await mkdtemp(join(tmpdir(), "zcode-bin-"));
+    const bundle = join(root, "zcode.cjs");
+    await writeFile(bundle, "// bundle\n");
+    const fakeNode = join(root, "node");
+    await writeFile(fakeNode, "#!/bin/sh\n", { mode: 0o755 });
+
+    const launch = await resolveZCodeLaunch({
+      pathEntries: [],
+      env: { GLM_BINARY_PATH: bundle },
+      desktopRoots: [],
+      execPath: fakeNode,
+    });
+
+    expect(launch?.command).toBe(fakeNode);
+    expect(launch?.args).toEqual([bundle, "app-server", "--stdio"]);
+    expect(launch?.env["ELECTRON_RUN_AS_NODE"]).toBe("1");
+  });
 });
