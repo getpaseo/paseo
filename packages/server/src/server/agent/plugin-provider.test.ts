@@ -566,6 +566,83 @@ test("a rewind reopens with the options as they stand, a reset included", async 
   await registry.shutdown();
 });
 
+// A plugin may report no options at all while it runs the ones it was given.
+async function withUnreportedOptionSession(
+  run: (
+    session: Awaited<ReturnType<AgentClient["createSession"]>>,
+    harness: ReturnType<typeof createRewindProviderHarness>,
+  ) => Promise<void>,
+) {
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            model: "plugin-model",
+            mode: "build",
+            models: [{ id: "plugin-model", label: "Plugin model" }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions: [],
+            controls: [],
+            providerOptions: {},
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { token_budget: 1000 },
+  });
+  try {
+    await run(session, harness);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+}
+
+test("applying an option the plugin never reports leaves the stored option alone", async () => {
+  await withUnreportedOptionSession(async (session) => {
+    // The same value as a whole-profile patch carries it, then a new one.
+    expect(await session.applyOptions?.({ token_budget: 1000 })).toEqual({});
+    expect(await session.applyOptions?.({ token_budget: 2000 })).toEqual({});
+  });
+});
+
+test("a rewind reopens with the value the plugin accepted for an option it never reports", async () => {
+  await withUnreportedOptionSession(async (session, harness) => {
+    await session.run("A");
+    await session.applyOptions?.({ token_budget: 2000 });
+
+    await session.revertConversation!({ messageId: "user-A" });
+
+    const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+    expect(reopened?.config.providerOptions).toEqual({ token_budget: 2000 });
+  });
+});
+
 test("plugin rewind resumes the latest persistence rather than the original handle", async () => {
   await withPluginRewindSession(
     {

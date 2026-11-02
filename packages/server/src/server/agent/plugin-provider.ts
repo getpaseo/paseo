@@ -1462,11 +1462,10 @@ class PluginAgentSession implements AgentSession {
     } finally {
       this.applyingOptions = false;
     }
-    const ended = this.optionChanges({ ...before, ...settings });
-    for (const [id, value] of Object.entries(settings)) {
-      if (value === null) delete this.committedOptions[id];
-    }
-    this.commitOptions();
+    // A requested key is a request, not a report: only a key the plugin reported before can be
+    // one it has now dropped.
+    const ended = this.optionChanges({ ...before, ...settings }, before);
+    this.commitOptions(settings);
     return ended;
   }
 
@@ -1662,8 +1661,16 @@ class PluginAgentSession implements AgentSession {
     return patch;
   }
 
-  /** Take the plugin's reported options as known; a key it stopped reporting was reset. */
-  private commitOptions(): void {
+  /**
+   * Settle the options a reopened session starts with: what is committed, then the request the
+   * plugin accepted, then what it reported back. A key it reported before and no longer reports
+   * was reset.
+   */
+  private commitOptions(accepted: Readonly<Record<string, JsonValue>> = {}): void {
+    for (const [id, value] of Object.entries(accepted)) {
+      if (value === null) delete this.committedOptions[id];
+      else this.committedOptions[id] = value;
+    }
     const current = this.currentOptions();
     for (const id of Object.keys(this.knownOptions)) {
       if (!(id in current)) delete this.committedOptions[id];
@@ -1674,20 +1681,23 @@ class PluginAgentSession implements AgentSession {
 
   /**
    * What changed against the options `known` to be set: values that differ, and `null` for a key
-   * the plugin no longer reports, which went back to its default.
+   * in `reported` that the plugin no longer reports, which went back to its default.
    */
-  private optionChanges(known: Readonly<Record<string, JsonValue>>): Record<string, JsonValue> {
+  private optionChanges(
+    known: Readonly<Record<string, JsonValue>>,
+    reported: Readonly<Record<string, JsonValue>>,
+  ): Record<string, JsonValue> {
     const patch = this.optionDifferences(known);
     const current = this.currentOptions();
-    for (const [id, value] of Object.entries(known)) {
-      if (value !== null && !(id in current)) patch[id] = null;
+    for (const id of Object.keys(reported)) {
+      if (known[id] !== null && !(id in current)) patch[id] = null;
     }
     return patch;
   }
 
   private reportOptionChanges(): AgentStreamEvent[] {
     if (this.applyingOptions) return [];
-    const patch = this.optionChanges(this.knownOptions);
+    const patch = this.optionChanges(this.knownOptions, this.knownOptions);
     if (Object.keys(patch).length === 0) return [];
     this.commitOptions();
     return [{ type: "options_changed", provider: this.provider, patch }];
