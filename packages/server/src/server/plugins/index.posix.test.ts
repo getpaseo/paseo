@@ -34,7 +34,13 @@ const emptyUsageRuntime = {
   getUsageSourceRegistrations: () => [],
   fetchUsage: async () => undefined,
   discoverUsage: async () => [],
-} satisfies Pick<TestPluginRuntime, "getUsageSourceRegistrations" | "fetchUsage" | "discoverUsage">;
+  startSubscription: () => {
+    throw new Error("No subscriptions in this test");
+  },
+} satisfies Pick<
+  TestPluginRuntime,
+  "getUsageSourceRegistrations" | "fetchUsage" | "discoverUsage" | "startSubscription"
+>;
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-service-"));
