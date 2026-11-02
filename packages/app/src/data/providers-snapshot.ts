@@ -8,7 +8,7 @@ import {
 } from "./provider-snapshot-cache";
 import { queryClient as singletonQueryClient } from "./query-client";
 import { replaceProviderSnapshotIcons } from "@/data/provider-icons";
-import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { agentCommandsQueryRoot } from "@/agent-commands/cache";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 

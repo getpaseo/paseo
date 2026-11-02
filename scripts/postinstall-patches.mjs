@@ -28,6 +28,9 @@ const patchedPackages = [
   // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
   // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
   // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
+  // Layout constraints: backport of https://github.com/jpudysz/react-native-unistyles/pull/1357
+  // (commit from the root the commit hands us, so a concurrent window-size commit is kept).
+  // Remove the ShadowTreeManager hunk when the installed release includes that PR.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",

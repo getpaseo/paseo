@@ -1,7 +1,7 @@
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Pressable,
   Text,
   View,
   type PressableStateCallbackType,
@@ -23,7 +23,7 @@ import {
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
-import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedTerminal = withUnistyles(Terminal);
@@ -174,11 +174,11 @@ export function AddRemoteSshHostModal({
     }
 
     clear();
-    onClose();
     onSaved?.({
       ...result,
       isNewHost: !hosts.some((profile) => profile.serverId === result.serverId),
     });
+    onClose();
   }, [clear, hosts, isSaving, onClose, onSaved, probeAndUpsertRemoteSshConnection, t]);
   const handleTargetChange = useCallback((value: string) => {
     targetRef.current = value;
@@ -260,7 +260,7 @@ export function AddRemoteSshHostModal({
               onSubmitEditing={handleSubmit}
             />
           </View>
-          <Pressable
+          <PressHighlight
             style={iconButtonStyle}
             onPress={handleTogglePasswordVisibility}
             disabled={isSaving}
@@ -273,7 +273,7 @@ export function AddRemoteSshHostModal({
             testID="remote-ssh-password-visibility-toggle"
           >
             {isPasswordVisible ? <ThemedEyeOff size={18} /> : <ThemedEye size={18} />}
-          </Pressable>
+          </PressHighlight>
         </View>
       </Field>
       <View style={styles.actions}>

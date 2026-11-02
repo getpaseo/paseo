@@ -558,34 +558,31 @@ describe("runWorktreeSetupInBackground", () => {
   });
 
   test("runs setup from an exact workspace subdirectory", async () => {
-    const { tempDir, repoDir } = createGitRepo();
+    const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
     cleanupPaths.push(tempDir);
+    const repoDir = path.join(tempDir, "source");
     const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+    const worktree: WorktreeConfig = {
+      branchName: "feature-subdirectory-setup",
+      worktreePath: path.join(tempDir, "worktree"),
+    };
+    const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
+    // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
     mkdirSync(sourceWorkspaceCwd, { recursive: true });
+    mkdirSync(workspaceCwd, { recursive: true });
+    execFileSync("git", ["init", "-b", worktree.branchName], {
+      cwd: worktree.worktreePath,
+      stdio: "pipe",
+    });
     writeFileSync(
-      path.join(sourceWorkspaceCwd, "paseo.json"),
+      path.join(workspaceCwd, "paseo.json"),
       JSON.stringify({
         worktree: {
           setup: ["pwd > setup-cwd.txt"],
         },
       }),
     );
-    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add app setup"], {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
-
     const paseoHome = path.join(tempDir, ".paseo");
-    const createdWorktree = await createLegacyWorktreeForTest({
-      branchName: "feature-subdirectory-setup",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "feature-subdirectory-setup",
-
-      paseoHome,
-    });
-    const workspaceCwd = path.join(createdWorktree.worktreePath, "packages", "app");
 
     await runWorktreeSetupInBackground(
       {
@@ -600,16 +597,16 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: sourceWorkspaceCwd,
         repoRoot: repoDir,
         workspaceId: "ws-subdirectory-setup",
-        worktree: createdWorktree,
+        worktree,
         shouldBootstrap: true,
         slug: "feature-subdirectory-setup",
-        worktreePath: createdWorktree.worktreePath,
+        worktreePath: worktree.worktreePath,
         workspaceCwd,
       },
     );
 
     expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
-    expect(existsSync(path.join(createdWorktree.worktreePath, "setup-cwd.txt"))).toBe(false);
+    expect(existsSync(path.join(worktree.worktreePath, "setup-cwd.txt"))).toBe(false);
   });
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {

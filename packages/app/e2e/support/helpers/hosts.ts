@@ -273,3 +273,25 @@ export async function reloadPreservingHostRegistry(page: Page): Promise<void> {
   );
   await page.reload();
 }
+
+export async function disconnectAllHostsAndReload(page: Page): Promise<void> {
+  await page.evaluate(
+    ({ registryKey, nonceKey, disableSeedKey }) => {
+      const nonce = localStorage.getItem(nonceKey);
+      if (!nonce) throw new Error("Expected the e2e seed nonce");
+      const hosts = JSON.parse(localStorage.getItem(registryKey) ?? "[]");
+      for (const host of hosts) {
+        host.connections = [{ id: "offline", type: "directTcp", endpoint: "127.0.0.1:59999" }];
+        host.preferredConnectionId = "offline";
+      }
+      localStorage.setItem(registryKey, JSON.stringify(hosts));
+      localStorage.setItem(disableSeedKey, nonce);
+    },
+    {
+      registryKey: REGISTRY_KEY,
+      nonceKey: SEED_NONCE_KEY,
+      disableSeedKey: DISABLE_DEFAULT_SEED_ONCE_KEY,
+    },
+  );
+  await page.reload();
+}

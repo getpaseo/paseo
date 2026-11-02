@@ -164,6 +164,11 @@ import {
   FileTransferOpcode,
   TerminalStreamOpcode,
   type FileTransferFrame,
+  assertPluginWireValue,
+  decodePluginFrame,
+  encodePluginInputFrame,
+  isPluginFrameOpcode,
+  PluginFrameOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   createRelayE2eeTransportFactory,
@@ -2260,6 +2265,8 @@ export class DaemonClient {
     timeout?: number;
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
+    /** Sends the request in another form, such as a binary frame; defaults to `message`. */
+    transmit?: () => Promise<void>;
   }): Promise<T> {
     const wire = this.owned.prepareRequest(params.message);
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
@@ -2290,7 +2297,9 @@ export class DaemonClient {
     // The response deadline still applies while the transport waits for drain.
     void promise.catch(() => undefined);
     try {
-      const sent = this.sendSessionMessageOrThrow(wire.message);
+      const sent = params.transmit
+        ? params.transmit()
+        : this.sendSessionMessageOrThrow(wire.message);
       const result = await Promise.race([promise, sent.then(() => promise)]);
       if (result.kind === "error") throw result.error;
       return result.value;
@@ -2313,12 +2322,14 @@ export class DaemonClient {
     responseType: TResponseType;
     options?: { skipQueue?: boolean };
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
+    transmit?: () => Promise<void>;
   }): Promise<TResult> {
     return this.sendRequest({
       requestId: params.requestId,
       message: params.message,
       timeout: params.timeout,
       options: params.options,
+      ...(params.transmit ? { transmit: params.transmit } : {}),
       select: (msg) => {
         const correlated = msg as CorrelatedResponseMessage;
         if (correlated.type !== params.responseType) {
@@ -2650,6 +2661,7 @@ export class DaemonClient {
         resetSource = false;
         if (query.type === "workspace.setup.subscribe.request")
           this.requireWorkspaceSetupObservation();
+        if (query.type === "plugin.rpc.subscribe.request") this.requirePluginSubscriptions();
         const requestId = this.createRequestId(options?.requestId);
         const request = SessionInboundMessageSchema.parse({ ...query, requestId });
         try {
@@ -6197,20 +6209,57 @@ export class DaemonClient {
     return payload.plugin;
   }
 
+  /**
+   * A `Uint8Array` input or output crosses the wire as a binary frame. Any other value is JSON and
+   * must not contain a `Uint8Array`.
+   */
   async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
+    assertPluginWireValue(input, "input");
     const requestId = this.createRequestId();
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "plugin.rpc.invoke.request",
+    if (!(input instanceof Uint8Array)) {
+      const payload = await this.sendCorrelatedSessionRequest({
         requestId,
-        pluginId,
-        method,
-        input,
-      },
+        message: {
+          type: "plugin.rpc.invoke.request",
+          requestId,
+          pluginId,
+          method,
+          input,
+        },
+        responseType: "plugin.rpc.invoke.response",
+      });
+      return payload.output;
+    }
+    this.requirePluginSubscriptions();
+    const frame = encodePluginInputFrame({ requestId, pluginId, method, payload: input });
+    const payload = await this.sendCorrelatedRequest({
+      requestId,
+      message: { type: "plugin.rpc.invoke.request", requestId, pluginId, method, input: null },
       responseType: "plugin.rpc.invoke.response",
+      options: { skipQueue: true },
+      transmit: () => this.sendBinaryFrame(frame),
     });
     return payload.output;
+  }
+
+  /** One subscription to a plugin subscription handler; events arrive as updates and binary. */
+  observePluginRpc(
+    pluginId: string,
+    method: string,
+    input: unknown,
+    options?: { signal?: AbortSignal },
+  ): OwnedSubscription<CorrelatedResponsePayload<"plugin.rpc.subscribe.response">> {
+    assertPluginWireValue(input, "input");
+    return this.observe(
+      "plugin.rpc.subscribe.response",
+      { type: "plugin.rpc.subscribe.request", pluginId, method, input },
+      options,
+    );
+  }
+
+  private requirePluginSubscriptions(): void {
+    if (this.lastServerInfoMessage?.features?.pluginSubscriptions !== true)
+      throw new Error("Update the host to use plugin subscriptions and binary plugin RPC");
   }
 
   async respondToPermissionAndWait(
@@ -6975,6 +7024,23 @@ export class DaemonClient {
     }
   }
 
+  private handlePluginFrame(rawBytes: Uint8Array): void {
+    const frame = decodePluginFrame(rawBytes);
+    this.consecutiveLivenessFailures = 0;
+    this.runtimeMetrics?.recordBinaryFrame("plugin", rawBytes.byteLength, 0);
+    if (frame?.opcode === PluginFrameOpcode.Event) {
+      this.owned.receiveBinary(frame.subscriptionId, frame.payload);
+      return;
+    }
+    if (frame?.opcode === PluginFrameOpcode.Output) {
+      // The binary form of plugin.rpc.invoke.response.
+      this.resolveWaiters({
+        type: "plugin.rpc.invoke.response",
+        payload: { requestId: frame.requestId, output: frame.payload },
+      });
+    }
+  }
+
   private tryHandleBinaryFrame(rawBytes: Uint8Array): boolean {
     const hostFrame = decodeHostRouteFrame(rawBytes);
     if (rawBytes[0] === HOST_ROUTE_OPCODE && !hostFrame) {
@@ -6984,6 +7050,10 @@ export class DaemonClient {
     }
     if (hostFrame) {
       for (const handler of this.hostFrameListeners) handler(hostFrame);
+      return true;
+    }
+    if (isPluginFrameOpcode(rawBytes[0])) {
+      this.handlePluginFrame(rawBytes);
       return true;
     }
     const fileFrame = decodeFileTransferFrame(rawBytes);

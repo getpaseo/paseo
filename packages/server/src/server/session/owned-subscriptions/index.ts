@@ -56,6 +56,11 @@ export interface OwnedSubscription {
   release(): Promise<void>;
 }
 
+const BINARY_REPLY_REQUESTS: ReadonlySet<string> = new Set([
+  "file_explorer_request",
+  "plugin.rpc.invoke.request",
+]);
+
 // One registration per context kind; per-session registrations outlive closed sessions in Node.
 const requests = new AsyncLocalStorage<RequestOwner>();
 const projectionSource = new AsyncLocalStorage<ProjectionOwner>();
@@ -394,12 +399,13 @@ export class SessionDelivery {
     if (owner) await this.releaseOwner(owner);
   }
 
-  authorizeFileReply(frame: Uint8Array, socket: object): void {
+  /** Lets a binary frame answer the current request, for requests whose reply can be bytes. */
+  authorizeBinaryReply(frame: Uint8Array, socket: object): void {
     const owner = this.currentRequest;
     if (
       owner?.active &&
       owner.source.socket === socket &&
-      owner.request.type === "file_explorer_request"
+      BINARY_REPLY_REQUESTS.has(owner.request.type)
     )
       this.proofs.set(frame, owner);
   }

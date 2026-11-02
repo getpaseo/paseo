@@ -1,6 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -63,6 +63,13 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+
+/**
+ * Skill discovery also reads the user's home directories. Point it at a path
+ * that does not exist so a session only sees the skills in its own cwd, and
+ * these tests do not depend on what the machine running them has installed.
+ */
+const EMPTY_SKILL_HOME = path.join(tmpdir(), "paseo-acp-test-empty-home");
 
 describe("buildACPClientCapabilities", () => {
   test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
@@ -164,6 +171,7 @@ function createSession(
       },
       ...(terminateProcess ? { terminateProcess } : {}),
       ...(launchEnv ? { launchEnv } : {}),
+      homeDir: EMPTY_SKILL_HOME,
     },
   );
 }
@@ -223,6 +231,7 @@ function createSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: EMPTY_SKILL_HOME,
     },
   );
 }
@@ -252,6 +261,7 @@ function createKiroSession(
       extensionCommandsParser: parseKiroExtensionCommands,
       waitForInitialCommands: options.waitForInitialCommands ?? false,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
+      homeDir: EMPTY_SKILL_HOME,
     },
   );
 }
@@ -2558,6 +2568,7 @@ describe("ACPAgentSession slash commands", () => {
           supportsToolInvocations: true,
         },
         waitForInitialCommands: false,
+        homeDir: EMPTY_SKILL_HOME,
       },
     );
 
@@ -2585,6 +2596,7 @@ describe("ACPAgentSession slash commands", () => {
         },
         waitForInitialCommands: true,
         initialCommandsWaitTimeoutMs: 1500,
+        homeDir: EMPTY_SKILL_HOME,
       },
     );
 
@@ -2633,6 +2645,73 @@ describe("ACPAgentSession slash commands", () => {
         kind: "command",
       },
     ]);
+  });
+
+  test("lists late command batches through the public ACP client", async () => {
+    const artifacts = path.resolve(".artifacts");
+    await mkdir(artifacts, { recursive: true });
+    const directory = await mkdtemp(path.join(artifacts, "acp-command-inventory-"));
+    const script = path.join(directory, "agent.mjs");
+    await writeFile(
+      script,
+      `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const help = { name: "help", description: "Show available commands" };
+const skill = { name: "xlsx", description: "Work with spreadsheets", input: { hint: "[instructions]" } };
+const publish = (commands) => send({
+  jsonrpc: "2.0", method: "session/update", params: {
+    sessionId: "inventory-session", update: {
+      sessionUpdate: "available_commands_update", availableCommands: commands,
+    },
+  },
+});
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (request.method === "session/new") {
+    // The first batch is already cached when createSession returns.
+    publish([help]);
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "inventory-session" } });
+    setTimeout(() => publish([help]), 100);
+    setTimeout(() => publish([help, skill]), 350);
+  } else if (request.id !== undefined) {
+    send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } });
+  }
+});
+`,
+    );
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, script],
+      homeDir: EMPTY_SKILL_HOME,
+    });
+    try {
+      const session = await client.createSession({ provider: "acp", cwd: directory });
+      try {
+        const commands = await session.listCommands!();
+        expect(commands).toEqual([
+          {
+            name: "help",
+            description: "Show available commands",
+            argumentHint: "",
+            kind: "command",
+          },
+          {
+            name: "xlsx",
+            description: "Work with spreadsheets",
+            argumentHint: "[instructions]",
+            kind: "command",
+          },
+        ]);
+        expect(await session.listCommands!()).toEqual(commands);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

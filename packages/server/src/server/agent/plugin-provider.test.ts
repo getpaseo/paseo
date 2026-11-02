@@ -53,6 +53,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  closeAcknowledgementOnly?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
@@ -208,6 +209,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
       }
       if (input.type === "session.close") {
         emit({ type: "session.closed", sessionId: input.sessionId });
+        if (options.closeAcknowledgementOnly) return;
       }
       if ("requestId" in input) {
         emit({ type: "request.completed", requestId: input.requestId });
@@ -245,6 +247,572 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
 function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]) {
   return events.filter((event) => event.type === type);
 }
+
+function createRewindProviderHarness(
+  options: {
+    reuseAnswerId?: boolean;
+    forkOnRevert?: boolean;
+    handleInput?: ProviderHarnessOptions["handleInput"];
+  } = {},
+) {
+  const nativeMessages: string[] = [];
+  let originalMessages: string[] | null = null;
+  const harness = createProviderHarness({
+    closeAcknowledgementOnly: true,
+    capabilities: [
+      ...CAPABILITIES,
+      "session.revert.conversation",
+      "session.revert.files",
+      "session.revert.both",
+    ],
+    async handleInput(input, emit) {
+      if (await options.handleInput?.(input, emit)) return true;
+      if (input.type === "session.open" && input.history === "replay") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [
+            ...CAPABILITIES,
+            "session.revert.conversation",
+            "session.revert.files",
+            "session.revert.both",
+          ],
+          restoration: "core",
+          persistence: input.persistence ?? { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        const messages =
+          options.forkOnRevert &&
+          (input.persistence?.data as { token?: string })?.token === "root" &&
+          originalMessages
+            ? originalMessages
+            : nativeMessages;
+        for (const [index, text] of messages.entries()) {
+          emit({
+            type: "timeline.item",
+            sessionId: input.sessionId,
+            item: { type: "user_message", id: `user-${text}`, text, revertToken: text },
+          });
+          emit({
+            type: "timeline.item",
+            sessionId: input.sessionId,
+            item: {
+              type: "assistant_message",
+              id: options.reuseAnswerId ? `answer-${index + 1}` : `answer-${text}`,
+              text: `Reply ${text}`,
+            },
+          });
+        }
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        if (input.prompt.input.type !== "message") throw new Error("Expected a message");
+        const text = input.prompt.input.content
+          .flatMap((part) => (part.type === "text" ? [part.text] : []))
+          .join("");
+        nativeMessages.push(text);
+        const turnId = `turn-${text}`;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId },
+        });
+        emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "started" });
+        emit({
+          type: "timeline.item",
+          sessionId: input.sessionId,
+          item: {
+            type: "user_message",
+            id: `user-${text}`,
+            text,
+            clientMessageId: input.prompt.clientMessageId,
+            revertToken: text,
+          },
+        });
+        emit({
+          type: "timeline.item",
+          sessionId: input.sessionId,
+          item: {
+            type: "assistant_message",
+            id: options.reuseAnswerId ? `answer-${nativeMessages.length}` : `answer-${text}`,
+            text: `Reply ${text}`,
+          },
+        });
+        emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "completed" });
+        return true;
+      }
+      if (input.type === "session.revert") {
+        if (options.forkOnRevert && input.scope !== "files") {
+          originalMessages = [...nativeMessages];
+          emit({
+            type: "session.persistence",
+            sessionId: input.sessionId,
+            persistence: { version: 1, data: { token: "fork" } },
+          });
+        }
+        if (input.scope !== "files")
+          nativeMessages.splice(nativeMessages.indexOf(String(input.token)));
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  return { ...harness, nativeMessages };
+}
+
+async function withRewindAgent(
+  run: (context: {
+    manager: AgentManager;
+    agentId: string;
+    nativeMessages: string[];
+    messages: () => string[];
+  }) => Promise<void>,
+  options: Parameters<typeof createRewindProviderHarness>[0] = {},
+) {
+  const harness = createRewindProviderHarness(options);
+  const logger = createTestLogger();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({
+    logger,
+    clients: registry.clients(),
+    providerDefinitions: registry.definitions(),
+  });
+  const agent = await manager.createAgent(
+    { provider: harness.registration.id, cwd: tmpdir() },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const messages = () =>
+    manager
+      .getTimeline(agent.id)
+      .flatMap((item) =>
+        item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
+      );
+  try {
+    await manager.runAgent(agent.id, "A", { clientMessageId: "client-A" });
+    await manager.runAgent(agent.id, "B", { clientMessageId: "client-B" });
+    await manager.runAgent(agent.id, "C", { clientMessageId: "client-C" });
+    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
+    await run({ manager, agentId: agent.id, nativeMessages: harness.nativeMessages, messages });
+  } finally {
+    await manager.closeAgent(agent.id);
+    await registry.shutdown();
+  }
+}
+
+test("conversation rewind discards withdrawn plugin turns before and after a replacement prompt", async () => {
+  await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
+    await manager.rewind(agentId, "user-B", "conversation");
+    const afterRewind = messages();
+    expect(nativeMessages).toEqual(["A"]);
+    await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
+    const afterReplacement = messages();
+    expect(nativeMessages).toEqual(["A", "D"]);
+    expect({ afterRewind, afterReplacement }).toEqual({
+      afterRewind: ["A", "Reply A"],
+      afterReplacement: ["A", "Reply A", "D", "Reply D"],
+    });
+  });
+});
+
+test("file-only plugin rewind preserves the conversation before and after a replacement prompt", async () => {
+  await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
+    await manager.rewind(agentId, "user-B", "files");
+    expect(nativeMessages).toEqual(["A", "B", "C"]);
+    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
+    await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
+    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C", "D", "Reply D"]);
+  });
+});
+
+test("plugin rewind restores translation state when a replacement reuses a discarded item id", async () => {
+  const harness = createRewindProviderHarness({ reuseAnswerId: true });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const session = await client.createSession({ provider: harness.registration.id, cwd: tmpdir() });
+  const live: AgentStreamEvent[] = [];
+  try {
+    await session.run("A");
+    await session.run("B");
+    session.subscribe((event) => live.push(event));
+    await session.revertConversation!({ messageId: "user-B" });
+    live.length = 0;
+    await session.run("B revised");
+    const assistant = live.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "assistant_message" ? [event.item.text] : [],
+    );
+    expect(harness.nativeMessages).toEqual(["A", "B revised"]);
+    expect(assistant).toEqual(["Reply B revised"]);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+});
+
+async function withPluginRewindSession(
+  options: Parameters<typeof createRewindProviderHarness>[0],
+  run: (
+    session: Awaited<ReturnType<AgentClient["createSession"]>>,
+    harness: ReturnType<typeof createRewindProviderHarness>,
+  ) => Promise<void>,
+) {
+  const harness = createRewindProviderHarness(options);
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const session = await client.createSession({ provider: harness.registration.id, cwd: tmpdir() });
+  try {
+    await session.run("A");
+    await session.run("B");
+    await session.run("C");
+    await run(session, harness);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+}
+
+async function pluginMessages(session: Awaited<ReturnType<AgentClient["createSession"]>>) {
+  const events = await Array.fromAsync(session.streamHistory());
+  return events.flatMap((event) =>
+    event.type === "timeline" &&
+    (event.item.type === "user_message" || event.item.type === "assistant_message")
+      ? [event.item.text]
+      : [],
+  );
+}
+
+test("combined plugin rewind replays the retained native branch", async () => {
+  await withPluginRewindSession({}, async (session) => {
+    await session.revertBoth!({ messageId: "user-B" });
+    expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
+    await session.revertConversation!({ messageId: "user-A" });
+    expect(await pluginMessages(session)).toEqual([]);
+  });
+});
+
+test("plugin rewind resumes the latest persistence rather than the original handle", async () => {
+  await withPluginRewindSession(
+    {
+      handleInput: async (input, emit) => {
+        if (input.type === "session.revert")
+          emit({
+            type: "session.persistence",
+            sessionId: input.sessionId,
+            persistence: { version: 1, data: { token: "fork" } },
+          });
+        return false;
+      },
+    },
+    async (session, harness) => {
+      await session.revertConversation!({ messageId: "user-B" });
+      expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+        persistence: { version: 1, data: { token: "fork" } },
+        history: "replay",
+      });
+      expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
+    },
+  );
+});
+
+test("failed native plugin rewind preserves history and does not reopen", async () => {
+  await withPluginRewindSession(
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.revert") return false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "native rewind failed" },
+        });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      await expect(session.revertConversation!({ messageId: "user-B" })).rejects.toThrow(
+        "native rewind failed",
+      );
+      expect(await pluginMessages(session)).toEqual([
+        "A",
+        "Reply A",
+        "B",
+        "Reply B",
+        "C",
+        "Reply C",
+      ]);
+      expect(harness.inputs.filter((input) => input.type === "session.open")).toHaveLength(1);
+    },
+  );
+});
+
+test("failed plugin rewind replay blocks prompts until retry without repeating native rewind", async () => {
+  let failReplay = true;
+  await withPluginRewindSession(
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
+          return false;
+        failReplay = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "replay failed" },
+        });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      await expect(session.revertConversation!({ messageId: "user-B" })).rejects.toThrow(
+        "replay failed",
+      );
+      await expect(session.run("D")).rejects.toThrow("Retry the rewind or reload");
+      await session.revertConversation!({ messageId: "user-B" });
+      await session.run("D");
+      expect(await pluginMessages(session)).toEqual(["A", "Reply A", "D", "Reply D"]);
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toHaveLength(1);
+    },
+  );
+});
+
+test("retrying a failed plugin rewind replay replaces the manager timeline before prompting", async () => {
+  let failReplay = true;
+  await withRewindAgent(
+    async ({ manager, agentId, messages }) => {
+      await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
+        "replay failed",
+      );
+      await expect(manager.runAgent(agentId, "D")).rejects.toThrow("Retry the rewind or reload");
+      await manager.rewind(agentId, "user-B", "conversation");
+      expect(messages()).toEqual(["A", "Reply A"]);
+      await manager.runAgent(agentId, "D");
+      expect(messages()).toEqual(["A", "Reply A", "D", "Reply D"]);
+    },
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
+          return false;
+        failReplay = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "replay failed" },
+        });
+        return true;
+      },
+    },
+  );
+});
+
+test("reload after failed plugin rewind replay resumes the committed fork", async () => {
+  let failReplay = true;
+  await withRewindAgent(
+    async ({ manager, agentId, messages }) => {
+      await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
+        "replay failed",
+      );
+      await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agentId, { force: true });
+      expect(messages()).toEqual(["A", "Reply A"]);
+    },
+    {
+      forkOnRevert: true,
+      handleInput: async (input, emit) => {
+        if (input.type === "session.close") {
+          emit({ type: "request.completed", requestId: input.requestId });
+          return true;
+        }
+        if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
+          return false;
+        failReplay = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "replay failed" },
+        });
+        return true;
+      },
+    },
+  );
+});
+
+test("closing during plugin rewind replay closes each native binding once", async () => {
+  let opened!: () => void;
+  let release!: () => void;
+  const replayStarted = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const replayAllowed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await withPluginRewindSession(
+    {
+      handleInput: async (input) => {
+        if (input.type === "session.open" && input.history === "replay") {
+          opened();
+          await replayAllowed;
+        }
+        return false;
+      },
+    },
+    async (session, harness) => {
+      const rewind = session.revertConversation!({ messageId: "user-B" });
+      await replayStarted;
+      const closing = session.close();
+      release();
+      await Promise.all([rewind, closing]);
+      const closes = harness.inputs.flatMap((input) =>
+        input.type === "session.close" ? [input.sessionId] : [],
+      );
+      expect(closes).toHaveLength(2);
+      expect(new Set(closes).size).toBe(2);
+    },
+  );
+});
+
+test("plugin rewind retries a failed close before reopening the native writer", async () => {
+  let failClose = true;
+  await withPluginRewindSession(
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.close" || !failClose) return false;
+        failClose = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "close failed" },
+        });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      await expect(session.revertConversation!({ messageId: "user-B" })).rejects.toThrow(
+        "close failed",
+      );
+      expect(harness.inputs.filter((input) => input.type === "session.open")).toHaveLength(1);
+      expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toHaveLength(1);
+    },
+  );
+});
+
+test("plugin rewind retries permission settlement before retiring its session", async () => {
+  let failPermission = true;
+  await withPluginRewindSession(
+    {
+      handleInput: async (input) => {
+        if (input.type !== "session.permission" || !failPermission) return false;
+        failPermission = false;
+        throw new Error("permission delivery failed");
+      },
+    },
+    async (session, harness) => {
+      const opened = harness.inputs.find((input) => input.type === "session.open")!;
+      if (opened.type !== "session.open") throw new Error("Missing root");
+      harness.emit({
+        type: "session.permission",
+        sessionId: opened.sessionId,
+        request: { id: "pending", name: "tool", kind: "tool" },
+      });
+      await expect(session.revertConversation!({ messageId: "user-B" })).rejects.toThrow(
+        "permission delivery failed",
+      );
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      expect(harness.inputs.filter((input) => input.type === "session.close")).toHaveLength(0);
+      expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(harness.inputs.filter((input) => input.type === "session.permission")).toHaveLength(2);
+    },
+  );
+});
+
+test("plugin rewind replaces child listeners and settles old pending permissions", async () => {
+  await withPluginRewindSession({}, async (session, harness) => {
+    const root = harness.inputs.find((input) => input.type === "session.open")!;
+    if (root.type !== "session.open") throw new Error("Missing root");
+    harness.emit({
+      type: "session.permission",
+      sessionId: root.sessionId,
+      request: { id: "old-permission", name: "tool", kind: "tool", title: "Run tool" },
+    });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    await session.revertConversation!({ messageId: "user-B" });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.permission",
+        permissionId: "old-permission",
+        response: { behavior: "deny", message: "Session replaced after rewind" },
+      }),
+    );
+    harness.emit({
+      type: "timeline.item",
+      sessionId: "child-1",
+      item: { type: "assistant_message", id: "child-message", text: "Discarded child update" },
+    });
+    const history = await Array.fromAsync(session.streamHistory());
+    expect(history.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    const reopened = harness.inputs.findLast((input) => input.type === "session.open")!;
+    if (reopened.type !== "session.open") throw new Error("Missing reopened root");
+    harness.emit({
+      type: "session.opened",
+      sessionId: "child-1",
+      parentSessionId: reopened.sessionId,
+      capabilities: [],
+      restoration: "parent",
+      cwd: tmpdir(),
+    });
+    harness.emit({
+      type: "timeline.item",
+      sessionId: "child-1",
+      item: { type: "assistant_message", id: "child-message", text: "New child reply" },
+    });
+    const next = await Array.fromAsync(session.streamHistory());
+    expect(next).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "New child reply" }),
+        }),
+      }),
+    );
+  });
+});
+
+test("nonpersisted plugin sessions reject conversation rewind before native mutation", async () => {
+  await withPluginRewindSession(
+    {
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.open") return false;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation", "session.revert.files"],
+          restoration: "core",
+          cwd: input.config.cwd,
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      },
+    },
+    async (session, harness) => {
+      expect(session.capabilities.supportsRewindConversation).toBe(false);
+      await expect(session.revertConversation!({ messageId: "user-B" })).rejects.toThrow(
+        "requires session persistence",
+      );
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([]);
+      await session.revertFiles!({ messageId: "user-B" });
+      expect(harness.nativeMessages).toEqual(["A", "B", "C"]);
+    },
+  );
+});
 
 function openNestedChildren(rootSessionId: string, emit: (event: ProviderEvent) => void) {
   for (const [sessionId, parentSessionId] of [

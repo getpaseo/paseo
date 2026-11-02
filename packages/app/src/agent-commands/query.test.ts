@@ -1,11 +1,61 @@
 import { describe, expect, it } from "vitest";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { fetchQueryOptions } from "@/data/query";
 import {
   agentCommandsQueryKey,
   agentCommandsQueryRoot,
   draftAgentCommandsQueryKey,
   normalizeAgentCommandsCwd,
   sessionAgentCommandsQueryKey,
-} from "./agent-commands-query";
+  sessionCommandQueryPolicy,
+} from "./cache";
+
+it("reuses fresh commands and keeps stale commands during a shared refresh and failure", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { gcTime: 300_000 } } });
+  const key = sessionAgentCommandsQueryKey({ serverId: "s", agentId: "a" });
+  let calls = 0;
+  let fail = false;
+  let resolveRefresh: (value: string[]) => void = () => {};
+  const refresh = new Promise<string[]>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const options = fetchQueryOptions({
+    ...sessionCommandQueryPolicy,
+    staleTimeMs: sessionCommandQueryPolicy.staleTime,
+    dataShape: "value",
+    queryKey: key,
+    retry: false,
+    queryFn: async () => {
+      calls++;
+      if (fail) throw new Error("offline");
+      return refresh;
+    },
+  });
+  client.setQueryData(key, ["old"]);
+  const fresh = new QueryObserver(client, options);
+  const unsubscribeFresh = fresh.subscribe(() => {});
+  expect(calls).toBe(0);
+  unsubscribeFresh();
+  client.setQueryData(key, ["old"], { updatedAt: 1 });
+  const first = new QueryObserver(client, options);
+  const second = new QueryObserver(client, options);
+  const unsubscribeFirst = first.subscribe(() => {});
+  const unsubscribeSecond = second.subscribe(() => {});
+  expect(calls).toBe(1);
+  expect(first.getCurrentResult().data).toEqual(["old"]);
+  expect(client.getQueryCache().find({ queryKey: key })?.gcTime).toBe(1_800_000);
+  resolveRefresh(["new"]);
+  await refresh;
+  await first.refetch({ cancelRefetch: false });
+  expect(second.getCurrentResult().data).toEqual(["new"]);
+  fail = true;
+  await client.invalidateQueries({ queryKey: key });
+  expect(first.getCurrentResult().data).toEqual(["new"]);
+  expect(first.getCurrentResult().isError).toBe(true);
+  unsubscribeFirst();
+  unsubscribeSecond();
+  client.clear();
+});
 
 describe("agent command query keys", () => {
   it("shares draft commands across draft tabs with the same provider setup", () => {
