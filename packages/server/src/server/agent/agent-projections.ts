@@ -94,6 +94,7 @@ export function toStoredAgentRecord(
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     title: options?.title ?? null,
     labels: agent.labels,
+    metadata: agent.metadata,
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
@@ -156,6 +157,7 @@ export function toAgentPayload(
     persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
+    metadata: agent.metadata,
     archivedAt: options?.archivedAt ?? null,
     ...visibilityFlags(agent),
   };
@@ -304,6 +306,7 @@ export function buildStoredAgentPayload(
     archivedAt: record.archivedAt ?? null,
     ...visibilityFlags(record),
     labels: normalizeLabels(record.labels),
+    metadata: record.metadata,
     ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };

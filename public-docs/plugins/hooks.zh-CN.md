@@ -47,22 +47,22 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 
 ## 钩子一览 {#hooks}
 
-| 钩子                      | 等待 | 载荷                                   | 可修改                                    |
-| ------------------------- | ---- | -------------------------------------- | ----------------------------------------- |
-| `workspace.create.before` | 是   | `{ request }`                          | 整个创建请求                              |
-| `workspace.create.after`  | 否   | `{ workspace }`                        |                                           |
-| `workspace.archive.after` | 否   | `{ workspace }`                        |                                           |
-| `worktree.create.before`  | 是   | `{ request }`                          | 创建选项和目标路径                        |
-| `worktree.create.after`   | 是   | `{ worktree }`                         | worktree 中的文件；抛出错误中止创建       |
-| `agent.create.before`     | 是   | `{ request: { config, env? } }`        | 除 `cwd` 外的已保存配置；`env`            |
-| `agent.create.after`      | 否   | `{ agent }`                            |                                           |
-| `agent.open.before`       | 是   | `{ request }`                          | 仅用于启动的 `env`、`tools`、`mcpServers` |
-| `agent.close.after`       | 否   | `{ agent }`                            |                                           |
-| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                |                                           |
-| `agent.turn.before`       | 否   | `{ agent, turnId }`                    |                                           |
-| `agent.turn.after`        | 否   | `{ agent, turnId, outcome, timeline }` |                                           |
-| `agent.permission.before` | 否   | `{ agent, request }`                   |                                           |
-| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`     |                                           |
+| 钩子                      | 等待 | 载荷                                      | 可修改                                     |
+| ------------------------- | ---- | ----------------------------------------- | ------------------------------------------ |
+| `workspace.create.before` | 是   | `{ request }`                             | 整个创建请求                               |
+| `workspace.create.after`  | 否   | `{ workspace }`                           |                                            |
+| `workspace.archive.after` | 否   | `{ workspace }`                           |                                            |
+| `worktree.create.before`  | 是   | `{ request }`                             | 创建选项和目标路径                         |
+| `worktree.create.after`   | 是   | `{ worktree }`                            | worktree 中的文件；抛出错误中止创建        |
+| `agent.create.before`     | 是   | `{ request: { config, env?, metadata } }` | 除 `cwd` 外的已保存配置；`env`；`metadata` |
+| `agent.create.after`      | 否   | `{ agent }`                               |                                            |
+| `agent.open.before`       | 是   | `{ request }`                             | 仅用于启动的 `env`、`tools`、`mcpServers`  |
+| `agent.close.after`       | 否   | `{ agent }`                               |                                            |
+| `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                            |
+| `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                            |
+| `agent.turn.after`        | 否   | `{ agent, turnId, outcome, timeline }`    |                                            |
+| `agent.permission.before` | 否   | `{ agent, request }`                      |                                            |
+| `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                            |
 
 ## 共享载荷 {#shared-payloads}
 
@@ -74,6 +74,7 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  metadata: Record<string, JsonValue>;
 }
 
 interface PluginHookWorkspace {
@@ -82,6 +83,7 @@ interface PluginHookWorkspace {
   cwd: string;
   name: string | null;
   archivedAt: string | null;
+  metadata: Record<string, JsonValue>;
 }
 
 type PluginTurnOutcome =
@@ -98,9 +100,29 @@ type PluginTurnOutcome =
 | `resolution` | SDK 的 `AgentPermissionResponse`                                                         |
 | `archivedAt` | 时间戳字符串                                                                             |
 
+## 元数据 {#metadata}
+
+Agent 和工作区带有 `metadata` 记录，用于保存插件数据。键是字符串，值可以是任意 JSON 值，Paseo 只保存、不读取任何键。给键加上插件 ID 前缀，避免不同插件冲突。标签仍是用于筛选和标记的字符串；结构化数据请用元数据。
+
+可以在创建 Agent 或工作区时设置元数据，也可以之后修改。`null` 删除该键，其他值会替换该键的整个值：
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  cwd: "/projects/shop",
+  metadata: { "linear.issue": { id: "ENG-123" } },
+});
+
+agent.metadata; // { "linear.issue": { id: "ENG-123" } }
+await agent.setMetadata({ "linear.issue": null });
+await paseo.workspaces.ref(workspaceId).setMetadata({ "linear.issue": { id: "ENG-123" } });
+```
+
+元数据在 daemon 重启后仍然保留。所有钩子载荷都带有元数据：`workspace.create.before` 和 `agent.create.before` 收到调用方发送的元数据，`after` 钩子和 `agent.open.before` 收到已保存的元数据。主机版本过旧时，这些调用会抛出 “Update the host to use metadata.”。
+
 ## workspace.create.before {#workspacecreatebefore}
 
-收到 `{ request }`，其中包含 `source`、可选的 `title` 和 `firstAgentContext`。可替换整个显式创建请求；抛出错误、无效返回或超时会让创建失败。已有工作区和目录查找、导入不受影响。
+收到 `{ request }`，其中包含 `source`、可选的 `title`、可选的 `metadata` 和 `firstAgentContext`。可替换整个显式创建请求；抛出错误、无效返回或超时会让创建失败。已有工作区和目录查找、导入不受影响。
 
 ### 选择工作区隔离方式 {#choose-workspace-isolation}
 
@@ -199,7 +221,7 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 
 ## agent.create.before {#agentcreatebefore}
 
-收到 `{ request: { config, env? } }`。配置修改会保存，即使插件以后被停用或移除；`env` 只用于首次启动，不会保存。不能修改 `config.cwd`。抛出错误、无效返回或超时会让创建失败。
+收到 `{ request: { config, env?, metadata } }`。配置和 `metadata` 的修改会保存，即使插件以后被停用或移除；`env` 只用于首次启动，不会保存。不能修改 `config.cwd`。抛出错误、无效返回或超时会让创建失败。
 
 **`agent.create.before.config`** 使用 `AgentSessionConfig`：
 
@@ -267,6 +289,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
   "cwd": "/projects/shop",
   "title": "Workspace notes",
   "labels": { "notes/enabled": "true" },
+  "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
   "mcpServers": {},
   "reason": "resume",
@@ -280,6 +303,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 | `workspaceId` | 字符串或 `null`                                                                                          |
 | `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
 | `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
+| `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                  |
 | `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
 | `mcpServers`  | 可编辑的服务器映射，仅用于启动且仅包含本插件的条目。参阅[注入 MCP 服务器](#inject-mcp-servers)。         |
 | `reason`      | `create`、`resume`、`refresh`、`import`                                                                  |

@@ -8,7 +8,7 @@ export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
-import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import type { AgentPermissionResponse, JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
@@ -184,6 +184,8 @@ export interface PaseoWorkspaceHandle {
   readonly directory: string | null;
   readonly name: string | null;
   readonly status: PaseoWorkspace["status"] | null;
+  /** Data plugins stored on the workspace. Paseo never reads a key. */
+  readonly metadata: NonNullable<PaseoWorkspace["metadata"]> | null;
   readonly agents: {
     create(options: PaseoWorkspaceAgentCreateOptions): Promise<PaseoAgentHandle>;
   };
@@ -191,6 +193,8 @@ export interface PaseoWorkspaceHandle {
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
+  /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
+  setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
@@ -278,6 +282,8 @@ export interface PaseoAgentCreateOptions {
   background?: CreateAgentRequestMessage["background"];
   requestId?: string;
   labels?: Record<string, string>;
+  /** Data plugins store on the agent: JSON values under keys such as `"linear.issue"`. */
+  metadata?: CreateAgentRequestMessage["metadata"];
 }
 
 export type PaseoWorkspaceAgentCreateOptions = Omit<PaseoAgentCreateOptions, "cwd">;
@@ -380,6 +386,8 @@ export interface PaseoAgentHandle {
   readonly options: NonNullable<PaseoAgent["options"]> | null;
   /** How the provider wants its options drawn. Controls hold no value; read `options`. */
   readonly controls: NonNullable<PaseoAgent["controls"]> | null;
+  /** Data plugins stored on the agent. Paseo never reads a key. */
+  readonly metadata: NonNullable<PaseoAgent["metadata"]> | null;
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
@@ -398,6 +406,8 @@ export interface PaseoAgentHandle {
    * provider has applied the patch; a provider that cannot apply a key live rejects it.
    */
   setOptions(patch: Record<string, unknown>): Promise<void>;
+  /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
+  setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -887,6 +897,9 @@ function createWorkspaceHandleFactory(
       get status() {
         return current?.status ?? null;
       },
+      get metadata() {
+        return current?.metadata ?? null;
+      },
       agents: {
         create: async (options) => {
           const snapshot = current ?? (await refresh());
@@ -906,6 +919,10 @@ function createWorkspaceHandleFactory(
       current: () => current,
       refresh,
       setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),
+      setMetadata: async (patch) => {
+        const metadata = await daemonClient.setWorkspaceMetadata(id, patch);
+        if (current) current = { ...current, metadata };
+      },
       archive: async (requestId) => {
         const result = await daemonClient.archiveWorkspace(id, requestId);
         if (current) {
@@ -1013,6 +1030,9 @@ function createAgentHandleFactory(
       get controls() {
         return current?.controls ?? null;
       },
+      get metadata() {
+        return current?.metadata ?? null;
+      },
       get runtimeInfo() {
         return current?.runtimeInfo ?? null;
       },
@@ -1036,6 +1056,10 @@ function createAgentHandleFactory(
       },
       setOptions: async (patch) => {
         await daemonClient.setAgentOptions(id, patch);
+      },
+      setMetadata: async (patch) => {
+        const metadata = await daemonClient.setAgentMetadata(id, patch);
+        if (current) current = { ...current, metadata };
       },
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermission(id, requestId, response);

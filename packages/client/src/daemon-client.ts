@@ -21,6 +21,7 @@ import {
 } from "./connection/index.js";
 import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
@@ -516,11 +517,15 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+  /** Plugin-owned data stored on the agent. Needs a host with `entityMetadata`. */
+  metadata?: CreateAgentRequestMessage["metadata"];
 }
 
 export interface CreateWorkspaceRequestOptions {
   source: WorkspaceCreateRequest["source"];
   title?: string;
+  /** Plugin-owned data stored on the workspace. Needs a host with `entityMetadata`. */
+  metadata?: WorkspaceCreateRequest["metadata"];
   /** Workspace discovery visibility; contents retain normal durability. */
   background?: boolean;
   callerAgentId?: string;
@@ -3308,6 +3313,13 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  // Entity metadata is gated once at the transport boundary.
+  private requireEntityMetadata(): void {
+    if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
+      throw new Error("Update the host to use metadata.");
+    }
+  }
+
   // Background workspaces are gated once at the transport boundary.
   private requireBackgroundWorkspaces(): void {
     if (this.lastServerInfoMessage?.features?.backgroundWorkspaces !== true) {
@@ -3337,6 +3349,7 @@ export class DaemonClient {
       );
     }
     if (options.background !== undefined) this.requireBackgroundCreation(options);
+    if (options.metadata !== undefined) this.requireEntityMetadata();
     const config = resolveAgentConfig(options);
     const result = await this.creations.createAgent({
       ...options,
@@ -3571,6 +3584,42 @@ export class DaemonClient {
       throw new Error(payload.error ?? "removeProject rejected");
     }
     return { removedWorkspaceIds: payload.removedWorkspaceIds };
+  }
+
+  /** Top-level keys replace; `null` removes the key. Resolves to the agent's metadata afterwards. */
+  async setAgentMetadata(
+    agentId: string,
+    patch: Record<string, JsonValue>,
+    requestId?: string,
+  ): Promise<Record<string, JsonValue>> {
+    this.requireEntityMetadata();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.metadata.update.response">({
+        requestId,
+        message: { type: "agent.metadata.update.request", agentId, patch },
+      });
+    if (!payload.accepted || !payload.metadata) {
+      throw new Error(payload.error ?? "setAgentMetadata rejected");
+    }
+    return payload.metadata;
+  }
+
+  /** Top-level keys replace; `null` removes the key. Resolves to the workspace's metadata afterwards. */
+  async setWorkspaceMetadata(
+    workspaceId: string,
+    patch: Record<string, JsonValue>,
+    requestId?: string,
+  ): Promise<Record<string, JsonValue>> {
+    this.requireEntityMetadata();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.metadata.update.response">({
+        requestId,
+        message: { type: "workspace.metadata.update.request", workspaceId, patch },
+      });
+    if (!payload.accepted || !payload.metadata) {
+      throw new Error(payload.error ?? "setWorkspaceMetadata rejected");
+    }
+    return payload.metadata;
   }
 
   async setWorkspaceTitle(
@@ -5150,6 +5199,8 @@ export class DaemonClient {
     if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    if (input.metadata !== undefined || input.agent?.metadata !== undefined)
+      this.requireEntityMetadata();
     let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
     if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
       agentConfig = await this.routeLegacyCreateConfig(agentConfig);
@@ -7837,6 +7888,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     worktreeName: _worktreeName,
     requestId: _requestId,
     labels: _labels,
+    metadata: _metadata,
     ...overrides
   } = options;
 

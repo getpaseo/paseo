@@ -13,6 +13,7 @@ import {
 import type { AgentToolDefinition } from "@getpaseo/plugin/server";
 import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
   PluginHookAgent,
@@ -91,6 +92,7 @@ const beforeSchemas = {
   "agent.create.before": CreateAgentRequestMessageSchema.pick({
     config: true,
     env: true,
+    metadata: true,
   }).strict(),
   "agent.open.before": z
     .object({
@@ -102,6 +104,7 @@ const beforeSchemas = {
       purpose: z.enum(["interactive", "history"]),
       title: z.string().nullable(),
       labels: z.record(z.string(), z.string()),
+      metadata: z.record(z.string(), z.custom<JsonValue>()),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
@@ -152,6 +155,7 @@ export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): Plug
     cwd: workspace.cwd,
     name: workspace.title,
     archivedAt: workspace.archivedAt,
+    metadata: workspace.metadata,
   };
 }
 
@@ -162,6 +166,7 @@ export function describeHookAgent(agent: {
   cwd: string;
   title?: string | null;
   labels: Record<string, string>;
+  metadata: Record<string, JsonValue>;
 }): PluginHookAgent {
   return {
     id: agent.id,
@@ -170,6 +175,7 @@ export function describeHookAgent(agent: {
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
+    metadata: agent.metadata,
   };
 }
 
@@ -229,7 +235,8 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
       previous.reason !== next.reason ||
       previous.purpose !== next.purpose ||
       previous.title !== next.title ||
-      !isDeepStrictEqual(previous.labels, next.labels)
+      !isDeepStrictEqual(previous.labels, next.labels) ||
+      !isDeepStrictEqual(previous.metadata, next.metadata)
     ) {
       throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
     }

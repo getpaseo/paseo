@@ -90,6 +90,7 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -3217,6 +3218,10 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      case "agent.metadata.update.request":
+        return this.handleAgentMetadataUpdateRequest(msg);
+      case "workspace.metadata.update.request":
+        return this.handleWorkspaceMetadataUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -4082,6 +4087,79 @@ export class Session {
     }
   }
 
+  private async handleAgentMetadataUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "agent.metadata.update.request" }>,
+  ): Promise<void> {
+    const { agentId, patch, requestId } = request;
+    this.sessionLogger.info({ agentId, requestId }, "session: agent.metadata.update.request");
+    try {
+      const metadata = await this.agentManager.setMetadata(agentId, patch);
+      this.emit({
+        type: "agent.metadata.update.response",
+        payload: { requestId, agentId, accepted: true, metadata, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId, requestId },
+        "session: agent.metadata.update.request error",
+      );
+      this.emit({
+        type: "agent.metadata.update.response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          metadata: null,
+          error: getErrorMessageOr(error, "Failed to update agent metadata"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceMetadataUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.metadata.update.request" }>,
+  ): Promise<void> {
+    const { workspaceId, patch, requestId } = request;
+    this.sessionLogger.info(
+      { workspaceId, requestId },
+      "session: workspace.metadata.update.request",
+    );
+    const reject = (error: string) =>
+      this.emit({
+        type: "workspace.metadata.update.response",
+        payload: { requestId, workspaceId, accepted: false, metadata: null, error },
+      });
+    try {
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        metadata: applyRecordPatch(existing.metadata, patch),
+        updatedAt,
+      }));
+      if (!updated) {
+        reject("Workspace not found");
+        return;
+      }
+      this.emit({
+        type: "workspace.metadata.update.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          metadata: updated.metadata,
+          error: null,
+        },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.metadata.update.request error",
+      );
+      reject(getErrorMessageOr(error, "Failed to update workspace metadata"));
+    }
+  }
+
   private async handleWorkspacePinSetRequest(
     workspaceId: string,
     pinned: boolean,
@@ -4642,6 +4720,7 @@ export class Session {
           images,
           attachments,
           labels: resolvedIntent.intent.labels,
+          metadata: msg.metadata,
           env,
           provisionalTitle,
           firstAgentContext,
@@ -5850,6 +5929,7 @@ export class Session {
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
+      metadata: workspace.metadata,
       background: workspace.background,
       archivingAt: null,
       status: "done",
@@ -5948,6 +6028,7 @@ export class Session {
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),
+      metadata: result.workspace.metadata,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,
@@ -7070,6 +7151,7 @@ export class Session {
       {
         expectsInitialAgent: Boolean(request.firstAgentContext),
         workspaceId,
+        metadata: request.metadata,
         ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
       },
     );
@@ -7133,6 +7215,7 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        metadata: request.metadata,
         ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
       },
       source.baseBranch

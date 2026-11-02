@@ -2,6 +2,7 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentFeatureSchema, AgentOptionControlSchema, AgentStatusSchema } from "../messages.js";
@@ -56,6 +57,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
+  metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),

@@ -1,3 +1,4 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -34,6 +35,7 @@ export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   workspaceId?: string;
   projectId?: string;
   title?: string;
+  metadata?: Record<string, JsonValue>;
   background?: boolean;
   callerWorkspaceId?: string;
 }
@@ -113,6 +115,7 @@ async function createPaseoWorktreeWithPriority(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: createdWorktree.worktree.comparisonBaseRef,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      metadata: input.metadata,
       expectsInitialAgent: Boolean(input.firstAgentContext),
       background: input.background,
       callerWorkspaceId: input.callerWorkspaceId,

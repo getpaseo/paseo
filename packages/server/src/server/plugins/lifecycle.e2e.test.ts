@@ -240,6 +240,149 @@ export default function contribute(server) {
   }
 }, 60_000);
 
+test("metadata set at creation reaches the hooks, a before hook can add to it, and snapshots carry it", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-metadata-hooks-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "metadata-hooks",
+        requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+      }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  const log = (hook, metadata) => console.log(JSON.stringify({ hook, metadata }));
+  server.addHook("workspace.create.before", async ({ request }) => {
+    log("workspace.create.before", request.metadata);
+    return request;
+  });
+  server.addHook("workspace.create.after", async ({ workspace }) => {
+    log("workspace.create.after", workspace.metadata);
+  });
+  server.addHook("agent.create.before", async ({ request }) => {
+    log("agent.create.before", request.metadata);
+    return { ...request, metadata: { ...request.metadata, "hook.added": true } };
+  });
+  server.addHook("agent.open.before", async ({ request }) => {
+    log("agent.open.before", request.metadata);
+    return request;
+  });
+  server.addHook("agent.create.after", async ({ agent }) => {
+    log("agent.create.after", agent.metadata);
+  });
+  return () => {};
+}
+`,
+    );
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const workspace = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      metadata: { "linear.issue": { id: "ENG-123" } },
+    });
+    expect(workspace.workspace?.metadata).toEqual({ "linear.issue": { id: "ENG-123" } });
+    const agent = await client.createAgent({
+      provider: "claude",
+      cwd: directory,
+      workspaceId: workspace.workspace!.id,
+      metadata: { "linear.issue": { id: "ENG-123" } },
+    });
+    expect(agent.metadata).toEqual({ "linear.issue": { id: "ENG-123" }, "hook.added": true });
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("metadata-hooks");
+        return logs
+          .filter((entry) => entry.message.startsWith('{"hook":'))
+          .map((entry) => JSON.parse(entry.message));
+      })
+      .toMatchObject([
+        { hook: "workspace.create.before", metadata: { "linear.issue": { id: "ENG-123" } } },
+        { hook: "workspace.create.after", metadata: { "linear.issue": { id: "ENG-123" } } },
+        { hook: "agent.create.before", metadata: { "linear.issue": { id: "ENG-123" } } },
+        {
+          hook: "agent.open.before",
+          metadata: { "linear.issue": { id: "ENG-123" }, "hook.added": true },
+        },
+        {
+          hook: "agent.create.after",
+          metadata: { "linear.issue": { id: "ENG-123" }, "hook.added": true },
+        },
+      ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("metadata set at creation and through setMetadata survives a daemon restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-metadata-restart-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-metadata-cwd-"));
+  try {
+    const first = await createTestPaseoDaemon({ paseoHomeRoot: root, cleanup: false });
+    const firstClient = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws` });
+    let agentId: string;
+    let workspaceId: string;
+    try {
+      await firstClient.connect();
+      await firstClient.fetchAgents({ subscribe: {} });
+      const workspace = await firstClient.createWorkspace({
+        source: { kind: "directory", path: directory },
+        metadata: { "a.workspace": 1, "b.workspace": "to remove" },
+      });
+      workspaceId = workspace.workspace!.id;
+      const agent = await firstClient.createAgent({
+        provider: "claude",
+        cwd: directory,
+        workspaceId,
+        metadata: { "a.agent": { nested: [1, 2] }, "b.agent": "to remove" },
+      });
+      agentId = agent.id;
+      expect(
+        await firstClient.setAgentMetadata(agentId, { "b.agent": null, "c.agent": true }),
+      ).toEqual({
+        "a.agent": { nested: [1, 2] },
+        "c.agent": true,
+      });
+      expect(
+        await firstClient.setWorkspaceMetadata(workspaceId, {
+          "b.workspace": null,
+          "c.workspace": [],
+        }),
+      ).toEqual({ "a.workspace": 1, "c.workspace": [] });
+    } finally {
+      await firstClient.close();
+      await first.close();
+    }
+
+    const second = await createTestPaseoDaemon({ paseoHomeRoot: root, cleanup: false });
+    const secondClient = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws` });
+    try {
+      await secondClient.connect();
+      const agent = await secondClient.fetchAgent({ agentId });
+      expect(agent?.agent.metadata).toEqual({ "a.agent": { nested: [1, 2] }, "c.agent": true });
+      const workspaces = await secondClient.fetchWorkspaces({});
+      expect(workspaces.entries.find((entry) => entry.id === workspaceId)?.metadata).toEqual({
+        "a.workspace": 1,
+        "c.workspace": [],
+      });
+    } finally {
+      await secondClient.close();
+      await second.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("agent creation hooks change the provider and environment before the session opens", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-hooks-"));
   const pluginDirectory = await createProviderPlugin(directory, {

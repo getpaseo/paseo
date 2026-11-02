@@ -4,6 +4,7 @@ import type {
   AgentPermissionResponse,
   AgentTimelineItem,
   AgentSessionConfig,
+  JsonValue,
 } from "@getpaseo/protocol/agent-types";
 import type { PaseoApi } from "@getpaseo/client";
 import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
@@ -19,6 +20,8 @@ export interface PluginHookWorkspace {
   cwd: string;
   name: string | null;
   archivedAt: string | null;
+  /** Data plugins stored on the workspace. Paseo never reads a key. */
+  metadata: Record<string, JsonValue>;
 }
 
 export interface PluginHookWorktree {
@@ -68,6 +71,8 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  /** Data plugins stored on the agent. Paseo never reads a key. */
+  metadata: Record<string, JsonValue>;
 }
 
 export interface PluginSessionOpenRequest {
@@ -79,6 +84,7 @@ export interface PluginSessionOpenRequest {
   purpose: "interactive" | "history";
   readonly title: string | null;
   readonly labels: Readonly<Record<string, string>>;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
@@ -116,7 +122,12 @@ export interface PluginHookEvents {
 
 export interface PluginHookRequests {
   "worktree.create.before": PluginWorktreeCreateRequest;
-  "agent.create.before": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create.before": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    /** Stored on the new agent. Always present in the payload; return it changed to change it. */
+    metadata?: Record<string, JsonValue>;
+  };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }

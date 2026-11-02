@@ -3729,6 +3729,35 @@ test("rejects an internal create before sending when the host predates internal 
   expect(mock.sent).toHaveLength(0);
 });
 
+test("metadata needs a host that advertises entityMetadata and sends nothing to one that does not", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  const update = "Update the host to use metadata.";
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", metadata: { key: "value" } }),
+  ).rejects.toThrow(update);
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/tmp/project" },
+      metadata: { key: "value" },
+    }),
+  ).rejects.toThrow(update);
+  await expect(client.setAgentMetadata("agent-1", { key: null })).rejects.toThrow(update);
+  await expect(client.setWorkspaceMetadata("workspace-1", { key: null })).rejects.toThrow(update);
+  expect(mock.sent).toHaveLength(0);
+});
+
 test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
