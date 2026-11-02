@@ -201,3 +201,43 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 ## Debugging
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
+
+### A provider reports "not installed" or "error" on a developer machine
+
+`available: true` in `daemon status` only means the executable resolved. It does
+not mean the agent completes the ACP handshake. Check both, in this order:
+
+```powershell
+node packages\cli\dist\index.js daemon status
+node scripts\acp-handshake-probe.mjs --timeout 20000 -- <command> acp
+Get-Content "$env:PASEO_HOME\daemon.log" -Tail 80   # or %USERPROFILE%\.paseo\daemon.log
+```
+
+Four causes cover almost every case, and each one is an environment problem
+rather than a Paseo bug:
+
+- **Stale `PATH`.** A Windows process inherits the `PATH` its parent had at
+  start, so a daemon that has been running since before a CLI was installed
+  never sees it. Fix the daemon (PATH refresh on startup, PR #8413) or restart
+  it from a shell that has the new `PATH`. Writing an absolute path into
+  `config.json` works but breaks again when the CLI moves.
+- **nvm-windows switched the active Node version.** `C:\nvm4w\nodejs` is a
+  symlink to the active version, and `npm i -g` installs per version. Switching
+  versions makes globally installed CLIs disappear and breaks native modules
+  compiled for the old ABI. Reinstall under the active version, or switch back.
+- **Native module ABI mismatch.** Symptom: `available: true`, but the app shows
+  `Timed out refreshing <Provider> after 120000ms; pending: initialize` and the
+  CLI's `--version` works. The log names `NODE_MODULE_VERSION`. Rebuild the
+  module with the active Node (`npm rebuild <module>` in the package directory)
+  and re-run the probe.
+- **The provider's own budget.** A provider that stops on `max_turn_requests`
+  or `max_tokens` reports `turn_completed`; the reason travels as `stopReason`.
+
+Never restart the daemon inside the same tool call that waits for the result:
+the agent runs inside the daemon, so the restart kills the call. Launch the
+restart detached with its output redirected to a log file, then poll
+`daemon status` (the `workerPid` changing proves it restarted).
+
+Full playbook, including exact commands and the acceptance checklist:
+[docs/local-environment-troubleshooting.md](docs/local-environment-troubleshooting.md).
+

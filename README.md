@@ -218,6 +218,27 @@ npm run build:server
 npm run typecheck
 ```
 
+### When a provider says "not installed"
+
+`available: true` in `paseo daemon status` only means the executable resolved;
+it does not mean the agent completes the ACP handshake. If a provider shows
+"not installed" or a handshake timeout while its CLI works in your shell, the
+cause is usually the local environment, not Paseo:
+
+- a daemon that started before the CLI was installed (Windows hands a process
+  the `PATH` its parent had at start, so the new directory is invisible),
+- an nvm-windows version switch (`npm i -g` installs per Node version),
+- a native module built for a different Node ABI.
+
+Check the agent directly, without Paseo:
+
+```bash
+node scripts/acp-handshake-probe.mjs --timeout 20000 -- <command> acp
+```
+
+See [docs/local-environment-troubleshooting.md](docs/local-environment-troubleshooting.md)
+for diagnosis, fixes, and the acceptance checklist.
+
 ## Support Paseo
 
 Paseo is an independent project used by tens of thousands of developers daily, built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown at the top of this README and on the paseo.sh homepage and docs.

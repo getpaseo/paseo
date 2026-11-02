@@ -1,4 +1,6 @@
 import type { CreateTerminalResponse, ListTerminalsResponse } from "@getpaseo/protocol/messages";
+import { workspaceTerminalsPushRoute } from "@/data/push-router";
+import type { ServerDataQueryMeta } from "@/data/push-router";
 import { upsertTerminalListEntry } from "@/utils/terminal-list";
 
 export const TERMINALS_QUERY_STALE_TIME = 5_000;
@@ -24,6 +26,27 @@ export function canCreateWorkspaceTerminal(input: {
   return Boolean(
     input.isRouteFocused && input.client && input.isConnected && input.workspaceDirectory,
   );
+}
+
+/**
+ * Builds the push route a terminal replica subscribes to. Returns undefined
+ * when the workspace directory is not known yet, so an empty directory never
+ * reaches the daemon as an empty `cwd` — the terminal manager rejects that on
+ * every snapshot with "cwd must be absolute path".
+ */
+export function resolveWorkspaceTerminalsPushRoute(input: {
+  enabled: boolean;
+  serverId: string;
+  workspaceDirectory: string | null;
+  workspaceId?: string;
+}): ServerDataQueryMeta | undefined {
+  if (!input.workspaceDirectory) return undefined;
+  return workspaceTerminalsPushRoute({
+    enabled: input.enabled,
+    serverId: input.serverId,
+    cwd: input.workspaceDirectory,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+  });
 }
 
 export function reconcilePendingScriptTerminals(liveTerminalIds: string[], dataUpdatedAt: number) {
