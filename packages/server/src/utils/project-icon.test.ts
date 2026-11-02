@@ -230,6 +230,42 @@ describe("findProjectIcon", () => {
     expect(result).toBe(join(tempDir, "favicon.ico"));
   });
 
+  it("prioritizes the directory over the file name", async () => {
+    mkdirSync(join(tempDir, "docs"));
+    writeFileSync(join(tempDir, "docs", "logo.png"), "docs logo");
+    mkdirSync(join(tempDir, "public"));
+    writeFileSync(join(tempDir, "public", "favicon.svg"), "public favicon");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, "docs", "logo.png"));
+  });
+
+  it.each(["res", ".github"])("finds icon in %s directory", async (dir) => {
+    mkdirSync(join(tempDir, dir));
+    writeFileSync(join(tempDir, dir, "logo.svg"), "<svg></svg>");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, dir, "logo.svg"));
+  });
+
+  it("prioritizes logo over icon in the same directory", async () => {
+    writeFileSync(join(tempDir, "icon.svg"), "icon");
+    writeFileSync(join(tempDir, "logo.png"), "logo");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, "logo.png"));
+  });
+
+  it("finds WebP and JPEG icons, after SVG and PNG", async () => {
+    writeFileSync(join(tempDir, "favicon.jpg"), "jpg");
+    writeFileSync(join(tempDir, "favicon.webp"), "webp");
+
+    expect(await findProjectIcon(tempDir)).toBe(join(tempDir, "favicon.webp"));
+
+    writeFileSync(join(tempDir, "favicon.png"), "png");
+    expect(await findProjectIcon(tempDir)).toBe(join(tempDir, "favicon.png"));
+  });
+
   describe("monorepo package directories", () => {
     it("finds icon in packages/*/public directory", async () => {
       mkdirSync(join(tempDir, "packages", "app", "public"), { recursive: true });
@@ -488,6 +524,33 @@ describe("getProjectIcon", () => {
 
     const result = await getProjectIcon(tempDir);
     expect(result).toBeNull();
+  });
+
+  it("skips an oversized candidate and uses the next one", async () => {
+    writeFileSync(join(tempDir, "favicon.svg"), Buffer.alloc(33 * 1024, 0x20));
+    writeFileSync(join(tempDir, "favicon.png"), squarePng);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.mimeType).toBe("image/png");
+    expect(result?.data).toBe(squarePng.toString("base64"));
+  });
+
+  it("skips a non-square candidate and uses the next one", async () => {
+    writeFileSync(join(tempDir, "favicon.png"), nonSquarePng);
+    writeFileSync(join(tempDir, "logo.png"), squarePng);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.data).toBe(squarePng.toString("base64"));
+  });
+
+  it("falls through to a lower-priority directory when every candidate is rejected", async () => {
+    mkdirSync(join(tempDir, "public"));
+    writeFileSync(join(tempDir, "public", "favicon.png"), nonSquarePng);
+    mkdirSync(join(tempDir, "assets"));
+    writeFileSync(join(tempDir, "assets", "favicon.png"), squarePng);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.data).toBe(squarePng.toString("base64"));
   });
 
   it("returns null when no icon is found", async () => {
