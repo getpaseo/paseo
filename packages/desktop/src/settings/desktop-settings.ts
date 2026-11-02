@@ -15,12 +15,19 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
+  projects: {
+    /** Where Browse in Add Project opens. Wins over `lastBrowseDirectory` when set. */
+    defaultBrowseDirectory: string | null;
+    /** The parent of the directory last picked with Browse. */
+    lastBrowseDirectory: string | null;
+  };
 }
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
+  projects?: Partial<DesktopSettings["projects"]>;
 }
 
 export interface DesktopSettingsStore {
@@ -37,6 +44,10 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
+  },
+  projects: {
+    defaultBrowseDirectory: null,
+    lastBrowseDirectory: null,
   },
 };
 
@@ -57,11 +68,21 @@ const DaemonSchema = z
   })
   .catch(() => ({ ...DEFAULT_DESKTOP_SETTINGS.daemon }));
 
+const DirectoryPathSchema = z.string().min(1).nullable().catch(null);
+
+const ProjectsSchema = z
+  .looseObject({
+    defaultBrowseDirectory: DirectoryPathSchema,
+    lastBrowseDirectory: DirectoryPathSchema,
+  })
+  .catch(() => ({ ...DEFAULT_DESKTOP_SETTINGS.projects }));
+
 const DesktopSettingsSchema = z
   .looseObject({
     releaseChannel: ReleaseChannelSchema.catch(DEFAULT_DESKTOP_SETTINGS.releaseChannel),
     notifications: NotificationsSchema,
     daemon: DaemonSchema,
+    projects: ProjectsSchema,
   })
   .catch(() => buildDefaultSettings());
 
@@ -99,6 +120,13 @@ function coerceBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+/** A patch value for a nullable path: a non-empty string sets it, `null` clears it. */
+function coerceDirectoryPath(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  return undefined;
+}
+
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error;
 }
@@ -108,6 +136,7 @@ function buildDefaultSettings(): StoredDesktopSettings {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
     notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
+    projects: { ...DEFAULT_DESKTOP_SETTINGS.projects },
   };
 }
 
@@ -129,6 +158,10 @@ function toDesktopSettings(stored: StoredDesktopSettings): DesktopSettings {
     daemon: {
       manageBuiltInDaemon: stored.daemon.manageBuiltInDaemon,
       keepRunningAfterQuit: stored.daemon.keepRunningAfterQuit,
+    },
+    projects: {
+      defaultBrowseDirectory: stored.projects.defaultBrowseDirectory,
+      lastBrowseDirectory: stored.projects.lastBrowseDirectory,
     },
   };
 }
@@ -166,6 +199,21 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
     }
   }
 
+  if (isRecord(input.projects)) {
+    const projectsPatch: Partial<DesktopSettings["projects"]> = {};
+    const defaultBrowseDirectory = coerceDirectoryPath(input.projects.defaultBrowseDirectory);
+    if (defaultBrowseDirectory !== undefined) {
+      projectsPatch.defaultBrowseDirectory = defaultBrowseDirectory;
+    }
+    const lastBrowseDirectory = coerceDirectoryPath(input.projects.lastBrowseDirectory);
+    if (lastBrowseDirectory !== undefined) {
+      projectsPatch.lastBrowseDirectory = lastBrowseDirectory;
+    }
+    if (Object.keys(projectsPatch).length > 0) {
+      patch.projects = projectsPatch;
+    }
+  }
+
   return patch;
 }
 
@@ -199,6 +247,7 @@ function mergeDesktopSettings(
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
     notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
+    projects: { ...current.projects, ...patch.projects },
   };
 }
 

@@ -20,12 +20,19 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
+  projects: {
+    /** Where Browse in Add Project opens. Wins over `lastBrowseDirectory` when set. */
+    defaultBrowseDirectory: string | null;
+    /** The parent of the directory last picked with Browse. */
+    lastBrowseDirectory: string | null;
+  };
 }
 
 export interface DesktopSettingsPatch {
   releaseChannel?: ReleaseChannel;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
+  projects?: Partial<DesktopSettings["projects"]>;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -36,6 +43,10 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
+  },
+  projects: {
+    defaultBrowseDirectory: null,
+    lastBrowseDirectory: null,
   },
 };
 
@@ -153,6 +164,7 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
   const record = isRecord(raw) ? raw : {};
   const notifications = isRecord(record.notifications) ? record.notifications : {};
   const daemon = isRecord(record.daemon) ? record.daemon : {};
+  const projects = isRecord(record.projects) ? record.projects : {};
 
   return {
     releaseChannel: record.releaseChannel === "beta" ? "beta" : "stable",
@@ -172,7 +184,15 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
           ? daemon.keepRunningAfterQuit
           : DEFAULT_DESKTOP_SETTINGS.daemon.keepRunningAfterQuit,
     },
+    projects: {
+      defaultBrowseDirectory: parseDirectoryPath(projects.defaultBrowseDirectory),
+      lastBrowseDirectory: parseDirectoryPath(projects.lastBrowseDirectory),
+    },
   };
+}
+
+function parseDirectoryPath(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function mergeDesktopSettings(
@@ -189,6 +209,10 @@ function mergeDesktopSettings(
       ...current.daemon,
       ...updates.daemon,
     },
+    projects: {
+      ...current.projects,
+      ...updates.projects,
+    },
   };
 }
 
@@ -197,6 +221,7 @@ function normalizePatch(updates: DesktopSettingsPatch): Record<string, unknown> 
     ...(updates.releaseChannel ? { releaseChannel: updates.releaseChannel } : {}),
     ...(updates.notifications ? { notifications: updates.notifications } : {}),
     ...(updates.daemon ? { daemon: updates.daemon } : {}),
+    ...(updates.projects ? { projects: updates.projects } : {}),
   };
 }
 

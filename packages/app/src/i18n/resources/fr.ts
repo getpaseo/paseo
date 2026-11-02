@@ -2370,6 +2370,14 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      addProject: {
+        title: "Ajouter un projet",
+        browseStart: "Le sélecteur de dossier s'ouvre dans",
+        browseStartLastUsed: "Le dernier dossier parcouru",
+        choose: "Choisir...",
+        reset: "Réinitialiser",
+        chooseFailed: "Impossible d'ouvrir le sélecteur de dossier.",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
