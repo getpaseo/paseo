@@ -177,12 +177,20 @@ history. Code outside the owner does not distinguish cached and network timeline
 The first resume request is bounded. If it reports more newer history, fetch one latest complete-turn tail
 instead of replaying every missed page. Live gap recovery still pages forward until current.
 
-If the canonical window exceeds the cache item target, contains a discontiguous retained range, has a
-live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
-range and keeps a display-only tail of complete available turns. The item target is soft;
-the byte budget still evicts entire cache rows. Never slice items while retaining the pre-slice range; that
-falsely certifies discarded source rows. A display-only row paints without granting synchronization
-authority, so the owner uses the ordinary bounded `tail` bootstrap.
+A canonical window over the cache item target keeps its newest complete available turns and a
+range re-derived from them. The item target is soft; the byte budget still evicts entire cache
+rows. A trimmed certified window must start at a canonical user message that begins a turn,
+and every discarded item must end before that row. An item's cursor is its `seqEnd`, but
+`before startSeq` pages by display anchor; a user message is one source row, so its cursor is
+its anchor, and `before startSeq` returns exactly the discarded rows. Never slice items while
+retaining the pre-slice range; that falsely certifies discarded source rows.
+
+If no such boundary exists, or the window contains a discontiguous retained range, has a live head,
+or includes an item the cache cannot store, persistence drops the range and keeps a display-only
+tail of complete available turns. A display-only row paints without granting synchronization
+authority, so the owner uses the ordinary bounded `tail` bootstrap. User message images and
+attachments are not stored and do not drop the range: the daemon never returns them, so a refetch
+cannot restore them either.
 
 Live rows received between cache paint and catch-up stay in the separate live head and reconcile with
 the authoritative range through the existing forward-page path. The cache does not persist sync
