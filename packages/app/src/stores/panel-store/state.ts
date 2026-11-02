@@ -97,6 +97,7 @@ export const PanelPersistedStateSchema = z.strictObject({
   diffCollapsedFoldersByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   collapsedFilePathsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   sidebarWidth: z.number().optional(),
+  sidebarNavRows: z.number().int().positive().optional(),
   // Accepted only so migration can discard the former docked explorer sidebar width.
   explorerWidth: z.number().optional(),
   explorerSortOption: z.enum(["name", "modified", "size"]).optional(),
