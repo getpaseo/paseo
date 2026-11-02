@@ -73,6 +73,7 @@ my-plugin/
 | 旧根入口中的 `plugin.addClientSlashCommand(command)`                                          | `index.client.tsx` 中的 `client.addSlashCommand(command)`                                                              |
 | 旧根入口中的 `plugin.addClientSide(fn)`                                                       | 删除这层包装，把 `fn` 的函数体移入默认的客户端入口函数                                                                 |
 | 旧客户端回调中的 `client.addComposerPill(pill)`                                               | `index.client.tsx` 或被导入的 `client/` 函数中的 `client.addComposerPill(pill)`                                        |
+| 新的编辑器项贡献                                                                              | `index.client.tsx` 中的 `client.addComposerItem(item)`;见[编辑器项](reference#composer-items)                          |
 | 新的标题栏贡献                                                                                | `client.addHeaderButton({ id, workspaceId, button })`                                                                  |
 | 旧根入口中的 `plugin.addAttachmentSource(source)`                                             | `index.client.tsx` 中的 `client.addAttachmentSource(source)`                                                           |
 | 新的设置界面贡献                                                                              | `index.client.tsx` 中的 `client.addSettingsScreen(screen)`；见[设置界面](reference#settings-screens)                   |

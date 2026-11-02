@@ -3,6 +3,7 @@ import {
   resolveAgentForm,
   resolveFormState,
   resolveEffectiveModel,
+  isUnlistedModel,
   resolveThinkingOptionId,
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
@@ -128,6 +129,19 @@ describe("resolveDefaultModel", () => {
       { provider: "codex", id: "b", label: "B", isDefault: false },
     ];
     expect(resolveDefaultModel(models)?.id).toBe("a");
+  });
+});
+
+describe("isUnlistedModel", () => {
+  it("rejects an id the provider's catalog lacks, and accepts a listed id or alias", () => {
+    expect(isUnlistedModel(ALIASED_CODEX_MODELS, "not-in-the-catalog")).toBe(true);
+    expect(isUnlistedModel(ALIASED_CODEX_MODELS, "gpt-5.3-codex")).toBe(false);
+    expect(isUnlistedModel(ALIASED_CODEX_MODELS, "gpt-5.3-codex-legacy")).toBe(false);
+  });
+
+  it("accepts any id while the provider has listed no models", () => {
+    expect(isUnlistedModel(null, "anything")).toBe(false);
+    expect(isUnlistedModel([], "anything")).toBe(false);
   });
 });
 

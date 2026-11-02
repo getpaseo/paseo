@@ -21,6 +21,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { isUnlistedModel } from "@/provider-selection/resolve-agent-form";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -1146,6 +1147,7 @@ export const AgentControls = memo(function AgentControls({
       metadata: agent.metadata ?? EMPTY_METADATA,
       setProvider: () => Promise.reject(new Error("A running agent cannot change provider.")),
       setModel: async (modelId) => {
+        if (isUnlistedModel(models, modelId)) throw new Error(`Unknown model: ${modelId}`);
         await client.setAgentModel(agentId, modelId);
       },
       setMode: async (modeId) => {
@@ -1168,6 +1170,7 @@ export const AgentControls = memo(function AgentControls({
     client,
     modeControl?.selectedModeId,
     modelSelection.selectedThinkingId,
+    models,
   ]);
 
   const commandCenterControls = useMemo<AgentControlCommandCenterSource>(

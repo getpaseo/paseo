@@ -139,6 +139,22 @@ describe.each(["draft", "new-workspace"] as const)("the %s composer's agent", (c
     expect(draft.agent().options).toEqual({});
   });
 
+  it("creates with the provider's default again once a plugin resets an option", async () => {
+    const draft = openDraft(context);
+    const retained = draft.agent();
+
+    await retained.setOptions({ context: "1m", effort: "high" });
+    await retained.setOptions({ context: null });
+
+    expect(draft.agent().options).toEqual({ effort: "high" });
+    expect(draft.request()?.providerOptions).toEqual({ effort: "high" });
+
+    await retained.setOptions({ effort: null });
+
+    expect(draft.agent().options).toEqual({});
+    expect(draft.request()?.providerOptions).toBeUndefined();
+  });
+
   it("rejects a provider the host cannot run and a model the catalog does not list", async () => {
     const draft = openDraft(context);
     const retained = draft.agent();

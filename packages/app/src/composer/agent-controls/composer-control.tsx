@@ -16,7 +16,7 @@ import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
-import { useToast } from "@/contexts/toast-context";
+import { useToast } from "@/contexts/toast-api-context";
 import { toErrorMessage } from "@/utils/error-messages";
 
 interface ComposerControlBase {

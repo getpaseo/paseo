@@ -8,7 +8,7 @@ import {
 } from "@/composer/agent-controls/composer-control";
 import { useComposerAgent, useComposerInput } from "@/composer/session";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useToast } from "@/contexts/toast-context";
+import { useToast } from "@/contexts/toast-api-context";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";

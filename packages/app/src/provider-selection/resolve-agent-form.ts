@@ -153,6 +153,19 @@ export function resolveEffectiveModel(
   return findModelByReference(availableModels, modelId) ?? null;
 }
 
+/**
+ * True when the provider has listed its models and this id is not among them. A provider that
+ * lists none accepts any id.
+ */
+export function isUnlistedModel(
+  availableModels: AgentModelDefinition[] | null,
+  modelId: string,
+): boolean {
+  if (!availableModels || availableModels.length === 0) return false;
+  if (!normalizeSelectedModelId(modelId)) return false;
+  return !resolveEffectiveModel(availableModels, modelId);
+}
+
 function resolvePreferredThinkingOptionId(input: {
   availableModels: AgentModelDefinition[] | null;
   providerPrefs: ProviderPrefs | undefined;

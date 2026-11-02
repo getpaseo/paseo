@@ -4,9 +4,8 @@ import type { FormPreferences } from "@/hooks/use-form-preferences";
 import {
   INITIAL_AGENT_FORM_RESOLUTION,
   INITIAL_USER_MODIFIED,
-  normalizeSelectedModelId,
+  isUnlistedModel,
   resolveAgentForm,
-  resolveEffectiveModel,
   type AgentFormAction,
   type AgentFormReducerState,
 } from "@/provider-selection/resolve-agent-form";
@@ -75,9 +74,7 @@ export function openAgentForm(catalog: () => AgentFormCatalog): AgentFormStore {
       const host = catalog();
       const listed = provider ? host.models.get(provider) : undefined;
       const models = listed?.length ? listed : null;
-      if (models && normalizeSelectedModelId(modelId) && !resolveEffectiveModel(models, modelId)) {
-        return false;
-      }
+      if (isUnlistedModel(models, modelId)) return false;
       dispatch({
         type: "SET_MODEL_FROM_USER",
         modelId,
