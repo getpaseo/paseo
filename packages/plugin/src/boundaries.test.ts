@@ -235,8 +235,8 @@ describe("plugin composer SDK boundary", () => {
         composer.setMetadata({ fn: () => {} });
         return (
           <>
-            <Toggle title="Flag" icon="Flag" value={flag} onValueChange={(next: boolean) => composer.setMetadata({ flag: next })} />
-            <Select title="Size" icon="Gauge" value="a" options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} onValueChange={(next: "a" | "b") => {}} />
+            <Toggle title="Flag" icon="Flag" value={flag} onValueChange={({ value }: { value: boolean }) => composer.setMetadata({ flag: value })} />
+            <Select title="Size" icon="Gauge" value="a" options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} onValueChange={({ value }: { value: "a" | "b" }) => {}} />
             <Action title="Insert" icon="Plus" onPress={() => composer.setPrompt("")} />
           </>
         );

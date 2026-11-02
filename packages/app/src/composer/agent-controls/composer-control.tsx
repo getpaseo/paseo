@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useRef, type ReactElement } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -8,6 +16,8 @@ import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 
 interface ComposerControlBase {
   id: string;
@@ -36,13 +46,13 @@ export type ComposerControlItem =
   | (ComposerControlBase & {
       type: "toggle";
       value: boolean;
-      onChange: (value: boolean) => void;
+      onChange: (value: boolean) => void | Promise<void>;
     })
   | (ComposerControlBase & {
       type: "select";
       value: string | null;
       choices: readonly ComposerControlChoice[];
-      onChange: (value: string) => void;
+      onChange: (value: string) => void | Promise<void>;
       /** The toolbar trigger shows only the icon. */
       iconOnly?: boolean;
       showCaret?: boolean;
@@ -57,7 +67,7 @@ export type ComposerControlItem =
     })
   | (ComposerControlBase & {
       type: "action";
-      onPress: () => void;
+      onPress: () => void | Promise<void>;
     });
 
 export type ComposerControlSurface = "toolbar" | "sheet";
@@ -92,7 +102,7 @@ interface ControlView {
   opensList: boolean;
 }
 
-export function describeControl(
+function describeControl(
   item: ComposerControlItem,
   surface: ComposerControlSurface,
   t: TFunction,
@@ -153,18 +163,37 @@ export function ComposerControl({
   const sheetHeader = useMemo<SheetHeader>(() => ({ title: item.title }), [item.title]);
   const view = useMemo(() => describeControl(item, surface, t), [item, surface, t]);
 
+  // A command that returns a promise keeps the control pending until it settles, and a failure
+  // reaches the user the way a built-in live control's does.
+  const toast = useToast();
+  const [pending, setPending] = useState(false);
+  const run = useCallback(
+    (invoke: () => void | Promise<void>) => {
+      try {
+        const result = invoke();
+        if (!result) return;
+        setPending(true);
+        result
+          .catch((error: unknown) => toast.error(toErrorMessage(error)))
+          .finally(() => setPending(false));
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [toast],
+  );
   const handlePress = useCallback(() => {
-    if (item.type === "toggle") item.onChange(!item.value);
-    else if (item.type === "action") item.onPress();
+    if (item.type === "toggle") run(() => item.onChange(!item.value));
+    else if (item.type === "action") run(item.onPress);
     onActionComplete?.();
-  }, [item, onActionComplete]);
+  }, [item, onActionComplete, run]);
   const handleOpenPress = useCallback(() => onOpenChange(!open), [onOpenChange, open]);
   const handleSelect = useCallback(
     (value: string) => {
-      if (item.type === "select") item.onChange(value);
-      else if (item.type === "toggle") item.onChange(value === "true");
+      if (item.type === "select") run(() => item.onChange(value));
+      else if (item.type === "toggle") run(() => item.onChange(value === "true"));
     },
-    [item],
+    [item, run],
   );
 
   const select = item.type === "select" ? item : null;
@@ -179,7 +208,7 @@ export function ComposerControl({
       showToolbarLabel={!view.iconOnly}
       showCaret={select?.showCaret === true && !isSheet}
       open={view.opensList && open}
-      disabled={disabled}
+      disabled={disabled || pending}
       onPress={view.opensList ? handleOpenPress : handlePress}
       accessibilityLabel={item.accessibilityLabel ?? view.tooltip}
       testID={item.testID}

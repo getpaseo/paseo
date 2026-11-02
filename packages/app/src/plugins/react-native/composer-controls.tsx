@@ -43,7 +43,7 @@ export function Toggle({ title, icon, disabled, value, onValueChange }: TogglePr
       icon: Icon,
       highlight: value ? "blue" : undefined,
       value,
-      onChange: onValueChange,
+      onChange: (next) => onValueChange({ value: next }),
     }),
     [Icon, onValueChange, title, value],
   );
@@ -67,7 +67,7 @@ export function Select<Value extends string>({
       icon: Icon,
       value,
       choices: options,
-      onChange: (next) => onValueChange(next as Value),
+      onChange: (next) => onValueChange({ value: next as Value }),
       showCaret: true,
     }),
     [Icon, onValueChange, options, title, value],
@@ -78,7 +78,7 @@ export function Select<Value extends string>({
 export function Action({ title, icon, disabled, onPress }: ActionProps) {
   const Icon = usePluginControlIcon(icon);
   const item = useMemo<ComposerControlItem>(
-    () => ({ id: "plugin-action", type: "action", title, icon: Icon, onPress }),
+    () => ({ id: "plugin-action", type: "action", title, icon: Icon, onPress: () => onPress({}) }),
     [Icon, onPress, title],
   );
   return <PluginComposerControl item={item} disabled={disabled} />;

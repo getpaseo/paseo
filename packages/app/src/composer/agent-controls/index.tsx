@@ -71,6 +71,8 @@ import {
 } from "@/composer/agent-controls/composer-control";
 import { useAgentControlItems } from "@/composer/agent-controls/control-items";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
+import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
+import { draftComposerAgent } from "@/composer/draft/composer-agent";
 import { ComposerAgentProvider, type ComposerAgent } from "@/composer/session";
 import { PluginComposerItems, usePluginComposerItemCount } from "@/plugins/composer-items";
 import {
@@ -128,16 +130,22 @@ export interface DraftAgentControlsProps {
   onSelectMode: (modeId: string) => void;
   models: AgentModelDefinition[];
   selectedModel: string;
-  onSelectModel: (modelId: string) => void;
+  /** `false` when the provider's loaded catalog does not list the model. */
+  onSelectModel: (modelId: string) => boolean;
   isModelLoading: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
-  onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
+  /** `false` when the provider is unknown or not ready. */
+  onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => boolean;
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   selectedThinkingOptionId: string;
   onSelectThinkingOption: (thinkingOptionId: string) => void;
   onApplyAgentProfile: DraftAgentProfileControls["applyProfile"];
+  /** The controls the daemon described for the draft; absent until it answers. */
   optionControls?: ComposerOptionControls;
+  /** What the draft will create with, edits included, whether or not the daemon has answered. */
+  options: ProviderOptions;
+  onSetOption: (key: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -711,6 +719,7 @@ interface DesktopAgentControlsContentProps extends AgentControlsContentProps {
 }
 
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
+  const sheetBridge = useComposerSheetBridge();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const {
@@ -817,6 +826,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             header={featuresSheetHeader}
             visible={activeSheet === "features"}
             onClose={handleCloseSheet}
+            contextBridge={sheetBridge}
             testID="agent-features-sheet"
           >
             <ComposerControls
@@ -853,6 +863,7 @@ interface SheetAgentControlsContentProps extends AgentControlsContentProps {
 }
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
+  const sheetBridge = useComposerSheetBridge();
   const {
     provider,
     selectedModelId,
@@ -916,6 +927,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       onEditProfiles={onEditAgentProfiles}
       onCreateProfile={onCreateAgentProfile}
       onEditProfile={onEditAgentProfile}
+      contextBridge={sheetBridge}
       isLoading={isModelLoading}
       disabled={disabled}
       onOpen={onModelSelectorOpen}
@@ -1269,6 +1281,8 @@ export function DraftAgentControls({
   onSelectThinkingOption,
   onApplyAgentProfile,
   optionControls,
+  options,
+  onSetOption,
   onDropdownClose,
   onModelSelectorOpen,
   onRetryModelProvider,
@@ -1338,26 +1352,23 @@ export function DraftAgentControls({
     [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
   );
 
-  const composerAgent = useMemo<ComposerAgent>(
-    () => ({
-      context,
-      provider: selectedProvider,
-      model: selectedModel || null,
-      mode: selectedMode || null,
-      thinking: effectiveSelectedThinkingOption ?? null,
-      options: optionControls?.options ?? EMPTY_OPTIONS,
-      metadata,
-      // An empty model id picks the provider's default model.
-      setProvider: async (nextProvider) => onSelectProviderAndModel(nextProvider, ""),
-      setModel: async (modelId) => onSelectModel(modelId),
-      setMode: async (modeId) => onSelectMode(modeId),
-      setThinking: async (thinkingOptionId) => onSelectThinkingOption(thinkingOptionId),
-      setOptions: async (patch) => {
-        if (!optionControls) throw new Error("This provider has no options.");
-        for (const [key, value] of Object.entries(patch)) optionControls.onSetOption(key, value);
-      },
-      setMetadata: async (patch) => onSetMetadata(patch),
-    }),
+  const composerAgent = useMemo(
+    () =>
+      draftComposerAgent({
+        context,
+        selectedProvider,
+        selectedModel,
+        selectedMode,
+        thinking: effectiveSelectedThinkingOption ?? null,
+        options,
+        metadata,
+        onSelectProviderAndModel,
+        onSelectModel,
+        onSelectMode,
+        onSelectThinkingOption,
+        onSetOption,
+        onSetMetadata,
+      }),
     [
       context,
       effectiveSelectedThinkingOption,
@@ -1367,7 +1378,8 @@ export function DraftAgentControls({
       onSelectProviderAndModel,
       onSelectThinkingOption,
       onSetMetadata,
-      optionControls,
+      onSetOption,
+      options,
       selectedMode,
       selectedModel,
       selectedProvider,

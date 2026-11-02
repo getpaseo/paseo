@@ -22,6 +22,8 @@ export function resolveDraftKey(input: {
 export function buildDraftAgentControls(input: {
   formState: UseAgentFormStateResult;
   optionControls?: DraftAgentControlsProps["optionControls"];
+  options: DraftAgentControlsProps["options"];
+  onSetOption: DraftAgentControlsProps["onSetOption"];
   onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
   context: NonNullable<DraftAgentControlsProps["context"]>;
@@ -31,6 +33,8 @@ export function buildDraftAgentControls(input: {
   const {
     formState,
     optionControls,
+    options,
+    onSetOption,
     onApplyAgentProfile,
     onDropdownClose,
     context,
@@ -55,6 +59,8 @@ export function buildDraftAgentControls(input: {
     onSelectThinkingOption: formState.setThinkingOptionFromUser,
     onApplyAgentProfile,
     optionControls,
+    options,
+    onSetOption,
     onDropdownClose,
     onModelSelectorOpen: formState.refetchProviderModelsIfStale,
     onRetryModelProvider: formState.refreshProviderModels,

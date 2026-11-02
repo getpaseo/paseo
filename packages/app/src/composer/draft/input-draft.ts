@@ -290,10 +290,13 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const {
     optionControls: draftOptionControls,
     options: draftOptions,
+    shownOptions: draftShownOptions,
+    setOption: setDraftOption,
     applyProfile: applyProfileOptions,
   } = useDraftProviderOptions({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
+    getProvider: formState.getSelectedProvider,
     cwd: workingDir,
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
@@ -337,6 +340,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       agentControls: buildDraftAgentControls({
         formState,
         optionControls: draftOptionControls,
+        options: draftShownOptions,
+        onSetOption: setDraftOption,
         onApplyAgentProfile: applyDraftAgentProfile,
         context: composerOptions.context ?? "draft",
         metadata,
@@ -352,6 +357,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveThinkingOptionId,
     draftOptionControls,
     draftOptions,
+    draftShownOptions,
+    setDraftOption,
     applyDraftAgentProfile,
     formState,
     metadata,

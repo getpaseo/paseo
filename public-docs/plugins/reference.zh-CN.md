@@ -1615,7 +1615,9 @@ function ReviewFlag() {
       title="Needs review"
       icon="Flag"
       value={composer.agent.metadata["review.needsReview"] === true}
-      onValueChange={(next) => composer.setMetadata({ "review.needsReview": next ? true : null })}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
     />
   );
 }
@@ -1640,24 +1642,26 @@ export default function contribute(client: PluginClientContext) {
 
 `useComposer()` 返回该项所在的 composer：
 
-| 字段或命令                                          | 含义                                                                                                                             |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                           |
-| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                |
-| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                           |
-| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                     |
-| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。                                                                                           |
-| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                          |
-| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型，在 `context: "agent"` 下会被拒绝：运行中的 Agent 保持其 Provider。 |
-| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                           |
+| 字段或命令                                          | 含义                                                                                                                                                                                                                           |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                         |
+| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                              |
+| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                         |
+| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                   |
+| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                  |
+| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                                                                                                                        |
+| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型。在 `context: "agent"` 下（运行中的 Agent 保持其 Provider）以及主机不提供该 Provider 时会被拒绝。Provider 的模型目录已加载但未列出该模型时，`setModel` 会被拒绝。 |
+| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                                                                                                                         |
 
 同一个调用在每个 composer 中行为一致，插件不需要选择 composer 的实现。在运行中的 Agent 上调用 `setMetadata` 需要支持元数据的主机；主机过旧时，Promise 会以 “Update the host to use metadata.” 拒绝。
 
-`Toggle` 接收 `value` 和 `onValueChange`。`Select` 接收 `value`、`options`（`{ value, label, description? }`）和 `onValueChange`。`Action` 接收 `onPress`。三者都接收 `title`、`icon`（[Lucide 名称、SVG 或组件](#icons)）和 `disabled`。控件的位置由 Paseo 决定：composer 空间足够时显示在工具栏中，不够时（手机上始终如此）成为 composer 溢出面板中的一行。`Select` 会就地打开列表，而不是替换面板中的行。`Component` 如果渲染这些控件以外的内容，会在其所在位置绘制；在溢出面板中，该位置就是面板。
+`Toggle` 接收 `value` 和 `onValueChange({ value })`。`Select` 接收 `value`、`options`（`{ value, label, description? }`）和 `onValueChange({ value })`。`Action` 接收 `onPress(event)`。三者都接收 `title`、`icon`（[Lucide 名称、SVG 或组件](#icons)）和 `disabled`。回调可以返回 Promise：在它完成之前控件保持禁用，被拒绝时 Paseo 会像对待自身控件一样，以错误提示向用户显示。控件的位置由 Paseo 决定：composer 空间足够时显示在工具栏中，不够时（手机上始终如此）成为 composer 溢出面板中的一行。`Select` 会就地打开列表，而不是替换面板中的行。`Component` 如果渲染这些控件以外的内容，会在其所在位置绘制；在溢出面板中，该位置就是面板。
+
+每个命令都按运行时 composer 的当前状态执行，而不是按创建回调的那次渲染，所以 `await composer.setProvider("codex")` 之后再 `await composer.setModel("gpt")` 会同时生效。命令的 Promise 在更改生效后完成，`composer.agent` 在下一次渲染时反映它。
 
 在 Paseo 知道渲染结果之前，composer 项就已计入可容纳的数量。不渲染任何内容的项仍可能在窄 composer 上留下空的溢出面板，所以请始终渲染一个控件。
 
-[Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、一个 `Toggle` 和一个 `Action`。
+[Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`。
 
 ## Composer 胶囊 {#composer-pills}
 

@@ -12,6 +12,8 @@ import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 
+const EMPTY_OPTIONS: ProviderOptions = {};
+
 /**
  * Adapter between a draft's options model and the screen: it sends the model's complete options
  * to the daemon, hands the answer back, and persists the user's toggles as last-used values.
@@ -19,6 +21,8 @@ import { mergeProviderPreferences, useFormPreferences } from "./use-form-prefere
 export function useDraftProviderOptions(input: {
   serverId: string | null | undefined;
   provider: AgentProvider | null;
+  /** The form's provider as it is now, which a render may not have reached yet. */
+  getProvider: () => AgentProvider | null;
   cwd: string | null | undefined;
   modeId: string | null | undefined;
   modelId: string | null | undefined;
@@ -26,7 +30,16 @@ export function useDraftProviderOptions(input: {
   initialOptions?: ProviderOptions;
 }) {
   const { t } = useTranslation();
-  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialOptions } = input;
+  const {
+    serverId,
+    provider,
+    getProvider,
+    cwd,
+    modeId,
+    modelId,
+    thinkingOptionId,
+    initialOptions,
+  } = input;
   const [model] = useState(() => openDraftOptions({ provider, seed: initialOptions }));
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const client = useHostRuntimeClient(serverId ?? "");
@@ -77,21 +90,24 @@ export function useDraftProviderOptions(input: {
     if (provider && data) model.applyResolved({ provider, requestKey, ...data });
   }, [data, model, provider, requestKey]);
 
+  // An edit belongs to the provider the form has now, even before the render that shows it.
   const setOption = useCallback(
     (key: string, value: unknown) => {
+      const current = getProvider();
+      model.observeProvider(current);
       model.setOption(key, value);
-      if (!provider) return;
-      void updatePreferences((current) =>
+      if (!current) return;
+      void updatePreferences((stored) =>
         mergeProviderPreferences({
-          preferences: current,
-          provider,
+          preferences: stored,
+          provider: current,
           updates: { options: { [key]: value } },
         }),
       ).catch((error) => {
         console.warn("[useDraftProviderOptions] persist option preference failed", error);
       });
     },
-    [model, provider, updatePreferences],
+    [getProvider, model, updatePreferences],
   );
 
   const view = viewDraftOptions(state, { provider, requestKey });
@@ -105,5 +121,14 @@ export function useDraftProviderOptions(input: {
     [setOption, viewControls, viewOptions],
   );
 
-  return { optionControls, options: ownOptions, applyProfile: model.applyProfile };
+  // What the draft will create with, the plugin's own edits included, before the daemon answers.
+  const shownOptions = viewOptions ?? ownOptions ?? EMPTY_OPTIONS;
+
+  return {
+    optionControls,
+    options: ownOptions,
+    shownOptions,
+    setOption,
+    applyProfile: model.applyProfile,
+  };
 }

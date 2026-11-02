@@ -684,6 +684,16 @@ density and overflow. Plugin items count in the density presence in `layout.ts`,
 condenses to make room for them. A custom component renders wherever its item is placed, and an
 item that renders nothing still counts for density; there is no registration for either.
 
+A command runs against the owner's current state, not the render that built the callback. The
+draft's form (`openAgentForm`) and options (`openDraftOptions`) are plain stores for that reason,
+and `draftComposerAgent` rejects a provider the host does not offer or a model its loaded catalog
+does not list. `ComposerControl` owns the pending state and the error toast for callbacks that
+return a promise.
+
+The overflow sheet's content portals to the app root, away from the composer. Pass
+`useComposerSheetBridge()` as the sheet's `contextBridge`, or `useComposer()` returns nothing and
+the sheet draws no plugin rows.
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and

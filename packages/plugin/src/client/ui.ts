@@ -193,17 +193,22 @@ export interface ComposerControlProps {
   icon: PluginIcon;
   disabled?: boolean;
 }
+/**
+ * What a control's callback receives. A returned promise marks the control pending until it
+ * settles, and Paseo reports a rejection to the user.
+ */
 export interface ToggleProps extends ComposerControlProps {
   value: boolean;
-  onValueChange(value: boolean): void;
+  onValueChange(event: { value: boolean }): void | Promise<void>;
 }
 export interface SelectProps<Value extends string = string> extends ComposerControlProps {
   value: Value;
   options: readonly { value: Value; label: string; description?: string }[];
-  onValueChange(value: Value): void;
+  onValueChange(event: { value: Value }): void | Promise<void>;
 }
+export interface ActionPressEvent {}
 export interface ActionProps extends ComposerControlProps {
-  onPress(): void;
+  onPress(event: ActionPressEvent): void | Promise<void>;
 }
 /**
  * Composer controls. Render them from a composer item's `Component`. Paseo draws them inline when

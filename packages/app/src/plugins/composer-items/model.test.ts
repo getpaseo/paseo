@@ -69,7 +69,11 @@ function fakeAgent(context: ComposerAgent["context"]) {
     thinking: null,
     options: { effort: "high" },
     metadata: { flag: true },
-    setProvider: async (provider) => void calls.push(`provider:${provider}`),
+    // A running agent keeps its provider, as the real adapter does.
+    setProvider: async (provider) => {
+      if (context === "agent") throw new Error("A running agent cannot change provider.");
+      calls.push(`provider:${provider}`);
+    },
     setModel: async (model) => void calls.push(`model:${model}`),
     setMode: async (mode) => void calls.push(`mode:${mode}`),
     setThinking: async (thinking) => void calls.push(`thinking:${thinking}`),
@@ -133,14 +137,12 @@ describe("toPluginComposer", () => {
         composerInput: input,
         prompt: "",
       });
-      await composer.setProvider("codex");
       await composer.setModel("gpt");
       await composer.setMode("plan");
       await composer.setThinking("high");
       await composer.setOptions({ effort: "low" });
       await composer.setMetadata({ flag: null });
       expect(calls).toEqual([
-        "provider:codex",
         "model:gpt",
         "mode:plan",
         "thinking:high",
@@ -149,6 +151,29 @@ describe("toPluginComposer", () => {
       ]);
     },
   );
+
+  it("lets a draft change provider and tells a running agent it cannot", async () => {
+    const { input } = fakeInput();
+    const draft = fakeAgent("draft");
+    await toPluginComposer({
+      plugin: installed(),
+      agent: draft.agent,
+      composerInput: input,
+      prompt: "",
+    }).setProvider("codex");
+    expect(draft.calls).toEqual(["provider:codex"]);
+
+    const running = fakeAgent("agent");
+    await expect(
+      toPluginComposer({
+        plugin: installed(),
+        agent: running.agent,
+        composerInput: input,
+        prompt: "",
+      }).setProvider("codex"),
+    ).rejects.toThrow("A running agent cannot change provider.");
+    expect(running.calls).toEqual([]);
+  });
 
   it("changes the prompt and inserts at the cursor", () => {
     const { agent } = fakeAgent("draft");

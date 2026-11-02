@@ -1915,7 +1915,9 @@ function ReviewFlag() {
       title="Needs review"
       icon="Flag"
       value={composer.agent.metadata["review.needsReview"] === true}
-      onValueChange={(next) => composer.setMetadata({ "review.needsReview": next ? true : null })}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
     />
   );
 }
@@ -1940,35 +1942,42 @@ export default function contribute(client: PluginClientContext) {
 
 `useComposer()` returns the composer the item sits in:
 
-| Field or command                                    | Meaning                                                                                                                                          |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `context`                                           | `"agent"` for a running agent, `"draft"` for a new agent in a workspace, `"new-workspace"` for the New workspace screen.                         |
-| `prompt`, `setPrompt(text)`, `insertText(text)`     | The prompt. `insertText` replaces the selection or inserts at the cursor.                                                                        |
-| `attachments`, `addAttachment`, `removeAttachment`  | Items from [your own attachment sources](#add-a-composer-attachment-source). Attachments from other plugins and Paseo's own are not listed.      |
-| `agent.provider`, `model`, `mode`, `thinking`       | What the agent runs with, or what the draft will create.                                                                                         |
-| `agent.options`                                     | The provider options in effect, defaults included.                                                                                               |
-| `agent.metadata`                                    | The agent's [metadata](/docs/plugins/hooks#metadata). In New workspace, the first agent's.                                                       |
-| `setProvider`, `setModel`, `setMode`, `setThinking` | Return promises. `setProvider` resets the model like the provider picker, and rejects on `context: "agent"`: a running agent keeps its provider. |
-| `setOptions(patch)`, `setMetadata(patch)`           | Top-level keys replace; `null` removes the key. Metadata set in a draft is sent when the agent is created and cleared once the prompt is sent.   |
+| Field or command                                    | Meaning                                                                                                                                                                                                                                                       |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context`                                           | `"agent"` for a running agent, `"draft"` for a new agent in a workspace, `"new-workspace"` for the New workspace screen.                                                                                                                                      |
+| `prompt`, `setPrompt(text)`, `insertText(text)`     | The prompt. `insertText` replaces the selection or inserts at the cursor.                                                                                                                                                                                     |
+| `attachments`, `addAttachment`, `removeAttachment`  | Items from [your own attachment sources](#add-a-composer-attachment-source). Attachments from other plugins and Paseo's own are not listed.                                                                                                                   |
+| `agent.provider`, `model`, `mode`, `thinking`       | What the agent runs with, or what the draft will create.                                                                                                                                                                                                      |
+| `agent.options`                                     | The provider options in effect, defaults included. In a draft: the options the agent will be created with, including your changes.                                                                                                                            |
+| `agent.metadata`                                    | The agent's [metadata](/docs/plugins/hooks#metadata). In New workspace, the first agent's.                                                                                                                                                                    |
+| `setProvider`, `setModel`, `setMode`, `setThinking` | Return promises. `setProvider` resets the model like the provider picker. It rejects on `context: "agent"`, which keeps its provider, and for a provider the host does not offer. `setModel` rejects for a model the provider's loaded catalog does not list. |
+| `setOptions(patch)`, `setMetadata(patch)`           | Top-level keys replace; `null` removes the key. Metadata set in a draft is sent when the agent is created and cleared once the prompt is sent.                                                                                                                |
 
 The same call does the same thing in every composer; a plugin does not choose a composer's
 implementation. `setMetadata` on a running agent needs a host that supports metadata. On an older
 host the promise rejects with "Update the host to use metadata."
 
-`Toggle` takes `value` and `onValueChange`. `Select` takes `value`, `options` (`{ value, label,
-description? }`) and `onValueChange`. `Action` takes `onPress`. All three take `title`, `icon` (a
-[Lucide name, SVG or component](#icons)) and `disabled`. Paseo owns where each control sits: inline
-in the toolbar when the composer has room, and a row in the composer's overflow sheet when it does
-not, which is always the case on a phone. A `Select` opens its list in place of the sheet row. A
+`Toggle` takes `value` and `onValueChange({ value })`. `Select` takes `value`, `options` (`{ value, label,
+description? }`) and `onValueChange({ value })`. `Action` takes `onPress(event)`. All three take `title`,
+`icon` (a [Lucide name, SVG or component](#icons)) and `disabled`. A callback may return a promise:
+the control stays disabled until it settles, and Paseo shows a rejection to the user as an error
+toast, the way it does for its own controls. Paseo owns where each control sits: inline in the
+toolbar when the composer has room, and a row in the composer's overflow sheet when it does not,
+which is always the case on a phone. A `Select` opens its list in place of the sheet row. A
 `Component` that renders something other than these controls draws it where its item is placed; in
 the overflow sheet that is the sheet.
+
+Each command acts on the composer's state when it runs, not on the render that created your
+callback, so `await composer.setProvider("codex")` followed by `await composer.setModel("gpt")`
+changes both. A command's promise resolves once the change has taken effect, and `composer.agent`
+shows it on the next render.
 
 A composer item counts toward how much fits before Paseo knows what it renders. An item that
 renders nothing can still leave an empty overflow sheet on a narrow composer, so always render a
 control.
 
 The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
-registers a `Select`, a `Toggle` and an `Action`.
+registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`.
 
 ## Composer pills
 

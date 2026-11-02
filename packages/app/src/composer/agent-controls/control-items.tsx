@@ -30,7 +30,7 @@ function getFeatureHighlight(
   return color === "default" ? undefined : color;
 }
 
-export function toFeatureItem(
+function toFeatureItem(
   control: AgentOptionControl,
   optionControls: ComposerOptionControls,
 ): ComposerControlItem {

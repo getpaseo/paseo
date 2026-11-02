@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { useProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
@@ -43,6 +44,8 @@ interface CompactModelSheetProps {
   serverId?: string | null;
   glyphSize: number;
   canSwitchProvider: boolean;
+  /** Carries the composer's contexts into the sheets, which draw away from it. */
+  contextBridge?: ContextBridge | null;
   children: ReactNode;
 }
 
@@ -95,6 +98,7 @@ export function CompactModelSheet({
   serverId = null,
   glyphSize,
   canSwitchProvider,
+  contextBridge = null,
   children,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
@@ -299,6 +303,7 @@ export function CompactModelSheet({
         snapPoints={SNAP_POINTS}
         scrollable={false}
         contentStyle={styles.sheetBody}
+        contextBridge={contextBridge}
         testID="agent-controls-model-sheet"
       >
         <View
@@ -347,6 +352,7 @@ export function CompactModelSheet({
           scrollable={false}
           presentation="push"
           contentStyle={styles.sheetBody}
+          contextBridge={contextBridge}
           testID="agent-controls-model-browser-sheet"
         >
           <View

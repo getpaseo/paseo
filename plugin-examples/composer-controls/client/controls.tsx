@@ -15,16 +15,16 @@ const REVIEW_KEY = "composer-controls.needsReview";
 /** Reads and writes agent metadata, so the choice is saved with the agent. */
 export function ContextLength() {
   const composer = useComposer();
-  const value: ContextLength = composer.agent.metadata[CONTEXT_KEY] === "long" ? "long" : "short";
+  const current: ContextLength = composer.agent.metadata[CONTEXT_KEY] === "long" ? "long" : "short";
   const change = useCallback(
-    (next: ContextLength) => composer.setMetadata({ [CONTEXT_KEY]: next }),
+    ({ value }: { value: ContextLength }) => composer.setMetadata({ [CONTEXT_KEY]: value }),
     [composer],
   );
   return (
     <Select
       title="Context length"
       icon="Gauge"
-      value={value}
+      value={current}
       options={CONTEXT_OPTIONS}
       onValueChange={change}
     />
@@ -34,7 +34,7 @@ export function ContextLength() {
 export function ReviewFlag() {
   const composer = useComposer();
   const change = useCallback(
-    (next: boolean) => composer.setMetadata({ [REVIEW_KEY]: next ? true : null }),
+    ({ value }: { value: boolean }) => composer.setMetadata({ [REVIEW_KEY]: value ? true : null }),
     [composer],
   );
   return (
@@ -42,6 +42,28 @@ export function ReviewFlag() {
       title="Needs review"
       icon="Flag"
       value={composer.agent.metadata[REVIEW_KEY] === true}
+      onValueChange={change}
+    />
+  );
+}
+
+/**
+ * Changes a provider option. Only Codex reports `plan_mode`, so the control is disabled for
+ * other providers. The promise it returns keeps the control pending, and a rejection reaches the
+ * user as a toast.
+ */
+export function PlanFirst() {
+  const composer = useComposer();
+  const change = useCallback(
+    ({ value }: { value: boolean }) => composer.setOptions({ plan_mode: value }),
+    [composer],
+  );
+  return (
+    <Toggle
+      title="Plan first"
+      icon="ListTodo"
+      disabled={composer.agent.provider !== "codex"}
+      value={composer.agent.options.plan_mode === true}
       onValueChange={change}
     />
   );
