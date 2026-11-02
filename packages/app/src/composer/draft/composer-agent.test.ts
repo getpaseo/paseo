@@ -85,6 +85,25 @@ function openDraft(context: "draft" | "new-workspace") {
   return { form, agent, request };
 }
 
+describe("a draft's options", () => {
+  it("belong to the provider the form has now, before the screen has rendered the change", () => {
+    const form = openAgentForm(() => catalog);
+    const options = openDraftOptions({
+      provider: null,
+      currentProvider: () => form.getState().form.provider,
+    });
+    // No subscription: the screen observes the provider in an effect, after the command ran.
+    form.setProviderAndModel("claude", "");
+    options.observeProvider("claude");
+    options.setOption("context", "1m");
+
+    form.setProviderAndModel("codex", "");
+    options.setOption("effort", "high");
+
+    expect(options.getState()).toMatchObject({ provider: "codex", edits: { effort: "high" } });
+  });
+});
+
 describe.each(["draft", "new-workspace"] as const)("the %s composer's agent", (context) => {
   it("applies each awaited command before the next one runs", async () => {
     const draft = openDraft(context);
