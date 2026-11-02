@@ -375,19 +375,18 @@
       "otherHostComment": "# Target another host"
     },
     "plugins": {
-      "title": "Extend it with plugins",
-      "description": "Add new panels and functionality that work in desktop, web and mobile",
-      "lead": "Plugins",
+      "title": "Ask Paseo to change Paseo",
+      "description": "Agents in Paseo can change the whole UI without a restart, even on mobile.",
+      "request": "Add a sidebar panel with the PRs waiting on my review.",
+      "plan": "I'll build it as a local plugin and install it.",
+      "done": "Review queue is in your sidebar.",
+      "panelTitle": "Review queue",
+      "libraryTitle": "400+ community plugins",
+      "libraryDescription": "Built by developers on the same plugin API your agents use",
       "browse": "Browse plugins",
       "docs": "Plugin docs",
       "license": "Paseo is Apache 2.0.",
-      "fork": "Fork the repo",
-      "uiTitle": "UI",
-      "uiDescription": "Screens, workspace panels, sidebar items, slash commands, and themes",
-      "lifecycleTitle": "Agent lifecycle",
-      "lifecycleDescription": "Change config and MCP servers, answer permissions, and follow up",
-      "providersTitle": "Providers",
-      "providersDescription": "Add a coding agent as a provider, used like the built-in ones"
+      "fork": "Fork the repo"
     },
     "philosophy": {
       "title": "Philosophy",
@@ -447,10 +446,10 @@
     },
     "mockup": {
       "alt": "Paseo desktop app with coding agents, a conversation, and a code diff open side by side",
-      "build": "Build",
-      "review": "Review",
-      "ship": "Ship",
-      "extend": "Extend",
+      "build": "Parallel agents",
+      "review": "Code review",
+      "ship": "Pull requests",
+      "extend": "Plugins",
       "app": {
         "newWorkspace": "New workspace",
         "history": "History",
