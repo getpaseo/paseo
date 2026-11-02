@@ -42,11 +42,8 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
   }, [model]);
   const handleBack = useCallback(() => model.back(), [model]);
   const { visit } = state;
-  // Moving on from the last step finishes setup; any step's own work runs before that.
-  const handleAdvance = useCallback(() => {
-    if (isLast) void model.complete();
-    else model.next(visit);
-  }, [isLast, model, visit]);
+  // A step's own work runs before it moves on; from the last step, moving on finishes setup.
+  const handleAdvance = useCallback(() => model.next(visit), [model, visit]);
   const handleAddSuggestions = useCallback(() => {
     void (async () => {
       if (await addChecked()) handleAdvance();

@@ -46,8 +46,9 @@ export interface OnboardingModel {
   applySetupHost(host: OnboardingSetupHost | null, options: OnboardingStepOptions): void;
   reopen(serverId: string, options: OnboardingStepOptions): void;
   /**
-   * Moves on from the step visit the caller saw. A no-op once that visit ended, so an action that
-   * finishes late never moves a step the user left or a setup they closed and reopened.
+   * Moves on from the step visit the caller saw; from the last step, that finishes setup. A no-op
+   * once that visit ended, so an action that finishes late never moves a step the user left or
+   * closes a setup they went back in, or closed and reopened.
    */
   next(visit: number): void;
   back(): void;
@@ -129,6 +130,12 @@ export function createOnboardingModel(input: {
 
   const ready = loadCompletion();
 
+  async function complete() {
+    completion = "completed";
+    setState({ status: "hidden" });
+    await input.storage.markCompleted();
+  }
+
   return {
     ready,
     getState: () => state,
@@ -146,7 +153,9 @@ export function createOnboardingModel(input: {
       setState(openState(serverId, options));
     },
     next(visit) {
-      if (state.status === "open" && state.visit === visit) moveTo(state.stepIndex + 1);
+      if (state.status !== "open" || state.visit !== visit) return;
+      if (state.stepIndex === state.steps.length - 1) void complete();
+      else moveTo(state.stepIndex + 1);
     },
     back() {
       if (state.status === "open") moveTo(state.stepIndex - 1);
@@ -156,10 +165,6 @@ export function createOnboardingModel(input: {
       const stepIndex = state.steps.indexOf(step);
       if (stepIndex >= 0) moveTo(stepIndex);
     },
-    async complete() {
-      completion = "completed";
-      setState({ status: "hidden" });
-      await input.storage.markCompleted();
-    },
+    complete,
   };
 }

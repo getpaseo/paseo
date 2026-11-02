@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createOnboardingModel,
   type OnboardingCompletionStorage,
@@ -134,7 +134,6 @@ describe("onboarding model", () => {
     advance(model);
     advance(model);
     advance(model);
-    advance(model);
     expect(model.getState()).toMatchObject({ stepIndex: 3 });
     model.goTo("providers");
     expect(model.getState()).toMatchObject({ stepIndex: 1 });
@@ -160,6 +159,25 @@ describe("onboarding model", () => {
     model.goTo("projects");
     model.next(addingFrom);
     expect(model.getState()).toMatchObject({ status: "open", stepIndex: 2 });
+  });
+
+  it("moving on from the last step finishes setup, unless the user left that step first", async () => {
+    const storage = new MemoryCompletionStorage();
+    const model = await openModel(storage);
+    model.applySetupHost(FRESH_HOST, { includePhoneStep: false });
+    model.goTo("orchestration");
+
+    // Finish is applying choices when the user goes back to Projects.
+    const finishingFrom = currentVisit(model);
+    model.back();
+    model.next(finishingFrom);
+    expect(model.getState()).toMatchObject({ status: "open", stepIndex: 2 });
+    expect(storage.completed).toBe(false);
+
+    advance(model);
+    advance(model);
+    await vi.waitFor(() => expect(storage.completed).toBe(true));
+    expect(model.getState()).toEqual({ status: "hidden" });
   });
 
   it("records completion when setup closes, so it does not open again", async () => {
