@@ -79,7 +79,11 @@ describe("desktop sidebar layout", () => {
   });
 
   it("yields app navigation when settings needs the shell width", () => {
-    const settingsMinimum = resolveDesktopAppContentMinimum({ isSettingsRoute: true });
+    const settingsMinimum = resolveDesktopAppContentMinimum({
+      isSettingsRoute: true,
+      requestedSidebarWidth: 320,
+      viewportWidth: 751,
+    });
     expect(settingsMinimum).toBe(720);
     expect(
       canDesktopAppSidebarShare({
@@ -90,11 +94,38 @@ describe("desktop sidebar layout", () => {
     ).toBe(false);
   });
 
+  it.each([
+    { viewportWidth: 698, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: false },
+    { viewportWidth: 879, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: false },
+    { viewportWidth: 880, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: true },
+    { viewportWidth: 1500, requestedSidebarWidth: 600, settingsMinimum: 1000, canShare: false },
+    { viewportWidth: 1600, requestedSidebarWidth: 600, settingsMinimum: 1000, canShare: true },
+  ])(
+    "reserves the shared sidebar width and settings detail at $viewportWidth px",
+    ({ viewportWidth, requestedSidebarWidth, settingsMinimum, canShare }) => {
+      const contentMinimumWidth = resolveDesktopAppContentMinimum({
+        isSettingsRoute: true,
+        requestedSidebarWidth,
+        viewportWidth,
+      });
+
+      expect(contentMinimumWidth).toBe(settingsMinimum);
+      expect(
+        canDesktopAppSidebarShare({ contentMinimumWidth, requestedSidebarWidth, viewportWidth }),
+      ).toBe(canShare);
+    },
+  );
+
   it("imposes no content minimum outside settings", () => {
-    expect(resolveDesktopAppContentMinimum({ isSettingsRoute: false })).toBe(0);
+    const contentMinimumWidth = resolveDesktopAppContentMinimum({
+      isSettingsRoute: false,
+      requestedSidebarWidth: 320,
+      viewportWidth: 751,
+    });
+    expect(contentMinimumWidth).toBe(0);
     expect(
       canDesktopAppSidebarShare({
-        contentMinimumWidth: resolveDesktopAppContentMinimum({ isSettingsRoute: false }),
+        contentMinimumWidth,
         requestedSidebarWidth: 320,
         viewportWidth: 751,
       }),
@@ -106,6 +137,8 @@ it("reserves room for Explorer and the workspace before showing app navigation",
   const contentMinimumWidth = resolveDesktopAppContentMinimum({
     isSettingsRoute: false,
     explorerVisible: true,
+    requestedSidebarWidth: 320,
+    viewportWidth: 951,
   });
   expect(contentMinimumWidth).toBe(600);
   expect(

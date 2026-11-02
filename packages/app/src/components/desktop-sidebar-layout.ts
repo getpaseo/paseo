@@ -1,5 +1,5 @@
 import { EXPLORER_WORKSPACE_MIN_WIDTH } from "@/components/explorer-sidebar-layout";
-import { SETTINGS_DESKTOP_SPLIT_MIN_WIDTH } from "@/constants/layout";
+import { SETTINGS_DESKTOP_DETAIL_MIN_WIDTH } from "@/constants/layout";
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from "@/stores/panel-store";
 
 const MIN_DESKTOP_CENTER_WIDTH = 400;
@@ -66,9 +66,15 @@ export function resolveDesktopSidebarWidth(input: {
 export function resolveDesktopAppContentMinimum(input: {
   isSettingsRoute: boolean;
   explorerVisible?: boolean;
+  requestedSidebarWidth: number;
+  viewportWidth: number;
 }): number {
-  if (input.isSettingsRoute) return SETTINGS_DESKTOP_SPLIT_MIN_WIDTH;
-  return input.explorerVisible ? EXPLORER_WORKSPACE_MIN_WIDTH : 0;
+  if (!input.isSettingsRoute) return input.explorerVisible ? EXPLORER_WORKSPACE_MIN_WIDTH : 0;
+  const sidebarWidth = resolveDesktopSidebarWidth({
+    requestedWidth: input.requestedSidebarWidth,
+    viewportWidth: input.viewportWidth,
+  });
+  return sidebarWidth + SETTINGS_DESKTOP_DETAIL_MIN_WIDTH;
 }
 
 export function canDesktopAppSidebarShare(input: {
