@@ -296,6 +296,7 @@ export function useAgentHistory(options: {
     queryKey,
     enabled: Boolean(enabled && targetHosts.length > 0),
     staleTime: 30_000,
+    refetchOnMount: "always",
     initialPageParam: null,
     getNextPageParam: getNextAgentHistoryPageParam,
     queryFn: async ({ pageParam }) => {

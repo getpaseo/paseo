@@ -2,7 +2,8 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
-import { openSessions } from "../support/helpers/archive-tab";
+import type { Page } from "@playwright/test";
+import { closeWorkspaceAgentTab, openSessions } from "../support/helpers/archive-tab";
 import {
   assertChatTranscript,
   cleanupRewindFlow,
@@ -29,6 +30,15 @@ const FOLLOW_UP_REPLY = "CODEX_UNARCHIVED_SENTINEL";
 async function historyContainsAgent(client: SeedDaemonClient, agentId: string): Promise<boolean> {
   const history = await client.fetchAgentHistory({ page: { limit: 200 } });
   return history.entries.some((entry) => entry.agent.id === agentId);
+}
+
+async function closeAgentTab(page: Page, agentId: string): Promise<void> {
+  await page
+    .getByTestId(`workspace-tab-agent_${agentId}`)
+    .filter({ visible: true })
+    .first()
+    .hover();
+  await closeWorkspaceAgentTab(page, agentId);
 }
 
 test.describe("archived Codex agent recovery", () => {
@@ -108,6 +118,40 @@ test.describe("archived Codex agent recovery", () => {
         { role: "user", text: FOLLOW_UP_PROMPT },
         { role: "assistant", text: FOLLOW_UP_REPLY },
       ]);
+    } finally {
+      await cleanupRewindFlow({ handle, cwd });
+    }
+  });
+
+  test("refreshes cached History after unarchiving without restarting", async ({ page }) => {
+    const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-unarchive-history-")));
+    let handle: AgentHandle | undefined;
+    try {
+      handle = await launchAgent({
+        page,
+        provider: "codex",
+        providerConfig: { model: "gpt-5.6-sol" },
+        cwd,
+        mode: "full-access",
+      });
+      await sendMessage(handle, INITIAL_PROMPT);
+      await assertChatTranscript(handle, [
+        { role: "user", text: INITIAL_PROMPT },
+        { role: "assistant", text: INITIAL_REPLY },
+      ]);
+      await closeAgentTab(page, handle.agentId);
+      await openSessions(page);
+      const row = page.getByTestId(`agent-row-${getServerId()}-${handle.agentId}`);
+      await expect(row.getByText("Archived", { exact: true })).toBeVisible();
+      await row.click();
+      await page.getByRole("button", { name: "Unarchive", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible({
+        timeout: 60_000,
+      });
+      await openSessions(page);
+      await expect(row.getByText("Archived", { exact: true })).toHaveCount(0);
+      await row.click();
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable();
     } finally {
       await cleanupRewindFlow({ handle, cwd });
     }
