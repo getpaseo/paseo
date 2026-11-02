@@ -18,7 +18,7 @@ export function PluginInstallationProvider({
   return (
     <QueryClientProvider client={plugin.queryClient}>
       <PaseoApiProvider paseo={plugin.paseo}>
-        <PluginRpcProvider invoke={plugin.invoke}>
+        <PluginRpcProvider invoke={plugin.invoke} subscribe={plugin.subscribe}>
           <PluginTranslationProvider runtime={plugin.i18n}>{children}</PluginTranslationProvider>
         </PluginRpcProvider>
       </PaseoApiProvider>

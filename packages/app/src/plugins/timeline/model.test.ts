@@ -18,6 +18,9 @@ function plugin(input: {
     queryClient: new QueryClient(),
     paseo: {} as InstalledPlugin["paseo"],
     invoke: async () => undefined,
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [],
