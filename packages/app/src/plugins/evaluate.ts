@@ -520,6 +520,8 @@ export function runPluginClientBundle(
         useSettings,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        addHost: (input: Parameters<typeof runtime.hosts.addHost>[0]) =>
+          runtime.hosts.addHost(input),
         observeHosts: (listener: Parameters<typeof runtime.hosts.observeHosts>[0]) =>
           runtime.hosts.observeHosts(listener),
         useHosts: () =>

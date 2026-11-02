@@ -43,6 +43,7 @@ function registry(
       return {
         hosts: createPluginHosts(
           {
+            addHost: async () => ({ status: "cancelled" }),
             getHosts: () => [],
             getSnapshot: () => null,
             subscribeAll: () => () => {},

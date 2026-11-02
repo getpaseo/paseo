@@ -16,8 +16,10 @@ export type PluginHostColor =
 export type PluginHostBadgeDisplay = "name" | "icon" | "hidden";
 export interface PluginHostAppearance {
   readonly color: PluginHostColor;
+  /** Null uses the automatic local or remote default. */
   readonly badgeDisplay: PluginHostBadgeDisplay | null;
 }
+/** Saved connection settings without credentials. Routed connections have no URI. */
 export type PluginHostConnection =
   | {
       readonly id: string;
@@ -75,11 +77,14 @@ export interface PluginHost extends PluginHostSummary {
   readonly createdAt: string;
   readonly updatedAt: string;
   update(patch: PluginHostPatch): Promise<void>;
+  /** Removes the host; throws for the desktop daemon host. */
   remove(): Promise<void>;
+  /** Removing the last connection removes the host. */
   removeConnection(connectionId: string): Promise<void>;
   openSettings(): void;
 }
 export interface PluginHostAddInput {
+  /** Shared host connection grammar; may contain a password for the probe. */
   connection: string;
   label?: string;
 }
@@ -89,3 +94,5 @@ export type PluginHostAddResult =
   | { status: "cancelled" };
 export declare function useHosts(): readonly PluginHost[];
 export declare function observeHosts(listener: (hosts: readonly PluginHost[]) => void): () => void;
+
+export declare function addHost(input: PluginHostAddInput): Promise<PluginHostAddResult>;

@@ -1,4 +1,5 @@
 import {
+  addHost,
   getPaseoClient,
   useHosts,
   usePaseo,
@@ -6,12 +7,26 @@ import {
   type PluginHost,
 } from "@getpaseo/plugin/client";
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 
 export function Hosts({ theme }: PluginSurfaceProps) {
   const hosts = useHosts();
   const selected = usePaseo();
   const [result, setResult] = useState("");
+  const [connection, setConnection] = useState("");
+  const add = useCallback(async () => {
+    try {
+      const outcome = await addHost({ connection });
+      if (outcome.status === "saved") setResult(`Added ${outcome.host.label}`);
+      else if (outcome.status === "cancelled") setResult("Host addition cancelled");
+      else setResult("Add ?password= and retry");
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : String(error));
+    }
+  }, [connection]);
+  const addPressed = useCallback(() => {
+    void add();
+  }, [add]);
   const list = useCallback(
     async (serverId?: string) => {
       try {
@@ -36,6 +51,14 @@ export function Hosts({ theme }: PluginSurfaceProps) {
   }, [list]);
   return (
     <View style={styles.root}>
+      <TextInput
+        value={connection}
+        onChangeText={setConnection}
+        placeholder="host:port, ssh://user@host, or a pairing link"
+      />
+      <Pressable accessibilityRole="button" onPress={addPressed}>
+        <Text style={styles.text}>Add host</Text>
+      </Pressable>
       <Pressable accessibilityRole="button" onPress={listSelected}>
         <Text style={styles.text}>List selected host agents</Text>
       </Pressable>

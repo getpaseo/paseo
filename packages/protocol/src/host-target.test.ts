@@ -2,6 +2,11 @@ import { expect, test } from "vitest";
 import { parseHostTarget } from "./host-target.js";
 import { serializeSshTransportUri } from "./ssh-transport.js";
 import { serializeSocketHostTarget } from "./host-target.js";
+import {
+  parseConnectionUri,
+  serializeConnectionUri,
+  serializeRelayConnectionUri,
+} from "./daemon-endpoints.js";
 
 test("SSH and local socket targets round trip through their serializers", () => {
   const ssh = parseHostTarget("ssh://deploy@build-box:2222?daemonPort=7777");
@@ -14,6 +19,23 @@ test("SSH and local socket targets round trip through their serializers", () => 
     const target = parseHostTarget(`${type}://${path}`);
     expect(parseHostTarget(serializeSocketHostTarget(type, path))).toEqual(target);
   }
+});
+
+test("TCP and relay targets round trip through credential-free serializers", () => {
+  const tcp = parseConnectionUri("tcp://example.com:6767?ssl=true&password=secret");
+  const tcpUri = serializeConnectionUri(tcp);
+  expect(tcpUri).not.toContain("secret");
+  expect(parseHostTarget(tcpUri)).toMatchObject({
+    connection: { type: "directTcp", endpoint: "example.com:6767", useTls: true },
+  });
+  const relay = parseHostTarget(
+    "relay://relay.example:443/server?key=public&ssl=true&password=secret",
+  );
+  if (relay.kind !== "socket" || relay.connection.type !== "relay")
+    throw new Error("expected relay");
+  const relayUri = serializeRelayConnectionUri({ offer: relay.connection.offer });
+  expect(relayUri).not.toContain("secret");
+  expect(parseHostTarget(relayUri)).toMatchObject({ connection: relay.connection });
 });
 
 test.each([

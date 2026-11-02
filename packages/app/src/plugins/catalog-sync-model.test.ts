@@ -132,6 +132,7 @@ function harness() {
       return {
         hosts: createPluginHosts(
           {
+            addHost: async () => ({ status: "cancelled" }),
             getHosts: () => [],
             getSnapshot: () => null,
             subscribeAll: () => () => {},

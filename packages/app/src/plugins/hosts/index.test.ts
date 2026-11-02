@@ -36,6 +36,7 @@ function registry() {
   >();
   const listeners = new Set<() => void>();
   const source: PluginHostsSource = {
+    addHost: async () => ({ status: "cancelled" }),
     getHosts: () => hosts,
     getSnapshot: (id) => {
       const value = snapshots.get(id);
@@ -150,6 +151,62 @@ describe("plugin host access", () => {
       throw new Error("Failed for secret");
     };
     await expect(h.runtime.getSnapshot()[0].update({ label: "New" })).rejects.not.toThrow("secret");
+    h.lifetime.abort();
+  });
+
+  it("returns the projected handle after adding a host", async () => {
+    const h = registry();
+    h.source.addHost = async () => ({ status: "saved", serverId: "a" });
+    const result = await h.runtime.addHost({ connection: "tcp://example:6767?password=secret" });
+    expect(result.status).toBe("saved");
+    if (result.status !== "saved") throw new Error("expected saved host");
+    expect(result.host).toBe(h.runtime.getSnapshot()[0]);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    h.lifetime.abort();
+    await expect(h.runtime.addHost({ connection: "example:6767" })).rejects.toThrow(
+      "Plugin has stopped",
+    );
+  });
+
+  it("passes cancellation and authentication results without exposing credentials", async () => {
+    const h = registry();
+    for (const result of [
+      { status: "cancelled" as const },
+      { status: "password_required" as const, reason: "incorrect_password" as const },
+    ]) {
+      h.source.addHost = async () => result;
+      const returned = await h.runtime.addHost({
+        connection: "tcp://example:6767?password=secret",
+      });
+      expect(returned).toEqual(result);
+      for (const [key, value] of Object.entries(returned)) {
+        expect(key).not.toBe("password");
+        expect(value).not.toBe("secret");
+      }
+    }
+    h.lifetime.abort();
+  });
+
+  it("redacts encoded saved passwords in mutation errors", async () => {
+    const h = registry();
+    h.hosts[0].password = "two words";
+    h.source.renameHost = async () => {
+      throw new Error("failed for two%20words");
+    };
+    await expect(h.runtime.getSnapshot()[0].update({ label: "New" })).rejects.not.toThrow(
+      "two%20words",
+    );
+    h.lifetime.abort();
+  });
+
+  it("never exposes supplied passwords in add errors", async () => {
+    const h = registry();
+    h.source.addHost = async () => {
+      throw new Error("secret was rejected");
+    };
+    await expect(
+      h.runtime.addHost({ connection: "tcp://example:6767?password=secret" }),
+    ).rejects.not.toThrow("secret");
     h.lifetime.abort();
   });
 

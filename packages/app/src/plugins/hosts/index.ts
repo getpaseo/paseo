@@ -1,6 +1,12 @@
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginHost, PluginHostConnection, PluginHostPatch } from "@getpaseo/plugin/client";
+import type {
+  PluginHost,
+  PluginHostConnection,
+  PluginHostPatch,
+  PluginHostAddInput,
+  PluginHostAddResult,
+} from "@getpaseo/plugin/client";
 import type { HostProfile } from "@/types/host-connection";
 import type { HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import {
@@ -9,7 +15,7 @@ import {
   serializeRelayConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
-import { serializeSocketHostTarget } from "@getpaseo/protocol/host-target";
+import { parseHostTarget, serializeSocketHostTarget } from "@getpaseo/protocol/host-target";
 import {
   DEFAULT_SSH_DAEMON_PORT,
   serializeSshTransportUri,
@@ -25,6 +31,14 @@ type HostSnapshot = Pick<
   | "lastOnlineAt"
 >;
 export interface PluginHostsSource {
+  addHost(
+    input: PluginHostAddInput,
+    signal?: AbortSignal,
+  ): Promise<
+    | { status: "saved"; serverId: string }
+    | { status: "password_required"; reason: "password_required" | "incorrect_password" }
+    | { status: "cancelled" }
+  >;
   getHosts(): readonly HostProfile[];
   getSnapshot(serverId: string): HostSnapshot | null;
   subscribeAll(listener: () => void): () => void;
@@ -37,6 +51,17 @@ export interface PluginHostsSource {
   ): Promise<void>;
   removeHost(serverId: string): Promise<void>;
   removeConnection(serverId: string, connectionId: string): Promise<void>;
+}
+function redactSecret(message: string, secret: string | undefined): string {
+  if (!secret) return message;
+  for (const value of [
+    secret,
+    encodeURIComponent(secret),
+    new URLSearchParams({ password: secret }).toString().slice(9),
+  ]) {
+    message = message.split(value).join("[redacted]");
+  }
+  return message;
 }
 type ProjectedHost = Omit<PluginHost, "update" | "remove" | "removeConnection" | "openSettings">;
 function projectHost(profile: HostProfile, snapshot: HostSnapshot | null): ProjectedHost {
@@ -122,7 +147,7 @@ function projectHost(profile: HostProfile, snapshot: HostSnapshot | null): Proje
     appearance: { color: profile.appearance.color, badgeDisplay: profile.appearance.badgeDisplay },
     connections,
     activeConnectionId: snapshot?.activeConnectionId ?? null,
-    error: error && profile.password ? error.split(profile.password).join("[redacted]") : error,
+    error: error ? redactSecret(error, profile.password) : null,
     authFailureReason: snapshot?.authFailureReason ?? null,
     lastOnlineAt: snapshot?.lastOnlineAt ?? null,
     createdAt: profile.createdAt,
@@ -158,7 +183,9 @@ export function createPluginHosts(
       await action();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(secret ? message.split(secret).join("[redacted]") : message);
+      // A cause would expose the original error, including any password.
+      // oxlint-disable-next-line preserve-caught-error
+      throw new Error(redactSecret(message, secret));
     }
   }
   function readHosts(): { hosts: PluginHost[]; key: string } {
@@ -292,6 +319,31 @@ export function createPluginHosts(
   else signal.addEventListener("abort", stop, { once: true });
   return {
     getSnapshot: () => snapshot,
+    async addHost(input: PluginHostAddInput): Promise<PluginHostAddResult> {
+      if (signal.aborted) throw new Error("Plugin has stopped");
+      let result: Awaited<ReturnType<PluginHostsSource["addHost"]>>;
+      try {
+        result = await source.addHost(input, signal);
+      } catch (error) {
+        let secret: string | undefined;
+        try {
+          secret = parseHostTarget(input.connection).password;
+        } catch {
+          /* Invalid input has no parsed password. */
+        }
+        const message = redactSecret(
+          error instanceof Error ? error.message : String(error),
+          secret,
+        );
+        // The original error can contain the supplied credential.
+        // oxlint-disable-next-line preserve-caught-error
+        throw new Error(message);
+      }
+      if (result.status !== "saved") return result;
+      const host = snapshot.find((item) => item.serverId === result.serverId);
+      if (!host) throw new Error(`Unknown Paseo host: ${result.serverId}`);
+      return { status: "saved", host };
+    },
     observeHosts(listener: (hosts: readonly PluginHost[]) => void) {
       if (signal.aborted) throw new Error("Plugin has stopped");
       const notify = () => listener(snapshot);

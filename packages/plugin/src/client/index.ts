@@ -88,6 +88,7 @@ export interface PluginHostSummary {
 /** Live configured hosts. Supplied by the app's client bundle loader. */
 export declare const useHosts: typeof import("./hosts.js").useHosts;
 export declare const observeHosts: typeof import("./hosts.js").observeHosts;
+export declare const addHost: typeof import("./hosts.js").addHost;
 export type {
   PluginHost,
   PluginHostStatus,
