@@ -56,7 +56,7 @@ describe("history utilities", () => {
       {
         conversation_id: "conv-unverified",
         title: "Session without workspace",
-        // No primary_workspace_path: must not be offered
+        // No primary_workspace_path or workspace: must not be offered
         updated_at: "2026-10-15T09:00:00Z",
       },
       {
@@ -77,20 +77,34 @@ describe("history utilities", () => {
         primary_workspace_path: "/workspace/backend",
         updated_at: "2026-10-15T12:00:00Z",
       },
+      // Real agy JSONL format with workspace, conversationId, display, timestamp (ms)
+      {
+        conversationId: "conv-real-jsonl",
+        display: "Real agy interactive task",
+        workspace: "/workspace/backend",
+        timestamp: 1789509896806,
+      },
     ];
 
     await writeFile(historyJsonl, records.map((r) => JSON.stringify(r)).join("\n"));
 
     // 1. List all excludes records without verified workspace
     const all = listAntigravitySessions(undefined, tempDir);
-    expect(all).toHaveLength(3);
-    expect(all[0].persistence.data.conversationId).toBe("conv-3");
+    expect(all).toHaveLength(4);
     expect(all.map((s) => s.persistence.data.conversationId)).not.toContain("conv-unverified");
+    expect(all.find((s) => s.persistence.data.conversationId === "conv-real-jsonl")).toMatchObject({
+      title: "Real agy interactive task",
+      cwd: "/workspace/backend",
+    });
 
     // 2. Filter by cwd
     const backendOnly = listAntigravitySessions({ cwd: "/workspace/backend" }, tempDir);
-    expect(backendOnly).toHaveLength(2);
-    expect(backendOnly.map((s) => s.persistence.data.conversationId)).toEqual(["conv-3", "conv-2"]);
+    expect(backendOnly).toHaveLength(3);
+    expect(backendOnly.map((s) => s.persistence.data.conversationId)).toEqual([
+      "conv-real-jsonl",
+      "conv-3",
+      "conv-2",
+    ]);
 
     // 3. Filter by cwd with 0 matches returns empty array
     const noMatches = listAntigravitySessions({ cwd: "/workspace/nonexistent" }, tempDir);
@@ -104,10 +118,132 @@ describe("history utilities", () => {
     // 5. Limit
     const limited = listAntigravitySessions({ limit: 1 }, tempDir);
     expect(limited).toHaveLength(1);
-    expect(limited[0].persistence.data.conversationId).toBe("conv-3");
+    expect(limited[0].persistence.data.conversationId).toBe("conv-real-jsonl");
 
     // 6. Title lookup from history.jsonl
     expect(getAntigravitySessionTitle("conv-1", tempDir)).toBe("Frontend refactoring");
+    expect(getAntigravitySessionTitle("conv-real-jsonl", tempDir)).toBe(
+      "Real agy interactive task",
+    );
+  });
+
+  it("lists sessions from real conversation_summaries.db schema with workspace URIs, date sorting, and preview fallback", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sqlite = require("node:sqlite") as {
+      DatabaseSync?: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...params: unknown[]): void };
+        close(): void;
+      };
+    };
+    if (!sqlite.DatabaseSync) return;
+
+    const dbPath = path.join(tempDir, "conversation_summaries.db");
+    const db = new sqlite.DatabaseSync(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE conversation_summaries (
+          conversation_id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          preview TEXT NOT NULL DEFAULT '',
+          step_count INTEGER NOT NULL DEFAULT 0,
+          last_modified_time DATETIME NOT NULL,
+          workspace_uris TEXT NOT NULL,
+          last_user_input_time DATETIME NOT NULL
+        );
+      `);
+
+      const stmt = db.prepare(`
+        INSERT INTO conversation_summaries (
+          conversation_id, title, preview, last_modified_time, last_user_input_time, workspace_uris
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+
+      // Entry 1: project A, explicit title, newer user input time
+      stmt.run(
+        "conv-db-1",
+        "Pipeline Game Automation",
+        "Detailed preview text",
+        "2026-10-29 05:45:00.123456+00:00",
+        "2026-10-31 10:00:00.654321+00:00",
+        JSON.stringify(["file:///workspace/project-a"]),
+      );
+
+      // Entry 2: project A, empty title (should fallback to preview), earlier timestamp
+      stmt.run(
+        "conv-db-2",
+        "",
+        "Fix memory leak in websocket",
+        "2026-10-25 12:00:00.100+00:00",
+        "2026-10-25 12:00:00.100+00:00",
+        JSON.stringify(["file:///workspace/project-a"]),
+      );
+
+      // Entry 3: project B, different workspace
+      stmt.run(
+        "conv-db-3",
+        "Backend API endpoints",
+        "API docs",
+        "2026-10-30 08:00:00.000+00:00",
+        "2026-10-30 08:00:00.000+00:00",
+        JSON.stringify(["file:///workspace/project-b"]),
+      );
+
+      // Entry 4: zero/sentinel timestamp row (e.g. 0001-01-01), should sort to bottom
+      stmt.run(
+        "conv-db-zero",
+        "Ancient session",
+        "Preview ancient",
+        "0001-01-01 00:00:00+00:00",
+        "0001-01-01 00:00:00+00:00",
+        JSON.stringify(["file:///workspace/project-a"]),
+      );
+
+      // Entry 5: empty workspace_uris, must be excluded
+      stmt.run(
+        "conv-db-no-ws",
+        "No workspace session",
+        "Preview",
+        "2026-10-31 11:00:00.000+00:00",
+        "2026-10-31 11:00:00.000+00:00",
+        "[]",
+      );
+    } finally {
+      db.close();
+    }
+
+    // 1. List all valid sessions
+    const all = listAntigravitySessions(undefined, tempDir);
+    expect(all).toHaveLength(4);
+    expect(all.map((s) => s.persistence.data.conversationId)).toEqual([
+      "conv-db-1",
+      "conv-db-3",
+      "conv-db-2",
+      "conv-db-zero",
+    ]);
+
+    // conv-db-2 has empty title, falls back to preview
+    expect(all.find((s) => s.persistence.data.conversationId === "conv-db-2")?.title).toBe(
+      "Fix memory leak in websocket",
+    );
+
+    // 2. Filter by cwd
+    const projectA = listAntigravitySessions({ cwd: "/workspace/project-a" }, tempDir);
+    expect(projectA).toHaveLength(3);
+    expect(projectA.map((s) => s.persistence.data.conversationId)).toEqual([
+      "conv-db-1",
+      "conv-db-2",
+      "conv-db-zero",
+    ]);
+
+    // 3. Filter by query
+    const queried = listAntigravitySessions({ query: "Pipeline" }, tempDir);
+    expect(queried).toHaveLength(1);
+    expect(queried[0].title).toBe("Pipeline Game Automation");
+
+    // 4. Title lookup
+    expect(getAntigravitySessionTitle("conv-db-1", tempDir)).toBe("Pipeline Game Automation");
+    expect(getAntigravitySessionTitle("conv-db-2", tempDir)).toBe("Fix memory leak in websocket");
   });
 
   it("recovers valid turns from transcripts containing corrupted or null records", async () => {
