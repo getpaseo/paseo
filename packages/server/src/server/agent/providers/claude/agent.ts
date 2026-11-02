@@ -4017,6 +4017,7 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
+    this.forgetPermissionClearingSteers();
     this.syncTurnState("foreground turn terminal");
   }
 
@@ -4029,6 +4030,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (terminalSeen) {
       this.compactionMarkerOpen = false;
+      this.forgetPermissionClearingSteers();
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
         this.activeForegroundQuery = null;
@@ -4071,6 +4073,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
+    this.forgetPermissionClearingSteers();
     this.syncTurnState("autonomous turn completed");
   }
 
@@ -4658,6 +4661,11 @@ class ClaudeAgentSession implements AgentSession {
     if (!lifecycle || lifecycle.state === "queued") return;
     this.unstartedMessageUuids.delete(lifecycle.commandUuid);
     this.permissionClearingSteerUuids.delete(lifecycle.commandUuid);
+  }
+
+  /** Claude Code can fold a steer in without a "started" lifecycle (getpaseo/paseo#8028). */
+  private forgetPermissionClearingSteers(): void {
+    this.permissionClearingSteerUuids.clear();
   }
 
   private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {

@@ -36,6 +36,23 @@ interface TestClaudeSession {
   close(): Promise<void>;
 }
 
+interface SteerTurnInternals {
+  handlePermissionRequest(
+    name: string,
+    input: Record<string, unknown>,
+    options: Record<string, unknown>,
+  ): Promise<PermissionResult>;
+  routeSdkMessageFromPump(message: SDKMessage): Promise<void>;
+  autonomousTurn: { id: string } | null;
+}
+
+const claudeSuccessResult = {
+  type: "result",
+  subtype: "success",
+  usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+  total_cost_usd: 0,
+} as unknown as SDKMessage;
+
 function isLoadingCompactionEvent(event: AgentStreamEvent): boolean {
   return (
     event.type === "timeline" && event.item.type === "compaction" && event.item.status === "loading"
@@ -1326,6 +1343,158 @@ describe("ClaudeAgentSession features", () => {
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
       await expect(laterPermission).resolves.toMatchObject({ behavior: "deny" });
     } finally {
+      await session.close();
+    }
+  });
+
+  test("a human steer Claude never started stops superseding permissions when its turn completes", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as SteerTurnInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      await input[Symbol.asyncIterator]().next();
+      const steer = await session.steerActiveTurn?.("review this instead", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      });
+      if (steer?.status !== "accepted") throw new Error("Expected steer admission");
+      await internal.routeSdkMessageFromPump({
+        type: "command_lifecycle",
+        command_uuid: steer.providerMessageId,
+        state: "queued",
+      } as unknown as SDKMessage);
+      await internal.routeSdkMessageFromPump(claudeSuccessResult);
+      expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+
+      await session.startTurn("next turn");
+      const nextPermission = internal.handlePermissionRequest(
+        "Write",
+        { file_path: "NEXT.md" },
+        { toolUseID: "tool-next" },
+      );
+      expect(events.filter(isPermissionResolvedEvent)).toEqual([]);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      const requestId = session.getPendingPermissions()[0]!.id;
+      await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+      await expect(nextPermission).resolves.toMatchObject({ message: "test cleanup" });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("a human steer Claude never started stops superseding permissions when its turn fails", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as SteerTurnInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      await input[Symbol.asyncIterator]().next();
+      await expect(
+        session.steerActiveTurn?.("review this instead", {
+          expectedTurnId: turnId,
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toMatchObject({ status: "accepted" });
+
+      await queryMock.return();
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "turn_failed",
+            error: "Claude stream ended before terminal result",
+          }),
+        ),
+      );
+
+      const laterPermission = internal.handlePermissionRequest(
+        "Write",
+        { file_path: "LATER.md" },
+        { toolUseID: "tool-later" },
+      );
+      expect(events.filter(isPermissionResolvedEvent)).toEqual([]);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      const requestId = session.getPendingPermissions()[0]!.id;
+      await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+      await expect(laterPermission).resolves.toMatchObject({ message: "test cleanup" });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("a human steer Claude never started stops superseding permissions when an autonomous turn goes idle", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as SteerTurnInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("first turn");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      await input[Symbol.asyncIterator]().next();
+      await internal.routeSdkMessageFromPump(claudeSuccessResult);
+      await internal.routeSdkMessageFromPump({
+        type: "system",
+        subtype: "init",
+        session_id: "session-1",
+        permissionMode: "default",
+        model: "opus",
+      } as unknown as SDKMessage);
+      const autonomousTurnId = internal.autonomousTurn?.id;
+      if (!autonomousTurnId) throw new Error("Expected an autonomous turn");
+      await expect(
+        session.steerActiveTurn?.("review this instead", {
+          expectedTurnId: autonomousTurnId,
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toMatchObject({ status: "accepted" });
+
+      await internal.routeSdkMessageFromPump({
+        type: "system",
+        subtype: "session_state_changed",
+        state: "idle",
+      } as unknown as SDKMessage);
+      expect(internal.autonomousTurn).toBeNull();
+
+      await session.startTurn("next turn");
+      const nextPermission = internal.handlePermissionRequest(
+        "Write",
+        { file_path: "NEXT.md" },
+        { toolUseID: "tool-next" },
+      );
+      expect(events.filter(isPermissionResolvedEvent)).toEqual([]);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      const requestId = session.getPendingPermissions()[0]!.id;
+      await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+      await expect(nextPermission).resolves.toMatchObject({ message: "test cleanup" });
+    } finally {
+      unsubscribe();
       await session.close();
     }
   });
