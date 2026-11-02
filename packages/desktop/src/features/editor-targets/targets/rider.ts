@@ -4,12 +4,12 @@ const COMMANDS = ["rider", "rider64"] as const;
 
 export const riderTarget: EditorTarget = {
   id: "rider",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "Rider",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("rider.png"),
     };
   },
   async isInstalled(runtime) {

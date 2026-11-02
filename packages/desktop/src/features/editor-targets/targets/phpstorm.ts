@@ -4,12 +4,12 @@ const COMMANDS = ["phpstorm", "phpstorm64"] as const;
 
 export const phpstormTarget: EditorTarget = {
   id: "phpstorm",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "PhpStorm",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("phpstorm.png"),
     };
   },
   async isInstalled(runtime) {
