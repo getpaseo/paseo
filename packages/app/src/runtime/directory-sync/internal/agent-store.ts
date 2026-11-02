@@ -21,14 +21,20 @@ function withoutAgent(agentId: string) {
   };
 }
 
-function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent {
+function mergeSnapshot(previous: Agent | undefined, incoming: Agent): Agent {
   if (!previous) return incoming;
   const activeTurn =
     incoming.turn.phase === "open"
       ? { turnId: incoming.turn.turnId, startedAt: incoming.turn.startedAt }
       : null;
   const turn = reduceTurnLiveness(previous.turn, { type: "snapshot", activeTurn });
-  return turn === incoming.turn ? incoming : { ...incoming, turn };
+  // Snapshots cross JSON boundaries, but unchanged features must keep their UI identity.
+  const features = equal(previous.features, incoming.features)
+    ? previous.features
+    : incoming.features;
+  return turn === incoming.turn && features === incoming.features
+    ? incoming
+    : { ...incoming, turn, features };
 }
 
 export class AgentStoreProjection {
@@ -59,7 +65,7 @@ export class AgentStoreProjection {
     let accepted = agent;
     useSessionStore.getState().setAgents(this.serverId, (current) => {
       const previous = current.get(agent.id);
-      accepted = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
+      accepted = acceptAgentDirectoryUpdate(previous, mergeSnapshot(previous, agent));
       if (accepted === previous) return current;
       const next = new Map(current);
       next.set(agent.id, accepted);
@@ -116,7 +122,7 @@ export class AgentStoreProjection {
     const agents = new Map<string, Agent>();
     for (const [agentId, fetchedAgent] of fetched) {
       const existing = current.get(agentId);
-      const merged = mergeSnapshotTurn(existing, fetchedAgent);
+      const merged = mergeSnapshot(existing, fetchedAgent);
       agents.set(agentId, existing && equal(existing, merged) ? existing : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
