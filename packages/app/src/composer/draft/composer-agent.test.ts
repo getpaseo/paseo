@@ -57,6 +57,7 @@ function openDraft(context: "draft" | "new-workspace") {
       selectedModel: current.model,
       selectedMode: current.modeId,
       thinking: current.thinkingOptionId || null,
+      isLocked: () => false,
       options: shownDraftOptions(options.getState(), {
         provider: current.provider,
         requestKey: "",

@@ -10,6 +10,8 @@ import type { ComposerTextSource } from "@/composer/text-source";
 export interface ComposerInput {
   /** The prompt is held while the composer submits; the built-in input is read-only meanwhile. */
   locked: boolean;
+  /** `locked` as it is now. A command a plugin kept from an earlier render asks this. */
+  isLocked: () => boolean;
   textSource: ComposerTextSource;
   setText: (text: string) => void;
   /** Inserts at the cursor, replacing the selection. */
@@ -29,6 +31,8 @@ export interface ComposerAgent {
   context: "agent" | "draft" | "new-workspace";
   /** The agent is being created; the built-in controls are disabled meanwhile. */
   locked: boolean;
+  /** `locked` as it is now. A command a plugin kept from an earlier render asks this. */
+  isLocked: () => boolean;
   provider: string | null;
   model: string | null;
   mode: string | null;

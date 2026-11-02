@@ -21,11 +21,12 @@ export function draftComposerAgent(
     | "onSelectThinkingOption"
     | "onSetOption"
     | "onSetMetadata"
-  > & { thinking: string | null },
+  > & { thinking: string | null; isLocked: () => boolean },
 ): ComposerAgent {
   return {
     context: props.context ?? "draft",
     locked: props.disabled ?? false,
+    isLocked: props.isLocked,
     provider: props.selectedProvider,
     model: props.selectedModel || null,
     mode: props.selectedMode || null,

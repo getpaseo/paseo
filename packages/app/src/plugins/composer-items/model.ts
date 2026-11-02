@@ -22,12 +22,12 @@ function isPluginAttachment(
 
 const LOCKED_MESSAGE = "The composer is locked while the agent is being created.";
 
-function assertUnlocked(locked: boolean): void {
-  if (locked) throw new Error(LOCKED_MESSAGE);
+function assertUnlocked(isLocked: () => boolean): void {
+  if (isLocked()) throw new Error(LOCKED_MESSAGE);
 }
 
 async function whenUnlocked(agent: ComposerAgent, command: () => Promise<void>): Promise<void> {
-  assertUnlocked(agent.locked);
+  assertUnlocked(agent.isLocked);
   await command();
 }
 
@@ -60,11 +60,11 @@ export function toPluginComposer(input: {
       metadata: cloneAndFreeze(agent.metadata),
     },
     setPrompt: (text) => {
-      assertUnlocked(composerInput.locked);
+      assertUnlocked(composerInput.isLocked);
       composerInput.setText(text);
     },
     insertText: (text) => {
-      assertUnlocked(composerInput.locked);
+      assertUnlocked(composerInput.isLocked);
       composerInput.insertText(text);
     },
     addAttachment({ sourceId, item }) {

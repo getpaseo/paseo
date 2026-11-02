@@ -64,6 +64,7 @@ function fakeAgent(context: ComposerAgent["context"], locked = false) {
   const agent: ComposerAgent = {
     context,
     locked,
+    isLocked: () => locked,
     provider: "claude",
     model: "sonnet",
     mode: "default",
@@ -89,6 +90,7 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
   const state = { text: "", attachments: initial };
   const input: ComposerInput = {
     locked,
+    isLocked: () => locked,
     textSource: { getSnapshot: () => state.text, subscribe: () => () => {} },
     setText: (text) => {
       state.text = text;
@@ -211,6 +213,25 @@ describe("toPluginComposer", () => {
     await expect(composer.setMetadata({ flag: null })).rejects.toThrow("The composer is locked");
     expect(state.text).toBe("");
     expect(calls).toEqual([]);
+  });
+
+  it("refuses a command a plugin kept from before the composer locked", async () => {
+    const { agent } = fakeAgent("new-workspace");
+    const { input } = fakeInput();
+    const composer = toPluginComposer({
+      plugin: installed(),
+      agent,
+      composerInput: input,
+      prompt: "",
+    });
+
+    // The plugin's action was awaiting an RPC when the user submitted.
+    const lock = { locked: true };
+    agent.isLocked = () => lock.locked;
+    input.isLocked = () => lock.locked;
+
+    expect(() => composer.insertText("late")).toThrow("The composer is locked");
+    await expect(composer.setOptions({ effort: "low" })).rejects.toThrow("The composer is locked");
   });
 
   it("hands out options and metadata a plugin cannot change", () => {

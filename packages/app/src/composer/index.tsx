@@ -1433,9 +1433,12 @@ function ComposerContentImpl({
     },
     [onChangeText, textSource],
   );
+  const isComposerLockedRef = useRef(isComposerLocked);
+  isComposerLockedRef.current = isComposerLocked;
   const composerInput = useMemo<ComposerInput>(
     () => ({
       locked: isComposerLocked,
+      isLocked: () => isComposerLockedRef.current,
       textSource,
       setText: replaceUserInput,
       insertText: insertUserInput,

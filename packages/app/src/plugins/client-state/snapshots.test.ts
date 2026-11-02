@@ -115,6 +115,9 @@ describe("plugin context snapshots", () => {
     expect(Object.isFrozen(snapshot.labels)).toBe(true);
     expect(Reflect.set(snapshot, "title", "Hostile rename")).toBe(false);
     expect(Reflect.set(snapshot.labels, "phase", "hostile")).toBe(false);
+    const issue = snapshot.metadata["linear.issue"] as { id: string };
+    expect(Reflect.set(issue, "id", "hostile")).toBe(false);
+    expect(agent.metadata?.["linear.issue"]).toEqual({ id: "ENG-1" });
     expect(snapshot.title).toBe("Implement plugin panels");
     expect(snapshot.labels).toEqual({ phase: "implementation" });
     expect(agent.title).toBe("Implement plugin panels");

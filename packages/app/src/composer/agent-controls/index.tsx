@@ -95,6 +95,7 @@ interface AgentControlOption {
 const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 const EMPTY_OPTIONS: ProviderOptions = {};
 const EMPTY_METADATA: Record<string, JsonValue> = {};
+const neverLocked = () => false;
 
 interface ControlledAgentControlsProps {
   provider: string;
@@ -1140,6 +1141,7 @@ export const AgentControls = memo(function AgentControls({
     return {
       context: "agent",
       locked: false,
+      isLocked: neverLocked,
       provider: agent.provider,
       model: activeModelId,
       mode: modeControl?.selectedModeId ?? null,
@@ -1356,11 +1358,15 @@ export function DraftAgentControls({
     [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
   );
 
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  const isLocked = useCallback(() => disabledRef.current, []);
   const composerAgent = useMemo(
     () =>
       draftComposerAgent({
         context,
         disabled,
+        isLocked,
         selectedProvider,
         selectedModel,
         selectedMode,
@@ -1377,6 +1383,7 @@ export function DraftAgentControls({
     [
       context,
       disabled,
+      isLocked,
       effectiveSelectedThinkingOption,
       metadata,
       onSelectMode,
