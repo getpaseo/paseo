@@ -26,6 +26,7 @@ import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { resolveDraftSubmitSelection } from "@/composer/draft/workspace-tab-core";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
@@ -451,9 +452,13 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     config: {
       provider,
       cwd,
-      modeId: composerState.effectiveModeId || undefined,
-      model: composerState.effectiveModelId || undefined,
-      thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
+      ...resolveDraftSubmitSelection({
+        autoSubmitConfig: null,
+        selectionSource: composerState.selectionSource,
+        effectiveModelId: composerState.effectiveModelId,
+        effectiveModeId: composerState.effectiveModeId,
+        effectiveThinkingOptionId: composerState.effectiveThinkingOptionId,
+      }),
       featureValues: composerState.featureValues,
     },
     initialPrompt: text,
