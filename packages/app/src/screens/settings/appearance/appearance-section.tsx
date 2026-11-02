@@ -43,8 +43,11 @@ import {
   DEFAULT_UI_FONT_STACK,
   ICON_SIZE,
   PLUGIN_THEME_PREFERENCE,
+  SYSTEM_THEME_NAMES,
   THEME_OPTIONS,
   THEME_SWATCHES,
+  type SystemColorScheme,
+  type SystemThemeName,
   type Theme,
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
@@ -116,13 +119,17 @@ function ThemeSwatch({ color }: ThemeSwatchProps) {
   return <View style={swatchStyle} />;
 }
 
-interface ThemeMenuItemProps {
-  themeValue: BuiltInThemePreference;
+interface ThemeMenuItemProps<Value extends BuiltInThemePreference> {
+  themeValue: Value;
   selected: boolean;
-  onChange: (theme: BuiltInThemePreference) => void;
+  onChange: (theme: Value) => void;
 }
 
-function ThemeMenuItem({ themeValue, selected, onChange }: ThemeMenuItemProps) {
+function ThemeMenuItem<Value extends BuiltInThemePreference>({
+  themeValue,
+  selected,
+  onChange,
+}: ThemeMenuItemProps<Value>) {
   const { t } = useTranslation();
   const handleSelect = useCallback(() => {
     onChange(themeValue);
@@ -220,6 +227,55 @@ function ThemeRow({
               option={option}
               selected={selectedPluginTheme?.id === option.id}
               onSelect={onSelectPluginTheme}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+interface SystemThemeRowProps<Scheme extends SystemColorScheme> {
+  scheme: Scheme;
+  value: SystemThemeName<Scheme>;
+  onChange: (theme: SystemThemeName<Scheme>) => void;
+}
+
+function SystemThemeRow<Scheme extends SystemColorScheme>({
+  scheme,
+  value,
+  onChange,
+}: SystemThemeRowProps<Scheme>) {
+  const { t } = useTranslation();
+  const selectedLabel = getThemeLabel(t, value);
+  const leading = useMemo(() => <ThemeLeading themeValue={value} />, [value]);
+  const names: readonly SystemThemeName<Scheme>[] = SYSTEM_THEME_NAMES[scheme];
+  return (
+    <View style={styles.rowWithBorder}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t(`settings.appearance.theme.system.${scheme}.title`)}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t(`settings.appearance.theme.system.${scheme}.hint`)}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityLabel={t(`settings.appearance.theme.system.${scheme}.accessibilityLabel`, {
+            value: selectedLabel,
+          })}
+          leading={leading}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200} scrollable>
+          {names.map((name) => (
+            <ThemeMenuItem
+              key={name}
+              themeValue={name}
+              selected={value === name}
+              onChange={onChange}
             />
           ))}
         </DropdownMenuContent>
@@ -511,6 +567,20 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleSystemLightThemeChange = useCallback(
+    (systemLightTheme: SystemThemeName<"light">) => {
+      void updateSettings({ systemLightTheme });
+    },
+    [updateSettings],
+  );
+
+  const handleSystemDarkThemeChange = useCallback(
+    (systemDarkTheme: SystemThemeName<"dark">) => {
+      void updateSettings({ systemDarkTheme });
+    },
+    [updateSettings],
+  );
+
   const handlePluginThemeChange = useCallback(
     (option: PluginThemeOption) => {
       selectPluginTheme(option);
@@ -635,6 +705,20 @@ export function AppearanceSection() {
             onChange={handleThemeChange}
             onSelectPluginTheme={handlePluginThemeChange}
           />
+          {settings.theme === "auto" ? (
+            <>
+              <SystemThemeRow
+                scheme="light"
+                value={settings.systemLightTheme}
+                onChange={handleSystemLightThemeChange}
+              />
+              <SystemThemeRow
+                scheme="dark"
+                value={settings.systemDarkTheme}
+                onChange={handleSystemDarkThemeChange}
+              />
+            </>
+          ) : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

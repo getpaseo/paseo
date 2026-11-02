@@ -2505,6 +2505,18 @@ export const ar: TranslationResources = {
           pureBlack: "أسود خالص",
           auto: "نظام",
         },
+        system: {
+          light: {
+            title: "في الوضع الفاتح",
+            hint: "السمة التي يستخدمها خيار النظام عندما يكون جهازك في الوضع الفاتح",
+            accessibilityLabel: "في الوضع الفاتح: {{value}}",
+          },
+          dark: {
+            title: "في الوضع الداكن",
+            hint: "السمة التي يستخدمها خيار النظام عندما يكون جهازك في الوضع الداكن",
+            accessibilityLabel: "في الوضع الداكن: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "مستوى التفاصيل",

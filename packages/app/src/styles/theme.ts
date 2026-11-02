@@ -848,6 +848,27 @@ const CONCRETE_THEME_OPTIONS = THEME_OPTIONS.filter(
   (option): option is ConcreteThemeOption => option.name !== "auto",
 );
 
+export type SystemColorScheme = Theme["colorScheme"];
+/** The themes System may use while the OS is in each color scheme. */
+export type SystemThemeName<Scheme extends SystemColorScheme> = Extract<
+  ConcreteThemeOption,
+  { theme: { colorScheme: Scheme } }
+>["name"];
+
+function hasColorScheme<Scheme extends SystemColorScheme>(scheme: Scheme) {
+  return (
+    option: ConcreteThemeOption,
+  ): option is Extract<ConcreteThemeOption, { theme: { colorScheme: Scheme } }> =>
+    option.theme.colorScheme === scheme;
+}
+
+export const SYSTEM_THEME_NAMES: {
+  [Scheme in SystemColorScheme]: SystemThemeName<Scheme>[];
+} = {
+  light: CONCRETE_THEME_OPTIONS.filter(hasColorScheme("light")).map((option) => option.name),
+  dark: CONCRETE_THEME_OPTIONS.filter(hasColorScheme("dark")).map((option) => option.name),
+};
+
 type ThemeToUnistyles = {
   [Name in ThemeName]: Extract<ConcreteThemeOption, { name: Name }>["unistylesName"];
 };

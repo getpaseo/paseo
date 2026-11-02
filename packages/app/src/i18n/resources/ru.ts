@@ -2511,6 +2511,18 @@ export const ru: TranslationResources = {
           pureBlack: "Абсолютно чёрная",
           auto: "Системная",
         },
+        system: {
+          light: {
+            title: "В светлом режиме",
+            hint: "Тема, которую «Системная» использует в светлом режиме устройства",
+            accessibilityLabel: "В светлом режиме: {{value}}",
+          },
+          dark: {
+            title: "В тёмном режиме",
+            hint: "Тема, которую «Системная» использует в тёмном режиме устройства",
+            accessibilityLabel: "В тёмном режиме: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "Уровень детализации",

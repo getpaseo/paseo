@@ -178,6 +178,45 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe(name);
   });
 
+  it("defaults the System pair to the plain light and dark themes", async () => {
+    const result = await loadAppSettingsFromStorage(makeDeps());
+
+    expect(result.systemLightTheme).toBe("light");
+    expect(result.systemDarkTheme).toBe("dark");
+  });
+
+  it("loads a persisted System pair", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          systemLightTheme: "light",
+          systemDarkTheme: "claude",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.systemLightTheme).toBe("light");
+    expect(result.systemDarkTheme).toBe("claude");
+  });
+
+  it("drops a System pair theme drawn for the other color scheme", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          systemLightTheme: "claude",
+          systemDarkTheme: "light",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.systemLightTheme).toBe("light");
+    expect(result.systemDarkTheme).toBe("dark");
+  });
+
   it("seeds storage with the client defaults when nothing is persisted", async () => {
     const deps = makeDeps();
 

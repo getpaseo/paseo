@@ -2443,6 +2443,18 @@ export const zhCN: TranslationResources = {
           pureBlack: "纯黑",
           auto: "系统",
         },
+        system: {
+          light: {
+            title: "浅色模式时",
+            hint: "设备处于浅色模式时“跟随系统”使用的主题",
+            accessibilityLabel: "浅色模式时: {{value}}",
+          },
+          dark: {
+            title: "深色模式时",
+            hint: "设备处于深色模式时“跟随系统”使用的主题",
+            accessibilityLabel: "深色模式时: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "详细程度",
