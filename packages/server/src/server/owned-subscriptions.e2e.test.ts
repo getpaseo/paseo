@@ -822,86 +822,100 @@ test("same-workspace terminal directory observers do not share a teardown slot",
   }
 });
 
-test("terminal output has separate server IDs and binary slots, including in a shared session", async () => {
-  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
-  const peers: SubscriptionPeer[] = [];
-  try {
-    await admin.connect();
-    const workspace = (
-      await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
-    ).workspace!;
-    const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
-      workspaceId: workspace.id,
-      command: process.execPath,
-      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
+test.each([false, true])(
+  "terminal output has separate server IDs and binary slots, including in a shared session (chunked=%s)",
+  async (chunked) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const admin = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.8.0",
     });
-    expect(result.error).toBe(null);
-    const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
-    peers.push(idle);
-    const peer = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
-    peers.push(peer);
-    for (const requestId of ["output-a", "output-b"]) {
-      await peer.request({
-        type: "subscribe_terminal_request",
-        requestId,
-        terminalId: result.terminal!.id,
+    const peers: SubscriptionPeer[] = [];
+    try {
+      await admin.connect();
+      const workspace = (
+        await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
+      ).workspace!;
+      const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
+        workspaceId: workspace.id,
+        command: process.execPath,
+        args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
       });
-    }
-    const replies = peer.frames.flatMap((frame) =>
-      frame.type === "session" &&
-      frame.message.type === "subscribe_terminal_response" &&
-      frame.message.payload.error === null
-        ? [frame.message.payload]
-        : [],
-    );
-    expect(replies).toHaveLength(2);
-    const ids = replies.map(
-      (reply) => (reply as typeof reply & { subscriptionId: string }).subscriptionId,
-    );
-    expect(ids.every((id) => typeof id === "string")).toBe(true);
-    expect(ids[0]).not.toBe(ids[1]);
-    expect(replies[0].slot).not.toBe(replies[1].slot);
-    await expect
-      .poll(() =>
-        peer.binaryFrames
-          .map(decodeTerminalStreamFrame)
-          .filter((frame) => frame?.opcode === TerminalStreamOpcode.Snapshot)
-          .map((frame) => frame!.slot),
-      )
-      .toEqual(expect.arrayContaining(replies.map((reply) => reply.slot)));
-    expect(idle.binaryFrames).toEqual([]);
-    await peer.request({
-      type: "subscription.release.request",
-      requestId: "release-output-a",
-      subscriptionId: ids[0],
-    });
-    peer.binaryFrames.length = 0;
-    admin.sendTerminalInput(result.terminal!.id, { type: "input", data: "remaining-observer\n" });
-    await expect
-      .poll(
-        () =>
+      expect(result.error).toBe(null);
+      const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session", {
+        terminal_chunked_replay: chunked,
+      });
+      peers.push(idle);
+      const peer = await SubscriptionPeer.connect(daemon.port, "terminal-output-session", {
+        terminal_chunked_replay: chunked,
+      });
+      peers.push(peer);
+      for (const requestId of ["output-a", "output-b"]) {
+        await peer.request({
+          type: "subscribe_terminal_request",
+          requestId,
+          terminalId: result.terminal!.id,
+        });
+      }
+      const replies = peer.frames.flatMap((frame) =>
+        frame.type === "session" &&
+        frame.message.type === "subscribe_terminal_response" &&
+        frame.message.payload.error === null
+          ? [frame.message.payload]
+          : [],
+      );
+      expect(replies).toHaveLength(2);
+      const ids = replies.map(
+        (reply) => (reply as typeof reply & { subscriptionId: string }).subscriptionId,
+      );
+      expect(ids.every((id) => typeof id === "string")).toBe(true);
+      expect(ids[0]).not.toBe(ids[1]);
+      expect(replies[0].slot).not.toBe(replies[1].slot);
+      await expect
+        .poll(() =>
           peer.binaryFrames
             .map(decodeTerminalStreamFrame)
-            .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
-            .map((frame) => Buffer.from(frame!.payload).toString())
-            .join(""),
-        { timeout: 5000 },
-      )
-      .toContain("remaining-observer");
-    expect(
-      peer.binaryFrames
-        .map(decodeTerminalStreamFrame)
-        .every((frame) => frame?.slot === replies[1].slot),
-    ).toBe(true);
-    expect(idle.binaryFrames).toEqual([]);
-    await admin.killTerminal(result.terminal!.id);
-  } finally {
-    for (const peer of peers) peer.close();
-    await admin.close();
-    await daemon.close();
-  }
-});
+            .filter(
+              (frame) =>
+                frame?.opcode ===
+                (chunked ? TerminalStreamOpcode.ReplayEnd : TerminalStreamOpcode.Restore),
+            )
+            .map((frame) => frame!.slot),
+        )
+        .toEqual(expect.arrayContaining(replies.map((reply) => reply.slot)));
+      expect(idle.binaryFrames).toEqual([]);
+      await peer.request({
+        type: "subscription.release.request",
+        requestId: "release-output-a",
+        subscriptionId: ids[0],
+      });
+      peer.binaryFrames.length = 0;
+      admin.sendTerminalInput(result.terminal!.id, { type: "input", data: "remaining-observer\n" });
+      await expect
+        .poll(
+          () =>
+            peer.binaryFrames
+              .map(decodeTerminalStreamFrame)
+              .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+              .map((frame) => Buffer.from(frame!.payload).toString())
+              .join(""),
+          { timeout: 5000 },
+        )
+        .toContain("remaining-observer");
+      expect(
+        peer.binaryFrames
+          .map(decodeTerminalStreamFrame)
+          .every((frame) => frame?.slot === replies[1].slot),
+      ).toBe(true);
+      expect(idle.binaryFrames).toEqual([]);
+      await admin.killTerminal(result.terminal!.id);
+    } finally {
+      for (const peer of peers) peer.close();
+      await admin.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("a modern connection and pure reads retain no client observation producers", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });

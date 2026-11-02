@@ -38,6 +38,9 @@ import {
   fillDirectHostUri,
   expectDirectHostFormValues,
   expectDirectHostSslEnabled,
+  expectDirectHostSslDisabled,
+  fillDirectHostAddress,
+  toggleDirectHostSsl,
   expectDirectHostUriValue,
   expectDirectHostUriHidden,
   expectDiagnosticsContent,
@@ -283,6 +286,16 @@ test.describe("Settings sidebar navigation", () => {
     await openAddHostFlow(page);
     await expectAddHostMethodOptions(page);
     await selectHostConnectionType(page, "direct");
+
+    await fillDirectHostAddress(page, "example.paseo.test", "7443");
+    await expectDirectHostSslDisabled(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslEnabled(page);
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriValue(page, "tcp://example.paseo.test:7443?ssl=true");
+    await toggleHostAdvanced(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslDisabled(page);
 
     await toggleHostAdvanced(page);
     await fillDirectHostUri(page, "tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
