@@ -267,7 +267,7 @@ describe("Codex file-change approvals", () => {
         provider: "codex",
         name: "CodexFileChange",
         kind: "tool",
-        title: "Apply file changes",
+        title: "Apply file changes: alpha.txt",
         description: "Apply the patch",
         detail: {
           type: "edit",

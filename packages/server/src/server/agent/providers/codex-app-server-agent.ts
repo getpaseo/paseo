@@ -6781,6 +6781,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     return !this.closed && this.activeForegroundTurnId === turnId;
   }
 
+  private forgetPendingToolCallDetail(itemId: string | null | undefined): void {
+    if (itemId) this.pendingToolCallDetails.delete(itemId);
+  }
+
   private async handleItemCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
   ): Promise<void> {
@@ -6792,9 +6796,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
     }
-    if (parsed.item.id) {
-      this.pendingToolCallDetails.delete(parsed.item.id);
-    }
+    this.forgetPendingToolCallDetail(parsed.item.id);
     this.receiveAsyncQuestion(parsed.threadId, parsed.item);
     if (this.isUserMessageItem(parsed.item)) {
       await this.handleUserMessageItem(parsed);
@@ -7270,20 +7272,24 @@ export class CodexAppServerAgentSession implements AgentSession {
       })
       .parse(params);
     const requestId = `permission-${parsed.itemId}`;
+    const detail: ToolCallTimelineItem["detail"] = this.pendingToolCallDetails.get(
+      parsed.itemId,
+    ) ?? {
+      type: "unknown",
+      input: { reason: parsed.reason ?? null },
+      output: null,
+    };
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: CODEX_PROVIDER,
       name: "CodexFileChange",
       kind: "tool",
-      title: "Apply file changes",
+      title:
+        detail.type === "edit" && detail.filePath
+          ? `Apply file changes: ${detail.filePath}`
+          : "Apply file changes",
       description: parsed.reason ?? undefined,
-      detail: this.pendingToolCallDetails.get(parsed.itemId) ?? {
-        type: "unknown",
-        input: {
-          reason: parsed.reason ?? null,
-        },
-        output: null,
-      },
+      detail,
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,
