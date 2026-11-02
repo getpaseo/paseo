@@ -1,5 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { promises as fsPromises } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -106,7 +107,10 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (...args: unknown[]) => Promise<unknown>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -2716,6 +2720,53 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 
 describe("ACPAgentSession", () => {
+  test("a stop during skill discovery cancels the turn without prompting the agent", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(async () => ({ stopReason: "end_turn" }) as PromptResponse);
+    const cancel = vi.fn(async () => undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    // Discovery is filesystem work, so the turn is still preparing its prompt
+    // when the stop arrives; nothing has reached the agent yet.
+    const turn = session.startTurn("hello");
+    await Promise.resolve();
+    await session.interrupt();
+    const { turnId } = await turn;
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_canceled", turnId, reason: "Interrupted" }),
+    );
+  });
+
+  test("scans the skill directories once even when no skill is found", async () => {
+    const session = createSession();
+    const prompt = vi.fn(async () => ({ stopReason: "end_turn" }) as PromptResponse);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    // The session's cwd points at a directory that does not exist, so the
+    // scan finds nothing. The second call must reuse the first answer instead
+    // of walking the directories again.
+    const readdir = vi.spyOn(fsPromises, "readdir");
+    try {
+      await session.startTurn("first");
+      const afterFirst = readdir.mock.calls.length;
+      await session.startTurn("second");
+      expect(readdir.mock.calls.length).toBe(afterFirst);
+    } finally {
+      readdir.mockRestore();
+    }
+  });
+
   test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
     const session = new ACPAgentSession(
       {

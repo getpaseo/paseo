@@ -1782,6 +1782,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private configOptions: SessionConfigOption[] = [];
   private cachedCommands: AgentSlashCommand[] = [];
   private discoveredSkills: DiscoveredACPSkill[] = [];
+  /**
+   * Set once a skill scan has finished, so an empty result is a real answer
+   * and is not rescanned on every prompt.
+   */
+  private skillsDiscovered: Promise<readonly DiscoveredACPSkill[]> | null = null;
+  /**
+   * Set when a turn is interrupted before its prompt reached the agent.
+   *
+   * `startTurn` waits for the skill scan before it can send anything. A Stop
+   * during that wait has nothing to cancel at the agent, so the request is
+   * recorded here and the turn ends without sending a prompt.
+   */
+  private pendingTurnInterrupt = false;
+  /**
+   * Whether the current turn's prompt has reached the agent. Until it has, a
+   * Stop has nothing to cancel at the agent.
+   */
+  private promptSentToAgent = false;
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
   private commandsReadySettled = false;
@@ -2007,6 +2025,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.pendingTurnInterrupt = false;
+    this.promptSentToAgent = false;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -2015,6 +2035,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const expandedPrompt = await this.expandSkillPrompt(prompt);
 
+    // The prompt is prepared asynchronously, so the user can stop the turn
+    // before it reaches the agent. Sending it anyway would start work after
+    // the user asked for it to stop.
+    if (this.pendingTurnInterrupt) {
+      this.pendingTurnInterrupt = false;
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return { turnId };
+    }
+
+    this.promptSentToAgent = true;
     void this.connection
       .prompt({
         sessionId: this.sessionId,
@@ -2171,16 +2206,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * conventions are scanned. Project roots win over user roots.
    */
   private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
-    if (this.discoveredSkills.length > 0) {
+    if (this.skillsDiscovered) {
+      return this.skillsDiscovered;
+    }
+    // Cache the promise, not just the result: an empty scan is a real answer,
+    // and concurrent callers must not each walk the filesystem.
+    this.skillsDiscovered = (async () => {
+      try {
+        this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to discover ACP skills");
+        this.discoveredSkills = [];
+      }
       return this.discoveredSkills;
-    }
-    try {
-      this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
-    } catch (error) {
-      this.logger.warn({ err: error }, "Failed to discover ACP skills");
-      this.discoveredSkills = [];
-    }
-    return this.discoveredSkills;
+    })();
+    return this.skillsDiscovered;
   }
 
   /**
@@ -2659,6 +2699,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
+      // The prompt may still be on its way to the agent, in which case there
+      // is nothing to cancel there yet. Record the stop so `startTurn` does
+      // not send a prompt the user already cancelled.
+      if (!this.promptSentToAgent) {
+        this.pendingTurnInterrupt = true;
+      }
       await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
