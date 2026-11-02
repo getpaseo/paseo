@@ -8,6 +8,7 @@ import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
+import { createPaseoApi } from "@getpaseo/client";
 
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
@@ -325,14 +326,39 @@ export default function contribute(server) {
 test("metadata set at creation and through setMetadata survives a daemon restart", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-metadata-restart-"));
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-metadata-cwd-"));
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-metadata-plugin-"));
   try {
+    await writeFile(
+      path.join(pluginDirectory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "metadata-restart",
+        requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+      }),
+    );
+    // Returns an explicit object without `metadata`, as a plugin written before metadata existed.
+    await writeFile(
+      path.join(pluginDirectory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    console.log(JSON.stringify({ hook: "agent.open.before", metadata: request.metadata }));
+    const { metadata, ...old } = request;
+    return { ...old, env: { ...old.env, HOOK_OPEN: "opened" } };
+  });
+  return () => {};
+}
+`,
+    );
     const first = await createTestPaseoDaemon({ paseoHomeRoot: root, cleanup: false });
     const firstClient = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws` });
+    const firstApi = createPaseoApi(firstClient);
     let agentId: string;
     let workspaceId: string;
     try {
       await firstClient.connect();
       await firstClient.fetchAgents({ subscribe: {} });
+      await firstClient.patchDaemonConfig({ pluginsEnabled: true });
+      await firstClient.installDirectoryPlugin(pluginDirectory);
       const workspace = await firstClient.createWorkspace({
         source: { kind: "directory", path: directory },
         metadata: { "a.workspace": 1, "b.workspace": "to remove" },
@@ -345,19 +371,18 @@ test("metadata set at creation and through setMetadata survives a daemon restart
         metadata: { "a.agent": { nested: [1, 2] }, "b.agent": "to remove" },
       });
       agentId = agent.id;
-      expect(
-        await firstClient.setAgentMetadata(agentId, { "b.agent": null, "c.agent": true }),
-      ).toEqual({
+      const agentHandle = firstApi.agents.ref(agentId);
+      await agentHandle.setMetadata({ "b.agent": null, "c.agent": true });
+      await firstApi.workspaces.ref(workspaceId).setMetadata({
+        "b.workspace": null,
+        "c.workspace": [],
+      });
+      expect((await firstClient.fetchAgent({ agentId }))?.agent.metadata).toEqual({
         "a.agent": { nested: [1, 2] },
         "c.agent": true,
       });
-      expect(
-        await firstClient.setWorkspaceMetadata(workspaceId, {
-          "b.workspace": null,
-          "c.workspace": [],
-        }),
-      ).toEqual({ "a.workspace": 1, "c.workspace": [] });
     } finally {
+      await firstApi.dispose();
       await firstClient.close();
       await first.close();
     }
@@ -373,6 +398,25 @@ test("metadata set at creation and through setMetadata survives a daemon restart
         "a.workspace": 1,
         "c.workspace": [],
       });
+      await secondClient.fetchAgents({ subscribe: {} });
+      await secondClient.patchDaemonConfig({ pluginsEnabled: true });
+      await secondClient.installDirectoryPlugin(pluginDirectory);
+      await secondClient.refreshAgent(agentId);
+      await expect
+        .poll(async () => {
+          const logs = await secondClient.getPluginLogs("metadata-restart");
+          return logs
+            .filter((entry) => entry.message.startsWith('{"hook":'))
+            .map((entry) => JSON.parse(entry.message));
+        })
+        .toContainEqual({
+          hook: "agent.open.before",
+          metadata: { "a.agent": { nested: [1, 2] }, "c.agent": true },
+        });
+      expect((await secondClient.fetchAgent({ agentId }))?.agent.metadata).toEqual({
+        "a.agent": { nested: [1, 2] },
+        "c.agent": true,
+      });
     } finally {
       await secondClient.close();
       await second.close();
@@ -380,6 +424,7 @@ test("metadata set at creation and through setMetadata survives a daemon restart
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(directory, { recursive: true, force: true });
+    await rm(pluginDirectory, { recursive: true, force: true });
   }
 }, 60_000);
 

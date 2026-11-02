@@ -104,7 +104,8 @@ const beforeSchemas = {
       purpose: z.enum(["interactive", "history"]),
       title: z.string().nullable(),
       labels: z.record(z.string(), z.string()),
-      metadata: z.record(z.string(), z.custom<JsonValue>()),
+      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
+      metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
@@ -236,10 +237,11 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
       previous.purpose !== next.purpose ||
       previous.title !== next.title ||
       !isDeepStrictEqual(previous.labels, next.labels) ||
-      !isDeepStrictEqual(previous.metadata, next.metadata)
+      (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
     ) {
       throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
     }
+    return { ...result, metadata: previous.metadata };
   }
   if (name === "agent.create.before") {
     const previous = beforeSchemas["agent.create.before"].parse(input);

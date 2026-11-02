@@ -101,6 +101,46 @@ test("session-open hooks reject changes to session identity instead of silently 
   ).rejects.toThrow("agent.open.before hooks can only change env");
 });
 
+test("a session-open hook that returns its own object without metadata leaves metadata unchanged", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    agentId: request.agentId,
+    workspaceId: request.workspaceId,
+    provider: request.provider,
+    cwd: request.cwd,
+    reason: request.reason,
+    purpose: request.purpose,
+    title: request.title,
+    labels: request.labels,
+    tools: request.tools,
+    env: { HOOK: "1" },
+    mcpServers: request.mcpServers,
+  }));
+  const result = await hooks.invoke(
+    "operation",
+    "agent.open.before",
+    {
+      agentId: "agent",
+      workspaceId: null,
+      provider: "codex",
+      cwd: "/project",
+      title: null,
+      labels: {},
+      metadata: { "linear.issue": { id: "ENG-1" } },
+      tools: [],
+      mcpServers: {},
+      env: {},
+      reason: "resume",
+      purpose: "interactive",
+    },
+    paseo,
+  );
+  expect(result).toMatchObject({
+    env: { HOOK: "1" },
+    metadata: { "linear.issue": { id: "ENG-1" } },
+  });
+});
+
 test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
   "session-open targeting metadata is read-only: %j",
   async (patch) => {
