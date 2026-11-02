@@ -200,13 +200,21 @@ those collections with its subset. Inclusive and default observations have disti
 scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
 Clients gate creation and inclusive discovery on `features.backgroundWorkspaces`.
 
-### Private daemon helpers
+### Disposable internal helpers
 
 Branch-name and commit-message generators still use private disposable internal runtimes.
 `AgentManager` does not persist them or their provider sessions, excludes them from public
 discovery and plugin hooks, and drops their timelines on archive. An archived helper retains
 its exact-ID result briefly to cover completion before a waiter attaches. This internal
-lifecycle is separate from public workspace visibility and is not a public creation option.
+lifecycle is separate from public workspace visibility.
+
+The SDK also exposes `internal: true` on agent creation for plugin metadata tasks such as title
+generation. It requires an existing workspace or caller agent and the `internalAgentCreation`
+host capability. Internal requests use the ordinary provider/config resolution and exact-ID
+execution APIs but bypass durable creation and message receipts. Workspace/worktree provisioning,
+durable idempotency, caller-selected IDs, and creation observation are rejected. The caller owns
+archiving, including after timeout or failure; disconnect does not cancel the runtime. See the
+[SDK title-generation example](../public-docs/sdk/agents.md#generate-a-title-with-an-internal-helper).
 
 ## Archive
 

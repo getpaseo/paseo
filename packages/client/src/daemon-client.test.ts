@@ -7478,6 +7478,44 @@ test("wire snapshot callers own expansion and receive hash references unchanged"
   expect(await request).toEqual(body);
 });
 
+test("internal agent creation rejects on disconnect and is never replayed on reconnect", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "internal-creation",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const features = {
+    internalAgentCreation: true,
+    creationLifecycle: true,
+    ownedSubscriptions: true,
+  };
+  const connected = client.connect();
+  transport.triggerOpen({ features });
+  await connected;
+  const creation = client.createAgent({
+    provider: "codex",
+    cwd: "/project",
+    workspaceId: "wks_0123456789abcdef",
+    internal: true,
+    initialPrompt: "Generate a title",
+  });
+  expect(parseSentFrame(transport.sent[0])).toMatchObject({
+    type: "agent.create.request",
+    internal: true,
+    initialPrompt: "Generate a title",
+  });
+  const failed = expect(creation).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
+  transport.triggerClose();
+  await failed;
+  const reconnected = client.connect();
+  transport.triggerOpen({ features });
+  await reconnected;
+  expect(transport.sent).toEqual([]);
+});
+
 test("creation lifecycle sends the keyed agent and initial prompt as one intent", async () => {
   const transport = createMockTransport();
   const client = new DaemonClient({

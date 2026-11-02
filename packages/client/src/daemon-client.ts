@@ -499,6 +499,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  internal?: CreateAgentRequestMessage["internal"];
   background?: CreateAgentRequestMessage["background"];
   /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   worktreeName?: string;
@@ -3265,6 +3266,23 @@ export class DaemonClient {
       throw new Error(
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
       );
+    }
+    if (options.internal) {
+      if (this.lastServerInfoMessage?.features?.internalAgentCreation !== true) {
+        throw new Error("Update the host to create internal agents.");
+      }
+      if (options.onEvent) {
+        throw new Error("Internal agents do not support durable creation observation.");
+      }
+      // Disposable helpers must not acquire a durable creation receipt or reconnect replay.
+      const result = await this.sendCorrelatedSessionRequest({
+        requestId: options.requestId,
+        message: { ...options, config: resolveAgentConfig(options), type: "agent.create.request" },
+        responseType: "agent.create.response",
+        timeout: 0,
+      });
+      if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
+      return result.agent;
     }
     if (options.background !== undefined) this.requireBackgroundWorkspaces();
     const result = await this.creations.createAgent({
