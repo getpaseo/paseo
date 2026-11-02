@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { AgentStorage } from "./agent-storage.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
-import { execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type {
   ProviderConnection,
@@ -1858,6 +1859,48 @@ describe("pending provider responses", () => {
 });
 
 describe("plugin provider launch and status", () => {
+  test("passes configured Electron mode to a real diagnostic child process", async () => {
+    const logger = createTestLogger();
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([
+      {
+        id: "environment-probe",
+        label: "Environment probe",
+        command: [
+          process.execPath,
+          "-e",
+          "console.log(JSON.stringify({ mode: process.env.ELECTRON_RUN_AS_NODE ?? null, internal: process.env.PASEO_NODE_ENV ?? null, parent: process.env.CLAUDECODE ?? null }))",
+        ],
+        async status({ launch }) {
+          if (!launch) throw new Error("Missing provider launch");
+          const { stdout } = await promisify(execFile)(launch.command, launch.args, {
+            env: launch.env,
+            timeout: 5000,
+          });
+          return { available: true, diagnostic: stdout.trim() };
+        },
+        async connect() {
+          throw new Error("A diagnostic does not need a provider connection");
+        },
+      },
+    ]);
+    const definition = registry.definitions()["environment-probe"]!;
+    const client = definition.createClient(
+      logger,
+      ProviderOverrideSchema.parse({ env: { ELECTRON_RUN_AS_NODE: "1" } }),
+    );
+    try {
+      const diagnostic = await client.getDiagnostic!();
+      expect(JSON.parse(diagnostic.diagnostic)).toEqual({
+        mode: "1",
+        internal: null,
+        parent: null,
+      });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves the executable against the provider's PATH override", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = { ...harness.registration, command: ["node"] };
