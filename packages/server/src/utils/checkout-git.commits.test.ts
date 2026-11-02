@@ -332,18 +332,24 @@ describe("listCheckoutCommits", () => {
     ]);
   });
 
-  it.each([false, true])(
-    "opens a file moved up out of a directory (edited: %s)",
-    async (edited) => {
+  it.each([
+    {
+      label: "without edits",
+      content: "one\ntwo\nthree\nfour\nfive\n",
+      additions: 0,
+      deletions: 0,
+    },
+    { label: "with edits", content: "one\nTWO\nthree\nfour\nfive\n", additions: 1, deletions: 1 },
+  ])(
+    "opens a file moved up out of a directory $label",
+    async ({ content, additions, deletions }) => {
       const { repoDir } = initRepoOnMain();
       git(["checkout", "-b", "feature"], repoDir);
       mkdirSync(join(repoDir, "src", "nested"), { recursive: true });
       commitFile(repoDir, "src/nested/a.txt", "one\ntwo\nthree\nfour\nfive\n", "Add nested file");
       git(["mv", "src/nested/a.txt", "src/a.txt"], repoDir);
-      if (edited) {
-        writeFileSync(join(repoDir, "src/a.txt"), "one\nTWO\nthree\nfour\nfive\n");
-        git(["add", "src/a.txt"], repoDir);
-      }
+      writeFileSync(join(repoDir, "src/a.txt"), content);
+      git(["add", "src/a.txt"], repoDir);
       commit(repoDir, "Move file up");
 
       const { commits } = await listCheckoutCommits({ cwd: repoDir });
@@ -353,8 +359,8 @@ describe("listCheckoutCommits", () => {
       expect(movedCommit.files).toEqual([
         {
           path: "src/a.txt",
-          additions: edited ? 1 : 0,
-          deletions: edited ? 1 : 0,
+          additions,
+          deletions,
           status: "renamed",
         },
       ]);
@@ -364,8 +370,8 @@ describe("listCheckoutCommits", () => {
         path: "src/a.txt",
         isNew: false,
         isDeleted: false,
-        additions: edited ? 1 : 0,
-        deletions: edited ? 1 : 0,
+        additions,
+        deletions,
       });
     },
   );
