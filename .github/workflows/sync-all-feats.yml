@@ -1,15 +1,12 @@
 name: Sync all-feats
 
-# Daily: merge the newest upstream STABLE release tag (vX.Y.Z, no prerelease
+# Manual: merge the newest upstream STABLE release tag (vX.Y.Z, no prerelease
 # suffix) into local/all-feats, push to fork, trigger build.
 # Upstream beta/main-tip commits are intentionally ignored — builds must
 # contain exactly one clean release plus fork features.
 # On conflict: open an issue once and fail loudly instead of force-merging.
 
 on:
-  schedule:
-    # 01:30 UTC = 09:30 UTC+8, once a day
-    - cron: "30 1 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -92,7 +89,7 @@ jobs:
             gh issue create \
               --repo "${{ github.repository }}" \
               --title "Sync conflict: upstream stable tag no longer merges cleanly" \
-              --body "Daily sync of getpaseo/paseo stable tag \`${{ steps.tag.outputs.tag }}\` into \`local/all-feats\` hit merge conflicts. Resolve locally, push, and the next run builds. Failing run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              --body "Manual sync of getpaseo/paseo stable tag \`${{ steps.tag.outputs.tag }}\` into \`local/all-feats\` hit merge conflicts. Resolve locally, push, and the next run builds. Failing run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
           exit 1
 
