@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveWorktreeCreationIntent } from "../server/resolve-worktree-creation-intent.js";
+
 import type { PullRequestCommandStatus } from "./forge-service.js";
 import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
 import type { GitLabStatusFacts } from "./gitlab-facts.js";
@@ -484,36 +486,70 @@ describe("createGitLabService", () => {
         checkoutTarget: target!,
       }),
     ).toBe("release/v0.4.0");
-    expect(calls[0]).toEqual(["mr", "view", "14", "-F", "json"]);
+    expect(calls).toEqual([["mr", "view", "14", "-F", "json"]]);
   });
 
-  it("marks fork merge request checkout targets as cross-repository", async () => {
-    const { service } = makeService(() =>
-      ok(
-        JSON.stringify({
-          ...OPEN_MR,
-          source_project_id: 202,
-          target_project_id: 101,
-          author: { username: "contributor" },
-        }),
-      ),
-    );
+  it.each(["contributor", "team"])(
+    "resolves the source project rather than the MR author for %s forks",
+    async (owner) => {
+      const { service, calls } = makeService((args) => {
+        if (args[0] === "api")
+          return ok(
+            JSON.stringify({
+              namespace: { full_path: owner },
+              ssh_url_to_repo: `git@gitlab.example.com:${owner}/fork.git`,
+              http_url_to_repo: `https://gitlab.example.com/${owner}/fork.git`,
+            }),
+          );
+        return ok(
+          JSON.stringify({ ...OPEN_MR, source_project_id: 202, author: { username: "mr-author" } }),
+        );
+      });
+      const intent = await resolveWorktreeCreationIntent(
+        {
+          action: "checkout",
+          checkoutSource: { kind: "change_request", forge: "gitlab", number: 14 },
+        },
+        "/repo",
+        { forge: "gitlab", forgeService: service, resolveDefaultBranch: async () => "main" },
+      );
+      expect(intent).toMatchObject({
+        kind: "checkout-change-request",
+        headRepositoryOwner: owner,
+        headRepository: `${owner}/fork`,
+        pushRemoteUrl: `git@gitlab.example.com:${owner}/fork.git`,
+        localBranchName: `${owner}/release/v0.4.0`,
+        checkoutRefs: [
+          { remoteName: "origin", remoteRef: "refs/merge-requests/14/head" },
+          { remoteName: "origin", remoteRef: "refs/heads/release/v0.4.0" },
+        ],
+      });
+      expect(calls).toEqual([
+        ["mr", "view", "14", "-F", "json"],
+        ["api", "projects/202"],
+      ]);
+    },
+  );
 
-    const target = await service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 14 });
+  it("keeps the target MR ref usable when its source project is inaccessible", async () => {
+    const { service } = makeService((args) => {
+      if (args[0] === "api") throw { code: 1, stderr: "404 Project Not Found" };
+      return ok(JSON.stringify({ ...OPEN_MR, source_project_id: 202 }));
+    });
+    const target = await service.getPullRequestCheckoutTarget!({ cwd: "/repo", number: 14 });
     expect(target).toMatchObject({
-      number: 14,
-      headRefName: "release/v0.4.0",
       isCrossRepository: true,
-      headOwnerLogin: "contributor",
+      headOwnerLogin: null,
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
+      checkoutRefs: [
+        { remoteName: "origin", remoteRef: "refs/merge-requests/14/head" },
+        { remoteName: "origin", remoteRef: "refs/heads/release/v0.4.0" },
+      ],
     });
     expect(
-      service.buildPrLocalBranchName?.({
-        headRef: target!.headRefName,
-        checkoutTarget: target!,
-      }),
-    ).toBe("contributor/release/v0.4.0");
+      service.buildPrLocalBranchName!({ headRef: target.headRefName, checkoutTarget: target }),
+    ).toBe("pr-14/release/v0.4.0");
   });
 
   it("creates a merge request and parses the URL and iid from glab output", async () => {
