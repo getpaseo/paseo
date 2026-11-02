@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { AgentManager } from "../agent-manager.js";
 import type { AgentSession, AgentStreamEvent } from "../agent-sdk-types.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
@@ -90,12 +91,54 @@ describe("GenericACPAgentClient permission requests when a turn ends early", () 
       }
     });
   });
+
+  test.each(["fail", "cancel"] as const)(
+    "settles an outside-turn permission that the manager clears when a turn ends with %s",
+    async (ending) => {
+      await withFakeACPAgent(`outside_${ending}`, async (command, cwd) => {
+        const logger = createTestLogger();
+        const client = new GenericACPAgentClient({
+          logger,
+          command,
+          waitForInitialCommands: false,
+        });
+        const manager = new AgentManager({ clients: { acp: client }, logger });
+        const agent = await manager.createAgent({ provider: "acp", cwd }, undefined, {
+          workspaceId: undefined,
+        });
+        try {
+          await waitForManagedPermission(manager, agent.id);
+          if (ending === "fail") {
+            await expect(manager.runAgent(agent.id, "turn one")).rejects.toThrow(
+              "turn failed with a permission open",
+            );
+          } else {
+            await expect(manager.runAgent(agent.id, "turn one")).resolves.toMatchObject({
+              canceled: true,
+            });
+          }
+          expect(manager.getPendingPermissions(agent.id)).toEqual([]);
+          const result = await manager.runAgent(agent.id, "turn two");
+          expect(result.finalText).toBe(
+            'perm-outside answered: {"outcome":{"outcome":"cancelled"}}',
+          );
+        } finally {
+          await manager.closeAgent(agent.id);
+          await manager.flush();
+        }
+      });
+    },
+  );
 });
 
 function collectEvents(session: AgentSession): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   return events;
+}
+
+async function waitForManagedPermission(manager: AgentManager, agentId: string): Promise<void> {
+  await expect.poll(() => manager.getPendingPermissions(agentId).length).toBe(1);
 }
 
 function hasEvent(
@@ -145,7 +188,15 @@ async function waitForToolUpdate(events: AgentStreamEvent[]): Promise<void> {
 }
 
 async function withFakeACPAgent(
-  ending: "fail" | "cancel" | "end_turn" | "completed" | "failed" | "outside_turn",
+  ending:
+    | "fail"
+    | "cancel"
+    | "end_turn"
+    | "completed"
+    | "failed"
+    | "outside_turn"
+    | "outside_fail"
+    | "outside_cancel",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-permission-turn-failure-"));
@@ -167,6 +218,7 @@ const ending = process.argv[2];
 const rl = readline.createInterface({ input: process.stdin });
 let promptCount = 0;
 let permissionAnswer = null;
+let outsidePermissionAnswer = null;
 
 function write(message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
@@ -193,6 +245,7 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === undefined) {
     if (message.id === "perm-1") permissionAnswer = message.result ?? { error: message.error };
+    if (message.id === "perm-outside") outsidePermissionAnswer = message.result ?? { error: message.error };
     return;
   }
   if (message.method === "initialize") {
@@ -200,7 +253,7 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "session/new") {
-    if (ending === "outside_turn") ask("session-1", "perm-outside", "tool-outside");
+    if (ending.startsWith("outside_")) ask("session-1", "perm-outside", "tool-outside");
     write({ id: message.id, result: { sessionId: "session-1" } });
     return;
   }
@@ -216,7 +269,7 @@ rl.on("line", (line) => {
         return;
       }
       setTimeout(() => {
-        if (ending === "cancel") {
+        if (ending === "cancel" || ending === "outside_cancel") {
           write({ id: message.id, result: { stopReason: "cancelled" } });
         } else if (ending === "end_turn" || ending === "outside_turn") {
           write({ id: message.id, result: { stopReason: "end_turn" } });
@@ -226,12 +279,14 @@ rl.on("line", (line) => {
       }, 50);
       return;
     }
-    const state = permissionAnswer === null ? "unanswered" : "answered: " + JSON.stringify(permissionAnswer);
+    const answer = ending.startsWith("outside_") ? outsidePermissionAnswer : permissionAnswer;
+    const requestId = ending.startsWith("outside_") ? "perm-outside" : "perm-1";
+    const state = answer === null ? "unanswered" : "answered: " + JSON.stringify(answer);
     write({
       method: "session/update",
       params: {
         sessionId,
-        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "perm-1 " + state } },
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: requestId + " " + state } },
       },
     });
     write({ id: message.id, result: { stopReason: "end_turn" } });

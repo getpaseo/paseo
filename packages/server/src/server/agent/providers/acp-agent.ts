@@ -3419,7 +3419,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
-    this.cancelPendingPermissions((pending) => pending.turnId === event.turnId);
+    // Failed and canceled turns clear every request in the manager. Answer the
+    // same set here so an outside-turn request cannot keep the provider blocked.
+    this.cancelPendingPermissions(
+      (pending) => event.type !== "turn_completed" || pending.turnId === event.turnId,
+    );
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
