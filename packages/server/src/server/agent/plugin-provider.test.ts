@@ -1209,6 +1209,30 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
+    test.runIf(shape === "controls")(
+      "reports an option the plugin stops reporting as removed, alone or with another change",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        changeOnItsOwn({ tokenBudget: undefined });
+        changeOnItsOwn({ tokenBudget: 700 });
+        changeOnItsOwn({ tokenBudget: undefined, loud: true });
+
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: null } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 700 } },
+          {
+            type: "options_changed",
+            provider: "plugin-direct",
+            patch: { token_budget: null, loud: true },
+          },
+        ]);
+        await session.close();
+      },
+    );
+
     test("a rejected apply reports what the plugin moved before refusing, since nothing is stored", async () => {
       const { session, events } = await openStubbornVoiceSession({}, { refuseAfterChanging: true });
 

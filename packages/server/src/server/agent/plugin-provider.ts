@@ -1675,6 +1675,11 @@ class PluginAgentSession implements AgentSession {
   private reportOptionChanges(): AgentStreamEvent[] {
     if (this.applyingOptions) return [];
     const patch = this.optionDifferences(this.knownOptions);
+    // A key the plugin reported before and no longer reports went back to its default.
+    const current = this.currentOptions();
+    for (const id of Object.keys(this.knownOptions)) {
+      if (!(id in current)) patch[id] = null;
+    }
     if (Object.keys(patch).length === 0) return [];
     this.commitOptions();
     return [{ type: "options_changed", provider: this.provider, patch }];
