@@ -59,7 +59,7 @@ test("a branch and metadata chosen for one project are not sent for another", as
       await screen.switchToOtherProject();
       const created = await screen.createWorkspace();
       expect(created.branch).not.toBe("pas-101-slow-sidebar");
-      expect(JSON.stringify(created.metadata ?? {})).not.toContain("PAS-101");
+      expect(created.metadata ?? {}).toEqual({});
     },
   );
 });
