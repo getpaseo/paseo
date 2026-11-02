@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -189,6 +189,71 @@ describe("resolveProviderLaunch", () => {
 });
 
 describe("checkProviderLaunchAvailable", () => {
+  test.each([
+    { lookup: "absolute", configured: true },
+    { lookup: "PATH", configured: true },
+    { lookup: "default", configured: true },
+    { lookup: "absolute", configured: false },
+    { lookup: "PATH", configured: false },
+    { lookup: "default", configured: false },
+  ])(
+    "passes finalized provider environment to the $lookup probe (configured=$configured)",
+    async ({ lookup, configured }) => {
+      const dir = makeTempDir();
+      const observed = path.join(dir, "probe.json");
+      const script = path.join(dir, "probe.cjs");
+      writeFileSync(
+        script,
+        `require("node:fs").writeFileSync(${JSON.stringify(observed)}, JSON.stringify({
+          args: process.argv.slice(2),
+          mode: process.env.ELECTRON_RUN_AS_NODE ?? null,
+          inherited: process.env.PASEO_NODE_ENV ?? null,
+          parent: process.env.CLAUDECODE ?? null,
+          ordinary: process.env.CUSTOM
+        }));`,
+      );
+      const command = process.platform === "win32" ? "provider.cmd" : "provider";
+      const executable = path.join(dir, command);
+      writeFileSync(
+        executable,
+        process.platform === "win32"
+          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec '${process.execPath.replaceAll("'", "'\\''")}' '${script.replaceAll("'", "'\\''")}' "$@"\n`,
+      );
+      chmodSync(executable, 0o755);
+      const env = createProviderEnv({
+        baseEnv: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "inherited",
+          PASEO_NODE_ENV: "production",
+          CLAUDECODE: "1",
+        },
+        runtimeSettings: { env: configured ? { ELECTRON_RUN_AS_NODE: "1" } : {} },
+        overlays: [{ CUSTOM: "session", PASEO_NODE_ENV: "development" }],
+      });
+      env.PATH = `${dir}${path.delimiter}${env.PATH ?? ""}`;
+      const launch = await resolveProviderLaunch({
+        commandConfig:
+          lookup === "default"
+            ? undefined
+            : { mode: "replace", argv: [lookup === "absolute" ? executable : command] },
+        defaultBinary: command,
+      });
+
+      await expect(checkProviderLaunchAvailable({ ...launch, env }, { command })).resolves.toEqual({
+        available: true,
+        resolvedPath: executable,
+      });
+      expect(JSON.parse(readFileSync(observed, "utf8"))).toEqual({
+        args: ["--version"],
+        mode: configured ? "1" : null,
+        inherited: null,
+        parent: null,
+        ordinary: "session",
+      });
+    },
+  );
+
   test("reports available with a resolved path", async () => {
     const binDir = makeTempDir();
     const binary = createExecutable(binDir, "default-provider");

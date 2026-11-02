@@ -44,7 +44,8 @@ export interface ResolvedProviderLaunch {
   command: string;
   args: string[];
   source: ProviderLaunchSource;
-  env?: ProcessEnvRecord;
+  /** Finalized provider environment from createProviderEnv(), ready for child execution. */
+  env?: ExternalProcessEnv;
 }
 
 export interface ProviderLaunchAvailability {
@@ -67,7 +68,8 @@ function normalizeLaunchDefault(
 }
 
 async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
-  const found = await findExecutable(command, { env });
+  // launch.env is finalized by the provider builder, including explicit runtime controls.
+  const found = await findExecutable(command, { env, envMode: env ? "internal" : "external" });
   if (found) {
     return found;
   }
@@ -79,10 +81,11 @@ async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promi
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  env?: ProcessEnvRecord,
 ): Promise<string | null> {
   return defaultBinary.resolvePath
     ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    : await resolveLaunchPath(defaultBinary.command, env);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -121,7 +124,7 @@ export async function checkProviderLaunchAvailable(
 ): Promise<ProviderLaunchAvailability> {
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
+      ? await resolveDefaultLaunchPath(defaultBinary, launch.env)
       : await resolveLaunchPath(launch.command, launch.env);
   return {
     available: resolvedPath !== null,
