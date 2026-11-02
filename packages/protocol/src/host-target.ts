@@ -14,11 +14,22 @@ export type HostTarget =
   | {
       kind: "socket";
       url: string;
+      connection:
+        | { type: "directTcp"; endpoint: string; useTls: boolean }
+        | { type: "directSocket"; path: string }
+        | { type: "directPipe"; path: string }
+        | { type: "relay"; offer: ConnectionOffer };
       socketPath?: string;
       password?: string;
       offer?: ConnectionOffer;
       description: string;
     };
+
+/** Serialize a local socket target in the shared host grammar. */
+export function serializeSocketHostTarget(type: "unix" | "pipe", path: string): string {
+  if (!path || path === "~") throw new Error("Invalid socket path");
+  return `${type}://${path}`;
+}
 
 /** The shared saved-host and CLI grammar. Errors never echo credential-bearing input. */
 export function parseHostTarget(input: string): HostTarget {
@@ -57,6 +68,9 @@ function parse(input: string): HostTarget {
     const pipe = input.startsWith("pipe://") || input.startsWith("\\\\.\\pipe\\");
     return {
       kind: "socket",
+      connection: pipe
+        ? { type: "directPipe", path: socketPath }
+        : { type: "directSocket", path: socketPath },
       socketPath,
       url: pipe ? "ws://localhost/ws" : `ws+unix://${socketPath}:/ws`,
       description: `${pipe ? "pipe" : "unix"}://${socketPath}`,
@@ -67,6 +81,7 @@ function parse(input: string): HostTarget {
   const endpoint = validatedEndpoint(/^\d+$/.test(input) ? `127.0.0.1:${input}` : input);
   return {
     kind: "socket",
+    connection: { type: "directTcp", endpoint, useTls: false },
     url: buildDaemonWebSocketUrl(endpoint, { useTls: false }),
     description: `tcp://${endpoint}`,
   };
@@ -75,6 +90,7 @@ function relayTarget(offer: ConnectionOffer, password?: string): HostTarget {
   const endpoint = validatedEndpoint(offer.relay.endpoint);
   return {
     kind: "socket",
+    connection: { type: "relay", offer },
     url: buildRelayWebSocketUrl({
       endpoint,
       serverId: offer.serverId,
@@ -97,6 +113,7 @@ function tcpTarget(input: string): HostTarget {
   );
   return {
     kind: "socket",
+    connection: { type: "directTcp", endpoint, useTls: parts.useTls },
     url: buildDaemonWebSocketUrl(endpoint, { useTls: parts.useTls }),
     password: parts.password,
     description: `tcp://${endpoint}`,
@@ -109,7 +126,15 @@ function websocketTarget(input: string): HostTarget {
   // Unknown query parameters may themselves contain credentials; discovery shows only the origin.
   if (url.pathname === "/") url.pathname = "/ws";
   url.searchParams.delete("password");
-  return { kind: "socket", url: url.toString(), password, description: url.origin };
+  const useTls = url.protocol === "wss:";
+  const endpoint = `${url.hostname}:${url.port || (useTls ? "443" : "80")}`;
+  return {
+    kind: "socket",
+    connection: { type: "directTcp", endpoint, useTls },
+    url: url.toString(),
+    password,
+    description: url.origin,
+  };
 }
 
 function sshTarget(input: string): HostTarget {

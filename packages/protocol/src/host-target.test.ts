@@ -1,5 +1,33 @@
 import { expect, test } from "vitest";
 import { parseHostTarget } from "./host-target.js";
+import { serializeSshTransportUri } from "./ssh-transport.js";
+import { serializeSocketHostTarget } from "./host-target.js";
+
+test("SSH and local socket targets round trip through their serializers", () => {
+  const ssh = parseHostTarget("ssh://deploy@build-box:2222?daemonPort=7777");
+  if (ssh.kind !== "ssh") throw new Error("expected SSH");
+  expect(parseHostTarget(serializeSshTransportUri(ssh.ssh))).toEqual(ssh);
+  for (const [type, path] of [
+    ["unix", "/tmp/paseo.sock"],
+    ["pipe", "\\\\.\\pipe\\paseo"],
+  ] as const) {
+    const target = parseHostTarget(`${type}://${path}`);
+    expect(parseHostTarget(serializeSocketHostTarget(type, path))).toEqual(target);
+  }
+});
+
+test.each([
+  ["example.com:6767", { type: "directTcp", endpoint: "example.com:6767", useTls: false }],
+  [
+    "tcp://example.com:6767?ssl=true",
+    { type: "directTcp", endpoint: "example.com:6767", useTls: true },
+  ],
+  ["wss://example.com/ws", { type: "directTcp", endpoint: "example.com:443", useTls: true }],
+  ["unix:///tmp/paseo.sock", { type: "directSocket", path: "/tmp/paseo.sock" }],
+  ["pipe://mypipe", { type: "directPipe", path: "mypipe" }],
+])("%s exposes its structured connection", (input, connection) => {
+  expect(parseHostTarget(input)).toMatchObject({ kind: "socket", connection });
+});
 
 test.each([
   ["127.0.0.1:6767", "tcp://127.0.0.1:6767"],
