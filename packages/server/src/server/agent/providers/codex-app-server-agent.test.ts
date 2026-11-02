@@ -1281,6 +1281,29 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("issues turn ids that stay unique after the thread is reopened", async () => {
+    // Idle runtime collection closes the provider session; the next prompt reopens it from
+    // persistence while the daemon keeps the earlier turns' rows and their turn ids.
+    const beforeReopen = createFakeCodexAppServer();
+    const firstSession =
+      await createProviderWithFakeAppServer(beforeReopen).createSession(createConfig());
+    const { turnId: firstTurnId } = await firstSession.startTurn("first turn");
+    const saved = waitForNextEvent(firstSession, "thread_started");
+    beforeReopen.startsTurn({ threadId: "thread-1" });
+    await saved;
+    const handle = firstSession.describePersistence()!;
+    await firstSession.close();
+
+    const afterReopen = createFakeCodexAppServer();
+    const resumed = await createProviderWithFakeAppServer(afterReopen).resumeSession(handle);
+    try {
+      const { turnId: secondTurnId } = await resumed.startTurn("turn after reopen");
+      expect(secondTurnId).not.toBe(firstTurnId);
+    } finally {
+      await resumed.close();
+    }
+  });
+
   test("keeps the default effort when a session without one is resumed after a restart", async () => {
     const beforeRestart = createFakeCodexAppServer();
     const firstSession = await createProviderWithFakeAppServer(beforeRestart).createSession(
@@ -4611,7 +4634,7 @@ describe("Codex app-server provider", () => {
       await expect(child).resolves.toMatchObject({
         type: "provider_subagent",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: expect.stringMatching(/^codex-turn-[0-9a-f]+-0$/),
         event: {
           type: "upsert",
           id: "legacy-only-child-thread",
@@ -4621,7 +4644,7 @@ describe("Codex app-server provider", () => {
       await expect(spawn).resolves.toMatchObject({
         type: "timeline",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: expect.stringMatching(/^codex-turn-[0-9a-f]+-0$/),
         item: {
           type: "tool_call",
           callId: "spawn-legacy-only-child",

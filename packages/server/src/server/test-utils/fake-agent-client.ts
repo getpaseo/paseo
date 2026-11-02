@@ -22,6 +22,7 @@ import type {
   FetchCatalogOptions,
 } from "../agent/agent-sdk-types.js";
 import type { AgentPermissionRequest, AgentPermissionResponse } from "../agent/agent-sdk-types.js";
+import { createTurnIdSequence } from "../agent/turn-ids.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 
 const TEST_CAPABILITIES: AgentCapabilityFlags = {
@@ -342,7 +343,7 @@ class FakeAgentSession implements AgentSession {
   private permissionGate: Deferred<AgentPermissionResponse> | null = null;
   private readonly historyPath: string;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
-  private nextTurnOrdinal = 0;
+  private readonly nextTurnId = createTurnIdSequence(0);
   private activeForegroundTurnId: string | null = null;
 
   readonly steerActiveTurn: AgentSession["steerActiveTurn"];
@@ -455,7 +456,7 @@ class FakeAgentSession implements AgentSession {
       throw new Error("A foreground turn is already active");
     }
 
-    const turnId = `fake-turn-${this.nextTurnOrdinal++}`;
+    const turnId = this.nextTurnId("fake");
     this.activeForegroundTurnId = turnId;
     this.onStartTurn?.(prompt, this.config);
 
