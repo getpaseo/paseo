@@ -181,7 +181,8 @@ export function createWorkspaceScriptsService(deps: {
     const workspace = await getWorkspace(input.workspaceId);
     await assertAutomationAllowed(workspace.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
-    if ((await getProjectLaunchNames(workspace, project)).has(input.scriptName)) {
+    const suppressedScriptNames = await getProjectLaunchNames(workspace, project);
+    if (suppressedScriptNames.has(input.scriptName)) {
       throw new Error(
         `Script '${input.scriptName}' is configured as a project launch; use 'paseo launch start ${input.scriptName}' instead`,
       );
@@ -193,6 +194,7 @@ export function createWorkspaceScriptsService(deps: {
       projectSlug: gitMetadata.projectSlug,
       branchName: gitMetadata.currentBranch,
       scriptName: input.scriptName,
+      suppressedScriptNames,
       daemonPort: getDaemonTcpPort?.() ?? null,
       daemonListenHost: getDaemonTcpHost?.() ?? null,
       serviceProxyPublicBaseUrl,

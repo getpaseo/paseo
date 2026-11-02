@@ -247,7 +247,7 @@ describe("buildSnapshot", () => {
     expect(spawnCalls[0]?.branchName).toBe(workspace.branch);
   });
 
-  test("hides a worktree script when the project defines a same-named launch", async () => {
+  test("excludes project launches when starting sibling worktree scripts", async () => {
     const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
     const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
     tempDirs.push(projectDirectory, workspaceDirectory);
@@ -257,7 +257,12 @@ describe("buildSnapshot", () => {
     );
     writeFileSync(
       join(workspaceDirectory, "paseo.json"),
-      JSON.stringify({ scripts: { dev: { type: "service", command: "./bin/legacy-dev" } } }),
+      JSON.stringify({
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev" },
+          api: { type: "service", command: "./bin/api" },
+        },
+      }),
     );
     const project = {
       projectId: "prj-launches",
@@ -274,9 +279,28 @@ describe("buildSnapshot", () => {
       projectId: project.projectId,
       cwd: workspaceDirectory,
     } as PersistedWorkspaceRecord;
-    const { service } = buildService({ workspace, project });
+    const { service, spawnCalls, emitted } = buildService({ workspace, project });
 
-    expect(await service.buildSnapshot(workspace, project)).toEqual([]);
+    expect(
+      (await service.buildSnapshot(workspace, project)).map((script) => script.scriptName),
+    ).toEqual(["api"]);
+    await service.start({ ...request, workspaceId: workspace.workspaceId, scriptName: "dev" });
+    expect(spawnCalls).toEqual([]);
+    expect(emitted).toContainEqual({
+      type: "start_workspace_script_response",
+      payload: {
+        requestId: request.requestId,
+        workspaceId: workspace.workspaceId,
+        scriptName: "dev",
+        terminalId: null,
+        error:
+          "Script 'dev' is configured as a project launch; use 'paseo launch start dev' instead",
+      },
+    });
+
+    await service.start({ ...request, workspaceId: workspace.workspaceId, scriptName: "api" });
+    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls[0]?.suppressedScriptNames).toEqual(new Set(["dev"]));
   });
 });
 

@@ -647,6 +647,51 @@ describe("runWorktreeAutoTerminals", () => {
     expect(createTerminalCalls).toEqual([]);
   });
 
+  it.each([
+    { allocation: "dynamic", port: undefined },
+    { allocation: "explicit", port: 43_000 },
+  ])("excludes superseded $allocation services from port and peer planning", async ({ port }) => {
+    commitPaseoConfig({
+      worktree: { servicePorts: { range: "43000-43004", blockSize: 4 } },
+      scripts: {
+        dev: { type: "service", command: "./bin/legacy-dev", port },
+        api: { type: "service", command: "./bin/api", port: 43_004 },
+      },
+    });
+    const serviceProxy = new ScriptRouteStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+
+    const result = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-superseded-service",
+      scriptName: "api",
+      suppressedScriptNames: new Set(["dev"]),
+      daemonPort: 6767,
+      serviceProxy,
+      runtimeStore: new WorkspaceScriptRuntimeStore(),
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+      workspaceRuntimeEnvironment,
+    });
+
+    expect(result.port).toBe(43_004);
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(createTerminalCalls[0]?.env).toMatchObject({
+      PASEO_PORT_BASE: "43000",
+      PASEO_PORT_END: "43003",
+      PASEO_PORT: "43004",
+      PASEO_SERVICE_API_PORT: "43004",
+    });
+    expect(createTerminalCalls[0]?.env).not.toHaveProperty("PASEO_SERVICE_DEV_PORT");
+    expect(createTerminalCalls[0]?.env).not.toHaveProperty("PASEO_SERVICE_DEV_URL");
+    expect(serviceProxy.listRoutes().map((route) => route.scriptName)).toEqual(["api"]);
+  });
+
   it("rejects an explicit service port reserved by an active launch block", async () => {
     const reservedPort = 45_678;
     commitPaseoConfig({

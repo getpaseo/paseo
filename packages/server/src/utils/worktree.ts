@@ -322,7 +322,10 @@ export async function getWorktreeTerminalSpecs(
   return specs;
 }
 
-export function getScriptConfigs(config: PaseoConfig | null): Map<string, ScriptConfig> {
+export function getScriptConfigs(
+  config: PaseoConfig | null,
+  suppressedScriptNames?: ReadonlySet<string>,
+): Map<string, ScriptConfig> {
   const scripts = config?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return new Map();
@@ -330,6 +333,9 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
 
   const result = new Map<string, ScriptConfig>();
   for (const [name, entry] of Object.entries(scripts)) {
+    if (suppressedScriptNames?.has(name)) {
+      continue;
+    }
     if (!entry || typeof entry !== "object") {
       continue;
     }
@@ -365,9 +371,12 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
   return result;
 }
 
-export function getExplicitWorkspaceServicePorts(config: PaseoConfig | null): Set<number> {
+export function getExplicitWorkspaceServicePorts(
+  config: PaseoConfig | null,
+  suppressedScriptNames?: ReadonlySet<string>,
+): Set<number> {
   const ports = new Set<number>();
-  for (const script of getScriptConfigs(config).values()) {
+  for (const script of getScriptConfigs(config, suppressedScriptNames).values()) {
     if (isServiceScript(script) && script.port !== undefined) {
       ports.add(script.port);
     }

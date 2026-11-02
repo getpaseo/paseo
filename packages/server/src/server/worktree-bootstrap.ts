@@ -367,6 +367,7 @@ export interface SpawnWorkspaceScriptOptions {
   projectSlug: string;
   branchName: string | null;
   scriptName: string;
+  suppressedScriptNames?: ReadonlySet<string>;
   daemonPort?: number | null;
   daemonListenHost?: string | null;
   serviceProxyPublicBaseUrl?: string | null;
@@ -465,7 +466,8 @@ async function setupServiceScriptRoute(params: {
       : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
 
   const peers: WorkspaceServicePeer[] = [];
-  for (const [peerScriptName, peerPort] of plannedPorts) {
+  for (const { scriptName: peerScriptName } of serviceDeclarations) {
+    const peerPort = requirePlannedWorkspaceServicePort(plannedPorts, peerScriptName);
     peers.push({
       scriptName: peerScriptName,
       port: peerScriptName === scriptName ? port : peerPort,
@@ -656,6 +658,7 @@ export async function spawnWorkspaceScript(
     projectSlug,
     branchName,
     scriptName,
+    suppressedScriptNames,
     daemonPort,
     daemonListenHost,
     serviceProxyPublicBaseUrl,
@@ -671,7 +674,7 @@ export async function spawnWorkspaceScript(
   if (!configResult.ok) {
     throw paseoConfigParseError(configResult);
   }
-  const scriptConfigs = getScriptConfigs(configResult.config);
+  const scriptConfigs = getScriptConfigs(configResult.config, suppressedScriptNames);
   const config = scriptConfigs.get(scriptName);
   if (!config) {
     throw new Error(`Script '${scriptName}' is not configured in paseo.json`);
@@ -699,7 +702,7 @@ export async function spawnWorkspaceScript(
       branchName,
       allocation: servicePortAllocation,
       excludedPorts: () => {
-        const ports = getExplicitWorkspaceServicePorts(configResult.config);
+        const ports = getExplicitWorkspaceServicePorts(configResult.config, suppressedScriptNames);
         for (const reservedPort of getAllReservedWorkspaceServicePorts()) {
           ports.add(reservedPort);
         }
