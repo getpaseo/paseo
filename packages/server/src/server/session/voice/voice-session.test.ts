@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
@@ -323,6 +324,41 @@ describe("VoiceSession streaming transcription", () => {
       }),
     );
 
+    await voiceSession.cleanup();
+  });
+});
+
+describe("VoiceSession agent system prompt", () => {
+  function recordReloads(host: FakeVoiceHost): Array<Partial<AgentSessionConfig>> {
+    const reloads: Array<Partial<AgentSessionConfig>> = [];
+    host.reloadAgentSession = async (agentId, overrides) => {
+      reloads.push(overrides);
+      return { id: agentId } as unknown as ManagedAgent;
+    };
+    return reloads;
+  }
+
+  test("disabling voice mode restores an absent system prompt", async () => {
+    const { voiceSession, host } = createVoiceSession();
+    const reloads = recordReloads(host);
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    await voiceSession.handleSetVoiceMode(false);
+
+    expect(reloads.at(-1)).toStrictEqual({ systemPrompt: undefined });
+    await voiceSession.cleanup();
+  });
+
+  test("disabling voice mode restores the original system prompt", async () => {
+    const { voiceSession, host } = createVoiceSession();
+    const reloads = recordReloads(host);
+    host.loadAgent = async (agentId) =>
+      ({ id: agentId, config: { systemPrompt: "Be terse." } }) as unknown as ManagedAgent;
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    await voiceSession.handleSetVoiceMode(false);
+
+    expect(reloads.at(-1)).toStrictEqual({ systemPrompt: "Be terse." });
     await voiceSession.cleanup();
   });
 });

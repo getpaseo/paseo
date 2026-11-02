@@ -28,6 +28,7 @@ import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/
 import { startAgentRun } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
+import { buildVoiceModeSystemPrompt } from "../voice-config.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentTimelineFetchOptions,
@@ -4771,6 +4772,125 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
       PASEO_AGENT_CWD: workdir,
     },
   });
+});
+
+test("reloadAgentSession with an undefined system prompt clears the saved system prompt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-system-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000008239",
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, systemPrompt: "Voice instructions." },
+    undefined,
+    { workspaceId: undefined },
+  );
+  expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBe("Voice instructions.");
+
+  const reloaded = await manager.reloadAgentSession(snapshot.id, { systemPrompt: undefined });
+  await storage.flush();
+
+  expect(client.resumeOverrides).toHaveLength(1);
+  expect(client.resumeOverrides[0]).toHaveProperty("systemPrompt", undefined);
+  expect(reloaded.config.systemPrompt).toBeUndefined();
+  expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBeUndefined();
+});
+
+test("loading a stored agent does not resume a saved legacy voice mode off block", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-voice-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const voiceModeOff =
+    "<paseo_voice_mode>\nPaseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.\n</paseo_voice_mode>";
+
+  class MetadataResumeClient extends TestAgentClient {
+    resumedConfig: AgentSessionConfig | undefined;
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumedConfig = {
+        ...(handle.metadata as Partial<AgentSessionConfig>),
+        ...overrides,
+        provider: "codex",
+        cwd: workdir,
+      };
+      return new TestAgentSession(this.resumedConfig);
+    }
+  }
+
+  const client = new MetadataResumeClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000008240",
+  });
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, systemPrompt: voiceModeOff },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(created.id);
+  const closed = await storage.get(created.id);
+  await storage.upsert({
+    ...closed!,
+    persistence: { ...closed!.persistence!, metadata: { systemPrompt: voiceModeOff } },
+  });
+
+  const loaded = await ensureAgentLoaded(created.id, {
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  await storage.flush();
+
+  expect(client.resumedConfig?.systemPrompt).toBeUndefined();
+  expect(loaded.config.systemPrompt).toBeUndefined();
+  expect((await storage.get(created.id))?.config?.systemPrompt).toBeUndefined();
+});
+
+test("an agent collected while voice mode is on resumes with its voice instructions", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-voice-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = await super.createSession(config);
+      session.canStopRuntime = async () => true;
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const collect = runtimeCleanup(manager);
+  const voiceModeOn = buildVoiceModeSystemPrompt(undefined);
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, systemPrompt: voiceModeOn },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const now = new Date(Date.now() + 61 * 60_000);
+    await collect({ now });
+    await collect({ now: new Date(now.getTime() + 61 * 60_000) });
+    expect(manager.getAgent(agent.id)).toBeNull();
+
+    const resumed = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(client.resumeOverrides.at(-1)?.systemPrompt).toBe(voiceModeOn);
+    expect(resumed.config.systemPrompt).toBe(voiceModeOn);
+  } finally {
+    await manager.closeAgent(manager.listAgents()[0]?.id ?? "missing").catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("reloadAgentSession preserves timeline and does not force history replay", async () => {

@@ -21,6 +21,7 @@ import type {
 } from "../../../agent-sdk-types.js";
 
 import { toDiagnosticErrorMessage } from "../../diagnostic-utils.js";
+import { OpenCodeHttpError } from "../http-error.js";
 
 import { runProviderTurn } from "../../provider-runner.js";
 
@@ -186,6 +187,12 @@ export class OpenCodeV2Session implements AgentSession {
         key: "paseo",
         value: system,
       });
+    else
+      await this.client.session.instructions.entry
+        .remove({ sessionID: this.id, key: "paseo" })
+        .catch((error: unknown) => {
+          if (!(error instanceof OpenCodeHttpError) || error.status !== 404) throw error;
+        });
   }
   private async startStream() {
     let ready!: () => void;
