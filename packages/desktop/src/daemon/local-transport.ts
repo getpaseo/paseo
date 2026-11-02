@@ -411,7 +411,8 @@ export function createLocalTransportManager(
       if (!isCurrent(session) || session.state !== "open") {
         return;
       }
-      if (isBinary || data instanceof Buffer) {
+      // Node ws also delivers text frames as Buffers; the opcode determines their type.
+      if (isBinary) {
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
         emitEvent({
           sessionId: session.id,
