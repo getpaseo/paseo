@@ -276,7 +276,8 @@ export function createPluginWorker(options: {
       reconnect: { enabled: true },
       transportFactory,
     });
-    paseo = createPaseoApi(daemonClient);
+    const api = createPaseoApi(daemonClient);
+    paseo = api;
     await daemonClient.connect();
     settingsStore = message.settingsDirectory
       ? new PluginSettingsStore(message.settingsDirectory, (settingsId) =>
@@ -292,6 +293,7 @@ export function createPluginWorker(options: {
       addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
+      paseo: api,
     });
     if (typeof contributedCleanup !== "function") {
       throw new Error("Plugin contribution must return a cleanup function");
