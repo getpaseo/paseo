@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -551,6 +552,36 @@ describe("getProjectIcon", () => {
 
     const result = await getProjectIcon(tempDir);
     expect(result?.data).toBe(squarePng.toString("base64"));
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "skips a named pipe that matches an icon name",
+    async () => {
+      // Reading a FIFO with no writer blocks forever; it must never be opened.
+      execFileSync("mkfifo", [join(tempDir, "favicon.svg")]);
+      writeFileSync(join(tempDir, "favicon.png"), squarePng);
+
+      const result = await getProjectIcon(tempDir);
+      expect(result?.data).toBe(squarePng.toString("base64"));
+    },
+    2000,
+  );
+
+  it("returns a square extended-format (VP8X) WebP icon", async () => {
+    // RIFF header + VP8X chunk: flags, reserved, then 24-bit canvas width-1 and height-1.
+    const webp = Buffer.alloc(30);
+    webp.write("RIFF", 0, "ascii");
+    webp.writeUInt32LE(22, 4);
+    webp.write("WEBP", 8, "ascii");
+    webp.write("VP8X", 12, "ascii");
+    webp.writeUInt32LE(10, 16);
+    webp.writeUIntLE(63, 24, 3);
+    webp.writeUIntLE(63, 27, 3);
+    writeFileSync(join(tempDir, "favicon.webp"), webp);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.mimeType).toBe("image/webp");
+    expect(result?.data).toBe(webp.toString("base64"));
   });
 
   it("returns null when no icon is found", async () => {

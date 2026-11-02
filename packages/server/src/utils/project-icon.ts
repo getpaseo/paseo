@@ -161,6 +161,11 @@ function getWebpDimensions(buffer: Buffer): ImageDimensions | null {
     const width = (bits & 0x3fff) + 1;
     const height = ((bits >> 14) & 0x3fff) + 1;
     return { width, height };
+  } else if (chunkType === "VP8X") {
+    // Extended format (alpha, metadata) - 24-bit canvas width-1 and height-1
+    const width = buffer.readUIntLE(24, 3) + 1;
+    const height = buffer.readUIntLE(27, 3) + 1;
+    return { width, height };
   }
   return null;
 }
@@ -316,11 +321,17 @@ async function isExistingDirectory(fullPath: string): Promise<boolean> {
  */
 type CandidateCheck<T> = (fullPath: string) => Promise<T | null>;
 
-async function findIconInDir<T>(
-  dir: string,
-  patterns: string[],
-  check: CandidateCheck<T>,
-): Promise<T | null> {
+interface FindIconInDirInput<T> {
+  dir: string;
+  patterns: string[];
+  check: CandidateCheck<T>;
+}
+
+async function findIconInDir<T>({
+  dir,
+  patterns,
+  check,
+}: FindIconInDirInput<T>): Promise<T | null> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -375,7 +386,7 @@ async function searchDirRecursively<T>(
   }
 
   // First check this directory for icons
-  const found = await findIconInDir(dir, patterns, check);
+  const found = await findIconInDir({ dir, patterns, check });
   if (found) {
     return found;
   }
@@ -416,16 +427,24 @@ export async function findProjectIcon(
   projectDir: string,
   maxDepth: number = 3,
 ): Promise<string | null> {
-  return searchProjectIcon(projectDir, maxDepth, async (fullPath) =>
-    (await isExistingFile(fullPath)) ? fullPath : null,
-  );
+  return searchProjectIcon({
+    projectDir,
+    maxDepth,
+    check: async (fullPath) => ((await isExistingFile(fullPath)) ? fullPath : null),
+  });
 }
 
-async function searchProjectIcon<T>(
-  projectDir: string,
-  maxDepth: number,
-  check: CandidateCheck<T>,
-): Promise<T | null> {
+interface SearchProjectIconInput<T> {
+  projectDir: string;
+  maxDepth: number;
+  check: CandidateCheck<T>;
+}
+
+async function searchProjectIcon<T>({
+  projectDir,
+  maxDepth,
+  check,
+}: SearchProjectIconInput<T>): Promise<T | null> {
   const ignoredDirsSet = new Set(IGNORED_DIRS);
 
   // First search priority directories
@@ -463,7 +482,7 @@ async function searchProjectIcon<T>(
             check,
           );
           if (packagePriorityResult) return packagePriorityResult;
-          return await findIconInDir(packagePath, ICON_PATTERNS, check);
+          return await findIconInDir({ dir: packagePath, patterns: ICON_PATTERNS, check });
         }),
       );
       return packageResults.find((result): result is Awaited<T> => result !== null) ?? null;
@@ -497,7 +516,7 @@ async function findDirRecursively<T>(
   }
 
   // Check root for icons
-  const found = await findIconInDir(dir, ICON_PATTERNS, check);
+  const found = await findIconInDir({ dir, patterns: ICON_PATTERNS, check });
   if (found) {
     return found;
   }
@@ -539,13 +558,14 @@ async function findDirRecursively<T>(
  * @returns The icon data with mime type, or null if not found
  */
 export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | null> {
-  return searchProjectIcon(projectDir, 3, loadIcon);
+  return searchProjectIcon({ projectDir, maxDepth: 3, check: loadIcon });
 }
 
 async function loadIcon(iconPath: string): Promise<ProjectIcon | null> {
   try {
     const stats = await stat(iconPath);
-    if (stats.size > MAX_ICON_SIZE) {
+    // Regular files only: reading a named pipe with no writer blocks forever.
+    if (!stats.isFile() || stats.size > MAX_ICON_SIZE) {
       return null;
     }
 
