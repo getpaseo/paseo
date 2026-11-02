@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listCheckoutCommits } from "./checkout-git.js";
+import { getCommitFileDiff, listCheckoutCommits } from "./checkout-git.js";
 import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 const tempDirs: string[] = [];
@@ -332,20 +332,43 @@ describe("listCheckoutCommits", () => {
     ]);
   });
 
-  it("keeps the destination path when a file moves up out of a directory", async () => {
-    const { repoDir } = initRepoOnMain();
-    git(["checkout", "-b", "feature"], repoDir);
-    mkdirSync(join(repoDir, "src", "nested"), { recursive: true });
-    commitFile(repoDir, "src/nested/a.txt", "content\n", "Add nested file");
-    git(["mv", "src/nested/a.txt", "src/a.txt"], repoDir);
-    commit(repoDir, "Move file up");
+  it.each([false, true])(
+    "opens a file moved up out of a directory (edited: %s)",
+    async (edited) => {
+      const { repoDir } = initRepoOnMain();
+      git(["checkout", "-b", "feature"], repoDir);
+      mkdirSync(join(repoDir, "src", "nested"), { recursive: true });
+      commitFile(repoDir, "src/nested/a.txt", "one\ntwo\nthree\nfour\nfive\n", "Add nested file");
+      git(["mv", "src/nested/a.txt", "src/a.txt"], repoDir);
+      if (edited) {
+        writeFileSync(join(repoDir, "src/a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+        git(["add", "src/a.txt"], repoDir);
+      }
+      commit(repoDir, "Move file up");
 
-    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+      const { commits } = await listCheckoutCommits({ cwd: repoDir });
 
-    expect(commits[0]?.files).toEqual([
-      { path: "src/a.txt", additions: 0, deletions: 0, status: "renamed" },
-    ]);
-  });
+      const movedCommit = commits[0]!;
+      const movedFile = movedCommit.files[0]!;
+      expect(movedCommit.files).toEqual([
+        {
+          path: "src/a.txt",
+          additions: edited ? 1 : 0,
+          deletions: edited ? 1 : 0,
+          status: "renamed",
+        },
+      ]);
+      expect(
+        await getCommitFileDiff({ cwd: repoDir, sha: movedCommit.sha, path: movedFile.path }),
+      ).toMatchObject({
+        path: "src/a.txt",
+        isNew: false,
+        isDeleted: false,
+        additions: edited ? 1 : 0,
+        deletions: edited ? 1 : 0,
+      });
+    },
+  );
 
   it("derives status for modified and deleted files", async () => {
     const { repoDir } = initRepoOnMain();
