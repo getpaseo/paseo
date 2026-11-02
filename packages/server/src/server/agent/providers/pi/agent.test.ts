@@ -1080,6 +1080,45 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test.each([true, false] as const)(
+    "does not complete an ordinary prompt when before_agent_start injects a custom message (display=%s)",
+    async (display) => {
+      const { pi, session, events } = await createSession();
+      const runtime = pi.latestSession();
+
+      const { turnId } = await session.startTurn(
+        "Use the write tool to create /tmp/marker containing exactly DELIVERED, then reply exactly DONE.",
+      );
+
+      // before_agent_start runs before agent_start: custom message arrives first.
+      runtime.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "recall-context",
+          content: [{ type: "text", text: "hidden context" }],
+          display,
+        },
+      });
+
+      expect(events.turnCompletedEvents()).toHaveLength(0);
+
+      runtime.emit({ type: "agent_start" });
+      runtime.emit({ type: "turn_start" });
+      runtime.finishTurn({
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "DONE" }],
+      });
+      await events.nextTurnCompletion();
+
+      expect(events.turnCompletedEvents()).toEqual([
+        expect.objectContaining({ type: "turn_completed", turnId }),
+      ]);
+      await session.close();
+    },
+  );
+
   test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
