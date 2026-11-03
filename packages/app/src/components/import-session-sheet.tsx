@@ -693,6 +693,7 @@ export function ImportSessionSheet({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
         cwd: entry.cwd,
+        ...(entry.providerId === "copilot" ? { title: entry.title, providerTitleSync: true } : {}),
         ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
       });
       return { agent, target };

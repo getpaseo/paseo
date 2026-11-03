@@ -3292,7 +3292,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handleSessionInfoUpdate(update: SessionInfoUpdate): void {
     if ("title" in update) {
-      this.currentTitle = update.title ?? null;
+      const title = update.title ?? null;
+      if (title !== this.currentTitle) {
+        this.currentTitle = title;
+        this.pushEvent({ type: "provider_title_changed", provider: this.provider, title });
+      }
     }
     if ("updatedAt" in update) {
       this.lastActivityAt = update.updatedAt ?? null;

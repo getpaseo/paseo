@@ -881,6 +881,7 @@ describe("ACP context-window usage", () => {
     session.subscribe((event) => {
       if (event.type === "usage_updated") events.push(event);
     });
+
     await session.sessionUpdate({
       sessionId: "session-1",
       update: { sessionUpdate: "usage_update", used: update.used, size: update.size },
@@ -907,6 +908,29 @@ describe("ACP context-window usage", () => {
     await expect(
       emitUsageUpdate({ used: 13_759, size: 0 }).then((result) => result.events),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("ACP provider title updates", () => {
+  test("emits provider title changes from session_info_update", async () => {
+    const session = createSessionWithConfig({ provider: "copilot" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: "Renamed in Copilot",
+      } as SessionUpdate,
+    });
+
+    expect(events).toContainEqual({
+      type: "provider_title_changed",
+      provider: "copilot",
+      title: "Renamed in Copilot",
+    });
   });
 });
 

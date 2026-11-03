@@ -438,6 +438,7 @@ interface ManagedAgentBase {
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
+  providerTitleSync?: boolean;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
@@ -456,6 +457,12 @@ interface ManagedAgentBase {
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
+}
+
+function getProviderTitleSync(
+  options: { providerTitleSync?: boolean } | undefined,
+): boolean | undefined {
+  return options?.providerTitleSync;
 }
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -1532,6 +1539,7 @@ export class AgentManager {
       launchEnv,
       persistence: handle,
       restoring: true,
+      providerTitleSync: record?.providerTitleSync,
     });
   }
 
@@ -1540,6 +1548,8 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string | null;
+    providerTitleSync?: boolean;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
@@ -1550,6 +1560,8 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string | null;
+    providerTitleSync?: boolean;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
@@ -1597,7 +1609,8 @@ export class AgentManager {
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
-      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const initialTitle =
+        input.title?.trim() || resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
@@ -1608,6 +1621,7 @@ export class AgentManager {
         persistence: imported.persistence,
         historyPrimed: true,
         initialTitle,
+        providerTitleSync: input.providerTitleSync === true,
         publishWhenReady: true,
       });
       for (const event of imported.providerSubagentEvents ?? []) {
@@ -1735,6 +1749,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        providerTitleSync: existing.providerTitleSync,
         restoring: true,
       });
     } catch (error) {
@@ -2281,7 +2296,21 @@ export class AgentManager {
     ) {
       return;
     }
+    agent.providerTitleSync = false;
     this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent, { title: normalizedTitle });
+    this.emitState(agent, { persist: false });
+  }
+
+  private async applyProviderTitle(agent: ActiveManagedAgent, title: string | null): Promise<void> {
+    if (!agent.providerTitleSync) {
+      return;
+    }
+    const normalizedTitle = title?.trim() || null;
+    const stored = await this.registry?.get(agent.id);
+    if (stored?.title === normalizedTitle) {
+      return;
+    }
     await this.persistSnapshot(agent, { title: normalizedTitle });
     this.emitState(agent, { persist: false });
   }
@@ -2321,6 +2350,7 @@ export class AgentManager {
     const nextRecord = {
       ...record,
       ...(patch.title ? { title: patch.title } : {}),
+      ...(patch.title ? { providerTitleSync: false } : {}),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
     };
@@ -3792,6 +3822,7 @@ export class AgentManager {
       timelineRows?: AgentTimelineRow[];
       timelineNextSeq?: number;
       persistence?: AgentPersistenceHandle;
+      providerTitleSync?: boolean;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
       lastError?: string;
@@ -3816,7 +3847,7 @@ export class AgentManager {
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
-      const initialPersistedTitle = await this.resolveInitialPersistedTitle(
+      let initialPersistedTitle = await this.resolveInitialPersistedTitle(
         resolvedAgentId,
         config,
         options?.initialTitle ?? null,
@@ -3864,6 +3895,7 @@ export class AgentManager {
         this.refreshSessionPersistence(managed);
       }
       await this.refreshRuntimeInfo(managed, { emit: false });
+      initialPersistedTitle = this.resolveInitialProviderTitle(managed, initialPersistedTitle);
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
         title: initialPersistedTitle,
@@ -3990,6 +4022,7 @@ export class AgentManager {
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
+          providerTitleSync?: boolean;
           workspaceId?: string;
           owner?: AgentOwner;
           launchEnv?: Record<string, string>;
@@ -4027,6 +4060,7 @@ export class AgentManager {
         options?.persistence ?? session.describePersistence(),
         config,
       ),
+      providerTitleSync: getProviderTitleSync(options),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
@@ -4035,6 +4069,17 @@ export class AgentManager {
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
+  }
+
+  private resolveInitialProviderTitle(
+    agent: ActiveManagedAgent,
+    fallback: string | null,
+  ): string | null {
+    if (!agent.providerTitleSync) {
+      return fallback;
+    }
+    const title = agent.runtimeInfo?.extra?.title;
+    return typeof title === "string" && title.trim() ? title.trim() : fallback;
   }
 
   private async loadCommittedTimelineSeed(
@@ -4673,6 +4718,9 @@ export class AgentManager {
       case "thread_started":
         this.onStreamThreadStarted(agent);
         return undefined;
+      case "provider_title_changed":
+        flags.shouldDispatchEvent = false;
+        return this.applyProviderTitle(agent, event.title);
       case "usage_updated":
         agent.lastUsage = event.usage;
         this.emitState(agent);

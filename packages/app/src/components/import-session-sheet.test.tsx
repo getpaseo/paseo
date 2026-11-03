@@ -618,6 +618,39 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
   });
 
+  it("passes the Copilot title and enables provider title sync on import", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "copilot",
+          title: "Copilot title",
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      { snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("copilot")] } },
+    );
+
+    fireEvent.click(await screen.findByTestId("import-session-session-copilot-provider-thread-1"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "copilot",
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+        title: "Copilot title",
+        providerTitleSync: true,
+      });
+    });
+  });
+
   it("shows an import error state without closing when selected session import fails", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",

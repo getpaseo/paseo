@@ -4645,6 +4645,8 @@ test("importProviderSession imports the selected session without listing and pub
     providerHandleId: "thread-selected",
     cwd: workdir,
     workspaceId: "ws-imported",
+    title: "Copied provider title",
+    providerTitleSync: true,
   });
 
   expect(client.listCalls).toBe(0);
@@ -4690,7 +4692,32 @@ test("importProviderSession imports the selected session without listing and pub
       persistence: { nativeHandle: "thread-selected" },
     },
   });
-  expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+  expect((await storage.get(imported.id))?.title).toBe("Copied provider title");
+  expect((await storage.get(imported.id))?.providerTitleSync).toBe(true);
+
+  session.pushEvent({
+    type: "provider_title_changed",
+    provider: "codex",
+    title: "Renamed in provider",
+  });
+  await manager.flush();
+
+  expect((await storage.get(imported.id))?.title).toBe("Renamed in provider");
+  expect((await storage.get(imported.id))?.providerTitleSync).toBe(true);
+
+  await manager.reloadAgentSession(imported.id);
+  expect((await storage.get(imported.id))?.providerTitleSync).toBe(true);
+
+  const reloadedSession = manager.getAgent(imported.id)?.session as TestAgentSession;
+  await manager.setTitle(imported.id, "Renamed in Paseo");
+  expect((await storage.get(imported.id))?.providerTitleSync).toBe(false);
+  reloadedSession.pushEvent({
+    type: "provider_title_changed",
+    provider: "codex",
+    title: "Renamed again in provider",
+  });
+  await manager.flush();
+  expect((await storage.get(imported.id))?.title).toBe("Renamed in Paseo");
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

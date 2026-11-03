@@ -45,6 +45,8 @@ const providerSessionImportMutations = new WeakMap<
 export interface NormalizedImportAgentRequest {
   provider: AgentProvider;
   providerHandleId: string;
+  title?: string | null;
+  providerTitleSync?: boolean;
   cwd?: string;
   workspaceId?: string;
   labels?: Record<string, string>;
@@ -109,6 +111,8 @@ export function normalizeImportAgentRequest(
   return {
     provider: provider as AgentProvider,
     providerHandleId,
+    title: msg.title,
+    providerTitleSync: msg.providerTitleSync,
     cwd: msg.cwd,
     workspaceId: msg.workspaceId,
     labels: msg.labels,
@@ -250,6 +254,8 @@ async function importProviderSessionNow(
   const snapshot = await input.agentManager.importProviderSession({
     provider,
     providerHandleId,
+    title: input.request.title,
+    providerTitleSync: input.request.providerTitleSync,
     cwd,
     workspaceId,
     labels,

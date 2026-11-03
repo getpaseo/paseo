@@ -558,11 +558,15 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
       requestId: "new-shape",
       providerId: "custom-codex",
       providerHandleId: "thread-1",
+      title: "Provider session title",
+      providerTitleSync: true,
     }),
   ).toEqual({
     requestId: "new-shape",
     provider: "custom-codex",
     providerHandleId: "thread-1",
+    title: "Provider session title",
+    providerTitleSync: true,
   });
 
   expect(
