@@ -11,6 +11,7 @@ import React, {
   useState,
   type ComponentProps,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -74,6 +75,7 @@ import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import { DisclosureRow } from "./disclosure";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -237,20 +239,28 @@ function renderListEmptyComponent(input: {
 // identity, or the renderer itself changes. Item identity is the revision signal the strategy
 // already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
 const StreamRow = memo(function StreamRow({
+  item,
   layoutItem,
   renderStreamItem,
+  viewportRef,
 }: {
   item: StreamItem;
   layoutItem: StreamLayoutItem;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
+  viewportRef: RefObject<StreamViewportHandle | null>;
 }) {
-  return <>{renderStreamItem(layoutItem)}</>;
+  return (
+    <DisclosureRow rowId={item.id} viewportRef={viewportRef}>
+      {renderStreamItem(layoutItem)}
+    </DisclosureRow>
+  );
 });
 
 function renderStreamRow(input: {
   item: StreamItem;
   layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
+  viewportRef: RefObject<StreamViewportHandle | null>;
 }): ReactNode {
   const layoutItem = input.layoutItemById.get(input.item.id);
   if (!layoutItem) {
@@ -261,6 +271,7 @@ function renderStreamRow(input: {
       item={input.item}
       layoutItem={layoutItem}
       renderStreamItem={input.renderStreamItem}
+      viewportRef={input.viewportRef}
     />
   );
 }
@@ -675,9 +686,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
+    // The summary line holds its row around this; chat find opens a turn without a hold.
     const setTurnExpanded = useCallback((hostId: string, expanded: boolean) => {
-      // A turn opens below its summary line; keep that line under the reader's pointer.
-      viewportRef.current?.holdReadingPosition();
       setExpandedTurnHostIds((previous) => {
         if (previous.has(hostId) === expanded) return previous;
         const next = new Set(previous);
@@ -1110,6 +1120,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item,
           layoutItemById: layoutHistoryItemById,
           renderStreamItem,
+          viewportRef,
         }),
       [layoutHistoryItemById, renderStreamItem],
     );
@@ -1131,6 +1142,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
+          viewportRef,
         }),
     );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {

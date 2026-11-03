@@ -56,8 +56,13 @@ export interface StreamViewportHandle {
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-  /** Stop following output so the rows on screen stay put while rows below them open or close. */
-  holdReadingPosition: () => void;
+  /**
+   * Run a disclosure's state change so the row that owns its trigger keeps its visual top.
+   * Following output stops; it resumes if the change leaves the list at its end. The
+   * viewport decides when `apply` runs: web runs it immediately, native after the
+   * anchor is mounted.
+   */
+  holdRow: (rowId: string, apply: () => void) => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 

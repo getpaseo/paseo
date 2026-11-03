@@ -79,6 +79,137 @@ function MeasuredTestRow({ item }: { item: StreamItem }) {
   );
 }
 
+const VIEWPORT_HEIGHT = 100;
+const ROW_HEIGHT = 40;
+
+function rect(top: number, height: number): DOMRect {
+  return {
+    top,
+    bottom: top + height,
+    height,
+    left: 0,
+    right: 500,
+    width: 500,
+    x: 0,
+    y: top,
+    toJSON: () => {},
+  } as DOMRect;
+}
+
+// jsdom has no layout. Rows stack in DOM order with heights from `heights`, and the
+// scroll container clamps scrollTop like a browser does.
+function layOutTimeline(host: HTMLDivElement, root: Root, historyMounted: StreamItem[]) {
+  const heights = new Map<string, number>();
+  const resizeCallbacks: Array<() => void> = [];
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: class ResizeObserver {
+      constructor(callback: () => void) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+    configurable: true,
+  });
+  HTMLElement.prototype.scrollTo = function (
+    this: HTMLElement,
+    options?: ScrollToOptions | number,
+  ) {
+    this.scrollTop = typeof options === "object" ? (options.top ?? 0) : 0;
+  };
+
+  const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+  const viewportRef = React.createRef<StreamViewportHandle>();
+  const input: StreamRenderInput = {
+    agentId: "agent",
+    segments: { historyVirtualized: [], historyMounted, liveHead: [] },
+    boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: false },
+    renderers: createRenderers(() => {}),
+    listEmptyComponent: null,
+    viewportRef,
+    routeBottomAnchorRequest: null,
+    isAuthoritativeHistoryReady: true,
+    onNearBottomChange: () => {},
+    onNearHistoryStart: () => true,
+    isLoadingOlderHistory: false,
+    hasOlderHistory: false,
+    olderHistoryProgressKey: null,
+    scrollEnabled: true,
+    listStyle: null,
+    baseListContentContainerStyle: null,
+    forwardListContentContainerStyle: null,
+    contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+  };
+  const render = (segments: Partial<StreamRenderInput["segments"]>) =>
+    root.render(strategy.render({ ...input, segments: { ...input.segments, ...segments } }));
+  act(() => render({}));
+
+  const scrollContainer = host.querySelector('[data-testid="agent-chat-scroll"]');
+  if (!(scrollContainer instanceof HTMLElement)) {
+    throw new Error("Expected agent chat scroll container");
+  }
+  const rows = () => Array.from(host.querySelectorAll<HTMLElement>("[data-history-row-id]"));
+  const heightOf = (row: HTMLElement) => heights.get(row.dataset.historyRowId!) ?? ROW_HEIGHT;
+  const contentHeight = () => rows().reduce((sum, row) => sum + heightOf(row), 0);
+  let requestedScrollTop = 0;
+  const clampScrollTop = (value: number) =>
+    Math.max(0, Math.min(value, contentHeight() - VIEWPORT_HEIGHT));
+  Object.defineProperty(scrollContainer, "scrollTop", {
+    configurable: true,
+    get: () => clampScrollTop(requestedScrollTop),
+    set: (value: number) => {
+      requestedScrollTop = clampScrollTop(value);
+    },
+  });
+  Object.defineProperty(scrollContainer, "clientHeight", {
+    configurable: true,
+    value: VIEWPORT_HEIGHT,
+  });
+  Object.defineProperty(scrollContainer, "scrollHeight", {
+    configurable: true,
+    get: contentHeight,
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this === scrollContainer) return rect(0, VIEWPORT_HEIGHT);
+      const id = this.dataset.historyRowId;
+      if (!id) return rect(0, 0);
+      let top = -scrollContainer.scrollTop;
+      for (const row of rows()) {
+        if (row === this) return rect(top, heightOf(row));
+        top += heightOf(row);
+      }
+      return rect(0, 0);
+    },
+  );
+
+  return {
+    scrollContainer,
+    heights,
+    render,
+    hold: (rowId: string, apply: () => void) =>
+      act(() => viewportRef.current!.holdRow(rowId, apply)),
+    rowTop: (id: string) =>
+      rows()
+        .find((row) => row.dataset.historyRowId === id)!
+        .getBoundingClientRect().top,
+    resize: () => act(() => resizeCallbacks.forEach((callback) => callback())),
+    nextFrame: () =>
+      act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }),
+  };
+}
+
+async function settleAtBottom(timeline: ReturnType<typeof layOutTimeline>) {
+  timeline.scrollContainer.scrollTop = Number.MAX_SAFE_INTEGER;
+  act(() => {
+    timeline.scrollContainer.dispatchEvent(new Event("scroll"));
+  });
+  await timeline.nextFrame();
+}
+
 describe("createWebStreamStrategy", () => {
   let root: Root | null = null;
   let container: HTMLDivElement | null = null;
@@ -1659,5 +1790,62 @@ describe("createWebStreamStrategy", () => {
     });
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
     expect(scrollTo).toHaveBeenCalledWith({ top: 2200, behavior: "auto" });
+  });
+
+  function mountTimeline(history: StreamItem[]) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    return layOutTimeline(container, root, history);
+  }
+
+  it("keeps the trigger's top when an anchored toggle at the bottom opens rows below it, and stops following", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map(userMessage);
+    const timeline = mountTimeline(history);
+    await settleAtBottom(timeline);
+    const triggerTop = timeline.rowTop("message-5");
+    expect(triggerTop).toBe(20);
+
+    const opened = userMessage(7);
+    timeline.heights.set(opened.id, 200);
+    timeline.hold("message-5", () =>
+      timeline.render({ historyMounted: [...history.slice(0, 5), opened, history[5]!] }),
+    );
+    timeline.resize();
+    await timeline.nextFrame();
+    expect(timeline.rowTop("message-5")).toBe(triggerTop);
+
+    act(() => timeline.render({ liveHead: [userMessage(8)] }));
+    timeline.resize();
+    await timeline.nextFrame();
+    expect(timeline.rowTop("message-5")).toBe(triggerTop);
+  });
+
+  it("keeps the trigger's top when its row grows while following output", async () => {
+    const timeline = mountTimeline([1, 2, 3, 4, 5, 6].map(userMessage));
+    await settleAtBottom(timeline);
+    const triggerTop = timeline.rowTop("message-5");
+
+    timeline.hold("message-5", () => timeline.heights.set("message-5", 240));
+    timeline.resize();
+    await timeline.nextFrame();
+    expect(timeline.rowTop("message-5")).toBe(triggerTop);
+  });
+
+  it("resumes following when collapsing an anchored row lands back at the end", async () => {
+    const timeline = mountTimeline([1, 2, 3, 4, 5, 6].map(userMessage));
+    await settleAtBottom(timeline);
+    timeline.hold("message-5", () => timeline.heights.set("message-5", 240));
+    timeline.resize();
+    await timeline.nextFrame();
+
+    timeline.hold("message-5", () => timeline.heights.set("message-5", ROW_HEIGHT));
+    timeline.resize();
+    await timeline.nextFrame();
+
+    act(() => timeline.render({ liveHead: [userMessage(8)] }));
+    timeline.resize();
+    await timeline.nextFrame();
+    expect(timeline.rowTop("message-8")).toBe(VIEWPORT_HEIGHT - ROW_HEIGHT);
   });
 });
