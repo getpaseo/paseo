@@ -102,7 +102,7 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
@@ -142,6 +142,7 @@ export default {
       searchPaths: ["../../node_modules", "./node_modules"],
     },
     plugins: [
+      "./modules/paseo-hardware-keyboard/app.plugin",
       "expo-router",
       withPasteInput,
       withAndroidScroll,
@@ -162,7 +163,10 @@ export default {
       ],
       ...buildProfile.notificationPlugins,
       "expo-audio",
-      ["expo-font", { fonts: ["./assets/fonts/SymbolsNerdFontMono-Regular.ttf"] }],
+      [
+        "expo-font",
+        { fonts: [path.resolve(__dirname, "assets/fonts/SymbolsNerdFontMono-Regular.ttf")] },
+      ],
       [
         "expo-gradle-jvmargs",
         {

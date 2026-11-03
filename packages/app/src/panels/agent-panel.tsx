@@ -28,6 +28,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
 import { Composer } from "@/composer";
+import { AgentCommandsProvider } from "@/agent-commands";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -44,7 +45,7 @@ import { useAgentDescriptor } from "@/agent-presentation";
 import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
-import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInputDraft, type AgentInputDraft } from "@/composer/draft/input-draft";
@@ -217,7 +218,7 @@ function AgentLoadErrorView({ message, onRetry }: { message: string; onRetry: ()
         <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
         <Text style={styles.statusText}>{message}</Text>
         <View style={styles.errorAction}>
-          <Button size="sm" variant="secondary" onPress={onRetry} testID="agent-load-error-retry">
+          <Button variant="secondary" onPress={onRetry} testID="agent-load-error-retry">
             {t("common.actions.retry")}
           </Button>
         </View>
@@ -1255,7 +1256,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </ChatSurface>
   );
 
-  return (
+  const content = (
     <RewindComposerRestoreProvider
       textSource={agentInputDraft.textSource}
       setText={agentInputDraft.replaceText}
@@ -1274,7 +1275,39 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       </View>
     </RewindComposerRestoreProvider>
   );
+  return wrapAgentCommandProvider({
+    enabled: showsComposer && hasActiveComposer,
+    serverId,
+    agentId,
+    editingSession: composerEditingSession,
+    children: content,
+  });
 });
+
+function wrapAgentCommandProvider({
+  enabled,
+  serverId,
+  agentId,
+  editingSession,
+  children,
+}: {
+  enabled: boolean;
+  serverId: string;
+  agentId: string;
+  editingSession: ComposerEditingSession;
+  children: ReactNode;
+}) {
+  return (
+    <AgentCommandsProvider
+      serverId={serverId}
+      agentId={agentId}
+      editingSession={editingSession}
+      enabled={enabled}
+    >
+      {children}
+    </AgentCommandsProvider>
+  );
+}
 
 function ChatSurface({
   children,
@@ -1308,7 +1341,6 @@ function TimelineSyncErrorCallout({
             {t("agentPanel.states.timelineSyncFailed")}
           </Text>
           <Button
-            size="sm"
             variant="secondary"
             onPress={onRetry}
             disabled={isRetrying}
@@ -1512,7 +1544,7 @@ function ActiveAgentComposer({
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
-    COMPACT_FORM_FACTOR_WIDTH,
+    COMPACT_CONTENT_WIDTH,
     { initialIsBelow: isCompactFormFactor },
   );
   const paneContext = usePaneContext();

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import * as zod from "zod";
 import { ZodError } from "zod";
 import {
   compilePlugin,
@@ -567,6 +568,101 @@ export default function contribute(client) {
     const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).not.toContain("async function contribute");
     expect(clientBundle).toContain("__async");
+  });
+
+  it("reduces client bytes while preserving registration and leaving server output readable", async () => {
+    const entries = await createSplitPlugin();
+    const source = `import { z } from "zod";
+const commandSchema = z.object({ id: z.string(), title: z.string() });
+export default function contribute(client) {
+  const command = commandSchema.parse({ id: "open", title: "Open – plugin" });
+  client.addCommandCenterItem({
+    ...command,
+    icon: "Scan",
+    context: "global",
+    onSelect() { return Promise.resolve(command.title); },
+  });
+  return () => undefined;
+}`;
+    await Promise.all([writeFile(entries.client, source), writeFile(entries.server, source)]);
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+    if (clientBundle === null || serverBundle === null) {
+      throw new Error("compilePlugin returned no bundle");
+    }
+
+    for (const bundle of [clientBundle, serverBundle]) {
+      const registered: { id: string; title: string; onSelect: () => Promise<string> }[] = [];
+      const exports = new Function(`return ${bundle}`)()((specifier: string) => {
+        expect(specifier).toBe("zod");
+        return zod;
+      });
+      const cleanup = exports.default({
+        addCommandCenterItem: (command: (typeof registered)[number]) => registered.push(command),
+      });
+      expect(registered).toMatchObject([{ id: "open", title: "Open – plugin" }]);
+      await expect(registered[0]!.onSelect()).resolves.toBe("Open – plugin");
+      expect(cleanup()).toBeUndefined();
+    }
+    expect(Buffer.byteLength(clientBundle)).toBeLessThan(Buffer.byteLength(serverBundle) * 0.9);
+    expect(clientBundle.split("").every((char) => char.charCodeAt(0) <= 0x7f)).toBe(true);
+    expect(serverBundle).toContain('title: "Open');
+  });
+
+  it("retains dependency license notices while minifying executable client code", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/licensed-dependency");
+    const notice = "Copyright Example Authors. SPDX-License-Identifier: MIT";
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "licensed-dependency", main: "index.js" }),
+    );
+    await writeFile(
+      path.join(dependency, "index.js"),
+      `/*! ${notice} */
+exports.title = function title(input) {
+  const trimmed = input.trim();
+  return "Licensed " + trimmed;
+};`,
+    );
+    const source = `import { title } from "licensed-dependency";
+export default function contribute() { return title(" plugin "); }`;
+    await Promise.all([writeFile(entries.client, source), writeFile(entries.server, source)]);
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+    if (clientBundle === null || serverBundle === null) {
+      throw new Error("compilePlugin returned no bundle");
+    }
+
+    for (const bundle of [clientBundle, serverBundle]) {
+      expect(bundle).toContain(notice);
+      const exports = new Function(`return ${bundle}`)()(() => {
+        throw new Error("The dependency must be bundled");
+      });
+      expect(exports.default()).toBe("Licensed plugin");
+    }
+    expect(Buffer.byteLength(clientBundle)).toBeLessThan(Buffer.byteLength(serverBundle) * 0.9);
+  });
+
+  it("keeps distinct host exports eager when minifying in the worker", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import * as host from "zod";
+export default function contribute() { return [host.first, host.second]; }`,
+    );
+    const { clientBundle } = await compilePlugin({ client: entries.client, server: null });
+    const host = { first: "first export", second: "second export" };
+    const factory = new Function(`return ${clientBundle}`)() as (
+      require: (specifier: string) => typeof host,
+    ) => { default: () => unknown };
+    function requireHost(specifier: string): typeof host {
+      expect(specifier).toBe("zod");
+      return host;
+    }
+    const exports = factory(requireHost);
+    host.first = "changed first export";
+    host.second = "changed second export";
+    expect(exports.default()).toEqual(["first export", "second export"]);
   });
 
   it("rejects node imports from the client entry", async () => {

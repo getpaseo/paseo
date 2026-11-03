@@ -5,6 +5,7 @@ import {
   type InlinePathTarget,
 } from "./parse";
 import { i18n } from "@/i18n/i18next";
+import { isAbsolutePath } from "@/utils/path";
 
 export interface AssistantFileLinkSource {
   href: string;
@@ -103,6 +104,62 @@ export async function fetchDaemonResolution({
     ...target,
     path: joinWorkspacePath(trimmedRoot, match.path),
   };
+}
+
+/** Only file-looking paths nested inside the workspace need suffix search. */
+function nestedRelativeLookupQuery(
+  targetPath: string,
+  workspaceRoot: string | undefined,
+): string | null {
+  const root = workspaceRoot?.trim();
+  if (!root) {
+    return null;
+  }
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedPath = targetPath.replace(/\\/g, "/");
+  const prefix = `${normalizedRoot}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    return null;
+  }
+  const relative = normalizedPath.slice(prefix.length);
+  if (!relative.includes("/") || !isFileLookingAssistantToken(encodeURI(relative))) {
+    return null;
+  }
+  return relative;
+}
+
+/** When a markdown link points at workspaceRoot/schema/x.md and that file is
+ * missing, ask the same suffix lookup bare names already use. An exact hit
+ * stays on that path. A suffix hit such as repo-a/schema/x.md replaces it.
+ * Lookup failure keeps the original target.
+ */
+export async function resolveMissingNestedRelativeFile(input: {
+  target: InlinePathTarget;
+  workspaceRoot?: string;
+  getDirectorySuggestions: GetDirectorySuggestions;
+}): Promise<InlinePathTarget> {
+  if (
+    isAbsoluteInlineCodeToken(input.target.raw) ||
+    input.target.raw.startsWith("~/") ||
+    input.target.raw.endsWith("/")
+  ) {
+    return input.target;
+  }
+  const query = nestedRelativeLookupQuery(input.target.path, input.workspaceRoot);
+  if (!query) {
+    return input.target;
+  }
+  try {
+    return await fetchDaemonResolution({
+      ambiguousQuery: query,
+      token: input.target.raw,
+      target: input.target,
+      workspaceRoot: input.workspaceRoot,
+      getDirectorySuggestions: input.getDirectorySuggestions,
+    });
+  } catch {
+    return input.target;
+  }
 }
 
 export function classifyForResolution(
@@ -215,11 +272,7 @@ export function shouldResolveDirectFileThroughSuggestions(input: {
 }
 
 function isAbsoluteInlineCodeToken(token: string): boolean {
-  return (
-    token.startsWith("/") ||
-    token.toLowerCase().startsWith("file://") ||
-    /^[A-Za-z]:[\\/]/.test(token)
-  );
+  return isAbsolutePath(token) || token.toLowerCase().startsWith("file://");
 }
 
 function isLinkifiedSource(source: AssistantFileLinkSource): boolean {
