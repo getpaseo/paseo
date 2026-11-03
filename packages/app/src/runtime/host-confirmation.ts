@@ -55,24 +55,38 @@ export class HostConfirmations {
   }
 
   /** Resolves true without asking when the link matches a saved host exactly. */
-  confirmLink(offer: ConnectionOffer, savedHosts: HostProfile[]): Promise<boolean> {
+  confirmLink(
+    offer: ConnectionOffer,
+    savedHosts: HostProfile[],
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const connection = relayConnectionFromOffer(offer);
     const savedHost = savedHosts.find((host) => host.serverId === offer.serverId);
     if (savedHost && hostHasConnection(savedHost, connection)) return Promise.resolve(true);
-    return this.ask({
-      id: this.nextRequestId++,
-      serverId: offer.serverId,
-      keyFingerprint: formatDaemonKeyFingerprint(connection.daemonPublicKeyB64),
-      relayEndpoint: connection.relayEndpoint,
-      kind: savedHost ? "changedConnection" : "newHost",
-    });
+    if (signal?.aborted) return Promise.resolve(false);
+    return this.ask(
+      {
+        id: this.nextRequestId++,
+        serverId: offer.serverId,
+        keyFingerprint: formatDaemonKeyFingerprint(connection.daemonPublicKeyB64),
+        relayEndpoint: connection.relayEndpoint,
+        kind: savedHost ? "changedConnection" : "newHost",
+      },
+      signal,
+    );
   }
 
-  private ask(request: HostConfirmationRequest): Promise<boolean> {
+  private ask(request: HostConfirmationRequest, signal?: AbortSignal): Promise<boolean> {
     // One question at a time: a newer one cancels the unanswered one.
     this.pending?.resolve(false);
     return new Promise<boolean>((resolve) => {
-      this.pending = { request, resolve };
+      const cancel = () => this.answer(request.id, false);
+      const finish = (approved: boolean) => {
+        signal?.removeEventListener("abort", cancel);
+        resolve(approved);
+      };
+      this.pending = { request, resolve: finish };
+      signal?.addEventListener("abort", cancel, { once: true });
       this.emit();
     });
   }

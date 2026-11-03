@@ -1,3 +1,4 @@
+import { buildSettingsHostRoute } from "@/utils/host-routes";
 import { buildPluginSettingsRoute } from "./settings/routes";
 import { router } from "expo-router";
 import type { PluginPanelLocation } from "@getpaseo/plugin/client";
@@ -9,7 +10,7 @@ import type { PluginNavigation } from "./actions";
 export function createPluginNavigation(input: {
   serverId: string;
   workspaceId: string | null;
-}): PluginNavigation {
+}): PluginNavigation & { openHostSettings(serverId: string): void } {
   const { serverId, workspaceId } = input;
   function placement(location: PluginPanelLocation) {
     if (location !== "explorer") return undefined;
@@ -20,6 +21,9 @@ export function createPluginNavigation(input: {
     return { mode: "pane" as const, paneId };
   }
   return {
+    openHostSettings(hostId) {
+      router.push(buildSettingsHostRoute(hostId));
+    },
     openSettings(pluginId, screenId) {
       router.push(buildPluginSettingsRoute(serverId, pluginId, screenId));
     },

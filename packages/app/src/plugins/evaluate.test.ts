@@ -819,6 +819,14 @@ it("binds imported getters to each originating installation across delayed callb
     hosts: {
       getSnapshot: () => [],
       subscribe: () => () => {},
+      observeHosts: () => {
+        calls.push(`${installation}/observe`);
+        return () => {};
+      },
+      addHost: async (input) => {
+        calls.push(`${installation}/add:${input.connection}`);
+        return { status: "cancelled" };
+      },
       getPaseoClient(serverId) {
         calls.push(`${installation}/${serverId}`);
         return runtime.paseo;
@@ -826,11 +834,12 @@ it("binds imported getters to each originating installation across delayed callb
     },
   });
   const source = bundle(`
-    const { getPaseoClient } = require("@getpaseo/plugin/client");
+    const { getPaseoClient, observeHosts, addHost } = require("@getpaseo/plugin/client");
     getPaseoClient("entry-host");
+    observeHosts(() => {});
     plugin.addCommandCenterItem({
       id: "read", title: "Read", icon: "Server", context: "global",
-      onSelect: async () => { await Promise.resolve(); getPaseoClient("target-host"); },
+      onSelect: async () => { await Promise.resolve(); getPaseoClient("target-host"); await addHost({ connection: "example:6767" }); },
     });
   `);
   const first = runPluginClientBundle("same-id", source, hostRuntime("first"));
@@ -840,9 +849,13 @@ it("binds imported getters to each originating installation across delayed callb
   await second.commandCenterItems[0].onSelect({} as never);
   expect(calls).toEqual([
     "first/entry-host",
+    "first/observe",
     "second/entry-host",
+    "second/observe",
     "first/target-host",
+    "first/add:example:6767",
     "second/target-host",
+    "second/add:example:6767",
   ]);
   await first.cleanup();
   await second.cleanup();

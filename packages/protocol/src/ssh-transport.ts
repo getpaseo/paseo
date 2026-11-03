@@ -60,6 +60,19 @@ export function parseSshTransportUri(value: string): SshTransportTarget {
   };
 }
 
+/** Serialize an SSH target without daemon credentials. */
+export function serializeSshTransportUri(target: SshTransportTarget): string {
+  const host = validateSshHost(target.host);
+  const separator = host.lastIndexOf("@");
+  const username = separator < 0 ? "" : `${encodeURIComponent(host.slice(0, separator))}@`;
+  const hostname = host.slice(separator + 1);
+  const authority = hostname.includes(":") ? `[${hostname}]` : hostname;
+  const port = target.sshPort === undefined ? "" : `:${validatePort(target.sshPort, "SSH port")}`;
+  const daemonPort = validatePort(target.daemonPort, "Daemon port");
+  const query = daemonPort === DEFAULT_SSH_DAEMON_PORT ? "" : `?daemonPort=${daemonPort}`;
+  return `ssh://${username}${authority}${port}${query}`;
+}
+
 export function buildSshTunnelArgs(target: SshTransportTarget): string[] {
   const host = validateSshHost(target.host);
   const daemonPort = validatePort(target.daemonPort, "Daemon port");

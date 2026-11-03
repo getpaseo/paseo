@@ -186,6 +186,28 @@ export async function getDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("desktop_daemon_status"));
 }
 
+/** Resolve the identity even when the daemon has stopped. */
+export async function resolveDesktopDaemonServerId(
+  deps: {
+    getStatus(): Promise<DesktopDaemonStatus>;
+    getSavedId(): Promise<string | null>;
+  } = {
+    getStatus: getDesktopDaemonStatus,
+    getSavedId: () => invokeDesktopCommand<string | null>("desktop_daemon_identity"),
+  },
+): Promise<string | null> {
+  try {
+    const id = (await deps.getStatus()).serverId.trim();
+    if (id) return id;
+  } catch {
+    /* The persisted identity remains available if the status request fails. */
+  }
+  const id = await deps.getSavedId();
+  if (id === null) return null;
+  if (typeof id !== "string") throw new Error("Invalid desktop daemon identity");
+  return id.trim() || null;
+}
+
 export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
 }

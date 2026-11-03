@@ -152,6 +152,12 @@ describe("daemon-manager commands", () => {
     expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalled();
   });
 
+  it("reads the desktop daemon identity after it has stopped", async () => {
+    mkdirSync(mocks.paseoHome);
+    writeFileSync(path.join(mocks.paseoHome, "server-id"), "srv_existing\n");
+    expect(await createDaemonCommandHandlers().desktop_daemon_identity()).toBe("srv_existing");
+  });
+
   it("reports an errored daemon when the local daemon state cannot be read", async () => {
     mkdirSync(mocks.paseoHome);
     writeFileSync(path.join(mocks.paseoHome, "paseo.pid"), "garbage");

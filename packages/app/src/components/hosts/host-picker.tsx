@@ -8,6 +8,7 @@ import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/comb
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeSnapshot, type ActiveConnection } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst } from "@/types/host-connection";
+import { isWeb } from "@/constants/platform";
 import {
   ADD_HOST_OPTION_ID,
   ALL_HOSTS_OPTION_ID,
@@ -89,35 +90,33 @@ export function HostPickerOption({
   );
   const trailingSlot = useMemo(() => {
     if (!onOpenHostSettings) return undefined;
-    return (
-      <Pressable
-        onPress={handleSettingsPress}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${label} settings`}
-      >
-        <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      </Pressable>
-    );
-  }, [
-    handleSettingsPress,
-    label,
-    onOpenHostSettings,
-    theme.colors.foregroundMuted,
-    theme.iconSize.sm,
-  ]);
+    return <View style={styles.settingsSlot} />;
+  }, [onOpenHostSettings]);
 
   return (
-    <ComboboxItem
-      label={label}
-      description={connectionLabel}
-      leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
-      selected={selected}
-      active={active}
-      onPress={onPress}
-      testID={testID}
-    />
+    <View style={styles.optionContainer}>
+      <ComboboxItem
+        label={label}
+        description={connectionLabel}
+        leadingSlot={leadingSlot}
+        trailingSlot={trailingSlot}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        testID={testID}
+      />
+      {onOpenHostSettings ? (
+        <Pressable
+          style={styles.settingsAction}
+          onPress={handleSettingsPress}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${label} settings`}
+        >
+          <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -319,6 +318,15 @@ export function HostPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  optionContainer: { position: "relative" },
+  settingsSlot: { width: theme.iconSize.sm, height: theme.iconSize.sm },
+  settingsAction: {
+    position: "absolute",
+    right: theme.spacing[3] + (isWeb ? 0 : theme.spacing[1]),
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+  },
   statusDotSlot: {
     width: theme.iconSize.sm,
     height: theme.iconSize.sm,

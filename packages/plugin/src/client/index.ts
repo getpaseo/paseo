@@ -91,7 +91,20 @@ export interface PluginHostSummary {
   readonly status: "idle" | "connecting" | "online" | "offline" | "error";
 }
 /** Live configured hosts. Supplied by the app's client bundle loader. */
-export declare function useHosts(): readonly PluginHostSummary[];
+export declare const useHosts: typeof import("./hosts.js").useHosts;
+export declare const observeHosts: typeof import("./hosts.js").observeHosts;
+export declare const addHost: typeof import("./hosts.js").addHost;
+export type {
+  PluginHost,
+  PluginHostStatus,
+  PluginHostColor,
+  PluginHostBadgeDisplay,
+  PluginHostAppearance,
+  PluginHostConnection,
+  PluginHostPatch,
+  PluginHostAddInput,
+  PluginHostAddResult,
+} from "./hosts.js";
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */

@@ -477,6 +477,14 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
+    desktop_daemon_identity: () => {
+      try {
+        return readFileSync(path.join(getPaseoHome(), "server-id"), "utf8").trim() || null;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    },
     desktop_local_credential: async (args) => {
       const instance = await readDaemonInstance(getPaseoHome());
       if (!instance?.desktopManaged || typeof args?.listen !== "string") return null;

@@ -1,5 +1,9 @@
 import { createPlayAudio, type AudioEngine } from "@/audio";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import {
+  resolveDesktopDaemonServerId,
+  shouldUseDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
 import { createPluginHosts } from "./hosts";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import { subscribePluginRpc } from "@getpaseo/plugin/client/host";
@@ -27,7 +31,14 @@ export function createPluginClientRuntime(
     ...capabilities,
     i18n: installation.i18n,
     playAudio: createPlayAudio(audio, installation.lifetime.signal),
-    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
+    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal, {
+      openSettings(serverId) {
+        createPluginNavigation({ serverId, workspaceId: null }).openHostSettings(serverId);
+      },
+      async isManagedLocalHost(serverId) {
+        return shouldUseDesktopDaemon() && (await resolveDesktopDaemonServerId()) === serverId;
+      },
+    }),
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },

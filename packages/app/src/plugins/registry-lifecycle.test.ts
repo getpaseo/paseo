@@ -43,12 +43,19 @@ function registry(
       return {
         hosts: createPluginHosts(
           {
+            addHost: async () => ({ status: "cancelled" }),
             getHosts: () => [],
             getSnapshot: () => null,
             subscribeAll: () => () => {},
             subscribeHostList: () => () => {},
+            renameHost: async () => {},
+            setHostColor: async () => {},
+            setHostBadgeDisplay: async () => {},
+            removeHost: async () => {},
+            removeConnection: async () => {},
           },
           installation.lifetime.signal,
+          { openSettings() {}, isManagedLocalHost: async () => false },
         ),
         paseo: installation.paseo,
         i18n: installation.i18n,

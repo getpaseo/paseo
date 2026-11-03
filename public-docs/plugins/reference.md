@@ -2078,7 +2078,7 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
-### Discover hosts and target another host
+### Hosts
 
 Use `useHosts()` to display configured hosts and `getPaseoClient(serverId)` in an action callback
 to run SDK operations on one of them:
@@ -2124,14 +2124,36 @@ export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactE
 }
 ```
 
-`useHosts(): readonly PluginHostSummary[]` includes offline hosts and updates when hosts,
-labels, or statuses change.
+`useHosts(): readonly PluginHost[]` includes offline hosts and updates when projected fields change.
+`observeHosts(listener)` immediately delivers the same list and returns an unsubscribe function.
+Set `requirements.paseo` in the manifest to the release that ships these host capabilities.
 
-| Summary field | Type or values                                               | Meaning                                                      |
-| ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `serverId`    | `string`                                                     | ID to pass to `getPaseoClient`.                              |
-| `label`       | `string`                                                     | Host's display name.                                         |
-| `status`      | `"idle"`, `"connecting"`, `"online"`, `"offline"`, `"error"` | Current app connection status. SDK calls require `"online"`. |
+| Host field                               | Meaning                                                                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `serverId`                               | ID to pass to `getPaseoClient`.                                                                                            |
+| `label`                                  | Display name.                                                                                                              |
+| `status`                                 | `idle`, `connecting`, `online`, `offline`, or `error`. SDK calls require `online`.                                         |
+| `appearance`                             | `color` and `badgeDisplay`; `null` badge display uses the local or remote default.                                         |
+| `connections`                            | Saved connections with an ID, type, credential-free `uri`, and type-specific settings. Routed connections have a null URI. |
+| `activeConnectionId`                     | ID of the active connection, or null.                                                                                      |
+| `error`                                  | Current connection error, or null.                                                                                         |
+| `authFailureReason`                      | `password_required`, `incorrect_password`, or null.                                                                        |
+| `lastOnlineAt`, `createdAt`, `updatedAt` | ISO timestamps; `lastOnlineAt` can be null.                                                                                |
+
+Call `host.update({ label, appearance })`, `host.removeConnection(id)`, `host.remove()`,
+or `host.openSettings()` to manage a host. Updating `appearance.badgeDisplay` to null restores
+the automatic default. Removing the last connection removes the host. The desktop daemon host
+cannot be removed by a plugin.
+
+Use `addHost({ connection, label? })` with the [shared connection grammar](../cli.md#connected-hosts).
+A connection may include `?password=`. The password is used for the probe and saved locally; plugins
+cannot read it back. Relay targets and pairing links ask the user to confirm.
+
+| Result                                    | Meaning                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `{ status: "saved", host }`               | The host or connection was saved.                                                                          |
+| `{ status: "password_required", reason }` | Nothing was saved; supply a password and retry. The reason is `password_required` or `incorrect_password`. |
+| `{ status: "cancelled" }`                 | The user declined the confirmation.                                                                        |
 
 `getPaseoClient(serverId: string): PaseoApi` borrows the host's authenticated app connection.
 Call it in client entry code or callbacks; it opens no socket and does not require the plugin
@@ -2145,13 +2167,13 @@ on the target daemon. Acquire the API when performing an action to use the curre
 | Connection settings change or the app switches connections, including automatic failover | The old API is released. Call `getPaseoClient(serverId)` again and recreate subscriptions.                                                                      |
 | Host is removed                                                                          | Its API is released; the removed ID is unknown.                                                                                                                 |
 | `client.dispose()`                                                                       | Releases that API and its observations. A later getter call returns a fresh API over the app connection. Disposing the old API again leaves the new API usable. |
-| Originating plugin unloads                                                               | All its borrowed APIs and observations are released, including those targeting other hosts. Retained handles cannot outlive the installation.                   |
+| Originating plugin unloads                                                               | Borrowed APIs and host observations are released. Later host handle calls throw `Plugin has stopped`.                                                           |
 | Surface host selection changes                                                           | `usePaseo()` follows the selected host. An explicitly acquired API keeps its original target.                                                                   |
 
 You can also release individual subscriptions through the normal SDK API.
 
-Plugins are trusted app code; cross-host access is intentional. Summaries contain no connection
-URLs or credentials, and borrowed APIs provide no connection lifecycle controls. See the
+Plugins see connection targets and daemon identities but cannot read saved passwords. Borrowed APIs
+provide no connection lifecycle controls. See the
 [host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
 
 ## Add plugin-specific backend behavior

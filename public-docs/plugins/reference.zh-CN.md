@@ -1779,7 +1779,7 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 返回的 API 涵盖项目、工作区、Agent、终端、Provider 和 daemon 配置。其方法请参阅 [SDK API 参考](/docs/sdk/reference)。这里刻意没有连接生命周期方法，因为连接由 Paseo 负责。
 
-### 发现主机并指定另一台主机 {#discover-hosts-and-target-another-host}
+### 主机 {#hosts}
 
 使用 `useHosts()` 显示已配置的主机，并在操作回调中使用 `getPaseoClient(serverId)` 对其中一台主机
 执行 SDK 操作：
@@ -1825,13 +1825,33 @@ export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactE
 }
 ```
 
-`useHosts(): readonly PluginHostSummary[]` 包括离线的主机，并在主机、标签或状态变化时更新。
+`useHosts(): readonly PluginHost[]` 包括离线主机，并在可见字段变化时更新。`observeHosts(listener)`
+立即提供相同的列表，并返回取消订阅函数。请将清单中的 `requirements.paseo` 设为提供这些主机能力的发布版本。
 
-| 摘要字段   | 类型或取值                                                   | 含义                                          |
-| ---------- | ------------------------------------------------------------ | --------------------------------------------- |
-| `serverId` | `string`                                                     | 传给 `getPaseoClient` 的 ID。                 |
-| `label`    | `string`                                                     | 主机的显示名称。                              |
-| `status`   | `"idle"`、`"connecting"`、`"online"`、`"offline"`、`"error"` | 当前应用的连接状态。SDK 调用需要 `"online"`。 |
+| 主机字段                                 | 含义                                                                                   |
+| ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| `serverId`                               | 传给 `getPaseoClient` 的 ID。                                                          |
+| `label`                                  | 显示名称。                                                                             |
+| `status`                                 | `idle`、`connecting`、`online`、`offline` 或 `error`。SDK 调用需要 `online`。          |
+| `appearance`                             | `color` 和 `badgeDisplay`；`null` 使用本地主机或远程主机的默认显示方式。               |
+| `connections`                            | 已保存的连接，包括 ID、类型、不含凭据的 `uri` 和类型专属设置。路由连接的 URI 为 null。 |
+| `activeConnectionId`                     | 活动连接的 ID，或 null。                                                               |
+| `error`                                  | 当前连接错误，或 null。                                                                |
+| `authFailureReason`                      | `password_required`、`incorrect_password` 或 null。                                    |
+| `lastOnlineAt`、`createdAt`、`updatedAt` | ISO 时间戳；`lastOnlineAt` 可以为 null。                                               |
+
+调用 `host.update({ label, appearance })`、`host.removeConnection(id)`、`host.remove()` 或
+`host.openSettings()` 管理主机。将 `appearance.badgeDisplay` 更新为 null 可恢复自动默认值。
+移除最后一个连接会移除主机。插件不能移除桌面 daemon 主机。
+
+使用 `addHost({ connection, label? })` 和[共享连接语法](../cli.md#connected-hosts)。连接字符串可以包含
+`?password=`。密码用于探测并保存在本地，插件无法读回密码。中继目标和配对链接需要用户确认。
+
+| 结果                                      | 含义                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `{ status: "saved", host }`               | 主机或连接已保存。                                                                   |
+| `{ status: "password_required", reason }` | 未保存任何内容；提供密码后重试。原因是 `password_required` 或 `incorrect_password`。 |
+| `{ status: "cancelled" }`                 | 用户拒绝了确认。                                                                     |
 
 `getPaseoClient(serverId: string): PaseoApi` 借用该主机已认证的应用连接。请在客户端入口代码或回调中
 调用它；它不会打开 socket，也不要求目标 daemon 上安装了该插件。在执行操作时再获取 API，以便使用当前的
@@ -1849,8 +1869,7 @@ export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactE
 
 你也可以通过普通的 SDK API 释放单个订阅。
 
-插件是受信任的应用代码；跨主机访问是有意设计的。摘要中不包含连接 URL 或凭据，借用的 API 也不提供连接
-生命周期控制。请参阅[主机 Agent 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts)。
+插件可以查看连接目标和 daemon 身份，但不能读取已保存的密码。借用的 API 不提供连接生命周期控制。请参阅[主机 Agent 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts)。
 
 ## 添加插件特有的后端行为 {#add-plugin-specific-backend-behavior}
 

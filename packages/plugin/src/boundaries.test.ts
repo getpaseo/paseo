@@ -92,6 +92,18 @@ function typeErrors(code: string): string[] {
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
 }
 describe("plugin SDK import boundaries", () => {
+  it("exposes host handles and object-shaped additions from the client entry", () => {
+    expect(
+      typeErrors(`
+      import { addHost, observeHosts, useHosts, type PluginHost } from "@getpaseo/plugin/client";
+      const hosts: readonly PluginHost[] = useHosts();
+      const stop = observeHosts((value) => { void value[0]?.openSettings(); });
+      void addHost({ connection: "localhost:6767", label: "Local" });
+      void hosts; stop();
+    `),
+    ).toEqual([]);
+  });
+
   it("publishes process capabilities without their Windows implementation helpers", () => {
     expect(Object.keys(server).sort()).toEqual([
       "defineAgentTool",

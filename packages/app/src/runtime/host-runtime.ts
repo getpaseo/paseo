@@ -3,6 +3,7 @@ import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
+import { parseHostTarget, type HostTarget } from "@getpaseo/protocol/host-target";
 import { useSyncExternalStore, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
@@ -1612,6 +1613,48 @@ interface AgentDirectoryRefreshInput {
   page?: FetchAgentsOptions["page"];
 }
 
+function directHostTarget(target: HostTarget, input: string): HostConnection {
+  let connection: HostConnection;
+  if (target.kind === "ssh") {
+    connection = createRemoteSshHostConnection(target.ssh);
+  } else {
+    if (/^wss?:\/\//.test(input.trim())) {
+      const url = new URL(target.url);
+      if (url.pathname !== "/ws" || url.search)
+        throw new Error("WebSocket path or query is unsupported by the app");
+    }
+    switch (target.connection.type) {
+      case "directTcp": {
+        const endpoint = normalizeHostPort(target.connection.endpoint);
+        connection = {
+          id: `direct:${endpoint}`,
+          type: "directTcp",
+          endpoint,
+          useTls: target.connection.useTls,
+        };
+        break;
+      }
+      case "directSocket":
+        connection = {
+          id: `socket:${target.connection.path}`,
+          type: "directSocket",
+          path: target.connection.path,
+        };
+        break;
+      case "directPipe":
+        connection = {
+          id: `pipe:${target.connection.path}`,
+          type: "directPipe",
+          path: target.connection.path,
+        };
+        break;
+      case "relay":
+        throw new Error("Unexpected relay target");
+    }
+  }
+  return connection;
+}
+
 export class HostRuntimeStore {
   private controllers = new Map<string, HostRuntimeController>();
   private hostObservations = new Map<
@@ -1964,6 +2007,66 @@ export class HostRuntimeStore {
     );
   }
 
+  /** Add a saved host using the shared connection grammar. */
+  async addHost(
+    input: {
+      connection: string;
+      label?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<
+    | { status: "saved"; serverId: string }
+    | { status: "password_required"; reason: "password_required" | "incorrect_password" }
+    | { status: "cancelled" }
+  > {
+    const target = parseHostTarget(input.connection);
+    await this.loadRegistry();
+    try {
+      if (signal?.aborted) throw new Error("Plugin has stopped");
+      if (target.kind === "socket" && target.connection.type === "relay") {
+        const approved = await this.confirmLink(target.connection.offer, signal);
+        if (signal?.aborted) throw new Error("Plugin has stopped");
+        if (!approved) return { status: "cancelled" };
+        const result = await this.probeAndUpsertOffer(
+          target.connection.offer,
+          target.password,
+          input.label,
+          signal,
+        );
+        return { status: "saved", serverId: result.serverId };
+      }
+      const connection = directHostTarget(target, input.connection);
+      const result = await this.probeAndUpsertConnection({
+        connection,
+        password: target.password,
+        label: input.label,
+        signal,
+      });
+      return { status: "saved", serverId: result.serverId };
+    } catch (error) {
+      if (signal?.aborted) {
+        // The failed probe can include a credential; do not attach it as a cause.
+        // oxlint-disable-next-line preserve-caught-error
+        throw new Error("Plugin has stopped");
+      }
+      const reason = getConnectionAuthFailureReason(error);
+      if (reason) return { status: "password_required", reason };
+      let message = error instanceof Error ? error.message : String(error);
+      if (target.password) {
+        for (const value of [
+          target.password,
+          encodeURIComponent(target.password),
+          new URLSearchParams({ password: target.password }).toString().slice(9),
+        ]) {
+          if (value) message = message.split(value).join("[redacted]");
+        }
+      }
+      // The original error can contain a credential; do not expose it as a cause.
+      // oxlint-disable-next-line preserve-caught-error
+      throw new Error(message);
+    }
+  }
+
   async upsertDirectConnection(input: {
     serverId: string;
     endpoint: string;
@@ -1993,6 +2096,7 @@ export class HostRuntimeStore {
     password?: string;
     label?: string;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     if (input.connection.type === "relay") {
       throw new Error("Cannot probe a relay connection without a server id.");
@@ -2013,6 +2117,10 @@ export class HostRuntimeStore {
       connection: input.connection,
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     });
+    if (input.signal?.aborted) {
+      await client.close().catch(() => undefined);
+      throw new Error("Plugin has stopped");
+    }
     const profile = await this.upsertHostConnection({
       serverId,
       label: input.label ?? hostname ?? undefined,
@@ -2062,9 +2170,9 @@ export class HostRuntimeStore {
   // A pairing link (a URL, a QR code, or a pasted link) asks the user to
   // confirm when it adds a new host or changes a saved host's key, relay, or
   // TLS setting. The answer needs the saved hosts, so it waits for them to load.
-  private async confirmLink(offer: ConnectionOffer): Promise<boolean> {
+  private async confirmLink(offer: ConnectionOffer, signal?: AbortSignal): Promise<boolean> {
     await this.loadRegistry();
-    return this.hostConfirmations.confirmLink(offer, this.hosts);
+    return this.hostConfirmations.confirmLink(offer, this.hosts, signal);
   }
 
   getPendingHostConfirmation(): HostConfirmationRequest | null {
@@ -2144,6 +2252,8 @@ export class HostRuntimeStore {
   private async probeAndUpsertOffer(
     offer: ConnectionOffer,
     password: string | undefined,
+    label?: string,
+    signal?: AbortSignal,
   ): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     const connection = relayConnectionFromOffer(offer);
     const probeHost: HostProfile = {
@@ -2159,7 +2269,12 @@ export class HostRuntimeStore {
     };
     const { client, hostname } = await this.deps.connectToDaemon({ host: probeHost, connection });
     await client.close().catch(() => undefined);
-    const profile = await this.upsertConnectionFromOffer(offer, hostname ?? undefined, password);
+    if (signal?.aborted) throw new Error("Plugin has stopped");
+    const profile = await this.upsertConnectionFromOffer(
+      offer,
+      label ?? hostname ?? undefined,
+      password,
+    );
     return { profile, serverId: offer.serverId, hostname };
   }
 
@@ -2221,7 +2336,10 @@ export class HostRuntimeStore {
     }));
   }
 
-  async setHostBadgeDisplay(serverId: string, badgeDisplay: HostBadgeDisplay): Promise<void> {
+  async setHostBadgeDisplay(
+    serverId: string,
+    badgeDisplay: HostBadgeDisplay | null,
+  ): Promise<void> {
     await this.updateHostAppearance(serverId, (host) => ({
       ...host,
       appearance: { ...host.appearance, badgeDisplay },
@@ -3034,7 +3152,7 @@ export interface HostMutations {
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
-  setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
+  setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay | null) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }

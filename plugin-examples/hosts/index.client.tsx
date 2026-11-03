@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { observeHosts } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Hosts } from "./client/hosts";
 
@@ -11,5 +12,8 @@ function HostsItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
 export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: "main", title: "Host agents", Component: Hosts });
   client.addSidebarHeaderItem({ id: "hosts", title: "Host agents", Component: HostsItem });
-  return () => {};
+  return observeHosts((hosts) => {
+    for (const host of hosts)
+      if (host.authFailureReason) console.log(`${host.label} requires attention`);
+  });
 }

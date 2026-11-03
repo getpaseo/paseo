@@ -16,7 +16,7 @@ import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
-import { defaultHostAppearance } from "@/hosts/appearance";
+import { defaultHostAppearance, selectHostBadges } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
@@ -33,6 +33,7 @@ import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 import { subscriptionFixture } from "./subscription-fixture";
 import { readDesktopManagedLocalCredential } from "@/desktop/daemon/local-credential";
 import type { HostConfirmationRequest } from "./host-confirmation";
+import { createPluginHosts } from "@/plugins/hosts";
 
 it("requests the managed connection credential through desktop main without a web hint", async () => {
   const requests: string[] = [];
@@ -4776,5 +4777,297 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
 
     expect(seenProbes).not.toContainEqual(expect.objectContaining({ endpoint: "metro-host:8081" }));
     expect(store.getHosts()).toHaveLength(0);
+  });
+});
+
+describe("adding hosts from plugin connection targets", () => {
+  it("does not save an unauthenticated target and retries with the password", async () => {
+    const store = createPairingStore({ password: "secret", serverIdForHost: () => "srv_direct" });
+    const requests = answerHostConfirmations(store, true);
+    expect(await store.addHost({ connection: "example.com:6767" })).toEqual({
+      status: "password_required",
+      reason: "password_required",
+    });
+    expect(store.getHosts()).toHaveLength(0);
+    expect(
+      await store.addHost({ connection: "tcp://example.com:6767?password=secret", label: "Build" }),
+    ).toEqual({ status: "saved", serverId: "srv_direct" });
+    expect(store.getHosts()[0]).toMatchObject({
+      label: "Build",
+      password: "secret",
+      connections: [{ type: "directTcp", endpoint: "example.com:6767" }],
+    });
+    expect(requests).toHaveLength(0);
+    await waitForHostOnline(store, "srv_direct");
+    store.syncHosts([]);
+  });
+  it("persists the supplied password and reconnects after the app restarts", async () => {
+    const storage = createMemoryHostRuntimeStorage({ "@paseo:e2e": "1" });
+    const first = createPairingStore({
+      storage,
+      password: "secret",
+      serverIdForHost: () => "srv_direct",
+    });
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(first, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const result = await plugin.addHost({ connection: "tcp://example.com:6767?password=secret" });
+    expect(result.status).toBe("saved");
+    expect(JSON.stringify(result)).not.toContain("secret");
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0].password).toBe("secret");
+    lifetime.abort();
+    first.syncHosts([]);
+
+    const attempts: string[] = [];
+    const restarted = createPairingStore({
+      storage,
+      password: "secret",
+      connectAttempts: attempts,
+      serverIdForHost: () => "srv_direct",
+    });
+    await restarted.boot();
+    await waitForHostOnline(restarted, "srv_direct");
+    expect(attempts).toContain("direct:example.com:6767");
+    expect(restarted.getHosts()[0].password).toBe("secret");
+    const restartedLifetime = new AbortController();
+    const restartedPlugin = createPluginHosts(restarted, restartedLifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    expect(JSON.stringify(restartedPlugin.getSnapshot())).not.toContain("secret");
+    restartedLifetime.abort();
+    restarted.syncHosts([]);
+  });
+
+  it("asks before saving a relay target and respects rejection", async () => {
+    const uri = "relay://relay.paseo.sh:443/srv_offer?key=pk_test_offer&ssl=true";
+    const rejected = createPairingStore();
+    const requests = answerHostConfirmations(rejected, false);
+    expect(await rejected.addHost({ connection: uri })).toEqual({ status: "cancelled" });
+    expect(requests).toHaveLength(1);
+    expect(rejected.getHosts()).toHaveLength(0);
+    const accepted = createPairingStore();
+    const acceptedRequests = answerHostConfirmations(accepted, true);
+    expect(await accepted.addHost({ connection: uri, label: "Relay" })).toEqual({
+      status: "saved",
+      serverId: "srv_offer",
+    });
+    expect(acceptedRequests).toHaveLength(1);
+    expect(accepted.getHosts()[0]).toMatchObject({
+      label: "Relay",
+      connections: [{ type: "relay" }],
+    });
+    accepted.syncHosts([]);
+  });
+  it.each([
+    ["ssh://deploy@build:2222?daemonPort=7777", "remoteSsh"],
+    ["unix:///tmp/paseo.sock", "directSocket"],
+    ["pipe://mypipe", "directPipe"],
+    ["wss://example.com/ws", "directTcp"],
+  ])("probes and saves %s", async (connection, type) => {
+    const store = createPairingStore({ serverIdForHost: () => "srv_target" });
+    expect(await store.addHost({ connection })).toEqual({
+      status: "saved",
+      serverId: "srv_target",
+    });
+    expect(store.getHosts()[0].connections[0].type).toBe(type);
+    store.syncHosts([]);
+  });
+  it("shares host changes between plugin handles, host settings, and sidebar badges", async () => {
+    const store = createPairingStore({
+      serverIdForHost: (host) => {
+        const connection = host.connections[0];
+        return connection?.type === "directTcp" ? connection.endpoint : "";
+      },
+    });
+    await store.addHost({ connection: "first:6767", label: "First" });
+    await store.addHost({ connection: "second:6767", label: "Second" });
+    await waitForHostOnline(store, "first:6767");
+    await waitForHostOnline(store, "second:6767");
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(store, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    expect(
+      plugin.getSnapshot().map((host) => [host.label, host.status, host.connections[0].uri]),
+    ).toEqual([
+      ["First", "online", "tcp://first:6767"],
+      ["Second", "online", "tcp://second:6767"],
+    ]);
+    await plugin.getSnapshot()[0].update({ label: "Build", appearance: { color: "sky" } });
+    expect(store.getHosts()[0]).toMatchObject({ label: "Build", appearance: { color: "sky" } });
+    expect(
+      selectHostBadges({ hosts: store.getHosts(), localServerId: null, enabled: true }).get(
+        "first:6767",
+      ),
+    ).toMatchObject({ label: "Build", color: "sky" });
+    lifetime.abort();
+    store.syncHosts([]);
+  });
+
+  it.each([
+    "tcp://example.com:6767?ssl=true",
+    "ssh://deploy@build:2222?daemonPort=7777",
+    "unix:///tmp/paseo.sock",
+    "relay://relay.paseo.sh:443/srv_offer?key=pk_test_offer&ssl=true",
+  ])("recreates the projected connection on another device: %s", async (connection) => {
+    const first = createPairingStore({ serverIdForHost: (host) => host.serverId || "srv_target" });
+    answerHostConfirmations(first, true);
+    const result = await first.addHost({ connection });
+    if (result.status !== "saved") throw new Error("expected saved host");
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(first, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const uri = plugin.getSnapshot().find((host) => host.serverId === result.serverId)
+      ?.connections[0].uri;
+    if (!uri) throw new Error("expected connection URI");
+    const second = createPairingStore({ serverIdForHost: (host) => host.serverId || "srv_target" });
+    answerHostConfirmations(second, true);
+    expect(await second.addHost({ connection: uri })).toEqual({
+      status: "saved",
+      serverId: result.serverId,
+    });
+    expect(second.getHosts()[0].connections).toEqual(first.getHosts()[0].connections);
+    lifetime.abort();
+    first.syncHosts([]);
+    second.syncHosts([]);
+  });
+
+  it("does not save an in-flight addition after its plugin stops", async () => {
+    const started = createDeferred<void>();
+    const probe = createDeferred<{
+      client: DaemonClient;
+      serverId: string;
+      hostname: string | null;
+    }>();
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          started.resolve(undefined);
+          return probe.promise;
+        },
+        getClientId: async () => "test",
+        readInitialConnectionHint: () => null,
+      },
+    });
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(store, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const adding = plugin.addHost({ connection: "example.com:6767" });
+    await started.promise;
+    lifetime.abort();
+    probe.resolve({
+      client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+      serverId: "srv",
+      hostname: null,
+    });
+    await expect(adding).rejects.toThrow("Plugin has stopped");
+    expect(store.getHosts()).toHaveLength(0);
+    store.syncHosts([]);
+  });
+
+  it("reports a stopped plugin when an aborted probe rejects authentication", async () => {
+    const started = createDeferred<void>();
+    const probe = createDeferred<{
+      client: DaemonClient;
+      serverId: string;
+      hostname: string | null;
+    }>();
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          started.resolve(undefined);
+          return probe.promise;
+        },
+        getClientId: async () => "test",
+        readInitialConnectionHint: () => null,
+      },
+    });
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(store, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const adding = plugin.addHost({ connection: "example.com:6767" });
+    await started.promise;
+    lifetime.abort();
+    probe.reject(new DaemonAuthenticationError("password_required"));
+    await expect(adding).rejects.toThrow("Plugin has stopped");
+    expect(store.getHosts()).toHaveLength(0);
+    store.syncHosts([]);
+  });
+
+  it("dismisses an unanswered confirmation when the plugin stops", async () => {
+    const store = createPairingStore();
+    const lifetime = new AbortController();
+    const plugin = createPluginHosts(store, lifetime.signal, {
+      openSettings() {},
+      isManagedLocalHost: async () => false,
+    });
+    const pending = createDeferred<void>();
+    const unsubscribe = store.subscribeHostConfirmation(() => {
+      if (store.getPendingHostConfirmation()) pending.resolve(undefined);
+    });
+    const adding = plugin.addHost({
+      connection: "relay://relay.paseo.sh:443/srv_offer?key=pk_test_offer&ssl=true",
+    });
+    await pending.promise;
+    lifetime.abort();
+    await expect(adding).rejects.toThrow("Plugin has stopped");
+    expect(store.getPendingHostConfirmation()).toBeNull();
+    expect(store.getHosts()).toHaveLength(0);
+    unsubscribe();
+    store.syncHosts([]);
+  });
+
+  it("returns incorrect_password without saving and redacts failed probe errors", async () => {
+    let failure: "auth" | "network" = "auth";
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          if (failure === "auth") throw new DaemonAuthenticationError("incorrect_password");
+          throw new Error("connection failed for secret");
+        },
+        getClientId: async () => "test",
+        readInitialConnectionHint: () => null,
+      },
+    });
+    expect(await store.addHost({ connection: "tcp://example.com:6767?password=secret" })).toEqual({
+      status: "password_required",
+      reason: "incorrect_password",
+    });
+    expect(store.getHosts()).toHaveLength(0);
+    failure = "network";
+    await expect(
+      store.addHost({ connection: "tcp://example.com:6767?password=secret" }),
+    ).rejects.not.toThrow("secret");
+    expect(store.getHosts()).toHaveLength(0);
+    store.syncHosts([]);
+  });
+
+  it("rejects websocket paths and query options the app cannot represent", async () => {
+    const store = createPairingStore();
+    await expect(store.addHost({ connection: "wss://example.com/custom" })).rejects.toThrow(
+      "unsupported",
+    );
+    await expect(
+      store.addHost({ connection: "wss://example.com/ws?token=secret" }),
+    ).rejects.toThrow("unsupported");
+    expect(store.getHosts()).toHaveLength(0);
+    store.syncHosts([]);
   });
 });

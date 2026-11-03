@@ -392,10 +392,10 @@ changes both `usePaseo()` and `useRpc()` to that host's installation. An offline
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
-Host-targeted clients and discovery are owned by `packages/app/src/plugins/hosts`, with per-installation
+Host handles and host-targeted clients are owned by `packages/app/src/plugins/hosts`. Its `projectHost` is the secret boundary; host target input uses the shared `parseHostTarget` grammar. Per-installation
 bindings supplied by the bundle loader. Bind the imperative getter to that installation; do not
 resolve ownership through a mutable current-plugin global. Keep observation ownership in this module
-and transport ownership in the app host runtime. See the [public host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
+and transport ownership in the app host runtime. See the [public host API contract](../public-docs/plugins/reference.md#hosts).
 
 Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
 normal clients, never resumes another session, and is cleaned immediately on exit without reconnect
@@ -414,7 +414,7 @@ in-memory bundles usable, and a later catalog retries persistence.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
-query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
+query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/reference.md#hosts).
 
 Workspace panels, Command Center items, and client slash commands are client contributions. The
 daemon transports their compiled bundle without interpreting placement or callbacks. Panel props

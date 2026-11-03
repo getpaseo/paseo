@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { executeDaemonManagementToggle } from "./daemon-management-toggle";
-import type { DesktopDaemonStatus } from "./desktop-daemon";
+import { resolveDesktopDaemonServerId, type DesktopDaemonStatus } from "./desktop-daemon";
 
 const runningManagedStatus: DesktopDaemonStatus = {
   serverId: "desktop",
@@ -53,6 +53,29 @@ function makeDeps(overrides?: {
     calls,
   };
 }
+
+it("retains the desktop identity when the daemon is stopped or status fails", async () => {
+  expect(
+    await resolveDesktopDaemonServerId({
+      getStatus: async () => ({ ...stoppedStatus, serverId: "" }),
+      getSavedId: async () => "desktop",
+    }),
+  ).toBe("desktop");
+  expect(
+    await resolveDesktopDaemonServerId({
+      getStatus: async () => {
+        throw new Error("offline");
+      },
+      getSavedId: async () => "desktop",
+    }),
+  ).toBe("desktop");
+  expect(
+    await resolveDesktopDaemonServerId({
+      getStatus: async () => runningManagedStatus,
+      getSavedId: async () => "old",
+    }),
+  ).toBe("desktop");
+});
 
 describe("executeDaemonManagementToggle", () => {
   describe("enable path (currentlyManaging: false)", () => {
