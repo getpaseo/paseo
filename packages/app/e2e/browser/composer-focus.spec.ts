@@ -123,6 +123,45 @@ test("focusing the feed preserves assistant text selection and code copy control
   }
 });
 
+test("pasting while the feed or nothing has focus inserts into the composer", async ({
+  page,
+  context,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-stray-paste-",
+    title: "Composer stray paste",
+    initialPrompt: "Render some text.",
+    featureValues: { mockAssistantResponse: "Click this assistant sentence." },
+  });
+
+  try {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await openAgentRoute(page, agent);
+    await composerLocator(page).fill("Draft");
+    // A reload restores the draft without placing a caret in it.
+    await page.reload();
+    await expectComposerDraft(page, "Draft");
+
+    const feed = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+    await feed.getByText("Click this assistant sentence.", { exact: true }).click();
+    await expect(feed).toBeFocused();
+    await page.evaluate(() => navigator.clipboard.writeText(" from the feed"));
+    await page.keyboard.press("ControlOrMeta+v");
+    await expectComposerFocused(page);
+    await expectComposerDraft(page, "Draft from the feed");
+
+    await blurComposerInput(page);
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    await page.evaluate(() => navigator.clipboard.writeText(" and from nowhere"));
+    await page.keyboard.press("ControlOrMeta+v");
+    await expectComposerFocused(page);
+    await expectComposerDraft(page, "Draft from the feed and from nowhere");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("submitting a message leaves the composer ready for the next message", async ({ page }) => {
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "composer-focus-",

@@ -570,6 +570,10 @@ function dispatchComposerKeyboardAction(args: DispatchComposerKeyboardActionArgs
     return true;
   }
 
+  if (action.id === "message-input.paste-text") {
+    return messageInputRef.current?.appendPastedText(action.text) ?? false;
+  }
+
   const passthroughAction = resolveMessageInputPassthroughAction(action.id);
   if (!passthroughAction) return false;
   const result = messageInputRef.current?.runKeyboardAction(passthroughAction);
@@ -621,6 +625,7 @@ function ComposerKeyboardRegistration({
     actions: [
       "agent.interrupt",
       "message-input.focus",
+      "message-input.paste-text",
       "message-input.send",
       "message-input.dictation-toggle",
       "message-input.dictation-cancel",
