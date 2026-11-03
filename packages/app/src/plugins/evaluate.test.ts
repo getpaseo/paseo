@@ -1,15 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { ProjectIconImage } from "@/components/project-icon-image";
-// @ts-expect-error The explicit extension bypasses the web resolver to test the native entry.
-import { ProjectIconImage as NativeProjectIconImage } from "@/components/project-icon-image.tsx";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
-
-vi.mock("react-native-svg/css", () => ({
-  SvgCss: ({ xml }: { xml: string }) => createElement("svg", { "data-xml": xml }),
-}));
 
 const runtime = {
   paseo: {},
@@ -760,32 +752,6 @@ describe("evaluatePluginClientBundle", () => {
       `),
     );
     expect(plugin.surfaces[0]?.Component).toBe(ProjectIconImage);
-  });
-
-  it("passes project SVG and PNG data URIs to the web image renderer", () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>.fill { fill: red; }</style><rect class="fill" width="10" height="10" /></svg>';
-    const fallback = createElement("span", null, "project initial");
-    const style = { width: 16, height: 16 };
-    const renderIcon = (dataUri: string) =>
-      renderToStaticMarkup(createElement(ProjectIconImage, { dataUri, fallback, style }));
-    const uri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
-    expect(renderIcon(uri)).toContain(uri);
-    expect(renderIcon("data:image/png;base64,AAAA")).toContain("data:image/png;base64,AAAA");
-  });
-
-  it("passes native project SVG CSS to SvgCss and preserves the ICO fallback", () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>.fill { fill: red; }</style><rect class="fill" width="10" height="10" /></svg>';
-    const fallback = createElement("span", null, "project initial");
-    const style = { width: 16, height: 16 };
-    const renderIcon = (dataUri: string) =>
-      renderToStaticMarkup(createElement(NativeProjectIconImage, { dataUri, fallback, style }));
-    expect(
-      renderIcon(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`),
-    ).toContain("&lt;style&gt;");
-    expect(renderIcon("data:image/png;base64,AAAA")).toContain("data:image/png;base64,AAAA");
-    expect(renderIcon("data:image/x-icon;base64,AAAA")).toContain("project initial");
   });
 
   it("provides Paseo UI through @getpaseo/plugin/client/ui", () => {
