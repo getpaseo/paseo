@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Copy, Ellipsis, Globe, Import as ImportIcon, Settings } from "lucide-react-native";
+import { Copy, Ellipsis, Globe, Import as ImportIcon, Pencil, Settings } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -32,11 +32,13 @@ import {
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
 import { usePluginWorkspaceMenu } from "@/plugins";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
+const ThemedPencil = withUnistyles(Pencil);
 const ThemedSettings = withUnistyles(Settings);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -44,6 +46,7 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+const MENU_RENAME_ICON = <ThemedPencil size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
 function WorkspaceHeaderMenuTriggerIcon() {
   return (
@@ -97,6 +100,12 @@ function WorkspaceHeaderWorkspaceActionItems({
   onOpenSetupTab,
 }: WorkspaceHeaderWorkspaceActions) {
   const { t } = useTranslation();
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
+  // The global WorkspaceRenameHost owns the dialog for the active workspace, the same one the
+  // command center opens, so the header and the sidebar row share one rename flow.
+  const handleRename = useCallback(() => {
+    keyboardActionDispatcher.dispatch({ id: "workspace.rename", scope: "workspace" });
+  }, [keyboardActionDispatcher]);
   return (
     <>
       <DropdownMenuItem
@@ -116,6 +125,13 @@ function WorkspaceHeaderWorkspaceActionItems({
           {t("workspace.header.actions.copyBranchName")}
         </DropdownMenuItem>
       ) : null}
+      <DropdownMenuItem
+        testID="workspace-header-rename"
+        leading={MENU_RENAME_ICON}
+        onSelect={handleRename}
+      >
+        {t("workspace.header.actions.rename")}
+      </DropdownMenuItem>
       <DropdownMenuItem
         testID="workspace-header-import-agent"
         leading={MENU_IMPORT_ICON}

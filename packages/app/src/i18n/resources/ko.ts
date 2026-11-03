@@ -746,6 +746,7 @@ export const ko: TranslationResources = {
         importSession: "세션 가져오기",
         copyPath: "워크스페이스 경로 복사",
         copyBranchName: "브랜치 이름 복사",
+        rename: "워크스페이스 이름 변경",
         showSetup: "설정 표시",
       },
       toasts: {

@@ -750,6 +750,7 @@ export const ptBR: TranslationResources = {
         importSession: "Importar sessão",
         copyPath: "Copiar caminho do workspace",
         copyBranchName: "Copiar nome da branch",
+        rename: "Renomear workspace",
         showSetup: "Mostrar configuração",
       },
       toasts: {
