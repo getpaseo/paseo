@@ -2671,3 +2671,19 @@ it.each([false, true])(
   },
   45000,
 );
+
+it.skipIf(process.platform !== "win32").each(Array.from({ length: 40 }, (_, i) => i + 1))(
+  "diagnostic: fresh terminal worker startup %i",
+  async () => {
+    const paseoHome = createTemporaryHome();
+    const started = Date.now();
+    try {
+      manager = await startRealWorkerManager({ paseoHome });
+      expect(manager).toBeDefined();
+    } finally {
+      console.log("terminal startup duration", Date.now() - started);
+      const workerLog = join(paseoHome, "terminal-worker.log");
+      if (existsSync(workerLog)) console.log(readFileSync(workerLog, "utf8"));
+    }
+  },
+);
