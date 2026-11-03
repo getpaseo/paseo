@@ -51,7 +51,10 @@ export function AssistantFileLinkContextMenuContent({
       return toNativeAbsolutePath(resolvedPaths.absolutePath);
     }
     const rawPath = target.path;
-    if (isAbsoluteRawPath(rawPath) || rawPath.startsWith("~/")) {
+    // A `~/` path stays unresolved on the client (the host's home directory is unknown
+    // here), so the menu only offers actions that do not need an absolute host path
+    // instead of handing the literal `~/...` to the desktop bridge.
+    if (isAbsoluteRawPath(rawPath)) {
       return toNativeAbsolutePath(rawPath);
     }
     return null;

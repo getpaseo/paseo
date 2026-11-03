@@ -39,42 +39,42 @@ vi.mock("expo-clipboard", () => ({
   setStringAsync: vi.fn(async () => {}),
 }));
 
-// The browser mocker cannot handle importOriginal() partial mocks of this module, so
-// replicate its full export surface for a fake Electron-on-web runtime.
-vi.mock("@/constants/platform", () => ({
-  isWeb: true,
-  isNative: false,
-  isDev: false,
-  getIsElectron: () => true,
-  getIsElectronMac: () => false,
-}));
-
-const openTarget = vi.hoisted(() => vi.fn(async () => {}));
-
-vi.mock("@/desktop/host", () => ({
-  getDesktopHost: () => ({
-    editor: {
-      listTargets: async () => [
-        {
-          id: "explorer",
-          label: "Explorer",
-          kind: "file-manager",
-          icon: { kind: "symbol", name: "folder" },
-        },
-      ],
-      openTarget: (...args: unknown[]) => openTarget(...(args as [])),
-    },
-  }),
-}));
-
-vi.mock("@/desktop/daemon/desktop-daemon", () => ({
-  shouldUseDesktopDaemon: () => true,
-  getDesktopDaemonStatus: async () => ({ serverId: "server-1" }),
-}));
-
+// toast-host imports ToastAndroid, which the browser react-native surface (react-native-web)
+// does not export, so no browser test can import the real toast module — the same reason the
+// other component tests mock it. The menu only surfaces errors through the api.
 vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ show: vi.fn(), copied: vi.fn(), error: vi.fn() }),
 }));
+
+// The desktop wiring runs through the production injection point: a `window.paseoDesktop`
+// bridge. Installing a fake bridge here exercises the real platform, desktop-host, and
+// desktop-daemon modules — the same surface the Electron wrapper provides — instead of
+// mocking those modules away.
+const openTarget = vi.fn(async () => {});
+
+const desktopHost = {
+  invoke: async (command: string) => {
+    if (command === "desktop_daemon_status") {
+      return { serverId: "server-1", status: "running", home: "C:/Users/test" };
+    }
+    return null;
+  },
+  editor: {
+    listTargets: async () => [
+      {
+        id: "explorer",
+        label: "Explorer",
+        kind: "file-manager",
+        icon: { kind: "symbol", name: "folder" },
+      },
+    ],
+    openTarget: (...args: unknown[]) => openTarget(...(args as [])),
+  },
+};
+
+beforeAll(() => {
+  (window as { paseoDesktop?: unknown }).paseoDesktop = desktopHost;
+});
 
 const SOURCE: AssistantFileLinkSource = {
   href: "file:///C:/Users/test/project/docs/report.html:12",
@@ -252,6 +252,53 @@ describe("AssistantFileLinkContextMenuContent", () => {
     await clickMenuItem("assistant-file-link-copy-path");
     await vi.waitFor(() => {
       expect(Clipboard.setStringAsync).toHaveBeenCalled();
+    });
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("hides reveal and copy path for home-relative paths while open stays available", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const homeTarget: InlinePathTarget = {
+      raw: "~/.paseo/plans/file-preview.md",
+      path: "~/.paseo/plans/file-preview.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    };
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ContextMenu>
+            <ContextMenuTrigger contextOnly testID="assistant-file-link-toggle">
+              <span>file-preview.md</span>
+            </ContextMenuTrigger>
+            <AssistantFileLinkContextMenuContent
+              source={SOURCE}
+              target={homeTarget}
+              serverId="server-1"
+              workspaceRoot="C:/Users/test/project"
+              onOpen={onOpen}
+              testIDPrefix="assistant-file-link"
+            />
+          </ContextMenu>
+        </QueryClientProvider>,
+      );
+    });
+    mountedMenus.push({ root, container });
+    openContextMenu();
+
+    await waitForMenuItem("assistant-file-link-open-file");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The client cannot resolve the host's home directory, so the menu must not offer
+    // actions that hand the literal `~/...` to the desktop bridge.
+    expect(document.querySelector('[data-testid="assistant-file-link-reveal"]')).toBeNull();
+    expect(document.querySelector('[data-testid="assistant-file-link-copy-path"]')).toBeNull();
+
+    await clickMenuItem("assistant-file-link-open-file");
+    await vi.waitFor(() => {
+      expect(onOpen).toHaveBeenCalledWith(SOURCE, "preferred");
     });
     expect(openTarget).not.toHaveBeenCalled();
   });
