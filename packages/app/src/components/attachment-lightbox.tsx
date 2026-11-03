@@ -9,12 +9,12 @@ import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative } from "@/constants/platform";
 import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
-import { useGlobalWebOverlayLayer } from "@/lib/overlay-root";
+import { useGlobalOverlayLayer } from "@/lib/overlay-root";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -35,7 +35,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   const url = source?.type === "uri" ? source.uri : attachmentUrl;
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && source !== null);
+  const modalLayer = useGlobalOverlayLayer("modal", source !== null);
 
   useEffect(() => {
     setErrored(false);

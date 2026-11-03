@@ -1,3 +1,4 @@
+import { usesDesktopBindings } from "@/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { View, Text, type PressableStateCallbackType } from "react-native";
@@ -33,7 +34,6 @@ import {
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
-import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
 
@@ -342,8 +342,7 @@ export function KeyboardShortcutsSection() {
 
   const isFocused = useIsFocused();
   const isMac = getShortcutOs() === "mac";
-  const isDesktopApp = getIsElectronRuntime();
-  const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  const sections = buildKeyboardShortcutHelpSections({ isMac, usesDesktopBindings });
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -463,7 +462,7 @@ export function KeyboardShortcutsSection() {
           >
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
-                const platform = { isMac, isDesktop: isDesktopApp };
+                const platform = { isMac, usesDesktopBindings };
                 const bindingId = getBindingIdForAction(row.id, platform);
                 const displayChord = resolveShortcutKeysForAction(row.id, overrides, platform);
                 // `in`, not a truthiness check: an unassigned shortcut stores

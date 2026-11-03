@@ -54,7 +54,7 @@ export function useOverlayLayer(kind: OverlayKind): number {
  * was topmost when it opened. Global hosts live outside their opener's React
  * tree, so context alone cannot preserve that relative ownership.
  */
-export function useGlobalWebOverlayLayer(kind: OverlayKind, active: boolean): number {
+export function useGlobalOverlayLayer(kind: OverlayKind, active: boolean): number {
   const contextualLayer = useOverlayLayer(kind);
   return useMemo(() => {
     if (!active) return contextualLayer;

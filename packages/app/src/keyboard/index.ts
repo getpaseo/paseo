@@ -7,3 +7,6 @@ export {
   getTopOverlayLayer,
   subscribeOverlays,
 } from "./internal/overlay-dispatch";
+export { useKeyboardFocusSurface } from "./internal/use-focus-surface";
+export { usesDesktopBindings } from "./internal/sources";
+export type { BrowserKeyboardPolicy } from "./internal/sources/electron-browser";

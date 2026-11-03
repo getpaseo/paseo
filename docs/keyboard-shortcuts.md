@@ -29,16 +29,35 @@ Never register Backspace: it would take deletion away from text fields. Changes
 to the native module require a native rebuild; an over-the-air JavaScript update
 cannot deliver them.
 
-## Overlays and text input
+## Overlay ownership
 
-The topmost overlay must have first refusal before global shortcuts run, on both web and native. Otherwise Escape can interrupt an agent instead of closing the surface above it. Keep this contract across [overlay-root.ts](../packages/app/src/lib/overlay-root.ts) and the platform key sources.
+Register keyboard handling with `useOverlayRegistration` from `@/keyboard`.
+Pass the surface's open state, layer, handled keys and `onKeyDown`. The highest
+layer gets first refusal; the latest registration wins a tie. Native registration
+does not need a DOM ref. Web adds focus trapping and restoration through its adapter.
 
-Native overlay navigation must work without DOM focus or row queries, including when the surface renders as a compact bottom sheet. Scope extra keys to the overlay that needs them so text controls retain their normal editing behavior.
+Declare Enter and arrow keys only while the surface owns them. Native sources
+use the top overlay's declarations to take those keys before text controls edit.
+Backspace stays with the focused input. Composition confirmation must not select
+an overlay row or submit the composer.
 
-Coordinate overlay Enter handling with composer submission and IME composition. Choosing a highlighted item must not submit the composer underneath it, and confirming an IME candidate must not submit unfinished text.
+Android modals have their own windows. Observe them through React Native's
+`ExtraWindowEventListener` as well as the activity window. The dev client bypasses
+Expo's root-container handler, so an activity root-view wrapper misses presses.
+Keep an overlay-owned press consumed through key-up, even if its key-down closes
+the overlay; otherwise the modal's default Escape handler can close a second layer.
 
-## Terminal focus
+iOS scene startup installs the observing window after Expo creates its root view.
+Keep that integration in the hardware keyboard module's config plugin. Its window
+owns both the press stream and the text-control key commands, including above modals.
 
-A focused terminal needs keys such as Escape for terminal applications. On iOS, those keys must be released from native command registration; filtering them after dispatch is too late. Native focus cannot be inferred from DOM ancestors. See [native-terminal-keyboard.ts](../packages/app/src/keyboard/native-terminal-keyboard.ts) for focus ownership and tab-switch lifetime handling.
+## Focus scopes
 
-An overlay above the terminal owns its keys until it closes. With a focused terminal and no overlay, Escape goes to the terminal; use the stop button to interrupt the agent.
+The composer and terminal declare focus with `useKeyboardFocusSurface`. Native
+scope derives from those declarations and command-center state. Releasing an old
+surface must not clear a newer owner's declaration during a tab switch. Web keeps
+its DOM-derived scope.
+
+Escape interrupts an agent only in the message input or an unclaimed surface.
+A focused terminal excludes that binding. The source leaves terminal Escape alone;
+terminal Escape/Ctrl forwarding is a separate feature.

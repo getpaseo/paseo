@@ -6,28 +6,11 @@ private let hardwareShortcutEventName = "onHardwareKeyboardShortcut"
 
 private weak var activeModule: PaseoHardwareKeyboardModule?
 private var isHardwareSubmitEnabled = false
-private var registeredKeyCommands: [KeyCommandSpec] = []
-
-private struct KeyCommandSpec {
-  let combo: String
-  let input: String
-  let modifierFlags: UIKeyModifierFlags
-}
-
-struct KeyCommandRecord: Record {
-  @Field var combo: String = ""
-  @Field var input: String = ""
-  @Field var namedKey: String = ""
-  @Field var command: Bool = false
-  @Field var alternate: Bool = false
-  @Field var control: Bool = false
-  @Field var shift: Bool = false
-}
+private var overlayKeys: Set<String> = []
 
 /// UIKit spells non-character keys as sentinel input strings rather than as the
 /// character they would type. JS sends the DOM `code` and the mapping lives
 /// here, so the constants stay in the one place that owns UIKit vocabulary.
-/// Keep this in step with `NATIVE_NAMED_KEY_CODES` in `keyboard/native-shortcuts.ts`.
 private let namedKeyInputs: [String: String] = [
   "Escape": UIKeyCommand.inputEscape,
   "ArrowUp": UIKeyCommand.inputUpArrow,
@@ -47,20 +30,6 @@ private func isComposingText() -> Bool {
   return responder.markedTextRange != nil
 }
 
-private func resolveKeyCommandInput(_ record: KeyCommandRecord) -> String? {
-  if record.namedKey.isEmpty {
-    return record.input.isEmpty ? nil : record.input
-  }
-  return namedKeyInputs[record.namedKey]
-}
-
-@objc
-public class PaseoHardwareKeyboardReactDelegateHandler: ExpoReactDelegateHandler {
-  public override func createRootViewController() -> UIViewController? {
-    return PaseoHardwareKeyboardRootViewController()
-  }
-}
-
 public class PaseoHardwareKeyboardModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PaseoHardwareKeyboard")
@@ -77,33 +46,9 @@ public class PaseoHardwareKeyboardModule: Module {
       }
     }
 
-    // The combo string is opaque to UIKit: it rides along on the command and
-    // comes back on the event so JS resolves the press through the same binding
-    // table the web listener uses, instead of a second native-only mapping.
-    Function("setKeyCommands") { (commands: [KeyCommandRecord]) in
+    Function("setOverlayKeys") { (keys: [String]) in
       DispatchQueue.main.async {
-        registeredKeyCommands = commands.compactMap { record in
-          // An unmapped named key would otherwise register under the empty
-          // input and match nothing, so drop it rather than carry a dead
-          // command that hides the missing mapping.
-          guard let input = resolveKeyCommandInput(record) else {
-            return nil
-          }
-          var modifierFlags: UIKeyModifierFlags = []
-          if record.command { modifierFlags.insert(.command) }
-          if record.alternate { modifierFlags.insert(.alternate) }
-          if record.control { modifierFlags.insert(.control) }
-          if record.shift { modifierFlags.insert(.shift) }
-          return KeyCommandSpec(
-            combo: record.combo,
-            input: input,
-            modifierFlags: modifierFlags
-          )
-        }
-        // The set now changes while the app runs -- a terminal takes Escape back
-        // whenever it holds focus, and an overlay asks for Enter and the arrows
-        // only while it is open. UIKit serves key commands from a menu it builds
-        // once, so the rebuild is what makes the new list take effect.
+        overlayKeys = Set(keys).intersection(["Enter", "ArrowUp", "ArrowDown"])
         UIMenuSystem.main.setNeedsRebuild()
       }
     }
@@ -111,9 +56,9 @@ public class PaseoHardwareKeyboardModule: Module {
     OnDestroy {
       if activeModule === self {
         activeModule = nil
+        isHardwareSubmitEnabled = false
+        overlayKeys = []
       }
-      isHardwareSubmitEnabled = false
-      registeredKeyCommands = []
     }
   }
 
@@ -121,20 +66,69 @@ public class PaseoHardwareKeyboardModule: Module {
     sendEvent(hardwareSubmitEventName, [:])
   }
 
-  fileprivate func emitHardwareKeyboardShortcut(combo: String) {
-    sendEvent(hardwareShortcutEventName, ["combo": combo])
+  fileprivate func emitHardwareKeyboardPress(_ press: UIPress, isRepeat: Bool) {
+    guard let key = press.key else { return }
+    let code = hardwareKeyCode(key)
+    let characters = key.characters
+    let named = namedKeyInputs.first { $0.value == characters }?.key
+    let keyName: String
+    if code.hasPrefix("Meta") { keyName = "Meta" }
+    else if code.hasPrefix("Control") { keyName = "Control" }
+    else if code.hasPrefix("Shift") { keyName = "Shift" }
+    else if code.hasPrefix("Alt") { keyName = "Alt" }
+    else { keyName = named ?? (characters.isEmpty ? code : characters) }
+    guard !code.isEmpty else { return }
+    sendEvent(hardwareShortcutEventName, [
+      "key": keyName,
+      "code": code,
+      "altKey": key.modifierFlags.contains(.alternate),
+      "ctrlKey": key.modifierFlags.contains(.control),
+      "metaKey": key.modifierFlags.contains(.command),
+      "shiftKey": key.modifierFlags.contains(.shift),
+      "repeat": isRepeat,
+      "isComposing": isComposingText(),
+      "phase": press.phase == .ended || press.phase == .cancelled ? "up" : "down",
+    ])
   }
 }
 
-private final class PaseoHardwareKeyboardRootViewController: UIViewController {
-  override var keyCommands: [UIKeyCommand]? {
+public final class PaseoHardwareKeyboardWindow: UIWindow {
+  private var pressedCodes: Set<Int> = []
+  public static func observing(_ original: UIWindow) -> UIWindow {
+    if original is PaseoHardwareKeyboardWindow { return original }
+    guard let scene = original.windowScene else { return original }
+    let observed = PaseoHardwareKeyboardWindow(windowScene: scene)
+    observed.windowLevel = original.windowLevel
+    observed.backgroundColor = original.backgroundColor
+    let controller = original.rootViewController
+    original.rootViewController = nil
+    original.isHidden = true
+    observed.rootViewController = controller
+    observed.makeKeyAndVisible()
+    return observed
+  }
+
+  public override func sendEvent(_ event: UIEvent) {
+    if let event = event as? UIPressesEvent {
+      for press in event.allPresses where press.phase == .began || press.phase == .ended || press.phase == .cancelled {
+        guard let key = press.key else { continue }
+        let raw = Int(key.keyCode.rawValue)
+        let isRepeat = press.phase == .began && pressedCodes.contains(raw)
+        if press.phase == .began { pressedCodes.insert(raw) }
+        else { pressedCodes.remove(raw) }
+        activeModule?.emitHardwareKeyboardPress(press, isRepeat: isRepeat)
+      }
+    }
+    super.sendEvent(event)
+  }
+  public override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
-    if isHardwareSubmitEnabled && !isPlainReturnClaimed
+    if isHardwareSubmitEnabled && !isPlainReturnClaimed && !isComposingText()
       && UIDevice.current.userInterfaceIdiom == .pad
     {
       commands.append(makeSubmitCommand())
     }
-    commands.append(contentsOf: registeredKeyCommands.map(makeShortcutCommand))
+    if !isComposingText() { commands.append(contentsOf: overlayKeys.compactMap(makeShortcutCommand)) }
     return commands
   }
 
@@ -145,7 +139,7 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
   /// two commands on one press, and the composer would win a press the picker
   /// asked for — Enter would create the workspace instead of choosing a project.
   private var isPlainReturnClaimed: Bool {
-    registeredKeyCommands.contains { $0.input == "\r" && $0.modifierFlags.isEmpty }
+    overlayKeys.contains("Enter")
   }
 
   private func makeSubmitCommand() -> UIKeyCommand {
@@ -160,20 +154,10 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
     return command
   }
 
-  private func makeShortcutCommand(_ spec: KeyCommandSpec) -> UIKeyCommand {
-    // `propertyList` is read-only, so the combo has to ride in through the
-    // initializer rather than being assigned after the fact.
-    let command = UIKeyCommand(
-      title: "",
-      image: nil,
-      action: #selector(handleHardwareKeyboardShortcut(_:)),
-      input: spec.input,
-      modifierFlags: spec.modifierFlags,
-      propertyList: spec.combo
-    )
-    if #available(iOS 15.0, *) {
-      command.wantsPriorityOverSystemBehavior = true
-    }
+  private func makeShortcutCommand(_ key: String) -> UIKeyCommand? {
+    guard let input = namedKeyInputs[key] else { return nil }
+    let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(handleHardwareKeyboardShortcut(_:)))
+    if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
     return command
   }
 
@@ -186,15 +170,7 @@ private final class PaseoHardwareKeyboardRootViewController: UIViewController {
   }
 
   @objc
-  private func handleHardwareKeyboardShortcut(_ sender: UIKeyCommand) {
-    guard let combo = sender.propertyList as? String else {
-      return
-    }
-    if combo == "Enter" && isComposingText() {
-      return
-    }
-    activeModule?.emitHardwareKeyboardShortcut(combo: combo)
-  }
+  private func handleHardwareKeyboardShortcut(_ sender: UIKeyCommand) {}
 
   private func canSubmitCurrentTextInput() -> Bool {
     guard let responder = UIResponder.paseoCurrentFirstResponder else {
@@ -225,4 +201,26 @@ private extension UIResponder {
   private func captureCurrentFirstResponder(_ sender: Any?) {
     UIResponder.currentFirstResponder = self
   }
+}
+
+
+private func hardwareKeyCode(_ key: UIKey) -> String {
+  let raw = key.keyCode.rawValue
+  if raw >= 4 && raw <= 29 {
+    let letter = UnicodeScalar(Int(raw) + 61)!
+    return "Key" + String(letter)
+  }
+  if raw >= 30 && raw <= 38 { return "Digit" + String(raw - 29) }
+  if raw == 39 { return "Digit0" }
+  let codes: [Int: String] = [
+    40: "Enter", 41: "Escape", 42: "Backspace", 43: "Tab", 44: "Space",
+    45: "Minus", 46: "Equal", 47: "BracketLeft", 48: "BracketRight",
+    49: "Backslash", 51: "Semicolon", 52: "Quote", 53: "Backquote",
+    54: "Comma", 55: "Period", 56: "Slash", 76: "Delete", 79: "ArrowRight",
+    80: "ArrowLeft", 81: "ArrowDown", 82: "ArrowUp", 224: "ControlLeft",
+    225: "ShiftLeft", 226: "AltLeft", 227: "MetaLeft", 228: "ControlRight",
+    229: "ShiftRight", 230: "AltRight", 231: "MetaRight",
+  ]
+  if raw >= 58 && raw <= 69 { return "F" + String(raw - 57) }
+  return codes[Int(raw)] ?? ""
 }

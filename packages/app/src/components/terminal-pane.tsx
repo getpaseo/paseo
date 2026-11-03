@@ -84,7 +84,7 @@ import {
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { claimNativeTerminalKeyboard } from "@/keyboard/native-terminal-keyboard";
+import { useKeyboardFocusSurface } from "@/keyboard";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -459,15 +459,7 @@ export function TerminalPane({
     }
   }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
-  // iOS resolves a hardware key against the registered `UIKeyCommand`s before
-  // the focused surface sees it, so Escape has to leave that list while a
-  // terminal is on screen and focused or vim never receives it.
-  useEffect(() => {
-    if (!isNative || !isTerminalPresented || !isPaneFocused || !terminalId) {
-      return;
-    }
-    return claimNativeTerminalKeyboard(`${scopeKey}:${terminalId}`);
-  }, [isPaneFocused, isTerminalPresented, scopeKey, terminalId]);
+  useKeyboardFocusSurface("terminal", isTerminalPresented && isPaneFocused && terminalId != null);
 
   useEffect(() => {
     const canRequest = canRequestFocusClaim({

@@ -53,7 +53,7 @@ import { useProjects } from "@/hooks/use-projects";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useProjectIcons } from "@/projects/icons";
-import { OverlayLayerProvider, useGlobalWebOverlayLayer } from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import {
   useKeyboardShortcutsStore,
@@ -781,7 +781,7 @@ export function CommandCenter() {
     interaction,
   );
   const showBottomSheet = isCompact && isNative;
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
+  const modalLayer = useGlobalOverlayLayer("modal", state.open);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
     isEnabled: showBottomSheet,
@@ -913,41 +913,43 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
-          {state.scope === "files" ? (
-            <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
-          ) : null}
-          <ThemedBottomSheetTextInput
-            testID="command-center-input"
-            ref={bottomSheetInputRef}
-            initialValue={state.query}
-            variant="bottom-sheet"
-            onChangeText={state.setQuery}
-            onKeyPress={keyPress}
-            onSubmitEditing={submit}
-            placeholder={
-              state.scope === "files"
-                ? t("shell.commandCenter.filePlaceholder")
-                : t("shell.commandCenter.placeholder")
-            }
-            style={[styles.input, styles.growingInput]}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-          />
-          <FileSearchLoadingIndicator
-            loading={state.fileSearchLoading}
-            label={t("shell.commandCenter.searchingFiles")}
-          />
-        </View>
-        {fileSearchError}
-        <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
+        <OverlayLayerProvider layer={modalLayer}>
+          <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
+            {state.scope === "files" ? (
+              <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+            ) : null}
+            <ThemedBottomSheetTextInput
+              testID="command-center-input"
+              ref={bottomSheetInputRef}
+              initialValue={state.query}
+              variant="bottom-sheet"
+              onChangeText={state.setQuery}
+              onKeyPress={keyPress}
+              onSubmitEditing={submit}
+              placeholder={
+                state.scope === "files"
+                  ? t("shell.commandCenter.filePlaceholder")
+                  : t("shell.commandCenter.placeholder")
+              }
+              style={[styles.input, styles.growingInput]}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+            />
+            <FileSearchLoadingIndicator
+              loading={state.fileSearchLoading}
+              label={t("shell.commandCenter.searchingFiles")}
+            />
+          </View>
+          {fileSearchError}
+          <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
+        </OverlayLayerProvider>
       </IsolatedBottomSheetModal>
     );
   }
   if (!state.open) return null;
   return (
-    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
+    <OverlayLayerProvider layer={modalLayer}>
       <Modal visible transparent animationType="fade" onRequestClose={state.close}>
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />

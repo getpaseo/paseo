@@ -908,6 +908,7 @@ function resolveInitialActiveIndex(
 }
 
 interface MobileBodyProps {
+  overlayLayer: number;
   isOpen: boolean;
   snapPoints: string[];
   handleIndicatorStyle: { backgroundColor: string };
@@ -986,45 +987,47 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      <ComboboxSheetFrame footer={props.footer}>
-        {props.header ? (
-          <SheetHeaderView header={props.header} onClose={props.onClose} />
-        ) : (
-          <>
-            <View style={styles.bottomSheetHeader}>
-              <Text key={props.titleColor} style={comboboxTitleStyle}>
-                {props.title}
-              </Text>
-            </View>
-            {props.stickyHeader}
-            {!props.hasChildren && props.searchable ? (
-              <SearchInput
-                placeholder={props.searchPlaceholder}
-                onChangeText={props.setSearchQueryWithCallback}
-                onSubmitEditing={props.handleSubmitSearch}
-                autoFocus={false}
-                useBottomSheetInput
-                resetKey={props.searchResetKey}
-              />
-            ) : null}
-          </>
-        )}
-        {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-          body
-        ) : (
-          <BottomSheetScrollView
-            style={styles.mobileSheetBody}
-            contentContainerStyle={[
-              styles.comboboxScrollContent,
-              props.mobileChildrenContentContainerStyle,
-            ]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {body}
-          </BottomSheetScrollView>
-        )}
-      </ComboboxSheetFrame>
+      <OverlayLayerProvider layer={props.overlayLayer}>
+        <ComboboxSheetFrame footer={props.footer}>
+          {props.header ? (
+            <SheetHeaderView header={props.header} onClose={props.onClose} />
+          ) : (
+            <>
+              <View style={styles.bottomSheetHeader}>
+                <Text key={props.titleColor} style={comboboxTitleStyle}>
+                  {props.title}
+                </Text>
+              </View>
+              {props.stickyHeader}
+              {!props.hasChildren && props.searchable ? (
+                <SearchInput
+                  placeholder={props.searchPlaceholder}
+                  onChangeText={props.setSearchQueryWithCallback}
+                  onSubmitEditing={props.handleSubmitSearch}
+                  autoFocus={false}
+                  useBottomSheetInput
+                  resetKey={props.searchResetKey}
+                />
+              ) : null}
+            </>
+          )}
+          {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+            body
+          ) : (
+            <BottomSheetScrollView
+              style={styles.mobileSheetBody}
+              contentContainerStyle={[
+                styles.comboboxScrollContent,
+                props.mobileChildrenContentContainerStyle,
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {body}
+            </BottomSheetScrollView>
+          )}
+        </ComboboxSheetFrame>
+      </OverlayLayerProvider>
     </IsolatedBottomSheetModal>
   );
 }
@@ -1580,6 +1583,7 @@ export function Combobox({
   if (isMobile) {
     return (
       <MobileComboboxBody
+        overlayLayer={floatingLayer}
         isOpen={isOpen}
         snapPoints={snapPoints}
         handleIndicatorStyle={handleIndicatorStyle}

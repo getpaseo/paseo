@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachElectronBrowserSource,
   buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
   shouldPublishBrowserShortcutPolicy,
-} from "./shortcuts";
-import { buildEffectiveBindings, resolveKeyboardShortcut } from "../../keyboard/keyboard-shortcuts";
+} from "./electron-browser";
+import { buildEffectiveBindings, resolveKeyboardShortcut } from "../../keyboard-shortcuts";
 
 describe("buildBrowserKeyboardPolicy", () => {
   it("publishes only chord starts while no browser chord is pending", () => {
@@ -13,7 +14,11 @@ describe("buildBrowserKeyboardPolicy", () => {
       "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+F12 Ctrl+F11",
     });
 
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({
+      bindings,
+      isMac: false,
+      usesDesktopBindings: true,
+    });
 
     expect(policy.prefixes).toContainEqual({
       alt: false,
@@ -51,7 +56,7 @@ describe("buildBrowserKeyboardPolicy", () => {
       bindings,
       chordState: { candidateIndices: [chordIndex], step: 1, timeoutId: null },
       isMac: false,
-      isDesktop: true,
+      usesDesktopBindings: true,
     });
 
     expect(policy.prefixes).toEqual([
@@ -85,7 +90,7 @@ describe("buildBrowserKeyboardPolicy", () => {
       context: {
         commandCenterOpen: false,
         focusScope: "browser",
-        isDesktop: true,
+        usesDesktopBindings: true,
         isMac: false,
       },
       chordState: { candidateIndices: [chordIndex], step: 1, timeoutId: null },
@@ -101,7 +106,11 @@ describe("buildBrowserKeyboardPolicy", () => {
       "settings-toggle-ctrl-comma-non-mac": "Ctrl+F10 F9",
     });
 
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({
+      bindings,
+      isMac: false,
+      usesDesktopBindings: true,
+    });
 
     expect(policy.prefixes).not.toContainEqual({
       alt: false,
@@ -125,7 +134,7 @@ describe("buildBrowserKeyboardPolicy", () => {
     });
 
     expect(
-      buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true }).prefixes,
+      buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true }).prefixes,
     ).toContainEqual({
       alt: false,
       code: "KeyY",
@@ -141,7 +150,11 @@ describe("buildBrowserKeyboardPolicy", () => {
       "workspace-tab-close-current-ctrl-w-non-mac": "Ctrl+Y",
     });
 
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({
+      bindings,
+      isMac: false,
+      usesDesktopBindings: true,
+    });
 
     expect(policy.prefixes).not.toContainEqual({
       alt: false,
@@ -164,7 +177,7 @@ describe("buildBrowserKeyboardPolicy", () => {
   it("leaves macOS browser back and forward shortcuts in the guest", () => {
     const bindings = buildEffectiveBindings({});
 
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true });
 
     for (const code of ["BracketLeft", "BracketRight"]) {
       expect(policy.prefixes).not.toContainEqual({
@@ -180,7 +193,7 @@ describe("buildBrowserKeyboardPolicy", () => {
 
   it("marks editable-only exclusions for enforcement inside the guest", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true });
 
     expect(policy.prefixes).toContainEqual({
       alt: false,
@@ -194,7 +207,11 @@ describe("buildBrowserKeyboardPolicy", () => {
 
   it("does not publish plain browser keys", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: false, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({
+      bindings,
+      isMac: false,
+      usesDesktopBindings: true,
+    });
 
     expect(policy.prefixes).not.toContainEqual({
       alt: false,
@@ -214,7 +231,7 @@ describe("buildBrowserKeyboardPolicy", () => {
 
   it("publishes Cmd+B with its logical key for non-QWERTY layouts", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true });
 
     expect(policy.prefixes).toContainEqual({
       alt: false,
@@ -228,7 +245,7 @@ describe("buildBrowserKeyboardPolicy", () => {
 
   it("publishes the physical code needed for macOS Option shortcuts", () => {
     const bindings = buildEffectiveBindings({});
-    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, isDesktop: true });
+    const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true });
 
     expect(policy.prefixes).toContainEqual({
       alt: true,
@@ -318,5 +335,51 @@ describe("parseBrowserShortcutInput", () => {
     },
   ])("rejects $name", ({ payload }) => {
     expect(parseBrowserShortcutInput(payload)).toBeNull();
+  });
+});
+
+describe("Electron guest source through shared resolution", () => {
+  it("replays guest input through user rebinds and preserves focus restoration", async () => {
+    const { createKeyboardPipeline } = await import("../pipeline");
+    const { createOverlayRegistry } = await import("../overlays");
+    const actions: string[] = [];
+    const restored: string[] = [];
+    let receive: (payload: unknown) => void = () => {};
+    const pipeline = createKeyboardPipeline({
+      getContext: () => ({ isMac: true, usesDesktopBindings: true, commandCenterOpen: false }),
+      getBindings: () => buildEffectiveBindings({ "command-center-toggle-cmd-k-mac": "Cmd+J" }),
+      isCapturing: () => false,
+      overlays: createOverlayRegistry(),
+      dispatch: (match, input) => {
+        actions.push(match.action);
+        input.captureFocusRestore();
+        return true;
+      },
+    });
+    const detach = attachElectronBrowserSource(
+      {
+        subscribe(handler) {
+          receive = handler;
+          return () => {
+            receive = () => {};
+          };
+        },
+        captureFocusRestore: (id) => restored.push(id),
+      },
+      { keyDown: pipeline.keyDown, keyUp() {}, blur() {}, commandCenterOpen: () => false },
+    );
+    receive({
+      browserId: "tab-1",
+      key: "j",
+      code: "KeyJ",
+      alt: false,
+      control: false,
+      meta: true,
+      shift: false,
+    });
+    expect(actions).toEqual(["command-center.toggle"]);
+    expect(restored).toEqual(["tab-1"]);
+    detach();
+    pipeline.dispose();
   });
 });

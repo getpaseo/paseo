@@ -78,7 +78,7 @@ import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
-import { OverlayLayerProvider, useGlobalWebOverlayLayer } from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import {
   useHosts,
   useHostRuntimeClient,
@@ -812,7 +812,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [activeIndex, handleBack, rows, submitActive],
   );
 
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
+  const modalLayer = useGlobalOverlayLayer("modal", true);
   const handleOverlayKeyDown = useCallback(
     (event: KeyboardInputEvent) => {
       if (!handleKey(event.key)) return false;
@@ -994,7 +994,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     </Modal>
   );
 
-  return createElement(OverlayLayerProvider, { layer: isWeb ? modalLayer : 0 }, modal);
+  return createElement(OverlayLayerProvider, { layer: modalLayer }, modal);
 }
 
 const styles = StyleSheet.create((theme) => ({

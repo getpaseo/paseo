@@ -7,11 +7,7 @@ import { Keyboard, Pressable, Text, View } from "react-native";
 import type { DimensionValue, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-} from "../lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useGlobalOverlayLayer } from "../lib/overlay-root";
 import {
   BottomSheetHandle,
   useBottomSheetGestureHandlers,
@@ -630,7 +626,7 @@ export function AdaptiveModalSheet({
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
+  const modalLayer = useGlobalOverlayLayer("modal", visible || shouldRenderWeb);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
     onDismiss?.();
@@ -711,18 +707,20 @@ export function AdaptiveModalSheet({
         accessible={false}
         presentation={presentation}
       >
-        <CompactSheetBody
-          header={header}
-          onClose={onClose}
-          testID={testID}
-          footer={footerView}
-          isKeyboardVisible={isKeyboardVisible}
-          scrollable={scrollable}
-          bodyStyle={bodyStyle}
-          contentStyle={contentStyle}
-        >
-          {children}
-        </CompactSheetBody>
+        <OverlayLayerProvider layer={modalLayer}>
+          <CompactSheetBody
+            header={header}
+            onClose={onClose}
+            testID={testID}
+            footer={footerView}
+            isKeyboardVisible={isKeyboardVisible}
+            scrollable={scrollable}
+            bodyStyle={bodyStyle}
+            contentStyle={contentStyle}
+          >
+            {children}
+          </CompactSheetBody>
+        </OverlayLayerProvider>
       </IsolatedBottomSheetModal>
     );
   }

@@ -4,8 +4,6 @@ import type { OverlayRegistration } from "./overlay-contract";
 type WebOverlayKeyHandler = (event: KeyboardInputEvent) => boolean;
 
 interface WebOverlayEntry {
-  id: symbol;
-  order: number;
   getLayer: () => number;
   getKeys: () => readonly string[];
   getScope: () => HTMLElement | null;
@@ -15,7 +13,6 @@ interface WebOverlayEntry {
 }
 
 const focusEntries = new WeakMap<OverlayEntry, WebOverlayEntry>();
-let webOverlayOrder = 0;
 let webOverlayListenersAttached = false;
 let webOverlayFocusCheckQueued = false;
 
@@ -177,7 +174,6 @@ export function useOverlayRegistration({
   manageFocus = true,
   restoreFocusRef: preferredRestoreFocusRef,
 }: OverlayRegistration) {
-  const idRef = useRef(Symbol("web-overlay"));
   const scopeRef = useRef<HTMLElement | null>(null);
   const keysRef = useRef(keys);
   keysRef.current = keys;
@@ -223,8 +219,6 @@ export function useOverlayRegistration({
 
     detachedRemoveEntryRef.current = null;
     const entry: WebOverlayEntry = {
-      id: idRef.current,
-      order: ++webOverlayOrder,
       getLayer: () => layerRef.current,
       getKeys: () => keysRef.current,
       getScope: () => scopeRef.current,

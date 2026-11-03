@@ -89,7 +89,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useKeyboardShortcuts } from "@/keyboard/use-shortcuts";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";

@@ -106,3 +106,46 @@ describe("Escape with a plugin popover open", () => {
     expect(keyBelongsToDomPopover({ key: "Escape" })).toBe(true);
   });
 });
+
+describe("DOM source through the shared resolver", () => {
+  it("uses user rebinds from a focused composer and cancels the DOM default", async () => {
+    const { attachDomKeyboardSource } = await import("@/keyboard/internal/sources/dom.web");
+    const { createKeyboardPipeline } = await import("@/keyboard/internal/pipeline");
+    const { createOverlayRegistry } = await import("@/keyboard/internal/overlays");
+    const { buildEffectiveBindings } = await import("@/keyboard/keyboard-shortcuts");
+    const actions: string[] = [];
+    const input = document.createElement("textarea");
+    input.dataset.testid = "message-input-root";
+    document.body.append(input);
+    input.focus();
+    const pipeline = createKeyboardPipeline({
+      getContext: () => ({ isMac: true, usesDesktopBindings: false, commandCenterOpen: false }),
+      getBindings: () => buildEffectiveBindings({ "command-center-toggle-cmd-k-mac": "Cmd+J" }),
+      isCapturing: () => false,
+      overlays: createOverlayRegistry(),
+      dispatch: (match) => {
+        actions.push(match.action);
+        return true;
+      },
+    });
+    const detach = attachDomKeyboardSource({
+      keyDown: pipeline.keyDown,
+      keyUp() {},
+      blur() {},
+      commandCenterOpen: () => false,
+    });
+    const event = new KeyboardEvent("keydown", {
+      key: "j",
+      code: "KeyJ",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    expect(actions).toEqual(["command-center.toggle"]);
+    expect(event.defaultPrevented).toBe(true);
+    detach();
+    pipeline.dispose();
+    input.remove();
+  });
+});
