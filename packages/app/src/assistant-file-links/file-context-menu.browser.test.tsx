@@ -268,12 +268,6 @@ describe("AssistantFileLinkContextMenuContent", () => {
     document.body.appendChild(container);
     const root = createRoot(container);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const homeTarget: InlinePathTarget = {
-      raw: "~/.paseo/plans/file-preview.md",
-      path: "~/.paseo/plans/file-preview.md",
-      lineStart: undefined,
-      lineEnd: undefined,
-    };
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
@@ -283,7 +277,7 @@ describe("AssistantFileLinkContextMenuContent", () => {
             </ContextMenuTrigger>
             <AssistantFileLinkContextMenuContent
               source={SOURCE}
-              target={homeTarget}
+              target={HOME_TARGET}
               serverId="server-1"
               workspaceRoot="C:/Users/test/project"
               onOpen={onOpen}
