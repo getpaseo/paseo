@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -65,6 +66,12 @@ import {
 } from "./provider-launch-config.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
+import {
+  discoverACPSkills,
+  expandSkillPrompt,
+  mergeSkillCommands,
+  type DiscoveredACPSkill,
+} from "./providers/acp-skill-commands.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
@@ -872,7 +879,10 @@ interface AdaptedPluginProvider {
 export class PluginAgentClientRegistry {
   private readonly providers = new Map<string, AdaptedPluginProvider>();
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly options: { skillRoots?: readonly string[] } = {},
+  ) {}
 
   replace(registrations: readonly ProviderRegistration[]): void {
     const incoming = new Map<string, ProviderRegistration>();
@@ -893,12 +903,16 @@ export class PluginAgentClientRegistry {
 
     for (const [id, registration] of incoming) {
       if (this.providers.has(id)) continue;
-      const client = new PluginAgentClient(registration);
+      const client = new PluginAgentClient(registration, undefined, this.options);
       const clients = new Set([client]);
       const definition = createPluginProviderDefinition(
         registration,
         (_logger, runtimeSettings) => {
-          const configuredClient = new PluginAgentClient(registration, runtimeSettings);
+          const configuredClient = new PluginAgentClient(
+            registration,
+            runtimeSettings,
+            this.options,
+          );
           clients.add(configuredClient);
           return configuredClient;
         },
@@ -955,16 +969,22 @@ interface PendingChild {
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
   private readonly runtime: ProviderRuntime;
+  private readonly skillRoots?: readonly string[];
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
+  constructor(
+    registration: ProviderRegistration,
+    runtimeSettings?: ProviderRuntimeSettings,
+    options: { skillRoots?: readonly string[] } = {},
+  ) {
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
+    this.skillRoots = options.skillRoots;
     if (registration.getCatalogCacheKey)
-      this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
+      this.getCatalogCacheKey = (fetchOptions) => this.runtime.catalogCacheKey(fetchOptions);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }
 
@@ -1134,8 +1154,25 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
     );
+    session.skillRoots = this.sessionSkillRoots(input.config.cwd);
     bind(bridge);
     return session;
+  }
+
+  /**
+   * Skill directories for the session's workspace and the user's home, in the
+   * precedence the ACP providers use: the workspace's own skills shadow the
+   * user's. Tests can replace the derivation through the registry options.
+   */
+  private sessionSkillRoots(cwd: string): readonly string[] {
+    if (this.skillRoots) return this.skillRoots;
+    const home = homedir();
+    return [
+      resolvePath(cwd, ".agents", "skills"),
+      resolvePath(cwd, ".claude", "skills"),
+      resolvePath(home, ".agents", "skills"),
+      resolvePath(home, ".claude", "skills"),
+    ];
   }
 
   private acceptChild(
@@ -1202,7 +1239,21 @@ class PluginAgentSession implements AgentSession {
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
+  /**
+   * Set when a turn is interrupted before its prompt reached the plugin.
+   *
+   * `startTurn` waits for the skill scan before it can send anything. A Stop
+   * during that wait has nothing to cancel at the plugin, so the request is
+   * recorded here and the turn ends without sending a prompt.
+   */
+  private pendingTurnInterrupt = false;
+  /** Whether `startTurn` is still preparing its prompt for the plugin. */
+  private preparingTurn = false;
   private closed = false;
+  skillRoots: readonly string[] = [];
+  private discoveredSkills: readonly DiscoveredACPSkill[] = [];
+  /** Set once a skill scan has finished, so an empty result is not rescanned. */
+  private skillsDiscovered: Promise<readonly DiscoveredACPSkill[]> | null = null;
   private replay: {
     persistence: ProviderPersistence;
     config: ProviderConfigState;
@@ -1273,10 +1324,35 @@ class PluginAgentSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     this.assertReplayComplete();
     const clientMessageId = options.clientMessageId ?? randomUUID();
+    this.preparingTurn = true;
+    this.pendingTurnInterrupt = false;
+    let expandedPrompt: AgentPromptInput;
+    try {
+      expandedPrompt = await this.expandSkillPrompt(prompt);
+    } finally {
+      this.preparingTurn = false;
+    }
+
+    // The prompt is prepared asynchronously, so the user can stop the turn
+    // before it reaches the plugin. Sending it anyway would start work after
+    // the user asked for it to stop.
+    if (this.pendingTurnInterrupt) {
+      this.pendingTurnInterrupt = false;
+      const turnId = `interrupted-${clientMessageId}`;
+      this.publish({ type: "turn_started", provider: this.provider, turnId });
+      this.publish({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return { turnId };
+    }
+
     const result = await this.bridge.prompt({
       clientMessageId,
       delivery: "auto",
-      input: mapPromptInput(prompt, this.bridge.commands),
+      input: mapPromptInput(expandedPrompt, this.bridge.commands),
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
@@ -1298,10 +1374,14 @@ class PluginAgentSession implements AgentSession {
     if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
       return { status: "unavailable" };
     }
+    // A steered prompt is a prompt: a skill the plugin does not advertise must
+    // be expanded here too, or the plugin receives the bare `/name` and never
+    // learns what the user asked for.
+    const expandedPrompt = await this.expandSkillPrompt(prompt);
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",
-      input: { type: "message", content: mapPromptContent(prompt) },
+      input: { type: "message", content: mapPromptContent(expandedPrompt) },
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
@@ -1377,6 +1457,12 @@ class PluginAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    // A prompt still being prepared has not reached the plugin, so there is
+    // nothing there to cancel. Record the stop so `startTurn` does not send it
+    // after the user asked to stop.
+    if (this.preparingTurn) {
+      this.pendingTurnInterrupt = true;
+    }
     await this.bridge.interrupt();
   }
 
@@ -1393,11 +1479,53 @@ class PluginAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    return this.bridge.commands.map((command) => ({
-      ...command,
-      argumentHint: command.argumentHint ?? "",
-      kind: "command",
-    }));
+    await this.ensureSkillsDiscovered();
+    return mergeSkillCommands(
+      this.bridge.commands.map((command) => ({
+        ...command,
+        argumentHint: command.argumentHint ?? "",
+        kind: "command",
+      })),
+      this.discoveredSkills,
+    );
+  }
+
+  /**
+   * Scan the configured roots once and cache the result. Discovery failures are
+   * swallowed: a missing or unreadable skill directory is the common case, and
+   * it must never block listing commands or starting a turn.
+   */
+  private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
+    if (this.skillRoots.length === 0) {
+      return this.discoveredSkills;
+    }
+    // Cache the promise, not just the result: an empty scan is a real answer,
+    // and concurrent callers must not each walk the filesystem.
+    this.skillsDiscovered ??= discoverACPSkills({ roots: this.skillRoots })
+      .then((skills) => {
+        this.discoveredSkills = skills;
+        return skills;
+      })
+      .catch(() => {
+        this.discoveredSkills = [];
+        return this.discoveredSkills;
+      });
+    return this.skillsDiscovered;
+  }
+
+  /**
+   * Expand a leading `/name` that names a skill Paseo discovered but the
+   * plugin does not advertise. Advertised commands still reach the plugin as
+   * structured command inputs so it keeps expanding those itself.
+   */
+  private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
+    if (this.skillRoots.length === 0) {
+      return prompt;
+    }
+
+    await this.ensureSkillsDiscovered();
+    const advertisedNames = new Set(this.bridge.commands.map((command) => command.name));
+    return expandSkillPrompt(prompt, this.discoveredSkills, advertisedNames);
   }
 
   async setModel(modelId: string | null): Promise<void> {

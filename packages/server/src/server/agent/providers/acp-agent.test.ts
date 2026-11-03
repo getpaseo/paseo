@@ -137,6 +137,16 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
+/**
+ * A home directory with no skills in it.
+ *
+ * Skill discovery reads the real home directory, so a test that does not pin
+ * the home picks up whatever skills the machine running the test has
+ * installed. The path does not have to exist: an unreadable root is the
+ * common case and is handled.
+ */
+const ISOLATED_HOME = path.join(tmpdir(), "paseo-acp-test-home");
+
 function createSession(
   options: {
     terminateProcess?: ProcessTerminator;
@@ -162,6 +172,7 @@ function createSession(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: ISOLATED_HOME,
       ...(terminateProcess ? { terminateProcess } : {}),
       ...(launchEnv ? { launchEnv } : {}),
     },
@@ -223,6 +234,7 @@ function createSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: ISOLATED_HOME,
     },
   );
 }
@@ -249,6 +261,7 @@ function createKiroSession(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: ISOLATED_HOME,
       extensionCommandsParser: parseKiroExtensionCommands,
       waitForInitialCommands: options.waitForInitialCommands ?? false,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
@@ -328,6 +341,7 @@ function createCopilotSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: ISOLATED_HOME,
     },
   );
 }
@@ -2557,6 +2571,7 @@ describe("ACPAgentSession slash commands", () => {
           supportsReasoningStream: true,
           supportsToolInvocations: true,
         },
+        homeDir: ISOLATED_HOME,
         waitForInitialCommands: false,
       },
     );
@@ -2583,6 +2598,7 @@ describe("ACPAgentSession slash commands", () => {
           supportsReasoningStream: true,
           supportsToolInvocations: true,
         },
+        homeDir: ISOLATED_HOME,
         waitForInitialCommands: true,
         initialCommandsWaitTimeoutMs: 1500,
       },
@@ -2673,6 +2689,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const client = new GenericACPAgentClient({
       logger: createTestLogger(),
       command: [process.execPath, script],
+      homeDir: ISOLATED_HOME,
     });
     try {
       const session = await client.createSession({ provider: "acp", cwd: directory });
@@ -2728,6 +2745,7 @@ describe("ACPAgentSession", () => {
           supportsReasoningStream: true,
           supportsToolInvocations: true,
         },
+        homeDir: ISOLATED_HOME,
       },
     );
 
@@ -3734,6 +3752,7 @@ describe("ACPAgentSession initialization cleanup", () => {
           supportsStreaming: true,
           supportsSessionPersistence: true,
         },
+        homeDir: ISOLATED_HOME,
         handle: { provider: "test-acp", sessionId: "archived-session" },
         terminateProcess: terminator.terminate,
       },
@@ -4449,6 +4468,7 @@ async function startSilentCloseProvider(): Promise<SilentCloseProvider> {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      homeDir: ISOLATED_HOME,
       launchEnv: {
         ACP_SDK_URL: pathToFileURL(
           createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
@@ -4585,6 +4605,7 @@ describe("ACP idle runtime cleanup", () => {
         defaultCommand: [process.execPath, agentScript],
         defaultModes: [],
         capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
+        homeDir: ISOLATED_HOME,
         launchEnv: {
           ACP_SDK_URL: pathToFileURL(
             createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
