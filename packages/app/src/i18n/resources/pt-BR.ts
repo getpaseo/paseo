@@ -384,6 +384,11 @@ export const ptBR: TranslationResources = {
       otherPlaceholder: "Outro...",
     },
     backgroundWork: {
+      notRunning: "Não está mais em execução",
+      dismiss: "Dispensar",
+      stop: "Parar",
+      stopping: "Parando…",
+      stopError: "Não foi possível confirmar a parada.",
       label: "Segundo plano",
       title: "Trabalho em segundo plano",
       waiting: "Aguardando os detalhes",

@@ -385,6 +385,11 @@ export const ja: TranslationResources = {
       otherPlaceholder: "その他...",
     },
     backgroundWork: {
+      notRunning: "実行は終了しました",
+      dismiss: "閉じる",
+      stop: "停止",
+      stopping: "停止中…",
+      stopError: "停止を確認できませんでした。",
       label: "バックグラウンド",
       title: "バックグラウンド作業",
       waiting: "作業の詳細を待っています",

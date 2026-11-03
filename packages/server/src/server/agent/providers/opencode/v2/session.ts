@@ -417,6 +417,9 @@ export class OpenCodeV2Session implements AgentSession {
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
     return this.turns.steerActiveTurn(prompt, options);
   }
+  stopBackgroundWork(id: string) {
+    return this.background.stopItem(id);
+  }
   interrupt() {
     return this.turns.interrupt();
   }
@@ -526,6 +529,7 @@ export class OpenCodeV2Session implements AgentSession {
           if (event.type === "server.connected") {
             this.timeline.resetStreams();
             await this.reconcileConnection();
+            signal.throwIfAborted();
             this.background.start(this.client);
             connected = true;
             ready();

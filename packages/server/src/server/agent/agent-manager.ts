@@ -1325,6 +1325,20 @@ export class AgentManager {
     return this.backgroundWork.list(agentId);
   }
 
+  async stopAgentBackgroundWork(agentId: string, itemId: string, stopToken: string): Promise<void> {
+    this.requirePublicAgent(agentId);
+    // Inventory events share the session queue; drain events already received before
+    // authorizing the token, including a reconnect's ownership revocation.
+    await this.sessionEventTails.get(agentId)?.catch(() => undefined);
+    const agent = this.requirePublicAgent(agentId);
+    if (!agent.session || !agent.session.stopBackgroundWork)
+      throw new Error("Background work cannot be stopped");
+    const item = this.backgroundWork.list(agentId).find((entry) => entry.id === itemId);
+    if (!item?.canStop || item.stopToken !== stopToken)
+      throw new Error("Background work is no longer available to stop");
+    await agent.session.stopBackgroundWork(itemId);
+  }
+
   getAgentBackgroundWorkSummary(agentId: string): { count: number } | undefined {
     return this.backgroundWork.summary(agentId);
   }

@@ -2,6 +2,7 @@ import type { PaseoAgentBackgroundWorkItem as AgentBackgroundWorkItem } from "@g
 
 interface Port {
   list(): Promise<AgentBackgroundWorkItem[]>;
+  stop?(item: AgentBackgroundWorkItem): Promise<void>;
   observe(callbacks: {
     snapshot(): void;
     disconnected(): void;
@@ -13,16 +14,21 @@ interface Port {
 interface BackgroundWorkState {
   status: "loading" | "stale" | "ready" | "error";
   items: AgentBackgroundWorkItem[] | null;
+  stops?: Record<string, { status: "pending" | "error"; item: AgentBackgroundWorkItem }>;
 }
 
 export function createBackgroundWorkModel(port: Port) {
   let state: BackgroundWorkState = { status: "loading", items: null };
   let sequence = 0;
+  let stopGeneration = 0;
   let stop: (() => void) | undefined;
   let observationFailed = false;
   const listeners = new Set<() => void>();
   const publish = (next: BackgroundWorkState) => {
-    state = next;
+    state =
+      next.stops === undefined && state.stops === undefined
+        ? next
+        : { ...next, stops: next.stops ?? state.stops };
     for (const listener of listeners) listener();
   };
   const refresh = async () => {
@@ -43,7 +49,16 @@ export function createBackgroundWorkModel(port: Port) {
       },
       disconnected: () => {
         sequence++;
-        publish({ status: state.items === null ? "loading" : "stale", items: state.items });
+        stopGeneration++;
+        const stops =
+          state.stops &&
+          Object.fromEntries(
+            Object.entries(state.stops).map(([id, entry]) => [
+              id,
+              { ...entry, status: "error" as const },
+            ]),
+          );
+        publish({ status: state.items === null ? "loading" : "stale", items: state.items, stops });
       },
       failed: () => {
         observationFailed = true;
@@ -58,6 +73,28 @@ export function createBackgroundWorkModel(port: Port) {
   };
   return {
     getSnapshot: () => state,
+    dismissStop: (token: string) => {
+      const stops = { ...state.stops };
+      delete stops[token];
+      publish({ ...state, stops });
+    },
+    stopItem: async (item: AgentBackgroundWorkItem) => {
+      const token = item.stopToken;
+      if (!port.stop || !token || state.stops?.[token]?.status === "pending") return;
+      if (!state.items?.some((entry) => entry.stopToken === token)) return;
+      const generation = stopGeneration;
+      publish({ ...state, stops: { ...state.stops, [token]: { status: "pending", item } } });
+      try {
+        await port.stop(item);
+        if (generation !== stopGeneration) return;
+        const stops = { ...state.stops };
+        delete stops[token];
+        publish({ ...state, stops });
+      } catch {
+        if (generation === stopGeneration)
+          publish({ ...state, stops: { ...state.stops, [token]: { status: "error", item } } });
+      }
+    },
     retry: () => {
       if (observationFailed) {
         stop?.();

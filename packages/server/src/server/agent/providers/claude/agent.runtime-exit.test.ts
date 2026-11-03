@@ -308,7 +308,7 @@ describe("Claude runtime exit", () => {
         expect.objectContaining({
           type: "background_work",
           provider: "claude",
-          items: [{ id: "bash-1", kind: "shell", description: "sleep 20" }],
+          items: [{ id: "bash-1", kind: "shell", description: "sleep 20", canStop: true }],
         }),
       );
     } finally {
@@ -513,4 +513,77 @@ describe("Claude runtime exit", () => {
       await session.close();
     }
   });
+  test("waits for a stopped task notification after the stop request is accepted", async () => {
+    let deliver!: (message: unknown) => void;
+    const tail = new Promise<unknown>((resolve) => {
+      deliver = resolve;
+    });
+    const query = createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, { tail });
+    query.stopTask = async () => {};
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory: () => query,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    try {
+      await session.run("start a background shell");
+      let settled = false;
+      const pending = session.stopBackgroundWork!("bash-1").then(() => {
+        settled = true;
+        return undefined;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      deliver({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bash-1",
+        status: "stopped",
+        output_file: "",
+        summary: "Stopped",
+        uuid: "00000000-0000-4000-8000-000000000002",
+        session_id: "claude-runtime-exit-session",
+      });
+      await pending;
+      expect(settled).toBe(true);
+      await expect(session.stopBackgroundWork!("wf-1")).rejects.toThrow();
+    } finally {
+      await session.close();
+    }
+  });
+  test.each(["completed", "failed"])(
+    "reports the task's %s outcome when it races a stop",
+    async (status) => {
+      let deliver!: (message: unknown) => void;
+      const tail = new Promise<unknown>((resolve) => {
+        deliver = resolve;
+      });
+      const query = createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, { tail });
+      query.stopTask = async () => {};
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        queryFactory: () => query,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+      try {
+        await session.run("start a background shell");
+        const result = session.stopBackgroundWork!("bash-1");
+        deliver({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bash-1",
+          status,
+          output_file: "",
+          summary: "Finished",
+          uuid: "00000000-0000-4000-8000-000000000003",
+          session_id: "claude-runtime-exit-session",
+        });
+        await expect(result).rejects.toThrow(status);
+      } finally {
+        await session.close();
+      }
+    },
+  );
 });

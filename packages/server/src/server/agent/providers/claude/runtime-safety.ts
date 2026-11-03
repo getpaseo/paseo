@@ -102,6 +102,10 @@ export class ClaudeRuntimeSafety {
     );
   }
 
+  canStop(id: string): boolean {
+    return this.buildInventory().some((item) => item.id === id && item.canStop);
+  }
+
   isCurrentInventory(items: AgentBackgroundWorkInput[]): boolean {
     return this.inventoryState === "supported" && this.published === items;
   }
@@ -124,7 +128,8 @@ function sameInventory(
       (item, index) =>
         item.id === right[index].id &&
         item.kind === right[index].kind &&
-        item.description === right[index].description,
+        item.description === right[index].description &&
+        item.canStop === right[index].canStop,
     )
   );
 }

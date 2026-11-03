@@ -1655,15 +1655,18 @@ test("retries failed background bootstrap and roster without losing stale work",
     shellFails = false;
     await vi.advanceTimersByTimeAsync(5000);
     expect(historyCalls).toBe(2);
-    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
     historyFails = true;
     inventory.start(harness.api);
     await vi.advanceTimersByTimeAsync(0);
-    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    expect(inventory.snapshot()?.items).toEqual([
+      { id: "live", kind: "shell", description: "sleep 120" },
+    ]);
+    await expect(inventory.stopItem("live")).rejects.toThrow("no longer available");
     historyFails = false;
     await vi.advanceTimersByTimeAsync(5000);
     expect(historyCalls).toBe(4);
-    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
     shellFails = true;
     await vi.advanceTimersByTimeAsync(5000);
     expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
@@ -1705,6 +1708,163 @@ test("does not retry a failed bootstrap from a disconnected generation", async (
     await vi.advanceTimersByTimeAsync(15000);
     expect(calls).toBe(1);
     expect(inventory.snapshot()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stops a selected promoted shell and retains its sibling", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: ["one", "two"].map((id) => ({
+      type: "tool" as const,
+      id,
+      name: "shell",
+      time: { created: 1 },
+      state: {
+        status: "completed" as const,
+        input: {},
+        content: [{ type: "text" as const, text: "" }],
+        metadata: { status: "running", shellID: id },
+      },
+    })),
+  });
+  let live = ["one", "two"];
+  harness.api.shell.list = async () => ({
+    location: harness.info.location,
+    data: live.map((id) => ({
+      id,
+      status: "running" as const,
+      command: `sleep ${id}`,
+      cwd: "/tmp/project",
+      shell: "sh",
+      file: "sh",
+      metadata: { sessionID: harness.info.id },
+      time: { started: 1 },
+    })),
+  });
+  harness.api.shell.remove = async ({ id }) => {
+    live = live.filter((entry) => entry !== id);
+    return { data: true };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "one" }, { id: "two" }] });
+    await session.stopBackgroundWork!("one");
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "two" }],
+    });
+    await expect(session.stopBackgroundWork!("one")).rejects.toThrow();
+  } finally {
+    await session.close();
+  }
+});
+
+test("closing during reconnect does not restart the background inventory", async () => {
+  const harness = new V2Harness();
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await expect
+    .poll(() => events.findLast((event) => event.type === "background_work"))
+    .toMatchObject({ items: [] });
+  let unblock!: () => void;
+  let entered = false;
+  const blocked = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
+  harness.connection.bindSession = async () => {
+    entered = true;
+    await blocked;
+  };
+  let reads = 0;
+  const original = harness.api.message.list;
+  harness.api.message.list = (...args) => {
+    reads++;
+    return original(...args);
+  };
+  harness.push({ id: "reconnect-close", created: 2, type: "server.connected", data: {} });
+  await expect.poll(() => entered).toBe(true);
+  const closing = session.close();
+  unblock();
+  await closing;
+  expect(reads).toBe(0);
+});
+
+test("keeps a shell available when its stop request times out", async () => {
+  const { vi } = await import("vitest");
+  vi.useFakeTimers();
+  try {
+    const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
+    const harness = new V2Harness();
+    harness.history.push({
+      id: "assistant",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "test", modelID: "test" },
+      time: { created: 1 },
+      content: [
+        {
+          type: "tool",
+          id: "tool",
+          name: "shell",
+          time: { created: 1 },
+          state: {
+            status: "completed",
+            input: {},
+            content: [{ type: "text", text: "" }],
+            metadata: { status: "running", shellID: "live" },
+          },
+        },
+      ],
+    });
+    harness.api.shell.list = async () => ({
+      location: harness.info.location,
+      data: [
+        {
+          id: "live",
+          status: "running",
+          command: "sleep 120",
+          cwd: "/tmp/project",
+          shell: "sh",
+          file: "sh",
+          metadata: { sessionID: harness.info.id },
+          time: { started: 1 },
+        },
+      ],
+    });
+    harness.api.shell.remove = () => new Promise(() => {});
+    const inventory = new OpenCodeBackgroundInventory(
+      harness.info.id,
+      "/tmp/project",
+      () => {},
+      () => {},
+    );
+    inventory.start(harness.api);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
+    const result = expect(inventory.stopItem("live")).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(10000);
+    await result;
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    inventory.disconnect();
   } finally {
     vi.useRealTimers();
   }

@@ -725,8 +725,8 @@ test("Claude runtime safety protects silent shells, monitors and pending complet
       ],
     }),
   ).toEqual([
-    { id: "quiet-shell", kind: "shell", description: "sleep 7200" },
-    { id: "monitor", kind: "shell", description: "watch build" },
+    { id: "quiet-shell", kind: "shell", description: "sleep 7200", canStop: true },
+    { id: "monitor", kind: "shell", description: "watch build", canStop: true },
   ]);
   expect(safety.canStopRuntime()).toBe(false);
   observe({
@@ -768,7 +768,7 @@ test("Claude runtime safety protects silent shells, monitors and pending complet
       subtype: "background_tasks_changed",
       tasks: [{ task_id: "new", task_type: "local_bash" }],
     }),
-  ).toEqual([{ id: "new", kind: "shell", description: null }]);
+  ).toEqual([{ id: "new", kind: "shell", description: null, canStop: true }]);
 });
 
 test("emits inventory only when relevant observations change it", () => {
@@ -781,7 +781,7 @@ test("emits inventory only when relevant observations change it", () => {
       subtype: "background_tasks_changed",
       tasks: [{ task_id: "m", task_type: "local_bash" }],
     }),
-  ).toEqual([{ id: "m", kind: "shell", description: null }]);
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
   expect(
     observe({
       type: "system",
@@ -797,13 +797,13 @@ test("emits inventory only when relevant observations change it", () => {
       type: "assistant",
       message: { content: [{ type: "tool_use", id: "tool", name: "Monitor" }] },
     }),
-  ).toEqual([{ id: "m", kind: "monitor", description: null }]);
+  ).toEqual([{ id: "m", kind: "monitor", description: null, canStop: true }]);
   expect(
     observe({ type: "assistant", message: { content: [{ type: "text", text: "streamed" }] } }),
   ).toBeUndefined();
   expect(
     observe({ type: "system", subtype: "task_started", task_id: "m", tool_use_id: "other" }),
-  ).toEqual([{ id: "m", kind: "shell", description: null }]);
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
 });
 
 test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {

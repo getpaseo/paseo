@@ -381,6 +381,11 @@ export const ko: TranslationResources = {
       otherPlaceholder: "기타...",
     },
     backgroundWork: {
+      notRunning: "더 이상 실행 중이 아님",
+      dismiss: "닫기",
+      stop: "중지",
+      stopping: "중지 중…",
+      stopError: "중지를 확인하지 못했습니다.",
       label: "백그라운드",
       title: "백그라운드 작업",
       waiting: "작업 세부 정보를 기다리는 중",

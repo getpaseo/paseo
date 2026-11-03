@@ -2939,6 +2939,8 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.background_work.list.request":
         return this.handleAgentBackgroundWorkListRequest(msg);
+      case "agent.background_work.stop.request":
+        return this.handleAgentBackgroundWorkStopRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
       case "session.events.set_subscription.request": {
@@ -8271,6 +8273,26 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleAgentBackgroundWorkStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_work.stop.request" }>,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await this.agentManager.stopAgentBackgroundWork(msg.agentId, msg.itemId, msg.stopToken);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type: "agent.background_work.stop.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        itemId: msg.itemId,
+        error,
+      },
+    });
   }
 
   private async handleAgentBackgroundWorkListRequest(

@@ -37,6 +37,7 @@ export function asAgentManager(stub: {
   return createStub<SessionOptions["agentManager"]>({
     listProviderSubagentActivity: () => [],
     getRetiredInternalAgent: () => null,
+    getAgentBackgroundWorkSummary: () => undefined,
     ...stub,
   });
 }

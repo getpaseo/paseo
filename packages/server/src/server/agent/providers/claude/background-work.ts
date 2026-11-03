@@ -20,6 +20,7 @@ export function toBackgroundWorkInputs(
     .map((task) => ({
       id: task.task_id,
       kind: toKind(task.task_type),
+      canStop: task.task_type === "local_bash",
       description: readDescription(task.description),
     }));
 }

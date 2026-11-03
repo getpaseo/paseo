@@ -13,9 +13,9 @@ describe("toBackgroundWorkInputs", () => {
         { task_id: "bash-2", task_type: "local_bash" },
       ]),
     ).toEqual([
-      { id: "bash-1", kind: "shell", description: "sleep 20" },
-      { id: "x-1", kind: "other", description: null },
-      { id: "bash-2", kind: "shell", description: null },
+      { id: "bash-1", kind: "shell", description: "sleep 20", canStop: true },
+      { id: "x-1", kind: "other", description: null, canStop: false },
+      { id: "bash-2", kind: "shell", description: null, canStop: true },
     ]);
   });
 });

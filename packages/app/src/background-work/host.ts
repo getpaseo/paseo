@@ -4,7 +4,10 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { createBackgroundWorkModel } from "./model";
 
 interface BackgroundWorkClient {
-  getLastServerInfoMessage(): { features?: { agentBackgroundWork?: boolean } | null } | null;
+  getLastServerInfoMessage(): {
+    features?: { agentBackgroundWork?: boolean; agentBackgroundWorkStop?: boolean } | null;
+  } | null;
+  stopAgentBackgroundWork(agentId: string, item: PaseoAgentBackgroundWorkItem): Promise<void>;
   listAgentBackgroundWork(agentId: string): Promise<PaseoAgentBackgroundWorkItem[]>;
   observeAgentBackgroundWork(): {
     subscribe(observer: {
@@ -35,10 +38,20 @@ export function createHostBackgroundWorkModel(
   host: BackgroundWorkHost = hostFor(serverId),
 ) {
   let client: BackgroundWorkClient | null = null;
+  const controls = (items: PaseoAgentBackgroundWorkItem[]) => {
+    // COMPAT(agentBackgroundWorkStop): added after v0.15.0, remove after 2027-05-03.
+    if (client?.getLastServerInfoMessage()?.features?.agentBackgroundWorkStop === true)
+      return items;
+    return items.map(({ canStop: _canStop, stopToken: _stopToken, ...item }) => item);
+  };
   return createBackgroundWorkModel({
+    stop: (item) => {
+      if (!client) return Promise.reject(new Error("Host disconnected"));
+      return client.stopAgentBackgroundWork(agentId, item);
+    },
     list: () => {
       if (!client) return Promise.reject(new Error("Host disconnected"));
-      return client.listAgentBackgroundWork(agentId);
+      return client.listAgentBackgroundWork(agentId).then(controls);
     },
     observe: ({ snapshot, update, disconnected, failed }) => {
       let release: (() => void) | undefined;
@@ -73,7 +86,7 @@ export function createHostBackgroundWorkModel(
               message.type === "agent.background_work.update" &&
               message.payload.agentId === agentId
             )
-              update(message.payload.items);
+              update(controls(message.payload.items));
           },
           error: () => {
             if (client === observedClient && currentObservation === observation) failed();

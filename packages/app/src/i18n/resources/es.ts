@@ -385,6 +385,11 @@ export const es: TranslationResources = {
       otherPlaceholder: "Otro...",
     },
     backgroundWork: {
+      notRunning: "Ya no está en ejecución",
+      dismiss: "Cerrar",
+      stop: "Detener",
+      stopping: "Deteniendo…",
+      stopError: "No se pudo confirmar la detención.",
       label: "Segundo plano",
       title: "Trabajo en segundo plano",
       waiting: "Esperando los detalles",

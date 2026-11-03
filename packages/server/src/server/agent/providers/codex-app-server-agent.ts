@@ -5131,6 +5131,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  stopBackgroundWork(id: string): Promise<void> {
+    return this.background.stopItem(id);
+  }
+
   async canStopRuntime(): Promise<boolean> {
     if (
       !this.client ||

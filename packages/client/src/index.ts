@@ -349,6 +349,11 @@ export interface PaseoAgentTimelineHandle {
 export type PaseoAgentBackgroundWorkItem = AgentBackgroundWorkItem;
 
 export interface PaseoAgentBackgroundWorkHandle {
+  /** Stop one item and wait for provider confirmation. */
+  stop(
+    item: PaseoAgentBackgroundWorkItem,
+    options?: { requestId?: string; timeout?: number },
+  ): Promise<void>;
   /** Reads the agent's current background work once. */
   list(options?: { requestId?: string; timeout?: number }): Promise<PaseoAgentBackgroundWorkItem[]>;
   /**
@@ -975,6 +980,7 @@ function createAgentHandleFactory(
           }),
       },
       backgroundWork: {
+        stop: (item, options) => daemonClient.stopAgentBackgroundWork(id, item, options),
         list: (options) => daemonClient.listAgentBackgroundWork(id, options),
         subscribe: (listener, options) => {
           const observation = observeBackgroundWork();

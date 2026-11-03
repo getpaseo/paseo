@@ -385,6 +385,11 @@ export const fr: TranslationResources = {
       otherPlaceholder: "Autre…",
     },
     backgroundWork: {
+      notRunning: "N’est plus en cours",
+      dismiss: "Fermer",
+      stop: "Arrêter",
+      stopping: "Arrêt…",
+      stopError: "Impossible de confirmer l’arrêt.",
       label: "Arrière-plan",
       title: "Travail en arrière-plan",
       waiting: "En attente des détails",

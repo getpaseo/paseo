@@ -1266,6 +1266,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
 test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
+  let agentManager: AgentManager | undefined;
   try {
     const cwd = path.join(workdir, "repo");
     mkdirSync(cwd, { recursive: true });
@@ -1279,7 +1280,7 @@ test("create_agent_request does not title an existing workspace from the agent p
       error: vi.fn(),
     };
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    const agentManager = new AgentManager({
+    agentManager = new AgentManager({
       clients: { codex: new CreateAgentTestClient() },
       registry: agentStorage,
       logger: asSessionLogger(logger),
@@ -1388,6 +1389,8 @@ test("create_agent_request does not title an existing workspace from the agent p
       updatedAt: "2026-05-07T00:00:00.000Z",
     });
   } finally {
+    // Agent snapshot writes can still be in flight when the request returns.
+    await agentManager?.flush();
     vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }

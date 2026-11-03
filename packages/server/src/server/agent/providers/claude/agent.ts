@@ -2294,6 +2294,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
+  private readonly backgroundStops = new Map<string, (outcome: string) => void>();
   private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
@@ -2667,6 +2668,33 @@ class ClaudeAgentSession implements AgentSession {
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  async stopBackgroundWork(id: string): Promise<void> {
+    const query = this.query;
+    if (!query || !this.runtimeSafety.canStop(id))
+      throw new Error("Background work is no longer available");
+    if (this.backgroundStops.has(id)) throw new Error("Stop is already pending");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finish!: (outcome: string) => void;
+    const outcome = new Promise<string>((resolve) => {
+      finish = resolve;
+      this.backgroundStops.set(id, resolve);
+    });
+    try {
+      const result = await Promise.race([
+        Promise.all([query.stopTask(id), outcome]).then(([, value]) => value),
+        outcome.then((value) => (value === "stopped" ? new Promise<string>(() => {}) : value)),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 15000);
+        }),
+      ]);
+      if (result !== "stopped") throw new Error(`Background work stop: ${result}`);
+      if (this.query !== query) throw new Error("Background work connection changed");
+    } finally {
+      clearTimeout(timer);
+      if (this.backgroundStops.get(id) === finish) this.backgroundStops.delete(id);
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -3476,6 +3504,7 @@ class ClaudeAgentSession implements AgentSession {
     const oldQuery = this.query;
     if (!oldQuery) return;
     const oldInput = this.input;
+    for (const finish of this.backgroundStops.values()) finish("connection lost");
     // Null out query/input BEFORE awaiting the old iterator's return so the
     // old pump sees this.query !== activeQuery and skips failActiveTurns.
     this.query = null;
@@ -4124,6 +4153,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRunningRuntimeTasks(): void {
+    for (const finish of this.backgroundStops.values()) finish("connection lost");
     this.runtimeSafety.retire();
     this.dispatchEvents([
       ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
@@ -4200,6 +4230,8 @@ class ClaudeAgentSession implements AgentSession {
       this.processingSdkMessages++;
       try {
         const backgroundWork = this.runtimeSafety.observe(message);
+        if (message.type === "system" && message.subtype === "task_notification")
+          this.backgroundStops.get(message.task_id)?.(message.status);
         logRawMessage(message);
         consecutiveInterruptAbortRecoveries = 0;
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;

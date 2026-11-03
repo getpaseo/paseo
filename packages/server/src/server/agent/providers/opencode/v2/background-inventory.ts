@@ -28,6 +28,54 @@ export class OpenCodeBackgroundInventory {
   private promoted = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private current: InventoryEvent | null = null;
+  private readonly listeners = new Set<() => void>();
+  async stopItem(id: string): Promise<void> {
+    const client = this.client;
+    const generation = this.generation;
+    if (!client || !this.current?.items?.some((item) => item.id === id && item.canStop))
+      throw new Error("Background shell is no longer available");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disconnected!: () => void;
+    const lost = new Promise<never>((_, reject) => {
+      disconnected = () => {
+        if (generation !== this.generation)
+          reject(new Error("Background shell connection changed"));
+      };
+      this.listeners.add(disconnected);
+      timer = setTimeout(() => reject(new Error("Background shell stop timed out")), 10000);
+    });
+    try {
+      await Promise.race([client.shell.remove({ id, location: { directory: this.cwd } }), lost]);
+    } finally {
+      clearTimeout(timer);
+      this.listeners.delete(disconnected);
+    }
+    if (generation !== this.generation) throw new Error("Background shell connection changed");
+    await new Promise<void>((resolve, reject) => {
+      const confirmationTimer = setTimeout(
+        () => finish(new Error("Background shell confirmation timed out")),
+        15000,
+      );
+      const finish = (error?: Error) => {
+        clearTimeout(confirmationTimer);
+        this.listeners.delete(check);
+        if (error) reject(error);
+        else resolve();
+      };
+      const check = () => {
+        if (generation !== this.generation)
+          finish(new Error("Background shell connection changed"));
+        else if (this.current?.items && !this.current.items.some((item) => item.id === id))
+          finish();
+      };
+      this.listeners.add(check);
+      this.dirty = true;
+      this.refresh();
+    });
+  }
+  private notify() {
+    for (const listener of this.listeners) listener();
+  }
   constructor(
     private readonly id: string,
     private readonly cwd: string,
@@ -47,6 +95,7 @@ export class OpenCodeBackgroundInventory {
   }
   disconnect(lost = false) {
     this.generation++;
+    this.notify();
     this.client = null;
     this.loading = false;
     this.pending = false;
@@ -58,6 +107,16 @@ export class OpenCodeBackgroundInventory {
     if (lost) {
       this.current = null;
       this.emit({ type: "background_work", provider: "opencode", items: null });
+    } else if (this.current?.items?.some((item) => item.canStop)) {
+      // Keep stale rows visible, but revoke their stop tokens until this generation's
+      // roster confirms ownership again.
+      const items = this.current.items.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        description: item.description,
+      }));
+      this.current = { type: "background_work", provider: "opencode", items };
+      this.emit(this.current);
     }
   }
   private async bootstrap(client: V2Api, generation: number) {
@@ -187,8 +246,14 @@ export class OpenCodeBackgroundInventory {
             shell.metadata.sessionID === this.id &&
             this.promoted.has(shell.id),
         )
-        .map((shell) => ({ id: shell.id, kind: "shell", description: shell.command || null })),
+        .map((shell) => ({
+          id: shell.id,
+          kind: "shell",
+          description: shell.command || null,
+          canStop: true,
+        })),
     };
     this.emit(this.current);
+    this.notify();
   }
 }

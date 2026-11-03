@@ -18,6 +18,7 @@ test("retries a failed observation and receives subsequent updates", async () =>
   };
   const client = {
     getLastServerInfoMessage: () => ({ features: { agentBackgroundWork: true } }),
+    stopAgentBackgroundWork: async () => {},
     listAgentBackgroundWork: async () => [item],
     observeAgentBackgroundWork: () => ({
       subscribe: (observer: Observer) => {
@@ -35,6 +36,7 @@ test("retries a failed observation and receives subsequent updates", async () =>
   const unsubscribe = model.subscribe(() => {});
   observers[0].snapshot();
   await Promise.resolve();
+  await Promise.resolve();
   expect(model.getSnapshot()).toEqual({ status: "ready", items: [item] });
   observers[0].error(new Error("subscription failed"));
   expect(model.getSnapshot()).toEqual({ status: "error", items: [item] });
@@ -42,6 +44,7 @@ test("retries a failed observation and receives subsequent updates", async () =>
   expect(observers).toHaveLength(2);
   expect(releases).toBe(1);
   observers[1].snapshot();
+  await Promise.resolve();
   await Promise.resolve();
   expect(model.getSnapshot()).toEqual({ status: "ready", items: [item] });
   observers[0].error(new Error("late error"));

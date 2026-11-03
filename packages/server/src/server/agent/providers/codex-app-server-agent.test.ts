@@ -2172,13 +2172,16 @@ describe("Codex app-server provider", () => {
         expect.objectContaining({ type: "user_message", messageId: "user-1", text: "Hello" }),
         expect.objectContaining({ type: "assistant_message", text: "Hi there." }),
       ]);
-      expect(codex.threadMethods(0)).toEqual([
+      // Background terminal observation is independent of conversation history loading.
+      const historyMethods = (index: number) =>
+        codex.threadMethods(index).filter((method) => method !== "thread/backgroundTerminals/list");
+      expect(historyMethods(0)).toEqual([
         "thread/loaded/list",
         "thread/resume",
         "thread/read",
         "thread/read",
       ]);
-      expect(codex.threadMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
+      expect(historyMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
       expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
     } finally {
       await codex.close();
@@ -7816,7 +7819,7 @@ describe("Codex interactive resume startup", () => {
       unsubscribe();
       const laterEvents: AgentStreamEvent[] = [];
       session.subscribe((event) => laterEvents.push(event));
-      expect(laterEvents).toEqual([]);
+      expect(laterEvents.filter((event) => event.type !== "background_work")).toEqual([]);
     } finally {
       await session.close();
       appServer.assertNoErrors();

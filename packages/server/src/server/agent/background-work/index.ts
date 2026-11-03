@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto";
+
 export interface AgentBackgroundWorkInput {
   id: string;
   /** Provider-neutral kind; consumers treat unknown kinds as other work. */
   kind: string;
   description: string | null;
+  canStop?: boolean;
 }
 
 export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
   startedAt: string;
+  stopToken?: string;
 }
 
 /**
@@ -24,7 +28,7 @@ export class AgentBackgroundWorkStore {
   ): AgentBackgroundWorkItem[] | null {
     const known = this.items.has(agentId);
     const previous = this.items.get(agentId) ?? [];
-    const startedAtById = new Map(previous.map((item) => [item.id, item.startedAt]));
+    const previousById = new Map(previous.map((item) => [item.id, item]));
     const seen = new Set<string>();
     const next: AgentBackgroundWorkItem[] = [];
     for (const input of inputs) {
@@ -34,7 +38,10 @@ export class AgentBackgroundWorkStore {
         id: input.id,
         kind: input.kind,
         description: input.description,
-        startedAt: startedAtById.get(input.id) ?? timestamp,
+        ...(input.canStop
+          ? { canStop: true, stopToken: previousById.get(input.id)?.stopToken ?? randomUUID() }
+          : {}),
+        startedAt: previousById.get(input.id)?.startedAt ?? timestamp,
       });
     }
     if (known && sameItems(previous, next)) return null;
@@ -69,6 +76,8 @@ function sameItems(
         item.id === other.id &&
         item.kind === other.kind &&
         item.description === other.description &&
+        item.canStop === other.canStop &&
+        item.stopToken === other.stopToken &&
         item.startedAt === other.startedAt
       );
     })

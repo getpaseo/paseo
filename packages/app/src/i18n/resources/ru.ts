@@ -384,6 +384,11 @@ export const ru: TranslationResources = {
       otherPlaceholder: "Другой ответ...",
     },
     backgroundWork: {
+      notRunning: "Больше не выполняется",
+      dismiss: "Закрыть",
+      stop: "Остановить",
+      stopping: "Остановка…",
+      stopError: "Не удалось подтвердить остановку.",
       label: "В фоне",
       title: "Фоновые задачи",
       waiting: "Ожидание сведений о задачах",

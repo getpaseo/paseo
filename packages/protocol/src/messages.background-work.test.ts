@@ -68,3 +68,27 @@ describe("agent background work protocol", () => {
     ).toBeUndefined();
   });
 });
+
+test("stop requests carry an inventory token and preserve legacy item parsing", () => {
+  expect(
+    SessionInboundMessageSchema.parse({
+      type: "agent.background_work.stop.request",
+      agentId: "a",
+      itemId: "x",
+      stopToken: "token",
+      requestId: "r",
+    }),
+  ).toMatchObject({ stopToken: "token" });
+  expect(
+    SessionOutboundMessageSchema.parse({
+      type: "agent.background_work.stop.response",
+      payload: { requestId: "r", agentId: "a", itemId: "x", error: null },
+    }),
+  ).toMatchObject({ payload: { error: null } });
+  expect(
+    SessionOutboundMessageSchema.parse({
+      type: "agent.background_work.update",
+      payload: { agentId: "a", items: [ITEM] },
+    }),
+  ).toMatchObject({ payload: { items: [ITEM] } });
+});

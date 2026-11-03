@@ -346,3 +346,123 @@ test("OpenCode keeps a live command visible after its turn", async ({ page }) =>
     await cleanupRewindFlow({ handle, cwd });
   }
 });
+
+for (const scenario of [
+  {
+    provider: "claude" as const,
+    prompt:
+      "Use Bash with run_in_background to start sleep 180 and sleep 181 as two separate background commands. Do not wait for them. Reply SPAWNED immediately.",
+    providerConfig: { model: "haiku" },
+  },
+  {
+    provider: "codex" as const,
+    prompt:
+      "Use exec_command twice to start sleep 180 and sleep 181 separately with yield_time_ms 1000. Do not wait for or stop either process. Reply SPAWNED immediately.",
+    providerConfig: { model: "gpt-6-astra" },
+  },
+  {
+    provider: "opencode" as const,
+    prompt:
+      "Use the shell tool twice with background true: start sleep 180, then start sleep 181. Do not wait for or stop either. Reply SPAWNED immediately.",
+    providerConfig: { model: "openrouter/google/gemini-3.6-flash" },
+  },
+]) {
+  test(`${scenario.provider} stops selected background work after the turn`, async ({ page }) => {
+    test.setTimeout(300_000);
+    const cwd = realpathSync(mkdtempSync(path.resolve("../../.artifacts/phase3-qa-workspace-")));
+    let handle: AgentHandle | undefined;
+    try {
+      handle = await launchAgent({
+        page,
+        provider: scenario.provider,
+        cwd,
+        mode: "full-access",
+        providerConfig: scenario.providerConfig,
+      });
+      await sendMessage(handle, scenario.prompt);
+      const pill = page.getByRole("button", { name: /Background · 2/ });
+      await expect(pill).toBeVisible({ timeout: 60_000 });
+      await pill.click();
+      const panel = page.getByTestId("background-work-panel");
+      await expect(panel).toContainText("sleep 180");
+      await expect(panel).toContainText("sleep 181");
+      await panel.getByRole("button", { name: /Stop .*sleep 180/ }).click();
+      await expect(panel).not.toContainText("sleep 180", { timeout: 40_000 });
+      await expect(panel).toContainText("sleep 181");
+      await page.screenshot({
+        path: path.resolve(`../../.artifacts/phase3-${scenario.provider}-stop.png`),
+        animations: "disabled",
+      });
+      await page.keyboard.press("Escape");
+      await sendMessage(handle, "Reply exactly HELLO without stopping the background command.");
+      await expectBackgroundPill(page);
+    } finally {
+      await cleanupRewindFlow({ handle, cwd });
+    }
+  });
+}
+
+test("Claude stops a selected monitor in the compact sheet", async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cwd = realpathSync(mkdtempSync(path.resolve("../../.artifacts/phase3-monitor-workspace-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({
+      page,
+      provider: "claude",
+      cwd,
+      mode: "full-access",
+      providerConfig: { model: "opus" },
+    });
+    await submitMessageWithButton(
+      page,
+      'Use exactly two separate Monitor tool calls, each with command `sleep 150`, timeout_ms 150000, persistent false, descriptions "probe monitor one" and "probe monitor two". Launch both independently, do not wait, then reply SPAWNED. Do not use any other tools.',
+    );
+    await expectAssistantReply(page, "SPAWNED");
+    const pill = page.getByRole("button", { name: /Background · 2/ });
+    await expect(pill).toBeVisible({ timeout: 30_000 });
+    await pill.click();
+    const panel = page.getByTestId("background-work-panel-content");
+    await waitForSettledPosition(panel);
+    await expect(panel).toContainText("probe monitor one");
+    await expect(panel).toContainText("probe monitor two");
+    await panel.getByRole("button", { name: /Stop .*probe monitor one/ }).click();
+    await expect(panel).not.toContainText("probe monitor one", { timeout: 40_000 });
+    await expect(panel).toContainText("probe monitor two");
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/phase3-claude-monitor-compact.png"),
+      animations: "disabled",
+    });
+    await closeBackgroundWork(page, true);
+    await submitMessageWithButton(
+      page,
+      "Reply exactly HELLO without stopping the background monitor.",
+    );
+    await expectAssistantReply(page, "HELLO");
+    await expectBackgroundPill(page);
+    await handle.client.sendAgentMessage(
+      handle.agentId,
+      "Use Bash to run sleep 20 in the foreground, then reply WAITED.",
+    );
+    await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await handle.client.sendAgentMessage(
+      handle.agentId,
+      "Reply exactly INTERRUPTED without stopping the background monitor.",
+      { activeTurnBehavior: "interrupt" },
+    );
+    expect((await handle.client.waitForFinish(handle.agentId, 120_000)).status).toBe("idle");
+    await expectBackgroundPill(page);
+    await expect
+      .poll(async () => handle!.client.listAgentBackgroundWork(handle!.agentId))
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ description: "probe monitor two", kind: "monitor" }),
+        ]),
+      );
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});

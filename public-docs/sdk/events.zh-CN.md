@@ -57,7 +57,7 @@ unsubscribe();
 
 传入 `subscribe(listener, { onError })` 可接收读取当前列表失败的错误；此时不会调用监听器，下次重连时会重新读取。未提供 `onError` 时会记录错误。
 
-主机未声明 `features.agentBackgroundWork` 时，`list()` 会 reject，`subscribe()` 会抛出错误；请让用户更新主机。
+主机未声明 `features.agentBackgroundWork` 时，`list()` 会 reject，`subscribe()` 会抛出错误；请让用户更新主机。对具有 `canStop` 的项目调用 `backgroundWork.stop(item)`，等待提供方确认。停止操作需要 `features.agentBackgroundWorkStop`。
 
 ## 跟踪时间线事件 {#follow-timeline-events}
 

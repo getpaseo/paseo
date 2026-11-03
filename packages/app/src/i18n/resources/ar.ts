@@ -380,6 +380,11 @@ export const ar: TranslationResources = {
       otherPlaceholder: "آخر...",
     },
     backgroundWork: {
+      notRunning: "لم يعد قيد التشغيل",
+      dismiss: "إغلاق",
+      stop: "إيقاف",
+      stopping: "جارٍ الإيقاف…",
+      stopError: "تعذر تأكيد الإيقاف.",
       label: "في الخلفية",
       title: "عمل الخلفية",
       waiting: "بانتظار تفاصيل عمل الخلفية",

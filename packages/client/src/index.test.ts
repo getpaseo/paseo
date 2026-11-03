@@ -2027,3 +2027,42 @@ test("background work asks for a host update when the daemon lacks it", async ()
   expect(() => handle.backgroundWork.subscribe(() => {})).toThrow("Update the host");
   await client.close();
 });
+
+test("background stop sends the live item token and waits for the response", async () => {
+  const { client, ws } = await connectClient({
+    ...BACKGROUND_WORK_FEATURES,
+    agentBackgroundWorkStop: true,
+  });
+  const item = { ...SHELL_ITEM, canStop: true, stopToken: "generation-1" };
+  const pending = client.agents.ref("agent-a").backgroundWork.stop(item);
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.background_work.stop.request",
+    agentId: "agent-a",
+    itemId: item.id,
+    stopToken: item.stopToken,
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.stop.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-a",
+        itemId: item.id,
+        error: "rejected",
+      },
+    }),
+  );
+  await expect(pending).rejects.toThrow("rejected");
+  await client.close();
+});
+
+test("background stop rejects when the host does not advertise the operation", async () => {
+  const { client } = await connectClient(BACKGROUND_WORK_FEATURES);
+  await expect(
+    client.agents
+      .ref("agent-a")
+      .backgroundWork.stop({ ...SHELL_ITEM, canStop: true, stopToken: "generation" }),
+  ).rejects.toThrow("Update the host");
+  await client.close();
+});

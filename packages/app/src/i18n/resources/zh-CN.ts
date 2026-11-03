@@ -380,6 +380,11 @@ export const zhCN: TranslationResources = {
       otherPlaceholder: "其他...",
     },
     backgroundWork: {
+      notRunning: "已不再运行",
+      dismiss: "关闭",
+      stop: "停止",
+      stopping: "正在停止…",
+      stopError: "无法确认已停止。",
       label: "后台",
       title: "后台任务",
       waiting: "正在等待后台任务详情",

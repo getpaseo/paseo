@@ -93,6 +93,10 @@ function createLogger(): pino.Logger {
   } as unknown as pino.Logger;
 }
 
+function decodedTerminalFrames(frames: TerminalStreamFrame[]): string {
+  return frames.map((frame) => new TextDecoder().decode(frame.payload)).join("");
+}
+
 describe("terminal-session-controller restore", () => {
   test("delivers output produced while restore is in flight after the restore frame", async () => {
     let terminalListener: ((message: ServerMessage) => void) | null = null;
@@ -172,7 +176,10 @@ describe("terminal-session-controller restore", () => {
     terminalListener?.({ type: "output", data: "restore-after\n", revision: 2 });
     snapshot.resolve(terminalReplay("restore-before", 1, "\x1b[?1h\x1b[?2004h"));
     await snapshot.promise;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(() => {
+      const output = decodedTerminalFrames(binaryFrames.slice(1));
+      expect(output).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
+    });
 
     expect(outboundMessages).toContainEqual({
       type: "subscribe_terminal_response",
@@ -183,14 +190,12 @@ describe("terminal-session-controller restore", () => {
         requestId: "req-1",
       },
     });
-    expect(binaryFrames.map((frame) => frame.opcode)).toEqual([
-      TerminalStreamOpcode.Restore,
-      TerminalStreamOpcode.Output,
-    ]);
+    expect(binaryFrames[0]?.opcode).toBe(TerminalStreamOpcode.Restore);
+    const outputFrames = binaryFrames.slice(1);
+    expect(outputFrames.length).toBeGreaterThan(0);
+    expect(outputFrames.every((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
-    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
-      "\x1b[?1h\x1b[?2004hrestore-after\n",
-    );
+    expect(decodedTerminalFrames(outputFrames)).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
   });
 });
 

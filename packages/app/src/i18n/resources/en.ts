@@ -377,6 +377,11 @@ export const en = {
       otherPlaceholder: "Other...",
     },
     backgroundWork: {
+      notRunning: "No longer running",
+      dismiss: "Dismiss",
+      stop: "Stop",
+      stopping: "Stopping…",
+      stopError: "Could not confirm stop.",
       label: "Background",
       title: "Background work",
       waiting: "Waiting for background work details",

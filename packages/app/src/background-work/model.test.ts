@@ -159,3 +159,75 @@ test("recreates a failed observation on retry and resumes live updates", async (
   expect(model.getSnapshot()).toEqual({ status: "ready", items: [] });
   unsubscribe();
 });
+
+test("keeps a stop pending across a roster removal and exposes a failed outcome", async () => {
+  const item = {
+    id: "1",
+    kind: "shell",
+    description: "sleep",
+    startedAt: "2026-01-01",
+    canStop: true,
+    stopToken: "generation-1",
+  };
+  let update!: (items: (typeof item)[]) => void;
+  let reject!: (error: Error) => void;
+  const model = createBackgroundWorkModel({
+    list: async () => [item],
+    stop: () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+    observe: (callbacks) => {
+      update = callbacks.update;
+      return () => {};
+    },
+  });
+  const unsubscribe = model.subscribe(() => {});
+  update([item]);
+  const pending = model.stopItem(item);
+  update([]);
+  expect(model.getSnapshot().stops?.["generation-1"]).toEqual({ status: "pending", item });
+  reject(new Error("connection lost"));
+  await pending;
+  expect(model.getSnapshot().stops?.["generation-1"]).toEqual({ status: "error", item });
+  model.dismissStop("generation-1");
+  expect(model.getSnapshot().stops).toEqual({});
+  unsubscribe();
+});
+
+test("ignores a stop response from a disconnected generation", async () => {
+  const first = {
+    id: "1",
+    kind: "shell",
+    description: "old",
+    startedAt: "2026-01-01",
+    canStop: true,
+    stopToken: "first",
+  };
+  const replacement = { ...first, description: "new", stopToken: "second" };
+  let update!: (items: (typeof first)[]) => void;
+  let disconnect!: () => void;
+  let resolve!: () => void;
+  const model = createBackgroundWorkModel({
+    list: async () => [],
+    stop: () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+    observe: (callbacks) => {
+      update = callbacks.update;
+      disconnect = callbacks.disconnected;
+      return () => {};
+    },
+  });
+  const unsubscribe = model.subscribe(() => {});
+  update([first]);
+  const pending = model.stopItem(first);
+  disconnect();
+  update([replacement]);
+  resolve();
+  await pending;
+  expect(model.getSnapshot().items).toEqual([replacement]);
+  expect(model.getSnapshot().stops?.first).toEqual({ status: "error", item: first });
+  unsubscribe();
+});

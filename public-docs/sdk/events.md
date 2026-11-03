@@ -59,7 +59,7 @@ unsubscribe();
 
 Pass `subscribe(listener, { onError })` to receive the error when reading the current list fails; the listener is not called and the list is read again on the next reconnect. Without `onError`, the error is logged.
 
-`list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host.
+`list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host. For an item with `canStop`, call `backgroundWork.stop(item)` to wait for provider confirmation. Stop requires `features.agentBackgroundWorkStop`.
 
 ## Follow timeline events
 

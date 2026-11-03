@@ -92,3 +92,23 @@ describe("AgentBackgroundWorkStore", () => {
     expect(store.list("agent-a")).toHaveLength(1);
   });
 });
+
+test("stop tokens follow a live item and change when an id is reused", () => {
+  const store = new AgentBackgroundWorkStore();
+  const input = { id: "1", kind: "shell", description: null, canStop: true };
+  const first = store.apply("agent", [input], T0)![0];
+  expect(first.stopToken).toBeTruthy();
+  expect(store.apply("agent", [input], T1)).toBeNull();
+  store.apply("agent", []);
+  const second = store.apply("agent", [input], T0)![0];
+  expect(second.stopToken).not.toBe(first.stopToken);
+});
+
+test("revokes a stop token while inventory ownership is being re-established", () => {
+  const store = new AgentBackgroundWorkStore();
+  const item = { id: "1", kind: "shell", description: null, canStop: true };
+  const first = store.apply("agent", [item])![0];
+  const stale = store.apply("agent", [{ ...item, canStop: false }])![0];
+  expect(stale.stopToken).toBeUndefined();
+  expect(store.apply("agent", [item])![0].stopToken).not.toBe(first.stopToken);
+});

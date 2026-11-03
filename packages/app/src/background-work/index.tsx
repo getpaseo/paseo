@@ -1,10 +1,13 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { LiveElapsed } from "@/components/message";
+import { Button } from "@/components/ui/button";
+import type { PaseoAgentBackgroundWorkItem } from "@getpaseo/client";
 import { createHostBackgroundWorkModel } from "./host";
+export { createHostBackgroundWorkModel } from "./host";
 
 function kindKey(kind: string): "shell" | "monitor" | "other" {
   if (kind === "shell" || kind === "monitor") return kind;
@@ -12,22 +15,6 @@ function kindKey(kind: string): "shell" | "monitor" | "other" {
 }
 
 export function BackgroundWorkTrack({
-  serverId,
-  agentId,
-  count,
-}: {
-  serverId: string;
-  agentId: string;
-  count: number;
-}) {
-  const model = useMemo(
-    () => createHostBackgroundWorkModel(serverId, agentId),
-    [serverId, agentId],
-  );
-  return <Track model={model} count={count} />;
-}
-
-function Track({
   model,
   count,
 }: {
@@ -35,12 +22,16 @@ function Track({
   count: number;
 }) {
   const { t } = useTranslation();
-  const { items, status } = useSyncExternalStore(
+  const { items, status, stops } = useSyncExternalStore(
     model.subscribe,
     model.getSnapshot,
     model.getSnapshot,
   );
-  if (status === "ready" && items?.length === 0) return null;
+  const missing = Object.values(stops ?? {}).filter(
+    (entry) => !items?.some((item) => item.stopToken === entry.item.stopToken),
+  );
+  const rows = [...(items ?? []), ...missing.map((entry) => entry.item)];
+  if (count === 0 && rows.length === 0) return null;
   const visibleCount = items?.length || count;
   return (
     <ComposerTrackPill
@@ -69,21 +60,82 @@ function Track({
           </ComposerTrackRow>
         </>
       ) : null}
-      {items?.map((item) => {
-        const kind = t(`message.backgroundWork.${kindKey(item.kind)}`);
-        return (
-          <ComposerTrackRow key={item.id}>
-            <View style={styles.row}>
-              <Text style={styles.title}>{item.description ?? kind}</Text>
-              <Text style={styles.facts}>
-                {kind} ·{" "}
-                <LiveElapsed startedAt={new Date(item.startedAt)} active style={styles.facts} />
-              </Text>
-            </View>
-          </ComposerTrackRow>
-        );
-      })}
+      {rows.map((item) => (
+        <BackgroundWorkRow
+          key={item.stopToken ?? item.id}
+          item={item}
+          model={model}
+          live={Boolean(items?.some((entry) => entry.stopToken === item.stopToken))}
+          ready={status === "ready"}
+          stopStatus={stops?.[item.stopToken ?? ""]?.status}
+        />
+      ))}
     </ComposerTrackPill>
+  );
+}
+
+function BackgroundWorkRow({
+  item,
+  model,
+  live,
+  ready,
+  stopStatus,
+}: {
+  item: PaseoAgentBackgroundWorkItem;
+  model: ReturnType<typeof createHostBackgroundWorkModel>;
+  live: boolean;
+  ready: boolean;
+  stopStatus?: "pending" | "error";
+}) {
+  const { t } = useTranslation();
+  const kind = t(`message.backgroundWork.${kindKey(item.kind)}`);
+  const stop = useCallback(() => {
+    void model.stopItem(item);
+  }, [model, item]);
+  const dismiss = useCallback(
+    () => model.dismissStop(item.stopToken ?? ""),
+    [model, item.stopToken],
+  );
+  let detail = t("message.backgroundWork.notRunning");
+  if (stopStatus === "pending") detail = t("message.backgroundWork.stopping");
+  const action = item.canStop && ready && live;
+  const label =
+    stopStatus === "pending"
+      ? t("message.backgroundWork.stopping")
+      : t("message.backgroundWork.stop");
+  return (
+    <ComposerTrackRow>
+      <View style={styles.row}>
+        <Text style={styles.title}>{item.description ?? kind}</Text>
+        <Text style={styles.facts}>
+          {kind} ·{" "}
+          {live ? (
+            <LiveElapsed startedAt={new Date(item.startedAt)} active style={styles.facts} />
+          ) : (
+            detail
+          )}
+        </Text>
+        {stopStatus === "error" ? (
+          <Text style={styles.facts}>{t("message.backgroundWork.stopError")}</Text>
+        ) : null}
+      </View>
+      {action ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          accessibilityLabel={`${t("message.backgroundWork.stop")} ${item.description ?? kind}`}
+          disabled={stopStatus === "pending"}
+          onPress={stop}
+        >
+          {label}
+        </Button>
+      ) : null}
+      {!live && stopStatus === "error" ? (
+        <Button variant="ghost" size="sm" onPress={dismiss}>
+          {t("message.backgroundWork.dismiss")}
+        </Button>
+      ) : null}
+    </ComposerTrackRow>
   );
 }
 
