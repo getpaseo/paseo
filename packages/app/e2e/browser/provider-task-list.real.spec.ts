@@ -284,3 +284,65 @@ test("background work updates the sidebar before the agent is opened", async ({ 
     await workspace.cleanup();
   }
 });
+
+test("Codex keeps a live command visible after its turn", async ({ page }) => {
+  test.setTimeout(300_000);
+  const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-codex-background-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({
+      page,
+      provider: "codex",
+      cwd,
+      mode: "full-access",
+      providerConfig: { model: "gpt-6-astra" },
+    });
+    await sendMessage(
+      handle,
+      "Use exec_command to run sleep 120 with yield_time_ms 1000. Do not wait for or stop it. Reply SPAWNED immediately.",
+    );
+    await expectBackgroundAgentRunning(page);
+    await openBackgroundWork(page, false);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/phase2-codex-background.png"),
+      animations: "disabled",
+    });
+    await closeBackgroundWork(page, false);
+    await sendMessage(handle, "Reply exactly HELLO without stopping the background command.");
+    await expectBackgroundPill(page);
+    await expectBackgroundWorkOnAnotherClient(page);
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
+
+test("OpenCode keeps a live command visible after its turn", async ({ page }) => {
+  test.setTimeout(300_000);
+  const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-opencode-background-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({
+      page,
+      provider: "opencode",
+      cwd,
+      mode: "full-access",
+      providerConfig: { model: "openrouter/google/gemini-3.6-flash" },
+    });
+    await sendMessage(
+      handle,
+      "Use the shell tool with background true to run sleep 120. Do not wait or stop it. Reply SPAWNED immediately.",
+    );
+    await expectBackgroundAgentRunning(page);
+    await openBackgroundWork(page, false);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/phase2-opencode-background.png"),
+      animations: "disabled",
+    });
+    await closeBackgroundWork(page, false);
+    await sendMessage(handle, "Reply exactly HELLO without stopping the background command.");
+    await expectBackgroundPill(page);
+    await expectBackgroundWorkOnAnotherClient(page);
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
