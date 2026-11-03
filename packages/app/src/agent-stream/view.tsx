@@ -1177,10 +1177,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
-    const { nestedItemIds } = presentation.turns;
+    const { nestedItemIds, updatedHostIds: updatedTurnHostIds } = presentation.turns;
     const historyRowRevision = useMemo(
       () => ({
-        contentById: presentation.historyGroupUpdatesByHostId,
+        contentById: {
+          has: (id: string) =>
+            presentation.historyGroupUpdatesByHostId.has(id) || updatedTurnHostIds.has(id),
+        },
         displayStateById: {
           // An opened lone call also marks its future group open; that row stays unrevised
           // until a group actually forms there.
@@ -1198,6 +1201,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobile,
         nestedItemIds,
         presentation.historyGroupUpdatesByHostId,
+        updatedTurnHostIds,
       ],
     );
 
