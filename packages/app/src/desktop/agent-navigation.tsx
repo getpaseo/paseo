@@ -2,21 +2,22 @@ import { useEffect } from "react";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { getDesktopHost } from "@/desktop/host";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-
-interface OpenAgentEventPayload {
-  serverId?: unknown;
-  agentId?: unknown;
-}
+import { readDesktopNavigationTarget } from "./desktop-navigation-target";
 
 export function AgentNavigationListener() {
-  const openAgent = useStableEvent((payload: OpenAgentEventPayload | null) => {
-    const serverId = typeof payload?.serverId === "string" ? payload.serverId.trim() : "";
-    const agentId = typeof payload?.agentId === "string" ? payload.agentId.trim() : "";
-    if (!serverId || !agentId) {
-      return;
+  const openAgent = useStableEvent((payload: unknown) => {
+    const target = readDesktopNavigationTarget(payload);
+    if (target?.kind === "terminal") {
+      navigateToWorkspace({
+        serverId: target.serverId,
+        workspaceId: target.workspaceId,
+        target: { kind: "terminal", terminalId: target.terminalId },
+      });
+    } else if (target?.kind === "agent") {
+      navigateToAgent({ serverId: target.serverId, agentId: target.agentId });
     }
-    navigateToAgent({ serverId, agentId });
   });
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export function AgentNavigationListener() {
     const connect = async () => {
       let dispose: (() => void) | null = null;
       try {
-        dispose = await listenToDesktopEvent<OpenAgentEventPayload>("open-agent", openAgent);
+        dispose = await listenToDesktopEvent<unknown>("open-agent", openAgent);
         if (disposed) {
           dispose();
           return;
