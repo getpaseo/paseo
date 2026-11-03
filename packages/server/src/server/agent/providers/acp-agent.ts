@@ -1674,10 +1674,12 @@ export class ACPAgentClient implements AgentClient {
     // Look the command up with the environment the child process will get, so
     // the path that is verified is the path that runs. A provider that carries
     // its own PATH would otherwise be resolved against the daemon's and could
-    // pick up a different build of the same command.
+    // pick up a different build of the same command. The lookup inherits the
+    // daemon's environment on top of the provider's own values, the same way
+    // the child process does.
     const availability = await checkProviderLaunchAvailable({
       ...prefix,
-      env: this.runtimeSettings?.env,
+      env: acpLookupEnv(this.runtimeSettings),
     });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
@@ -1709,6 +1711,21 @@ export class ACPAgentClient implements AgentClient {
       configOptions: this.configOptionsTransformer(transformed.configOptions),
     };
   }
+}
+
+/**
+ * The environment the command lookup runs with.
+ *
+ * The child process inherits the daemon's environment and the provider's own
+ * values on top of it, so the lookup has to see the same environment. A
+ * provider that sets only an API key still resolves against the inherited
+ * PATH.
+ */
+export function acpLookupEnv(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): Record<string, string> | undefined {
+  if (!runtimeSettings?.env) return undefined;
+  return createProviderEnv({ runtimeSettings });
 }
 
 export class ACPAgentSession implements AgentSession, ACPClient {
@@ -2896,10 +2913,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // Look the command up with the environment the child process will get, so
     // the path that is verified is the path that runs. A provider that carries
     // its own PATH would otherwise be resolved against the daemon's and could
-    // pick up a different build of the same command.
+    // pick up a different build of the same command. The lookup inherits the
+    // daemon's environment on top of the provider's own values, the same way
+    // the child process does.
     const availability = await checkProviderLaunchAvailable({
       ...prefix,
-      env: this.runtimeSettings?.env,
+      env: acpLookupEnv(this.runtimeSettings),
     });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);

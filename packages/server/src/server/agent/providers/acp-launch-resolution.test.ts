@@ -157,6 +157,55 @@ describe("ACP launch command resolution", () => {
     }
   });
 
+  test("generic ACP clients resolve against the provider's own PATH", async () => {
+    // The probe and the session have to agree on the build they run. A
+    // provider with its own PATH is probed against the daemon's PATH
+    // otherwise, so the probe answers for a different build.
+    const providerBinDir = makeTempDir("acp-launch-generic-provider-path-");
+    const daemonBinDir = makeTempDir("acp-launch-generic-daemon-path-");
+    const providerLauncher = createLauncherStub(providerBinDir, "acp-generic-path-agent");
+    createLauncherStub(daemonBinDir, "acp-generic-path-agent");
+    const originalPath = process.env.PATH;
+    process.env.PATH = daemonBinDir;
+
+    try {
+      const client = new TestGenericACPClient({
+        logger: createTestLogger(),
+        command: ["acp-generic-path-agent", "acp"],
+        runtimeSettings: { env: { PATH: providerBinDir } },
+      });
+
+      const resolved = await client.resolveLaunch();
+      expectSamePath(resolved.command, providerLauncher);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  test("launch resolution keeps the inherited PATH when the provider sets only a key", async () => {
+    // A provider configured with just an API key carries no PATH of its own.
+    // The child process inherits the daemon's PATH on top of that key, so the
+    // lookup has to see the same environment the child will get.
+    const binDir = makeTempDir("acp-launch-inherited-path-");
+    const launcher = createLauncherStub(binDir, "acp-inherited-agent");
+    const originalPath = process.env.PATH;
+    process.env.PATH = binDir;
+
+    try {
+      const client = new TestACPClient({
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-inherited-agent", "acp"],
+        runtimeSettings: { env: { API_KEY: "secret" } },
+      });
+
+      const resolved = await client.resolveLaunch();
+      expectSamePath(resolved.command, launcher);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   test("launch resolution fails when no executable can be resolved", async () => {
     const originalPath = process.env.PATH;
     process.env.PATH = makeTempDir("acp-launch-empty-");

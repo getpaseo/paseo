@@ -1,7 +1,12 @@
 import type { Logger } from "pino";
 
-import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
+  checkProviderLaunchAvailable,
+  resolveProviderLaunch,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
+import {
+  acpLookupEnv,
   ACPAgentClient,
   type ACPCatalogModelResolver,
   type ACPClientCapabilityMeta,
@@ -20,6 +25,8 @@ interface GenericACPAgentClientOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
+  /** The provider's own settings, including the environment the child gets. */
+  runtimeSettings?: ProviderRuntimeSettings;
   providerId?: string;
   label?: string;
   usageProvider?: string;
@@ -45,7 +52,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       usageProvider: options.usageProvider,
       logger: options.logger,
       runtimeSettings: {
-        env: options.env,
+        ...options.runtimeSettings,
+        env: options.runtimeSettings?.env ?? options.env,
       },
       defaultCommand: options.command,
       capabilities: DEFAULT_ACP_CAPABILITIES,
@@ -68,7 +76,14 @@ export class GenericACPAgentClient extends ACPAgentClient {
 
   protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
     const launch = await this.resolveConfiguredLaunch();
-    const availability = await checkProviderLaunchAvailable(launch);
+    // Look the command up with the environment the child process will get, so
+    // the path that is verified is the path that runs. A provider that carries
+    // its own PATH would otherwise be probed against the daemon's PATH, and
+    // the probe would run a different build than the session does.
+    const availability = await checkProviderLaunchAvailable({
+      ...launch,
+      env: acpLookupEnv(this.runtimeSettings),
+    });
     if (!availability.available) {
       throw new Error(`acp command '${this.command[0]}' not found`);
     }
@@ -83,7 +98,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
 
   override async isAvailable(): Promise<boolean> {
     const launch = await this.resolveConfiguredLaunch();
-    const availability = await checkProviderLaunchAvailable(launch);
+    const availability = await checkProviderLaunchAvailable({
+      ...launch,
+      env: acpLookupEnv(this.runtimeSettings),
+    });
     return availability.available;
   }
 
