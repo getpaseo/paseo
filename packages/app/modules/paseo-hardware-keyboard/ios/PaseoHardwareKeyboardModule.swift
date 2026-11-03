@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import GameController
 
 private let hardwareSubmitEventName = "onHardwareKeyboardSubmit"
 private let hardwareShortcutEventName = "onHardwareKeyboardShortcut"
@@ -31,14 +32,22 @@ private func isComposingText() -> Bool {
 }
 
 public class PaseoHardwareKeyboardModule: Module {
+  private var keyboardObservers: [NSObjectProtocol] = []
   public func definition() -> ModuleDefinition {
     Name("PaseoHardwareKeyboard")
 
-    Events(hardwareSubmitEventName, hardwareShortcutEventName)
+    Events(hardwareSubmitEventName, hardwareShortcutEventName, "onHardwareKeyboardPresenceChanged")
 
     OnCreate {
       activeModule = self
+      for name in [Notification.Name.GCKeyboardDidConnect, Notification.Name.GCKeyboardDidDisconnect] {
+        self.keyboardObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+          self?.sendEvent("onHardwareKeyboardPresenceChanged", [:])
+        })
+      }
     }
+
+    Function("getHardwareKeyboardPresent") { GCKeyboard.coalesced != nil }
 
     Function("setHardwareKeyboardSubmitEnabled") { (enabled: Bool) in
       DispatchQueue.main.async {
@@ -54,6 +63,8 @@ public class PaseoHardwareKeyboardModule: Module {
     }
 
     OnDestroy {
+      self.keyboardObservers.forEach(NotificationCenter.default.removeObserver)
+      self.keyboardObservers = []
       if activeModule === self {
         activeModule = nil
         isHardwareSubmitEnabled = false

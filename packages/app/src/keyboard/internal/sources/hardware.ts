@@ -9,3 +9,10 @@ export function subscribeHardwareKeyboard(
   return () => {};
 }
 export function setHardwareKeyboardOverlayKeys(_keys: readonly string[]): void {}
+
+export function getHardwareKeyboardPresent(): boolean {
+  return false;
+}
+export function subscribeHardwareKeyboardPresence(_changed: () => void): () => void {
+  return () => {};
+}

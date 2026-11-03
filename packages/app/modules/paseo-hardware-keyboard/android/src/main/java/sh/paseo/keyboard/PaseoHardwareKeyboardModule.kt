@@ -1,5 +1,11 @@
 package sh.paseo.keyboard
 
+import android.content.ComponentCallbacks
+import android.content.res.Configuration
+import android.hardware.input.InputManager
+import android.os.Handler
+import android.os.Looper
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.Window
 import android.widget.EditText
@@ -107,22 +113,40 @@ private class KeyboardWindowCallback(private val window: Window, val previous: W
   }
 }
 
-class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener {
+class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener, InputManager.InputDeviceListener, ComponentCallbacks {
+  private var inputManager: InputManager? = null
   private var registeredReactContext: ReactContext? = null
+  private fun keyboardPresent(): Boolean {
+    val config = registeredReactContext?.resources?.configuration
+    return (config?.keyboard == Configuration.KEYBOARD_QWERTY && config.hardKeyboardHidden != Configuration.HARDKEYBOARDHIDDEN_YES) ||
+      InputDevice.getDeviceIds().any { id -> InputDevice.getDevice(id)?.let { !it.isVirtual && it.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC } == true }
+  }
+  private fun presenceChanged() { sendEvent("onHardwareKeyboardPresenceChanged", emptyMap<String, Any>()) }
+  override fun onInputDeviceAdded(id: Int) { presenceChanged() }
+  override fun onInputDeviceRemoved(id: Int) { presenceChanged() }
+  override fun onInputDeviceChanged(id: Int) { presenceChanged() }
+  override fun onConfigurationChanged(config: Configuration) { presenceChanged() }
+  override fun onLowMemory() {}
   override fun onExtraWindowCreate(window: Window) { HardwareKeyboard.observe(window) }
   override fun onExtraWindowDestroy(window: Window) { HardwareKeyboard.release(window) }
   override fun definition() = ModuleDefinition {
     Name("PaseoHardwareKeyboard")
-    Events("onHardwareKeyboardShortcut")
+    Events("onHardwareKeyboardShortcut", "onHardwareKeyboardPresenceChanged")
     OnCreate {
       HardwareKeyboard.module = this@PaseoHardwareKeyboardModule
       val context = appContext.reactContext
       require(context is ReactContext) { "Hardware keyboard observation requires a React context" }
       registeredReactContext = context
+      context.registerComponentCallbacks(this@PaseoHardwareKeyboardModule)
+      inputManager = context.getSystemService(InputManager::class.java)
+      inputManager?.registerInputDeviceListener(this@PaseoHardwareKeyboardModule, Handler(Looper.getMainLooper()))
       context.addExtraWindowEventListener(this@PaseoHardwareKeyboardModule)
       UiThreadUtil.runOnUiThread { appContext.currentActivity?.window?.let { HardwareKeyboard.observe(it) } }
     }
     OnDestroy {
+      inputManager?.unregisterInputDeviceListener(this@PaseoHardwareKeyboardModule)
+      inputManager = null
+      registeredReactContext?.unregisterComponentCallbacks(this@PaseoHardwareKeyboardModule)
       registeredReactContext?.removeExtraWindowEventListener(this@PaseoHardwareKeyboardModule)
       registeredReactContext = null
       if (HardwareKeyboard.module === this@PaseoHardwareKeyboardModule) {
@@ -131,6 +155,7 @@ class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener {
         UiThreadUtil.runOnUiThread { if (HardwareKeyboard.module == null) HardwareKeyboard.releaseAll() }
       }
     }
+    Function("getHardwareKeyboardPresent") { keyboardPresent() }
     Function("setOverlayKeys") { keys: List<String> ->
       HardwareKeyboard.overlayKeys = keys.filter { it in setOf("Escape", "Enter", "ArrowUp", "ArrowDown") }.toSet()
     }

@@ -149,3 +149,17 @@ describe("DOM source through the shared resolver", () => {
     input.remove();
   });
 });
+
+it("recognizes a hardware keyboard from modified input without a fine pointer", async () => {
+  const { createWebHardwareKeyboardPresence } = await import("@/keyboard/internal/presence.web");
+  const presence = createWebHardwareKeyboardPresence(window.matchMedia("(width: 0px)"), window);
+  const values: boolean[] = [];
+  const release = presence.subscribe(() => values.push(presence.getSnapshot()));
+  expect(presence.getSnapshot()).toBe(false);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA" }));
+  expect(presence.getSnapshot()).toBe(false);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true }));
+  expect(presence.getSnapshot()).toBe(true);
+  expect(values).toEqual([true]);
+  release();
+});

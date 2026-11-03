@@ -1,10 +1,7 @@
+import { usesDesktopBindings } from "./internal/conventions";
 import { createKeyboardPipeline } from "./internal/pipeline";
 import { overlays } from "./internal/overlays";
-import {
-  attachKeyboardSources,
-  publishKeyboardPolicy,
-  usesDesktopBindings,
-} from "./internal/sources";
+import { attachKeyboardSources, publishKeyboardPolicy } from "./internal/sources";
 import type { KeyboardSourceInput } from "./internal/sources/contract";
 import type { KeyboardInputEvent } from "./internal/overlays";
 import { hasActiveOverlay } from "./internal/overlay-dispatch";

@@ -1,11 +1,10 @@
-import { getIsElectronRuntime } from "@/constants/layout";
+import { usesDesktopBindings } from "../conventions";
 import { getDesktopHost } from "@/desktop/host";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { buildBrowserKeyboardPolicy, attachElectronBrowserSource } from "./electron-browser";
 import { attachDomKeyboardSource } from "./dom.web";
 import type { KeyboardSourceHandlers } from "./contract";
-export const usesDesktopBindings = getIsElectronRuntime();
 export function attachKeyboardSources(handlers: KeyboardSourceHandlers): () => void {
   const detachDom = attachDomKeyboardSource(handlers);
   const host = getDesktopHost();

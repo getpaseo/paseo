@@ -4,7 +4,19 @@ Define shortcuts in [the shared binding table](../packages/app/src/keyboard/keyb
 
 ## Badges and routing
 
-Keep badge visibility separate from key routing. Hiding badges on a phone without a keyboard must not disable shortcuts when a hardware keyboard is attached. See [availability.ts](../packages/app/src/keyboard/availability.ts) for the current policy.
+Routing runs whenever the app mounts its key sources, independently of layout.
+Use `useHardwareKeyboardPresent()` for hints and the Shortcuts settings section.
+iOS reads `GCKeyboard.coalesced` and connection notifications. Android watches input
+devices and hardware keyboard configuration. Web starts with a fine hover pointer and recognizes the first modified
+keydown, including on touch devices. Compact Electron keeps its bindings.
+
+Keyboard navigation needs the sidebar's filtered workspace model even when its visual
+panel is hidden. Retain that model while keyboard navigation is active; gating it on
+panel visibility leaves number shortcuts with no targets after a compact startup.
+
+Composer send-key customization remains a separate capability. Native retains its
+existing Return submission path; advertising its web-only customization would expose
+settings the native composer does not implement.
 
 ## Native sources
 
@@ -24,6 +36,11 @@ normally. Keep Simulator input capture off: Send Keyboard Input to Device
 prevented synthetic AppleScript input from arriving, including plain text.
 For simulator QA, use Cmd+B/P to check delivery and rebind the command center to
 Cmd+J to check toggle and rebind behavior. Cmd+K delivery needs a physical iPad.
+Simulator also reserves Cmd+1…4, Cmd+Shift+A and Cmd+comma. Exercise those actions
+through rebinds. For numeric injection, use AppleScript physical key codes (for example
+25 for 9); `keystroke "9"` did not deliver a digit in the QA session.
+Simulator exposes a virtual `GCKeyboard` even with Connect Hardware Keyboard off.
+Verify the iOS absence case on a physical iPhone.
 
 Never register Backspace: it would take deletion away from text fields. Changes
 to the native module require a native rebuild; an over-the-air JavaScript update
@@ -44,6 +61,8 @@ an overlay row or submit the composer.
 Android modals have their own windows. Observe them through React Native's
 `ExtraWindowEventListener` as well as the activity window. The dev client bypasses
 Expo's root-container handler, so an activity root-view wrapper misses presses.
+A modal can forward an unhandled event into the activity window. Observe the event
+once across that nested delivery without retaining recycled Android `KeyEvent`s.
 Keep an overlay-owned press consumed through key-up, even if its key-down closes
 the overlay; otherwise the modal's default Escape handler can close a second layer.
 
