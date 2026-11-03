@@ -112,16 +112,26 @@ describe("WorkspaceLaunchManager", () => {
     );
 
     await Promise.all([manager.start(context, "dev"), manager.start(context, "full")]);
-    expect((await manager.buildSnapshot(context)).filter((launch) => launch.active)).toEqual([
+    const activeLaunches = (await manager.buildSnapshot(context)).filter((launch) => launch.active);
+    expect(activeLaunches).toEqual([
       expect.objectContaining({ launchName: "full", lifecycle: "running" }),
     ]);
+    const currentTerminalId = activeLaunches[0]!.terminalId!;
+    expect(currentTerminalId).not.toBe(full.terminalId);
+    const currentTerminal = terminalManager.manager.getTerminal(currentTerminalId);
+    expect(currentTerminal).toMatchObject({ id: currentTerminalId });
 
     await manager.stop(context, "full");
-    expect(terminalManager.manager.getTerminal(full.terminalId!)).toBeDefined();
-    expect(terminalManager.manager.getTerminal(full.terminalId!)?.getExitInfo()).not.toBeNull();
+    expect(terminalManager.manager.getTerminal(currentTerminalId)).toBe(currentTerminal);
+    expect(currentTerminal?.getExitInfo()).toEqual({ exitCode: 0 });
     expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
+        expect.objectContaining({
+          launchName: "full",
+          lifecycle: "stopped",
+          active: false,
+          terminalId: currentTerminalId,
+        }),
       ]),
     );
     await manager.disposeWorkspace(context.workspaceId);
