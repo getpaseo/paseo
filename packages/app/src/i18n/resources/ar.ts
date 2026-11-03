@@ -1408,14 +1408,14 @@ export const ar: TranslationResources = {
         pid: "PID{{pid}}",
       },
       management: {
-        title: "إدارة البرنامج الخفي المدمج",
-        hint: "اسمح لـ Paseo ببدء تشغيل البرنامج الخفي المدمج وإيقافه",
+        title: "بدء تشغيل البرنامج الخفي تلقائيًا",
+        hint: "يبدأ تشغيل البرنامج الخفي المدمج عند فتح Paseo",
         pauseTitle: "وقفة المدمج في البرنامج الخفي",
         pauseMessage:
           "سيؤدي هذا إلى إيقاف البرنامج الخفي المدمج على الفور. سيتم إيقاف تشغيل الوكلاء والمحطات الطرفية المتصلة بالبرنامج الخفي المدمج.",
         pauseAndStop: "وقفة وتوقف",
         registrationFailed:
-          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
+          "تم تشغيل البرنامج الخفي المدمج، لكن Paseo لم يتمكن من حفظ اتصال localhost. حاول تشغيله مرة أخرى، أو أضف localhost يدويًا.",
         pausedStopFailed:
           "تم إيقاف إدارة البرنامج الخفي المضمنة مؤقتًا، لكن لم يتمكن Paseo من إيقاف البرنامج الخفي.",
         updateFailed: "غير قادر على تحديث إدارة البرنامج الخفي المضمنة.",

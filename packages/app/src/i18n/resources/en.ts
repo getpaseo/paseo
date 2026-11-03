@@ -1418,6 +1418,9 @@ export const en = {
         stop: "Stop daemon",
         stopping: "Stopping…",
         stopFailed: "Unable to stop daemon",
+        start: "Start daemon",
+        starting: "Starting…",
+        startFailed: "Unable to start daemon",
         pauseAttached: "Pause automatic daemon management? The attached daemon will keep running.",
         pause: "Pause management",
         workerUpdated: "Worker updated to {{version}}",
@@ -1432,14 +1435,14 @@ export const en = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "Manage built-in daemon",
-        hint: "Let Paseo start and stop the built-in daemon",
+        title: "Start daemon automatically",
+        hint: "The built-in daemon starts when you open Paseo",
         pauseTitle: "Pause built-in daemon",
         pauseMessage:
           "This will stop the built-in daemon immediately. Running agents and terminals connected to the built-in daemon will be stopped.",
         pauseAndStop: "Pause and stop",
         registrationFailed:
-          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
+          "Built-in daemon started, but Paseo could not save the localhost connection. Try starting it again, or add localhost manually.",
         pausedStopFailed:
           "Built-in daemon management was paused, but Paseo could not stop the daemon.",
         updateFailed: "Unable to update built-in daemon management.",
