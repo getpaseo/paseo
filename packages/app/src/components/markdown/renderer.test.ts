@@ -110,6 +110,37 @@ describe("shared Markdown source adaptation", () => {
       ["https://x/q.png", false],
     ]);
   });
+  it("renders linked images that share a line with text inline", async () => {
+    // A review bot's summary header: linked badges inside a heading with the score text.
+    const reviewHeader =
+      '<h2><a href="https://x/retrigger"><picture><source media="(prefers-color-scheme: dark)" srcset="https://x/r-dark.svg"><img alt="Retrigger" src="https://x/r.svg" align="right"></picture></a>Confidence Score: 5/5</h2>';
+    const source = [
+      reviewHeader,
+      "[![Alone](https://x/alone.png)](https://x)",
+      "[![a](https://x/a.png)](https://x) [![b](https://x/b.png)](https://x)",
+      "See [![gh](https://x/gh.png) GitHub](https://x) for more.",
+    ].join("\n\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    markInlineImages(tree);
+    const images: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Image") images.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(
+      images.map((image) => [image.attributes?.url, image.attributes?.isInline === true]),
+    ).toEqual([
+      ["https://x/r.svg", true],
+      ["https://x/alone.png", false],
+      ["https://x/a.png", true],
+      ["https://x/b.png", true],
+      ["https://x/gh.png", true],
+    ]);
+  });
   it("escapes spoiler delimiters only in prose", () => {
     expect(prepareMarkdownSource("Show ||words|| and `||code||`.").render()).toBe(
       "Show \\|\\|words\\|\\| and `||code||`.",
