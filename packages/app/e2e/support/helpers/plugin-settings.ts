@@ -15,7 +15,10 @@ type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>
 const TABBED_PLUGIN_ID = "settings-tabs";
 /** Two settings screens, so the settings page shows a tab per screen. */
 const TABBED_SOURCE = `import React from "react";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
+import { defineTranslations, useTranslation } from "@getpaseo/plugin/client";
+
+const messages = defineTranslations({ resources: { en: { icon: "advanced-tab-icon" } } });
 
 function General({ theme }) {
   return <Text style={{ color: theme.colors.foreground }}>General settings body</Text>;
@@ -25,9 +28,19 @@ function Advanced({ theme }) {
   return <Text style={{ color: theme.colors.foreground }}>Advanced settings body</Text>;
 }
 
+// Component icons run with the plugin's runtime; one that throws costs its tab only the icon.
+function TranslatedIcon({ color, size }) {
+  const { t } = useTranslation(messages);
+  return <View testID={t("icon")} aria-hidden style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />;
+}
+
+function BrokenIcon() {
+  throw new Error("Settings tab icon exploded");
+}
+
 export default function contribute(client) {
-  client.addSettingsScreen({ id: "general", title: "General", icon: "Settings", Component: General });
-  client.addSettingsScreen({ id: "advanced", title: "Advanced", icon: "Wrench", Component: Advanced });
+  client.addSettingsScreen({ id: "general", title: "General", icon: BrokenIcon, Component: General });
+  client.addSettingsScreen({ id: "advanced", title: "Advanced", icon: TranslatedIcon, Component: Advanced });
   return () => {};
 }
 `;
@@ -114,6 +127,8 @@ export async function expectNoSettingsCogWithoutScreens(page: Page) {
 export async function openTabbedSettings(page: Page) {
   await page.getByRole("button", { name: `Settings for ${TABBED_PLUGIN_ID}`, exact: true }).click();
   await expectSettingsTab(page, "General");
+  // The Advanced icon reads the plugin's translations; the General icon throws and is dropped.
+  await expect(page.getByTestId("advanced-tab-icon")).toBeVisible();
 }
 function settingsTab(page: Page, title: string) {
   return page.getByTestId("plugin-settings-tabs").getByRole("button", { name: title, exact: true });

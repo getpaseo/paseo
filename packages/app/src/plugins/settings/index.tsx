@@ -50,14 +50,42 @@ export function PluginSettingsButton({ serverId, pluginId }: Omit<SettingsIdenti
   );
 }
 
-/** One tab per registered settings screen. A plugin with a single screen shows no tabs. */
+function renderNoIcon() {
+  return null;
+}
+
+/** A plugin-supplied icon component may throw; its tab then shows the label alone. */
+function SettingsTabIcon({
+  plugin,
+  icon,
+  size,
+  color,
+}: {
+  plugin: InstalledPlugin;
+  icon: InstalledPlugin["settingsScreens"][number]["icon"];
+  size: number;
+  color: string;
+}) {
+  return (
+    <SurfaceErrorBoundary installation={plugin} Surface={icon} renderError={renderNoIcon}>
+      <PluginIconView icon={icon} size={size} color={color} />
+    </SurfaceErrorBoundary>
+  );
+}
+
+/**
+ * One tab per registered settings screen. A plugin with a single screen shows no tabs.
+ * Render inside the installation's provider: tab icons may be plugin components.
+ */
 function SettingsTabs({ plugin, screenId }: { plugin: InstalledPlugin; screenId: string }) {
   const options = useMemo<SegmentedControlOption<string>[]>(
     () =>
       plugin.settingsScreens.map((screen) => ({
         value: screen.id,
         label: plugin.i18n.resolve(screen.title, plugin.locale),
-        icon: ({ color, size }) => <PluginIconView icon={screen.icon} size={size} color={color} />,
+        icon: ({ color, size }) => (
+          <SettingsTabIcon plugin={plugin} icon={screen.icon} size={size} color={color} />
+        ),
         testID: `plugin-settings-tab-${screen.id}`,
       })),
     [plugin],
@@ -124,19 +152,19 @@ function SettingsContent({
     return <Text style={styles.message}>{t("settings.plugins.screens.unavailable")}</Text>;
   const Component = screen.Component;
   return (
-    <View>
-      <SettingsTabs plugin={plugin} screenId={screen.id} />
-      <SurfaceErrorBoundary
-        installation={plugin}
-        Surface={Component}
-        resetKey={attempt}
-        renderError={renderError}
-      >
-        <PluginInstallationProvider plugin={plugin}>
+    <PluginInstallationProvider plugin={plugin}>
+      <View>
+        <SettingsTabs plugin={plugin} screenId={screen.id} />
+        <SurfaceErrorBoundary
+          installation={plugin}
+          Surface={Component}
+          resetKey={attempt}
+          renderError={renderError}
+        >
           <Component theme={theme} layout={layout} host={host} />
-        </PluginInstallationProvider>
-      </SurfaceErrorBoundary>
-    </View>
+        </SurfaceErrorBoundary>
+      </View>
+    </PluginInstallationProvider>
   );
 }
 const ThemedSettingsContent = withUnistyles(SettingsContent);
