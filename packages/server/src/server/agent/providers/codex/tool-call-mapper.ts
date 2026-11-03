@@ -763,6 +763,15 @@ function parseFileChangeDiff(entry: Record<string, unknown>): string | undefined
   ]);
 }
 
+function fileChangeDiffWithoutMoveNotice(
+  diff: string | undefined,
+  movePath: unknown,
+): string | undefined {
+  if (typeof diff !== "string" || typeof movePath !== "string") return diff;
+  const notice = `\n\nMoved to: ${movePath}`;
+  return diff.endsWith(notice) ? diff.slice(0, -notice.length) : diff;
+}
+
 function toFileChangeEntry(
   entry: Record<string, unknown>,
   options?: CodexMapperOptions,
@@ -777,7 +786,7 @@ function toFileChangeEntry(
   return {
     path,
     kind: parseFileChangeKind(entry),
-    diff: parseFileChangeDiff(entry),
+    diff: fileChangeDiffWithoutMoveNotice(parseFileChangeDiff(entry), movePath),
     movePath:
       typeof movePath === "string" ? normalizeCodexFilePath(movePath, options?.cwd) : undefined,
   };
@@ -851,7 +860,13 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
 function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   const { unifiedDiff, newString } = resolveFileChangeTextFields(file);
   if (!unifiedDiff && !newString) {
-    return "";
+    return file.movePath
+      ? [
+          `diff --git a/${file.path} b/${file.movePath}`,
+          `rename from ${file.path}`,
+          `rename to ${file.movePath}`,
+        ].join("\n")
+      : "";
   }
   if (unifiedDiff?.startsWith("diff --git")) {
     return unifiedDiff.replace(/\r?\n$/, "");

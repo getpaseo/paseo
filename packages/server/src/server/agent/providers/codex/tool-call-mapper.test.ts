@@ -1410,3 +1410,29 @@ describe("large multi-file additions", () => {
     expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
   });
 });
+
+describe("move-only entries in multi-file previews", () => {
+  it("shows a move without manufacturing added file contents from provider metadata", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "move-only",
+        status: "completed",
+        changes: [
+          {
+            path: "/repo/old.txt",
+            kind: { type: "update", move_path: "/repo/new.txt" },
+            diff: "\n\nMoved to: /repo/new.txt",
+          },
+          { path: "/repo/second.txt", kind: "modify", diff: "@@ -1 +1 @@\n-small\n+large\n" },
+        ],
+      },
+      { cwd: "/repo" },
+    );
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain("rename from old.txt\nrename to new.txt");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+    expect(item.detail.unifiedDiff).not.toContain("+Moved to:");
+    expect(item.detail.unifiedDiff).not.toContain("@@ -0,0");
+  });
+});
