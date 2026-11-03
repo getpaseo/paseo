@@ -24,6 +24,7 @@ import {
   getPaseoWorktreeMetadataPath,
   readPaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
+import { validateBeforeRequest, validateBeforeResult } from "./plugins/lifecycle/index.js";
 import { UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -419,6 +420,21 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(existsSync(result.worktree.worktreePath)).toBe(true);
     });
 
+    test("keeps default placement suffixes when the default destination already exists", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const first = await createCoreWorktree(
+        { cwd: repoDir, paseoHome, branchName: "first", worktreeSlug: "same" },
+        createCoreDeps(),
+      );
+      const second = await createCoreWorktree(
+        { cwd: repoDir, paseoHome, branchName: "second", worktreeSlug: "same" },
+        createCoreDeps(),
+      );
+      expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath + "-1");
+      expect(existsSync(first.worktree.worktreePath)).toBe(true);
+    });
+
     test("creates branch-off worktrees from origin main without tracking origin main", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginMain();
       cleanupPaths.push(tempDir);
@@ -485,6 +501,42 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/123/head" }],
         trackOriginHead: true,
       });
+      expect(result.worktree.branchName).toBe("feature/review-pr");
+    });
+
+    test("round trips every resolved change-request field through an unchanged before-hook result", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const deps = createCoreDeps();
+      const requests: unknown[] = [];
+      const result = await createCoreWorktree(
+        { cwd: repoDir, githubPrNumber: 123, refName: "feature/review-pr", paseoHome },
+        {
+          ...deps,
+          lifecycle: {
+            before: async (name, request) => {
+              requests.push(request);
+              return validateBeforeResult(name, validateBeforeRequest(name, request), request);
+            },
+          },
+        },
+      );
+      expect(requests).toEqual([
+        {
+          kind: "checkout-change-request",
+          forge: "github",
+          changeRequestNumber: 123,
+          headRef: "feature/review-pr",
+          baseRef: "main",
+          branch: "feature/review-pr",
+          checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/123/head" }],
+          trackOriginHead: true,
+          repoRoot: repoDir,
+          sourceCheckout: repoDir,
+          slug: "feature-review-pr",
+          path: result.worktree.worktreePath,
+        },
+      ]);
       expect(result.worktree.branchName).toBe("feature/review-pr");
     });
 

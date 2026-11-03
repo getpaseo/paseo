@@ -48,6 +48,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import {
   collectAllPanes,
   createDefaultLayout,
+  selectExplorerSidebarPaneId,
   useWorkspaceLayoutStore,
   type SplitNode,
   type SplitPane,
@@ -183,8 +184,8 @@ export function SplitContainer({
   } | null>(null);
   const maximizedPaneId =
     maximizedPane?.workspaceKey === workspaceKey ? maximizedPane.paneId : null;
-  const explorerSidebarPaneId = useWorkspaceLayoutStore(
-    (state) => state.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? null,
+  const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
+    selectExplorerSidebarPaneId(state, workspaceKey),
   );
 
   const mainRoot = useMemo(

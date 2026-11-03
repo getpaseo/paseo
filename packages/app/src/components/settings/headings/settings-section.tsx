@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { ExternalLink, type ExternalLinkProps } from "@/components/ui/external-link";
 import { SettingsInfoTip } from "./settings-info-tip";
 import { settingsStyles } from "@/styles/settings";
 
@@ -11,6 +12,12 @@ interface SettingsSectionProps {
    * paragraph between the header and the card is wrong (docs/design.md §7).
    */
   info?: ReactNode;
+  /**
+   * A page outside the app, such as the docs, shown at the header's end as "Label ↗". Its glyph
+   * sits as far inside the card's edge as the title does on the other side.
+   */
+  link?: Pick<ExternalLinkProps, "href" | "label" | "accessibilityLabel" | "tooltip" | "testID">;
+  /** An action at the header's end, such as Refresh or Add. A link to a page is `link`. */
   trailing?: ReactNode;
   testID?: string;
   style?: StyleProp<ViewStyle>;
@@ -30,6 +37,7 @@ interface SettingsSectionProps {
 export function SettingsSection({
   title,
   info,
+  link,
   trailing,
   testID,
   style,
@@ -53,6 +61,11 @@ export function SettingsSection({
             />
           ) : null}
         </View>
+        {link ? (
+          <View style={styles.link}>
+            <ExternalLink {...link} />
+          </View>
+        ) : null}
         {trailing}
       </View>
       <View style={styles.content}>{children}</View>
@@ -68,6 +81,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
+  },
+  // Mirrors the header's marginLeft, so the link's glyph and the title's sit on matching rails.
+  link: {
+    marginRight: theme.spacing[1],
   },
   titleRow: {
     flexDirection: "row",

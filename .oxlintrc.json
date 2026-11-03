@@ -203,6 +203,31 @@
                 "readFileSync",
                 "rmSync"
               ],
+              // Terminal child process: launcher readiness and PTY record ownership run outside the daemon.
+              "terminal/terminal-worker-process.ts": [
+                "chmodSync",
+                "closeSync",
+                "existsSync",
+                "openSync",
+                "rmSync",
+                "writeSync"
+              ],
+              // Worker startup only: choose and secure the local listening socket before accepting a controller.
+              "terminal/terminal-worker-socket-path.ts": ["lstatSync", "mkdirSync"],
+              // Startup only: build an independent worker installation before launching; Electron ASAR sources require plain fs reads.
+              "terminal/terminal-worker-runtime.ts": [
+                "chmodSync",
+                "existsSync",
+                "mkdirSync",
+                "readdirSync",
+                "readFileSync",
+                "renameSync",
+                "rmSync",
+                "statSync",
+                "writeFileSync"
+              ],
+              // TODO: CLI shim lookup moved out of terminal.ts; migrate the executable-resolution boundary together.
+              "terminal/paseo-cli-path.ts": ["existsSync"],
               // Node loader thread: TypeScript terminal-worker resolution runs in the loader, outside the daemon event loop.
               "terminal/terminal-ts-loader.mjs": ["existsSync"],
               // Terminal child process: executable preparation and shell integration run in the worker-backed terminal manager.
@@ -381,10 +406,7 @@
     {
       "files": [
         "packages/app/src/app/_layout.tsx",
-        "packages/app/src/app/pair-scan.tsx",
         "packages/app/src/components/adaptive-modal-sheet.tsx",
-        "packages/app/src/components/add-host-method-modal.tsx",
-        "packages/app/src/components/add-host-modal.tsx",
         "packages/app/src/components/agent-list.tsx",
         "packages/app/src/components/agent-status-dot.tsx",
         "packages/app/src/components/attachment-lightbox.tsx",
@@ -403,7 +425,6 @@
         "packages/app/src/components/hosts/host-picker.tsx",
         "packages/app/src/components/icons/paseo-logo.tsx",
         "packages/app/src/components/left-sidebar.tsx",
-        "packages/app/src/components/pair-link-modal.tsx",
         "packages/app/src/components/plan-card.tsx",
         "packages/app/src/components/provider-diagnostic-sheet.tsx",
         "packages/app/src/components/question-form-card.tsx",
@@ -518,14 +539,10 @@
         "packages/app/src/agent-skills/selection-sheet.tsx",
         "packages/app/src/agent-stream/chat-outline/rail.web.tsx",
         "packages/app/src/agent-stream/view.tsx",
-        "packages/app/src/app/pair-scan.tsx",
         "packages/app/src/changelog/internal/changelog-sheet.tsx",
         "packages/app/src/command-center/command-center.tsx",
         "packages/app/src/components/adaptive-modal-sheet.tsx",
-        "packages/app/src/components/add-host-method-modal.tsx",
-        "packages/app/src/components/add-host-modal.tsx",
         "packages/app/src/components/add-project-flow.tsx",
-        "packages/app/src/components/add-remote-ssh-host-modal.tsx",
         "packages/app/src/components/agent-list.tsx",
         "packages/app/src/components/app-diagnostic-sheet.tsx",
         "packages/app/src/components/attachment-lightbox.tsx",

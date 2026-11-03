@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import {
   createContext,
   useCallback,
@@ -14,11 +15,7 @@ import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "rea
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { Portal } from "@gorhom/portal";
-import {
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { FloatingSurface } from "@/components/ui/floating";
 import {
   measureFloatingPanelPortalHost,
@@ -127,7 +124,7 @@ function WebHoverCard({
   }, [clearGraceTimer, disabled]);
 
   const keyPressed = useCallback(
-    (event: KeyboardEvent): boolean => {
+    (event: KeyboardInputEvent): boolean => {
       if (!isWeb) return false;
       const trigger = triggerRef.current as unknown as HTMLElement | null;
       if (!trigger) return false;
@@ -139,7 +136,7 @@ function WebHoverCard({
         return true;
       } else if (
         focusInside() &&
-        event.target === trigger &&
+        document.activeElement === trigger &&
         ["ArrowDown", "Enter", " "].includes(event.key)
       ) {
         event.preventDefault();
@@ -158,7 +155,8 @@ function WebHoverCard({
     [clearGraceTimer, focusInside, open, openNow],
   );
 
-  const setOverlayScope = useWebOverlayRegistration({
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
     active: !disabled && open,
     layer,
     onKeyDown: keyPressed,
