@@ -47,7 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
@@ -1639,15 +1639,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
   },
   inlineNewTabButton: {
-    width: buttonControlHeight.xs,
-    height: buttonControlHeight.xs,
+    width: CONTROL_HEIGHTS.sm,
+    height: CONTROL_HEIGHTS.sm,
   },
   paneSplitActions: {
     paddingHorizontal: PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING,
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
   },
   tab: {
-    height: buttonControlHeight.xs,
+    height: CONTROL_HEIGHTS.sm,
     paddingHorizontal: TAB_CHIP_HORIZONTAL_PADDING,
     borderRadius: theme.borderRadius.md,
     flexDirection: "row",

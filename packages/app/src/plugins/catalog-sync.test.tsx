@@ -15,6 +15,7 @@ vi.mock("./registry", () => ({
     removeHost: vi.fn(),
     installCatalog: vi.fn(() => false),
     getSnapshot: vi.fn(() => []),
+    setCatalogStatus: vi.fn(),
   },
 }));
 
@@ -26,6 +27,7 @@ const registry = pluginRegistry as unknown as {
   removeHost: ReturnType<typeof vi.fn>;
   installCatalog: ReturnType<typeof vi.fn>;
   getSnapshot: ReturnType<typeof vi.fn>;
+  setCatalogStatus: ReturnType<typeof vi.fn>;
 };
 
 const storage = vi.hoisted(() => ({ raw: null as string | null }));

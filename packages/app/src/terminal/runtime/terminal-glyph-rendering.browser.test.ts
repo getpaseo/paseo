@@ -38,7 +38,6 @@ function mountTerminal(left: number): TerminalView {
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: 1000,
     fontFamily: "monospace",
     fontSize: 16,

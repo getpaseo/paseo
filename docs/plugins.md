@@ -99,6 +99,10 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+The `worktree-include` built-in copies gitignored files selected by
+[`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
+before setup and agents, through `worktree.create.after`.
+
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
 filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
@@ -353,9 +357,27 @@ keys are stored under a `param.` prefix; plugins never see it and may use any ke
 `openScreen` validates its input once (`parsePluginOpenScreenInput`); code past it trusts the
 params.
 
-RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
-typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
-Paseo gives each plugin installation its own query client.
+RPC and subscription contracts validate inputs, outputs, and events in both the app and plugin
+subprocess. `useRpc` returns a typed async function. Use the host-provided `@tanstack/react-query`
+for request state and caching; Paseo gives each plugin installation its own query client.
+
+A subscription is a session-owned observation (`plugin-rpc` delivery family): the session that
+subscribed owns its lifetime, so release, disconnect, plugin stop, and reload need no plugin code.
+Each subscriber gets its own handler call in the subprocess; there is no fan-out or replay. The
+runtime buffers pushes until the session has sent `plugin.rpc.subscribe.response`, so a client
+never sees an event for an unknown subscription. The app installation's lifetime aborts every
+subscription its surfaces left open, and a reload replaces the installation, which resubscribes
+mounted hooks.
+
+The byte rule (a top-level `Uint8Array` is binary, a nested one is a validation error) is checked
+once per hop by `assertPluginWireValue`. Bytes ride plugin binary frames, opcodes `0x20`-`0x2f`
+(`packages/protocol/src/binary-frames/plugin.ts`); nothing on the path copies or re-encodes them,
+and `plugin-subscriptions.perf.e2e.test.ts` locks that. Keep it that way: never stringify a plugin
+payload for a log, and the client's bootstrap buffer holds bytes only until the first observer
+attaches. Binary outputs reach only clients that send `pluginBinaryPayloads`. A binary input
+frame (`0x22`) becomes a synthetic `plugin.rpc.invoke.request` and runs through the normal message
+path, so it is authorized like any other invoke. The author contract, including the native upload
+limit, is in [stream events from the daemon](../public-docs/plugins/reference.md#subscriptions).
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle.
@@ -436,21 +458,22 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
 
 ## Lifecycle hooks
 
-Server entries register lifecycle observers with `server.on()` and request transforms with
-`server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `agent.create` edits the agent's saved
-configuration; `agent.session_open` contributes launch-only `env`, `tools`, and `mcpServers`,
-re-derived on each open and following the plugin's lifecycle. See
-[Inject MCP servers](../public-docs/plugins/reference.md#inject-mcp-servers) for choosing the hook.
-`plugin-examples/lifecycle-logger` registers all
-eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
-Session-open hooks also [attach tools to individual agents](../public-docs/plugins/reference.md#attach-tools-to-agents),
-as shown in `plugin-examples/agent-tools`. The agent manager stamps their metadata per session;
-executable definitions stay in the plugin process.
+Server entries register async handlers with `server.addHook(name, handler)`, returning a cleanup
+function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
+registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
+owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
+every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+
+Worktree placement is resolved before Git source planning, so a hook can change the branch and base
+without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
+Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,
+ownership checks prefer the marker-verified worktree root over the legacy
+path shape: a plugin can place a worktree several directories below the default worktrees root.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
-live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
-answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
+or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
 
 ## Contribute a provider
 
@@ -545,7 +568,7 @@ string is never inline SVG or a URL.
 
 Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same SVG file rules as provider icons.
 
-The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
+When the host’s **Check usage** switch is off, the daemon rejects usage requests before discovery, without reading logins or calling vendors. Otherwise, the daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
 ## Contribute sidebar items
 

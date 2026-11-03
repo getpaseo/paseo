@@ -8,7 +8,15 @@ import {
   createTestCreationService,
 } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
@@ -28,6 +36,11 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import {
+  terminalCleanupRecordPath,
+  terminalWorkerDirectory,
+  writeTerminalCleanupRecord,
+} from "../terminal/terminal-worker-record.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -335,6 +348,7 @@ interface SessionForTestOptions {
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
+  clientCapabilities?: SessionOptions["clientCapabilities"];
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
@@ -389,6 +403,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
             messages.push(message),
         }),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
+    clientCapabilities: options.clientCapabilities,
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushNotifications: options.pushNotifications ?? asPushNotifications(),
@@ -586,6 +601,64 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   await session.cleanup();
   expect(listeners.size).toBe(0);
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
+});
+
+test("losing daemon.manage releases the session's plugin subscriptions", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const release = vi.fn();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribePluginRpc: () => ({ ready: Promise.resolve(), attach: () => {}, release }),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({
+    type: "plugin.rpc.subscribe.request",
+    requestId: "watch",
+    pluginId: "example",
+    method: "screen.capture",
+    input: {},
+  });
+  expect(messages.map((message) => message.type)).toContain("plugin.rpc.subscribe.response");
+  session.setPermissions(["daemon.read"]);
+
+  // Bytes have no outbound permission check, so the stream itself has to end.
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
+test("losing daemon.manage during a plugin RPC withholds its JSON and binary results", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const binaryMessages: Uint8Array[] = [];
+  const outputs = new Map<string, (output: unknown) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    invokePluginRpc: (_pluginId: string, method: string) =>
+      new Promise((resolve) => outputs.set(method, resolve)),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({
+    messages,
+    binaryMessages,
+    pluginRuntime,
+    clientCapabilities: { [CLIENT_CAPS.pluginBinaryPayloads]: true },
+  });
+  const invoke = (method: string) =>
+    session.handleMessage({
+      type: "plugin.rpc.invoke.request",
+      requestId: method,
+      pluginId: "example",
+      method,
+      input: {},
+    });
+
+  const pending = [invoke("capture.json"), invoke("capture.bytes")];
+  await vi.waitFor(() => expect(outputs.size).toBe(2));
+  session.setPermissions(["daemon.read"]);
+  outputs.get("capture.json")?.({ width: 1 });
+  outputs.get("capture.bytes")?.(new Uint8Array([1, 2, 3]));
+  await Promise.all(pending);
+
+  expect(messages.filter((message) => message.type === "plugin.rpc.invoke.response")).toEqual([]);
+  expect(binaryMessages).toEqual([]);
 });
 
 test("leaves out the client bundles a catalog request already holds", async () => {
@@ -2071,9 +2144,82 @@ describe("daemon status + pairing RPC", () => {
             { provider: "claude", available: true, error: null },
             { provider: "codex", available: false, error: "boom" },
           ],
+          terminalCleanupUnconfirmed: [],
         },
       },
     ]);
+  });
+
+  test("daemon.get_status.request reports what a terminal cleanup could not confirm gone", async () => {
+    const messages: unknown[] = [];
+    const paseoHome = makeHome();
+    const unresolved = {
+      pid: 4242,
+      role: "terminal program" as const,
+      reason: "still alive" as const,
+      detail: "survived SIGKILL",
+    };
+    await writeTerminalCleanupRecord(paseoHome, {
+      recordId: "closing-record",
+      pid: 4241,
+      bootId: null,
+      createdAt: new Date().toISOString(),
+      identity: { startedAt: "Thu Jan  1 00:00:00 1970", commandLine: "worker" },
+      protocolVersion: 1,
+      paseoVersion: "0.0.0-test",
+      socketPath: join(paseoHome, "closing.sock"),
+      secret: "closing-secret",
+      terminals: [{ id: "t1", pid: 4242, startedAt: "Thu Jan  1 00:00:00 1970" }],
+      closing: { unresolved: [unresolved] },
+    });
+    const session = createSessionForTest({
+      messages,
+      paseoHome,
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
+      agentManager: { listProviderAvailability: vi.fn().mockResolvedValue([]) },
+    });
+
+    await session.handleMessage({ type: "daemon.get_status.request", requestId: "status-2" });
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "daemon.get_status.response",
+        payload: expect.objectContaining({ terminalCleanupUnconfirmed: [unresolved] }),
+      }),
+    ]);
+  });
+
+  test("daemon.get_status.request fails when a terminal cleanup record cannot be read", async () => {
+    const messages: unknown[] = [];
+    const paseoHome = makeHome();
+    mkdirSync(terminalWorkerDirectory(paseoHome), { recursive: true });
+    const cleanupPath = terminalCleanupRecordPath(paseoHome, "closing-record");
+    writeFileSync(cleanupPath, "{ not json");
+    const session = createSessionForTest({
+      messages,
+      paseoHome,
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
+      agentManager: { listProviderAvailability: vi.fn().mockResolvedValue([]) },
+    });
+
+    await session.handleMessage({ type: "daemon.get_status.request", requestId: "status-3" });
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "status-3",
+          error: expect.stringContaining(cleanupPath),
+        }),
+      }),
+    );
+    expect(messages).not.toContainEqual(
+      expect.objectContaining({ type: "daemon.get_status.response" }),
+    );
   });
 
   test("daemon.get_status.request falls back to a null/empty status when provider listing fails", async () => {
@@ -2107,6 +2253,7 @@ describe("daemon status + pairing RPC", () => {
           listen: null,
           relay: null,
           providers: [],
+          terminalCleanupUnconfirmed: [],
         },
       },
     ]);

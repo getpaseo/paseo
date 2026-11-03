@@ -84,6 +84,23 @@ describe("daemon web UI bootstrap", () => {
     }
   });
 
+  test("returns 404 for missing metadata while serving web UI deep links", async () => {
+    const distDir = await createWebUiDist();
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: true,
+      webUi: { enabled: true, distDir },
+    });
+    const origin = `http://127.0.0.1:${daemonHandle.port}`;
+    const metadata = await fetch(`${origin}/.well-known/oauth-protected-resource/mcp/agents`);
+    expect(metadata.status).toBe(404);
+    expect(metadata.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(await metadata.json()).toEqual({ error: "Not found" });
+
+    const deepLink = await fetch(`${origin}/h/example/agent/123`);
+    expect(deepLink.status).toBe(200);
+    expect(await deepLink.text()).toContain("<body>app</body>");
+  });
+
   test("advertises ComputerName as the hostname over HTTP and WebSocket", async () => {
     daemonHandle = await createTestPaseoDaemon({ mcpEnabled: false });
     const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);

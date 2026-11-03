@@ -112,7 +112,7 @@ function appendRun<TGroup>(input: {
   const run = createRun(input.calls, input.isSealed);
   const host = createHost(run);
   input.output.push(host);
-  input.groups.set(host.id, input.buildGroup(run));
+  if (run.calls.length > 1) input.groups.set(host.id, input.buildGroup(run));
 }
 
 export function prepareGroupedHistory<TGroup>(input: {
@@ -180,7 +180,8 @@ export function groupLiveToolCalls<TGroup>(input: {
     if (hostPlacement === "head") {
       head.push(createHost(run));
     }
-    if (hostPlacement === "head" || pendingIncludesHead || !isSealed) {
+    const needsLiveGroup = hostPlacement === "head" || pendingIncludesHead || !isSealed;
+    if (run.calls.length > 1 && needsLiveGroup) {
       liveGroups.set(run.id, input.buildGroup(run));
     }
     pending = [];
@@ -217,19 +218,13 @@ export function groupLiveToolCalls<TGroup>(input: {
       historyGroupUpdatesByHostId: EMPTY_GROUPS,
     };
   }
-  if (input.history.groupsByHostId.size === 0) {
-    return {
-      tail: input.history.tail,
-      head,
-      groupsByHostId: liveGroups,
-      historyGroupUpdatesByHostId: EMPTY_GROUPS,
-    };
-  }
   const groupsByHostId = new Map(input.history.groupsByHostId);
   let historyGroupUpdatesByHostId: Map<string, TGroup> | null = null;
   for (const [id, group] of liveGroups) {
     groupsByHostId.set(id, group);
-    if (input.history.groupsByHostId.has(id)) {
+    const isHistoryHost =
+      input.history.groupsByHostId.has(id) || input.history.pendingCalls[0]?.id === id;
+    if (isHistoryHost) {
       historyGroupUpdatesByHostId ??= new Map();
       historyGroupUpdatesByHostId.set(id, group);
     }

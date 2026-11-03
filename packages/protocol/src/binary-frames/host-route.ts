@@ -3,6 +3,11 @@ import { MAX_WEBSOCKET_MESSAGE_BYTES } from "../websocket-message-limit.js";
 export const HOST_ROUTE_OPCODE = 0x30;
 export const MAX_HOST_ROUTE_ID_BYTES = 256;
 export const MAX_HOST_ROUTE_HEADER_BYTES = 3 + MAX_HOST_ROUTE_ID_BYTES;
+// A logical host channel crosses the 32 MiB route admission boundary. Text can
+// expand sixfold when enclosed in JSON; binary adds the bounded route header.
+export const MAX_HOST_CHANNEL_FRAME_BYTES = Math.floor(
+  (32 * 1024 * 1024 - MAX_HOST_ROUTE_HEADER_BYTES) / 6,
+);
 export const MAX_ROUTED_PAYLOAD_BYTES = MAX_WEBSOCKET_MESSAGE_BYTES - MAX_HOST_ROUTE_HEADER_BYTES;
 export interface HostRouteFrame {
   routeId: string;
