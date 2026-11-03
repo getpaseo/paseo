@@ -161,10 +161,12 @@ async function createWorkspaceJourney() {
   };
 }
 
-async function createUnobservedWorkspace(
-  archiveBarrier?: Promise<void>,
-  changeBeforeArchiveRead = false,
-) {
+async function createUnobservedWorkspace(journeyOptions?: {
+  archiveBarrier?: Promise<void>;
+  changeBeforeArchiveRead?: boolean;
+}) {
+  const { archiveBarrier, changeBeforeArchiveRead: shouldChange = false } = journeyOptions ?? {};
+  let changeBeforeArchiveRead = shouldChange;
   const { repoDir, paseoHome, worktree } = await createWorkspaceFiles();
   const cwd = worktree.worktreePath;
   run(repoDir, ["remote", "add", "origin", "https://github.com/acme/repo.git"]);
@@ -297,7 +299,7 @@ afterEach(async () => {
 
 describe("workspace auto-archive behavior", () => {
   test("rechecks checkout changes made after the merge notification", async () => {
-    const workspace = await createUnobservedWorkspace(undefined, true);
+    const workspace = await createUnobservedWorkspace({ changeBeforeArchiveRead: true });
     await workspace.observe("open");
     await workspace.observe("merged");
     await vi.waitFor(() => expect(workspace.archiveDecisions()).toBe(1));
@@ -322,7 +324,7 @@ describe("workspace auto-archive behavior", () => {
     const archiveBarrier = new Promise<void>((resolve) => {
       releaseArchive = resolve;
     });
-    const workspace = await createUnobservedWorkspace(archiveBarrier);
+    const workspace = await createUnobservedWorkspace({ archiveBarrier });
     try {
       await workspace.observe("open");
       expect(workspace.archives).toEqual([]);

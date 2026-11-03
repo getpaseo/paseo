@@ -3274,7 +3274,17 @@ describe("ForgeService", () => {
 
   it("prefers an exact terminal head and otherwise the most recently updated terminal PR", async () => {
     const owner = { login: "forkOwner" };
-    const terminal = (number: number, headRefOid: string, updatedAt: string, state: string) =>
+    const terminal = ({
+      number,
+      headRefOid,
+      updatedAt,
+      state,
+    }: {
+      number: number;
+      headRefOid: string;
+      updatedAt: string;
+      state: string;
+    }) =>
       JSON.parse(
         currentPullRequestJson({
           number,
@@ -3285,8 +3295,18 @@ describe("ForgeService", () => {
           headRepositoryOwner: owner,
         }),
       );
-    const older = terminal(41, "old", "2026-07-01T00:00:00Z", "MERGED");
-    const newer = terminal(42, "new", "2026-07-02T00:00:00Z", "CLOSED");
+    const older = terminal({
+      number: 41,
+      headRefOid: "old",
+      updatedAt: "2026-07-01T00:00:00Z",
+      state: "MERGED",
+    });
+    const newer = terminal({
+      number: 42,
+      headRefOid: "new",
+      updatedAt: "2026-07-02T00:00:00Z",
+      state: "CLOSED",
+    });
     for (const [headSha, expected] of [
       ["old", 41],
       ["other", 42],
@@ -3304,6 +3324,45 @@ describe("ForgeService", () => {
       });
       expect(status?.number).toBe(expected);
     }
+  });
+
+  it("prefers an exact merged PR over a closed draft", async () => {
+    const owner = { login: "forkOwner" };
+    const closedDraft = JSON.parse(
+      currentPullRequestJson({
+        number: 1,
+        state: "CLOSED",
+        isDraft: true,
+        headRefOid: "old",
+        updatedAt: "2026-07-01T00:00:00Z",
+        headRepositoryOwner: owner,
+      }),
+    );
+    const merged = JSON.parse(
+      currentPullRequestJson({
+        number: 2,
+        state: "MERGED",
+        mergedAt: "2026-07-02T00:00:00Z",
+        headRefOid: "exact",
+        updatedAt: "2026-07-02T00:00:00Z",
+        headRepositoryOwner: owner,
+      }),
+    );
+    const runner = createScriptedRunner([
+      JSON.stringify(closedDraft),
+      JSON.stringify([closedDraft, merged]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headRepositoryOwner: "forkOwner",
+      headSha: "exact",
+    });
+    expect(status).toMatchObject({ number: 2, state: "merged" });
   });
 
   it("prefers an open PR over an exact-SHA merged PR for the same head", async () => {

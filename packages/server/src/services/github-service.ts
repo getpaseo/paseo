@@ -3423,7 +3423,7 @@ function comparePullRequestCandidatePreference(
 }
 
 function getPullRequestStateRank(status: CurrentPullRequestStatus): number {
-  if (status.state === "open" || status.isDraft) {
+  if (status.state === "open") {
     return 0;
   }
   return 1;
