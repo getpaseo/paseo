@@ -2183,6 +2183,25 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test.each([false, true])(
+    "closing Pi releases an active turn without publishing a terminal outcome (autonomous=%s)",
+    async (autonomous) => {
+      const { pi, session, events } = await createSession();
+      if (autonomous) {
+        pi.latestSession().emit({ type: "agent_start" });
+        pi.latestSession().emit({ type: "turn_start" });
+      } else {
+        await session.startTurn("keep working");
+      }
+      const before = events.turnLifecycleEvents();
+
+      await session.close();
+
+      expect(pi.latestSession().closeCalls).toBe(1);
+      expect(events.turnLifecycleEvents()).toEqual(before);
+    },
+  );
+
   test("fails the active turn when the Pi process exits mid-turn", async () => {
     const { pi, session, events } = await createSession();
 

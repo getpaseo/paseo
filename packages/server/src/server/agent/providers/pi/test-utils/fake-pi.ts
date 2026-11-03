@@ -427,6 +427,10 @@ export class FakePiSession implements PiRuntimeSession {
 
   async close(): Promise<void> {
     this.closeCalls += 1;
+    this.emit({
+      type: "process_exit",
+      error: "Pi RPC process exited with code 0 and signal null",
+    });
   }
 
   emit(event: PiRuntimeEvent): void {

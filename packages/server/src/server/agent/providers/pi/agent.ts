@@ -2204,12 +2204,16 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
-    this.emit({
-      type: "turn_failed",
-      provider: this.provider,
-      turnId,
-      error,
-    });
+    // Releasing the runtime is not a failed turn: restart recovery still owns
+    // unfinished work after the session has been intentionally closed.
+    if (!this.closed) {
+      this.emit({
+        type: "turn_failed",
+        provider: this.provider,
+        turnId,
+        error,
+      });
+    }
   }
 
   private handleSessionEvent(event: PiAgentSessionEvent): void {
