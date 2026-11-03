@@ -132,7 +132,7 @@ function OpenAgentProfileEditModal({
   onDismiss,
   onSave,
 }: AgentProfileEditModalProps & { onDismiss: () => void }): ReactElement {
-  const { t } = useTranslation();
+  const { t } = useTranslation(["translation", "providerDescriptions"]);
   const controlSize: ControlSize = "md";
   const snapshot = useMemo(
     () => ({ mode, ...(profile ? { profile } : {}), ...(seed ? { seed } : {}) }),

@@ -1599,6 +1599,9 @@ export const it: TranslationResources = {
       cli: {
         statusFailed: "Impossibile verificare lo stato di installazione della CLI.",
         installFailed: "Impossibile installare la CLI di Paseo.",
+        uninstallFailed: "Impossibile disinstallare la CLI di Paseo.",
+        keptForeign:
+          "È stato mantenuto un comando paseo non installato da Paseo. Rimuovilo manualmente per disinstallarlo.",
       },
     },
   },
@@ -1703,6 +1706,61 @@ export const it: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "Passaggio {{current}} di {{total}}",
+      skip: "Salta configurazione",
+      continue: "Continua",
+      finish: "Completa",
+      steps: {
+        appearance: {
+          label: "Aspetto",
+          title: "Benvenuto in Paseo",
+          description: "Iniziamo scegliendo l'aspetto",
+        },
+        providers: {
+          label: "Provider",
+          title: "I tuoi agenti",
+          description: "Paseo esegue le CLI degli agenti già installate su questo computer",
+        },
+        projects: {
+          label: "Progetti",
+          title: "Aggiungi i tuoi progetti",
+          description: "Dove vuoi che lavorino i tuoi agenti",
+          addProject: "Aggiungi progetto",
+          added: "Aggiunto",
+          suggestions: {
+            loading: "Ricerca delle cartelle usate di recente",
+            empty: "Nessun progetto recente trovato",
+            lastUsed: "Ultimo utilizzo: {{time}}",
+            addSelected_one: "Aggiungi {{count}} progetto",
+            addSelected_other: "Aggiungi {{count}} progetti",
+            adding: "Aggiunta...",
+            addFailed: "Impossibile aggiungere questa cartella",
+          },
+        },
+        orchestration: {
+          label: "Orchestrazione",
+          title: "Consenti agli agenti di usare Paseo",
+          description:
+            "Consenti ai tuoi agenti di creare ambienti di lavoro e comunicare con altri agenti",
+        },
+        phone: {
+          label: "Mobile",
+          title: "Porta con te i tuoi agenti",
+          description:
+            "L'app mobile nativa completa ti permette di controllare dal telefono qualsiasi computer con Paseo",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "Scegli come connetterti",
+          connectDocs: "Documentazione",
+          openConnectDocs: "Apri la documentazione sulla connessione",
+          recommended: "Consigliato",
+          relay: { title: "Relay", hint: "Crittografia end-to-end, scansiona un codice QR" },
+          tailscale: { title: "Tailscale", hint: "Richiede una configurazione iniziale" },
+        },
+      },
+    },
     title: "Benvenuto in Paseo",
     subtitle: "Connetti il tuo computer per iniziare",
     actions: {
@@ -1923,6 +1981,8 @@ export const it: TranslationResources = {
       notNow: "Non ora",
       directConnectionHint:
         "Senza relay, connettiti direttamente tramite TCP, Tailscale o un'altra VPN. Non verrà creato alcun codice QR.",
+      tailscaleDocs: "Configura Tailscale",
+      tailscaleDocsAccessibility: "Scopri come connetterti tramite Tailscale",
       updateRequired: "Aggiorna l'host per attivare il relay da Paseo Desktop.",
       unavailable: "Dati di associazione non disponibili.",
       hint: "Scansiona questo codice QR con Paseo sul telefono oppure copia il link qui sotto.",
@@ -2494,6 +2554,12 @@ export const it: TranslationResources = {
     general: {
       title: "Generali",
       sending: "Invio",
+      setup: {
+        label: "Configurazione iniziale",
+        description:
+          "Rivedi la configurazione di aspetto, provider, progetti e associazione del telefono",
+        action: "Mostra di nuovo la configurazione",
+      },
       browserData: {
         title: "Dati del browser",
         siteData: "Cookie e dati dei siti",
@@ -2791,11 +2857,7 @@ export const it: TranslationResources = {
       commandLine: {
         title: "Riga di comando",
         description: "Controlla gli agenti e automatizzali con script dal terminale",
-      },
-      actions: {
-        install: "Installa",
-        installing: "Installazione...",
-        installed: "Installato",
+        accessibilityLabel: "Installa la CLI di Paseo",
       },
     },
     permissions: {
@@ -2872,7 +2934,7 @@ export const it: TranslationResources = {
       skills: {
         sectionTitle: "Skill di orchestrazione",
         title: "Skill di orchestrazione",
-        description: "Insegna ai tuoi agenti a coordinarsi tramite la CLI",
+        description: "Insegna ai tuoi agenti a usare gli strumenti di Paseo",
         docs: "Skill",
         openDocs: "Apri documentazione delle skill",
         unavailable: "Connettiti a questo host per gestire le skill di orchestrazione",
@@ -2883,7 +2945,6 @@ export const it: TranslationResources = {
         saveSelectionFailed: "Impossibile salvare la selezione delle skill di orchestrazione.",
         updateAvailable: "Aggiornamento disponibile",
         updateTitle: "Aggiornare le skill di Paseo?",
-        updateFallback: "Sincronizza le skill incluse su questo host.",
         uninstallTitle: "Disinstallare le skill di Paseo?",
         uninstallMessage:
           "Rimuove tutte le skill di orchestrazione di Paseo da ~/.agents, ~/.claude, ~/.codex su questo host.",
@@ -2898,9 +2959,6 @@ export const it: TranslationResources = {
           "{{skills}} verranno eliminate da ~/.agents, ~/.claude e ~/.codex su questo host. Verrà eliminato anche tutto ciò che hai aggiunto nelle cartelle di queste skill.",
         saveFailed: "Impossibile salvare la selezione delle skill.",
         actions: {
-          install: "Installa",
-          installing: "Installazione...",
-          installed: "Installato",
           update: "Aggiorna",
           working: "Operazione in corso...",
           remove: "Rimuovi",
@@ -2922,6 +2980,7 @@ export const it: TranslationResources = {
           title: "Attiva strumenti di Paseo",
           hint: "Gli agenti potranno gestire worktree, agenti e pianificazioni",
           accessibilityLabel: "Aggiungi strumenti di Paseo",
+          updateFailed: "Impossibile aggiornare gli strumenti di Paseo.",
         },
         systemPrompt: {
           title: "Prompt di sistema",
