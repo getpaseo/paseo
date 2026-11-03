@@ -225,3 +225,61 @@ test.each([
   },
   60_000,
 );
+
+test.each([
+  { label: "--json", command: ["logs"], flags: ["--json"] },
+  { label: "--format json", command: ["agent", "logs"], flags: ["--format", "json"] },
+])(
+  "logs --follow $label exits when stdout closes before saved history is written",
+  async ({ command, flags }) => {
+    await mkdir(".artifacts", { recursive: true });
+    const paseoHomeRoot = await mkdtemp(resolve(".artifacts/logs-follow-closed-"));
+    const staticDir = join(paseoHomeRoot, "static");
+    await mkdir(staticDir);
+    const daemon = await createTestPaseoDaemon({ paseoHomeRoot, staticDir });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    let follow: ReturnType<typeof spawn> | undefined;
+    let stderr = "";
+    try {
+      await client.connect();
+      // No turn is started: the saved history must trigger shutdown on its own.
+      const agent = await client.createAgent({ provider: "claude", cwd: daemon.paseoHome });
+      await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "Saved reply before the reader closes",
+        messageId: "saved",
+      });
+      follow = spawn(
+        process.execPath,
+        [
+          "--conditions=source",
+          "--import",
+          "tsx",
+          fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
+          "--host",
+          `127.0.0.1:${daemon.port}`,
+          ...command,
+          agent.id,
+          "--follow",
+          ...flags,
+        ],
+        {
+          env: { ...process.env, PASEO_HOME: daemon.paseoHome },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      const exited = once(follow, "exit");
+      follow.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      follow.stdout?.destroy();
+      await expect.poll(() => follow?.exitCode, { timeout: 10_000 }).toBe(0);
+      expect(await exited, stderr).toEqual([0, null]);
+    } finally {
+      follow?.kill("SIGKILL");
+      await client.close();
+      await daemon.close();
+    }
+  },
+  30_000,
+);

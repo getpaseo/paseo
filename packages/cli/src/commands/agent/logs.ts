@@ -380,88 +380,98 @@ async function runFollowMode({
   options,
   sinceTimestampMs,
 }: FollowModeInput): Promise<void> {
-  const DEFAULT_FOLLOW_TAIL = 10;
-  const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL;
-
-  // First, get existing timeline.
-  let existingItems: AgentTimelineItem[] = [];
-  try {
-    existingItems = await fetchAgentTimelineItems(client, agentId, {
-      timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
-      sinceTimestampMs,
-    });
-  } catch (error) {
-    console.warn("Warning: failed to fetch existing timeline", error);
-  }
-
-  // Apply filter to existing items
-  if (options.filter) {
-    existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
-  }
-
+  // Observe shutdown before history writes can encounter a closed reader.
+  // Keep an early stop resolved while subscription setup is in flight.
+  const stopController = new AbortController();
+  const stopped = waitForStop(stopController.signal);
+  let unsubscribe: (() => void) | undefined;
   const json = usesJsonOutput(options);
-
-  // Print existing transcript (tail-like behavior)
-  if (json) {
-    for (const item of selectTailItems(existingItems, tailCount)) {
-      console.log(JSON.stringify(item));
-    }
-  } else if (tailCount > 0) {
-    const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount);
-    if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
-      console.log(existingTranscript);
-    }
-  }
-
-  // Subscribe to new events
-  const tailLabel =
-    tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
-
   const writer = json
     ? createFollowJsonWriter(options.filter)
     : createFollowTranscriptWriter(undefined, options.filter);
-  // Keep stdout parseable in JSON mode: one timeline item per line, notices on stderr.
-  const notice = json ? console.error : console.log;
+  try {
+    const DEFAULT_FOLLOW_TAIL = 10;
+    const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL;
 
-  const unsubscribe = client.subscribeAgentTimeline(agentId, (message) => {
-    if (message.type === "agent.timeline.replacement") {
-      writer.end();
-      notice("\n[Timeline replaced; earlier output is no longer current]");
-      return;
+    // First, get existing timeline.
+    let existingItems: AgentTimelineItem[] = [];
+    try {
+      existingItems = await fetchAgentTimelineItems(client, agentId, {
+        timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+        sinceTimestampMs,
+      });
+    } catch (error) {
+      console.warn("Warning: failed to fetch existing timeline", error);
     }
 
-    if (message.type === "agent.timeline.error") {
-      writer.end();
-      console.error(`Timeline observation stopped: ${message.payload.error}`);
-      return;
+    // Apply filter to existing items
+    if (options.filter) {
+      existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
     }
-    if (message.type === "agent.timeline.subscription_restored") {
-      writer.end();
-      notice("\n[Reconnected; live output resumed. Events may have been missed.]");
-      return;
+
+    // Print existing transcript (tail-like behavior)
+    if (json) {
+      for (const item of selectTailItems(existingItems, tailCount)) {
+        console.log(JSON.stringify(item));
+      }
+    } else if (tailCount > 0) {
+      const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount);
+      if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
+        console.log(existingTranscript);
+      }
     }
-    if (message.payload.event.type === "timeline") {
-      const matchesSince =
-        sinceTimestampMs === undefined || Date.parse(message.payload.timestamp) >= sinceTimestampMs;
-      if (!matchesSince) {
+
+    // Subscribe to new events
+    const tailLabel =
+      tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
+
+    // Keep stdout parseable in JSON mode: one timeline item per line, notices on stderr.
+    const notice = json ? console.error : console.log;
+
+    const subscription = client.subscribeAgentTimeline(agentId, (message) => {
+      if (message.type === "agent.timeline.replacement") {
+        writer.end();
+        notice("\n[Timeline replaced; earlier output is no longer current]");
         return;
       }
-      const item = message.payload.event.item;
-      writer.push(item, message.payload.event.turnId);
-    } else if (
-      message.payload.event.type === "turn_completed" ||
-      message.payload.event.type === "turn_failed" ||
-      message.payload.event.type === "turn_canceled"
-    ) {
-      writer.end();
-    }
-  });
 
-  await unsubscribe.ready;
-  notice(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
+      if (message.type === "agent.timeline.error") {
+        writer.end();
+        console.error(`Timeline observation stopped: ${message.payload.error}`);
+        return;
+      }
+      if (message.type === "agent.timeline.subscription_restored") {
+        writer.end();
+        notice("\n[Reconnected; live output resumed. Events may have been missed.]");
+        return;
+      }
+      if (message.payload.event.type === "timeline") {
+        const matchesSince =
+          sinceTimestampMs === undefined ||
+          Date.parse(message.payload.timestamp) >= sinceTimestampMs;
+        if (!matchesSince) {
+          return;
+        }
+        const item = message.payload.event.item;
+        writer.push(item, message.payload.event.turnId);
+      } else if (
+        message.payload.event.type === "turn_completed" ||
+        message.payload.event.type === "turn_failed" ||
+        message.payload.event.type === "turn_canceled"
+      ) {
+        writer.end();
+      }
+    });
 
-  await waitForStop();
-  writer.end();
-  unsubscribe();
-  await client.close();
+    unsubscribe = subscription;
+    await subscription.ready;
+    notice(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
+
+    await stopped;
+  } finally {
+    stopController.abort();
+    writer.end();
+    unsubscribe?.();
+    await client.close();
+  }
 }
