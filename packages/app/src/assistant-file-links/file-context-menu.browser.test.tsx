@@ -89,6 +89,13 @@ const TARGET: InlinePathTarget = {
   lineEnd: undefined,
 };
 
+const HOME_TARGET: InlinePathTarget = {
+  raw: "~/.paseo/plans/file-preview.md",
+  path: "~/.paseo/plans/file-preview.md",
+  lineStart: undefined,
+  lineEnd: undefined,
+};
+
 const onOpen = vi.fn();
 
 interface MountedMenu {
