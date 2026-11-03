@@ -199,6 +199,7 @@ function readProviderTurnId(params: unknown): string | undefined {
 
 export class CodexAppServerClient {
   private readonly stdoutLineReader: { close(): void };
+  private readonly exitPromise: Promise<void>;
   private activeProviderRequests = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
@@ -213,6 +214,11 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
+    this.exitPromise =
+      (child.exitCode !== null && child.exitCode !== undefined) ||
+      (child.signalCode !== null && child.signalCode !== undefined)
+        ? Promise.resolve()
+        : new Promise((resolve) => child.once("exit", () => resolve()));
     // Split only on LF: U+2028/U+2029 are valid raw characters inside Codex JSON.
     const reader = new ProviderLineReader(
       CODEX_PROVIDER_LINE_BYTES,
@@ -268,6 +274,14 @@ export class CodexAppServerClient {
 
   hasPendingRequests(): boolean {
     return this.pending.size > 0 || this.activeProviderRequests > 0;
+  }
+
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  whenExited(): Promise<void> {
+    return this.exitPromise;
   }
 
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {

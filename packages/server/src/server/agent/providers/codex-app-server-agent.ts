@@ -5075,6 +5075,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async requestTurnInterrupt(target: CodexInterruptTarget): Promise<void> {
+    if (this.matchesTimedOutInterruptTarget(target) && target.client.isDisposed()) {
+      // A previous forced shutdown timed out after closing the RPC transport.
+      // Another explicit Stop retries process termination without sending to that transport.
+      await this.stopUnresponsiveAppServer(target);
+      return;
+    }
     const interruptRequest = target.client.request(
       "turn/interrupt",
       { threadId: target.threadId, turnId: target.turnId },
@@ -5098,7 +5104,6 @@ export class CodexAppServerAgentSession implements AgentSession {
           return;
         }
         if (this.matchesTimedOutInterruptTarget(target)) {
-          this.clearTimedOutInterruptTarget(target);
           await this.stopUnresponsiveAppServer(target);
           return;
         }
@@ -5165,19 +5170,37 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
       "provider.codex.interrupt.repeated_unacknowledged_stopping_app_server",
     );
+    if (!target.client.isDisposed()) {
+      // The shutdown call can time out while the child is still alive. Its eventual
+      // exit must settle the turn even if no further Stop request arrives.
+      void target.client
+        .whenExited()
+        .then(() => this.finishStoppedAppServer(target))
+        .catch((error) => {
+          this.logger.warn({ err: error }, "Failed to settle Codex turn after app-server exit");
+        });
+    }
     await target.client.forceDispose();
+    this.finishStoppedAppServer(target);
+  }
+
+  private finishStoppedAppServer(target: CodexInterruptTarget): void {
     const targetTurnStillActive = this.isInterruptTargetActive(target);
     if (this.client === target.client) {
       this.client = null;
       this.connectionState = "disconnected";
     }
+    this.clearTimedOutInterruptTarget(target);
     if (!targetTurnStillActive) {
       return;
     }
-    this.clearPendingPermissions();
-    this.dismissInterruptedAsyncQuestions();
-    this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
-    this.clearActiveTurnState();
+    try {
+      this.clearPendingPermissions();
+      this.dismissInterruptedAsyncQuestions();
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } finally {
+      this.clearActiveTurnState();
+    }
   }
 
   private clearActiveTurnState(): void {

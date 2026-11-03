@@ -4736,6 +4736,150 @@ describe("Codex app-server provider", () => {
     }
   }, 10_000);
 
+  test("settles a forced cancel when the app-server exits after the shutdown deadline", async () => {
+    const stuckAppServer = createFakeCodexAppServer({
+      "turn/interrupt": () => new Promise(() => undefined),
+    });
+    const replacementAppServer = createFakeCodexAppServer();
+    const spawnedChildren = [stuckAppServer.child, replacementAppServer.child];
+    stuckAppServer.child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => {
+        const child = spawnedChildren.shift();
+        if (!child) throw new Error("Unexpected extra Codex app-server spawn");
+        return child;
+      },
+    );
+    const terminalEvents: TurnTerminalEvent[] = [];
+    session.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        terminalEvents.push(event);
+      }
+    });
+
+    try {
+      await session.startTurn("Install dependencies.");
+      stuckAppServer.startsTurn({ threadId: "thread-1", turnId: "turn-stuck" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      vi.useFakeTimers();
+
+      const firstInterrupt = session.interrupt();
+      const firstTimeout = expect(firstInterrupt).rejects.toThrow(
+        "request timed out for turn/interrupt",
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await firstTimeout;
+
+      const secondInterrupt = session.interrupt();
+      const shutdownTimeout = expect(secondInterrupt).rejects.toThrow(
+        "Codex app-server did not report exit after SIGKILL",
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdownTimeout;
+      expect(stuckAppServer.child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(terminalEvents).toEqual([]);
+
+      stuckAppServer.child.signalCode = "SIGKILL";
+      stuckAppServer.child.emit("exit", null, "SIGKILL");
+      await Promise.resolve();
+      expect(terminalEvents).toEqual([
+        expect.objectContaining({ type: "turn_canceled", provider: CODEX_PROVIDER }),
+      ]);
+
+      await session.startTurn("Try again.");
+      await replacementAppServer.waitForTurnStart();
+      expect(spawnedChildren).toEqual([]);
+      stuckAppServer.assertNoErrors();
+      replacementAppServer.assertNoErrors();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  }, 10_000);
+
+  test("retries process termination after a forced cancel misses the shutdown deadline", async () => {
+    const stuckAppServer = createFakeCodexAppServer({
+      "turn/interrupt": () => new Promise(() => undefined),
+    });
+    const replacementAppServer = createFakeCodexAppServer();
+    const spawnedChildren = [stuckAppServer.child, replacementAppServer.child];
+    let killCount = 0;
+    stuckAppServer.child.kill = vi.fn((signal) => {
+      if (signal === "SIGKILL" && ++killCount === 3) {
+        stuckAppServer.child.signalCode = "SIGKILL";
+        stuckAppServer.child.emit("exit", null, "SIGKILL");
+      }
+      return true;
+    }) as ChildProcessWithoutNullStreams["kill"];
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => {
+        const child = spawnedChildren.shift();
+        if (!child) throw new Error("Unexpected extra Codex app-server spawn");
+        return child;
+      },
+    );
+    const terminalEvents: TurnTerminalEvent[] = [];
+    session.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        terminalEvents.push(event);
+      }
+    });
+
+    try {
+      await session.startTurn("Install dependencies.");
+      stuckAppServer.startsTurn({ threadId: "thread-1", turnId: "turn-stuck" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      vi.useFakeTimers();
+
+      const firstInterrupt = session.interrupt();
+      const firstTimeout = expect(firstInterrupt).rejects.toThrow(
+        "request timed out for turn/interrupt",
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await firstTimeout;
+
+      const secondInterrupt = session.interrupt();
+      const shutdownTimeout = expect(secondInterrupt).rejects.toThrow(
+        "Codex app-server did not report exit after SIGKILL",
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdownTimeout;
+      expect(terminalEvents).toEqual([]);
+
+      await expect(session.interrupt()).resolves.toBeUndefined();
+      expect(killCount).toBe(3);
+      expect(
+        stuckAppServer.requests().filter((request) => request.method === "turn/interrupt"),
+      ).toHaveLength(2);
+      expect(terminalEvents).toEqual([
+        expect.objectContaining({ type: "turn_canceled", provider: CODEX_PROVIDER }),
+      ]);
+
+      await session.startTurn("Try again.");
+      await replacementAppServer.waitForTurnStart();
+      expect(spawnedChildren).toEqual([]);
+      stuckAppServer.assertNoErrors();
+      replacementAppServer.assertNoErrors();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  }, 10_000);
+
   test("does not let a stale interrupt timeout stop the next turn", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/interrupt": () => new Promise(() => undefined),
