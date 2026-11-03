@@ -73,7 +73,7 @@ export function opencodeStorePaths(env: NodeJS.ProcessEnv, home: string): Openco
   const directory = join(dataHome, "opencode");
   return {
     file: join(directory, "auth.json"),
-    database: env.OPENCODE_DB ? resolve(env.OPENCODE_DB) : join(directory, "opencode.db"),
+    database: resolve(directory, env.OPENCODE_DB || "opencode.db"),
   };
 }
 
@@ -176,7 +176,9 @@ export function readOpencodeOauth(path: string, lookup: StoreLookup = {}): Openc
     }
     const rows = db
       .prepare(
-        "SELECT id, value FROM credential WHERE integration_id = ? AND active = 1 ORDER BY time_updated DESC, id DESC",
+        // Migrated v1 rows have no active flag. OpenCode selects the newest
+        // created login until an explicit selection pins another one.
+        "SELECT id, value FROM credential WHERE integration_id = ? AND (active = 1 OR active IS NULL) ORDER BY active DESC, time_created DESC, id DESC LIMIT 1",
       )
       .all("openai");
     return rows.flatMap((value) => {

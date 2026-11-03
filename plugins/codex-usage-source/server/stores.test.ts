@@ -470,22 +470,80 @@ test.each([
   expect(await logins(lookup(env))).toEqual([{ route: { store: "opencode", path: file } }]);
 });
 
-test("OpenCode v2 database path honours OPENCODE_DB", async () => {
-  const databasePath = join(home, "custom-opencode.db");
-  const db = await opencodeDatabase(databasePath);
-  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-    "cred_1",
-    "openai",
-    "OpenAI",
-    opencodeOauth("fixture-db", 2000, "db-account"),
-    null,
-    "chatgpt-headless",
-    1,
-    1,
-    1,
-  );
-  db.close();
-  expect(await logins(lookup({ OPENCODE_DB: databasePath }))).toEqual([
-    { route: { store: "opencode-db", path: databasePath, credentialId: "cred_1" } },
-  ]);
-});
+test.each(["absolute", "relative"])(
+  "OpenCode v2 database path honours %s OPENCODE_DB",
+  async (kind) => {
+    const data = join(home, "data");
+    const databasePath = join(data, "opencode", "custom-opencode.db");
+    const db = await opencodeDatabase(databasePath);
+    db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "cred_1",
+      "openai",
+      "OpenAI",
+      opencodeOauth("fixture-db", 2000, "db-account"),
+      null,
+      "chatgpt-headless",
+      1,
+      1,
+      1,
+    );
+    db.close();
+    expect(
+      await logins(
+        lookup({
+          XDG_DATA_HOME: data,
+          OPENCODE_DB: kind === "absolute" ? databasePath : "custom-opencode.db",
+        }),
+      ),
+    ).toEqual([{ route: { store: "opencode-db", path: databasePath, credentialId: "cred_1" } }]);
+  },
+);
+
+test.each([false, true])(
+  "OpenCode v2 selects its current login after legacy migration (explicit selection: %s)",
+  async (selected) => {
+    const data = join(home, "data");
+    const env = { XDG_DATA_HOME: data };
+    const databasePath = join(data, "opencode", "opencode.db");
+    const db = await opencodeDatabase(databasePath);
+    const insert = db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    // The v1 migration leaves active NULL; OpenCode uses creation order until a login is selected.
+    insert.run(
+      "older",
+      "openai",
+      "OpenAI",
+      opencodeOauth("fixture-older", 2000, "older-account"),
+      null,
+      "chatgpt-headless",
+      selected ? 1 : null,
+      1,
+      3,
+    );
+    insert.run(
+      "newer",
+      "openai",
+      "OpenAI",
+      opencodeOauth("fixture-newer", 2000, "newer-account"),
+      null,
+      "chatgpt-headless",
+      null,
+      2,
+      2,
+    );
+    db.close();
+
+    const inputs = await logins(lookup(env));
+    expect(inputs).toEqual([
+      {
+        route: {
+          store: "opencode-db",
+          path: databasePath,
+          credentialId: selected ? "older" : "newer",
+        },
+      },
+    ]);
+    expect(await accountIdentity(inputs[0]!, env)).toEqual({
+      key: selected ? "older-account" : "newer-account",
+    });
+  },
+);

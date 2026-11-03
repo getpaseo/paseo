@@ -224,7 +224,7 @@ async function fetchApi(url, init) {
     return new Response(JSON.stringify({ account: { uuid: second ? 'claude-two' : 'claude-one' }, organization: { uuid: second ? 'org-two' : 'org-one' } }));
   }
   if (token === 'Bearer fixture-revoked') return new Response(null, { status: 401 });
-  const used = { 'Bearer fixture-codex': 11, 'Bearer fixture-opencode': 22, 'Bearer fixture-pi-codex': 33, 'Bearer fixture-omp-codex': 44, 'Bearer fixture-omp-claude': 66, 'Bearer fixture-pi-claude': 77 }[token] || 55;
+  const used = { 'Bearer fixture-codex': 11, 'Bearer fixture-opencode': 22, 'Bearer fixture-opencode-db': 23, 'Bearer fixture-pi-codex': 33, 'Bearer fixture-omp-codex': 44, 'Bearer fixture-omp-claude': 66, 'Bearer fixture-pi-claude': 77 }[token] || 55;
   return new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: used } }, five_hour: { utilization: used } }));
 }
 export default function contribute(server) {
@@ -270,6 +270,31 @@ export default function contribute(server) {
       (await client.listUsageReports({ reportIds: ["codex:chatgpt-one"], forceRefresh: true }))
         .reports[0];
     expect((await refresh())?.report.windows[0]?.usedPct).toBe(22);
+    const openCodeDatabase = path.join(path.dirname(openCodePath), "opencode.db");
+    const openCodeDb = new DatabaseSync(openCodeDatabase);
+    openCodeDb.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, active INTEGER, time_created INTEGER, time_updated INTEGER)",
+    );
+    // OpenCode's v1 migration leaves active NULL and does not update auth.json.
+    openCodeDb.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, NULL, 1, 1)").run(
+      "migrated-login",
+      "openai",
+      "OpenAI",
+      JSON.stringify({
+        type: "oauth",
+        access: "fixture-opencode-db",
+        expires: Date.now() + 60_000,
+        metadata: { accountID: "chatgpt-one" },
+      }),
+    );
+    openCodeDb.close();
+    const rediscover = async () =>
+      (await client.listUsageReports({ forceRefresh: true })).reports.find(
+        (entry) => entry.id === "codex:chatgpt-one",
+      );
+    expect((await rediscover())!.report.windows[0]!.usedPct).toBe(23);
+    await rm(openCodeDatabase);
+    expect((await rediscover())!.report.windows[0]!.usedPct).toBe(22);
     await rm(openCodePath);
     expect((await refresh())?.report.windows[0]?.usedPct).toBe(33);
     await json(piPath, {
