@@ -3333,22 +3333,29 @@ test("createAgent and resume give the agent its workspace id", async () => {
     PASEO_WORKSPACE_ID: "ws-agent-home",
   });
 
-  // A daemon restart resumes from the stored record, without a workspace id in the call.
-  await manager.closeAgent(snapshot.id);
-  await manager.resumeAgentFromPersistence(
-    {
-      provider: "codex",
-      sessionId: "workspace-env-session",
-      metadata: { provider: "codex", cwd: workdir },
-    },
-    { cwd: workdir },
-    snapshot.id,
-  );
-  expect(client.resumeLaunchContext?.env).toEqual({
+  // The stored record supplies the workspace when the caller doesn't.
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "workspace-env-session",
+    metadata: { provider: "codex", cwd: workdir },
+  };
+  const expectedEnv = {
     PASEO_AGENT_ID: snapshot.id,
     PASEO_AGENT_CWD: workdir,
     PASEO_WORKSPACE_ID: "ws-agent-home",
-  });
+  };
+
+  await manager.closeAgent(snapshot.id);
+  const resumed = await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, snapshot.id);
+  expect(client.resumeLaunchContext?.env).toEqual(expectedEnv);
+  expect(resumed.workspaceId).toBe("ws-agent-home");
+  expect((await storage.get(snapshot.id))?.workspaceId).toBe("ws-agent-home");
+
+  // Each restart reads what the previous resume stored.
+  client.resumeLaunchContext = undefined;
+  await manager.closeAgent(snapshot.id);
+  await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, snapshot.id);
+  expect(client.resumeLaunchContext?.env).toEqual(expectedEnv);
 });
 
 test("createAgent passes persistSession to provider create options", async () => {

@@ -683,15 +683,15 @@ function agentIdentityEnv({
   };
 }
 
-// A restart resumes from the stored record, with no workspace id in the call.
+// Launch env and the registered agent must agree, or the next snapshot erases the stored workspace.
 function resolveResumeWorkspaceId({
   options,
   record,
 }: {
   options: { workspaceId?: string } | undefined;
   record: Pick<StoredAgentRecord, "workspaceId"> | null;
-}): string | null {
-  return options?.workspaceId ?? record?.workspaceId ?? null;
+}): string | undefined {
+  return options?.workspaceId ?? record?.workspaceId;
 }
 
 function validateAgentId(agentId: string, source: string): string {
@@ -1601,6 +1601,7 @@ export class AgentManager {
     const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
     const launchEnv = record?.launchEnv;
+    const workspaceId = resolveResumeWorkspaceId({ options, record });
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
@@ -1623,7 +1624,7 @@ export class AgentManager {
       {
         reason: "resume",
         purpose,
-        workspaceId: resolveResumeWorkspaceId({ options, record }),
+        workspaceId,
         title: record?.title ?? mergedConfig.title ?? null,
         labels: record?.labels ?? options?.labels ?? {},
       },
@@ -1639,6 +1640,7 @@ export class AgentManager {
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
+      workspaceId,
       launchEnv,
       persistence: handle,
       restoring: true,
