@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { AgentBackgroundWorkStore } from "./store.js";
+import { AgentBackgroundWorkStore } from "./index.js";
 
 const T0 = "2026-10-06T10:00:00.000Z";
 const T1 = "2026-10-06T10:05:00.000Z";
@@ -35,7 +35,17 @@ describe("AgentBackgroundWorkStore", () => {
     expect(
       store.apply("agent-a", [{ id: "bash-1", kind: "shell", description: "sleep 20" }], T1),
     ).toBeNull();
+    expect(store.apply("agent-b", [], T1)).toEqual([]);
     expect(store.apply("agent-b", [], T1)).toBeNull();
+  });
+
+  test("distinguishes an unknown inventory from an observed empty inventory", () => {
+    const store = new AgentBackgroundWorkStore();
+    expect(store.summary("agent-a")).toBeUndefined();
+    store.apply("agent-a", []);
+    expect(store.summary("agent-a")).toEqual({ count: 0 });
+    store.clear("agent-a");
+    expect(store.summary("agent-a")).toBeUndefined();
   });
 
   test("keeps the first occurrence of a duplicated id", () => {

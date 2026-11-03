@@ -379,6 +379,17 @@ export const ar: TranslationResources = {
       answerPlaceholder: "اكتب إجابتك...",
       otherPlaceholder: "آخر...",
     },
+    backgroundWork: {
+      label: "في الخلفية",
+      title: "عمل الخلفية",
+      waiting: "بانتظار تفاصيل عمل الخلفية",
+      error: "تعذر تحميل عمل الخلفية",
+      retry: "إعادة المحاولة",
+      running: "عمل الخلفية قيد التشغيل",
+      shell: "الصدفة",
+      monitor: "المراقبة",
+      other: "عمل آخر",
+    },
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",

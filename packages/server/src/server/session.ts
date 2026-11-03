@@ -16,7 +16,7 @@ import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
-import type { AgentBackgroundWorkItem } from "./agent/background-work/store.js";
+import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
@@ -2040,22 +2040,12 @@ export class Session {
         }
 
         if (event.type === "provider_subagent") {
-          // The subagents track of an internal parent stays hidden.
-          const parentAgentId =
-            event.event.type === "upsert"
-              ? event.event.subagent.parentAgentId
-              : event.event.parentAgentId;
-          if (this.agentManager.getAgent(parentAgentId)?.internal) return;
-          this.emitProviderSubagentWorkspaceUpdate(event.event);
-          this.forwardProviderSubagentUpdate(event.event);
+          this.forwardProviderSubagent(event.event);
           return;
         }
 
         if (event.type === "background_work") {
-          this.emit({
-            type: "agent.background_work.update",
-            payload: { agentId: event.agentId, items: event.items },
-          });
+          this.forwardBackgroundWork(event);
           return;
         }
 
@@ -2130,6 +2120,25 @@ export class Session {
     );
   }
 
+  private forwardProviderSubagent(event: ProviderSubagentManagerEvent): void {
+    const parentAgentId =
+      event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
+    if (this.agentManager.getAgent(parentAgentId)?.internal) return;
+    this.emitProviderSubagentWorkspaceUpdate(event);
+    this.forwardProviderSubagentUpdate(event);
+  }
+
+  private forwardBackgroundWork(
+    event: Extract<AgentManagerEvent, { type: "background_work" }>,
+  ): void {
+    this.emit({
+      type: "agent.background_work.update",
+      payload: { agentId: event.agentId, items: event.items },
+    });
+    const agent = this.agentManager.getAgent(event.agentId);
+    if (agent && !agent.internal) void this.agentUpdates.forwardLiveAgent(agent);
+  }
+
   private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {
     if (event.type === "timeline") {
       return;
@@ -2162,6 +2171,7 @@ export class Session {
   }
 
   private async enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload> {
+    payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
@@ -5780,6 +5790,7 @@ export class Session {
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
+            backgroundWork: agent.backgroundWork,
           });
         case "created_at":
           return Date.parse(agent.createdAt);
@@ -8291,6 +8302,9 @@ export class Session {
   // Answering from storage keeps a read from resuming a dormant agent.
   private async readAgentBackgroundWork(agentId: string): Promise<AgentBackgroundWorkItem[]> {
     if (this.agentManager.getAgent(agentId)) {
+      if (!this.agentManager.getAgentBackgroundWorkSummary(agentId)) {
+        throw new Error("Background work inventory is unavailable");
+      }
       return this.agentManager.listAgentBackgroundWork(agentId);
     }
     const record = await this.agentStorage.get(agentId);
@@ -8300,7 +8314,7 @@ export class Session {
     if (record.archivedAt) {
       throw new Error(`Agent is archived: ${agentId}`);
     }
-    return [];
+    throw new Error("Background work inventory is unavailable");
   }
 
   private async handleProviderSubagentTimelineRequest(

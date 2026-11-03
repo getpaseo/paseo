@@ -473,7 +473,7 @@ export type AgentStreamEvent =
       /** Full replacement of the agent's live background work (shells, monitors…). */
       type: "background_work";
       provider: AgentProvider;
-      items: import("./background-work/store.js").AgentBackgroundWorkInput[];
+      items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

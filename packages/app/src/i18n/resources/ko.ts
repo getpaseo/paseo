@@ -380,6 +380,17 @@ export const ko: TranslationResources = {
       answerPlaceholder: "답변을 입력하세요...",
       otherPlaceholder: "기타...",
     },
+    backgroundWork: {
+      label: "백그라운드",
+      title: "백그라운드 작업",
+      waiting: "작업 세부 정보를 기다리는 중",
+      error: "백그라운드 작업을 불러오지 못했습니다",
+      retry: "다시 시도",
+      running: "백그라운드 작업 실행 중",
+      shell: "셸",
+      monitor: "모니터",
+      other: "기타 작업",
+    },
     todo: {
       title: "작업",
       empty: "아직 작업이 없습니다.",

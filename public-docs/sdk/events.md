@@ -55,7 +55,7 @@ const unsubscribe = agent.backgroundWork.subscribe((items) => render(items));
 unsubscribe();
 ```
 
-`subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list on every change. Use `list()` for a one-shot read, such as automation that waits for the list to empty. Each item has `id`, `kind` (`"shell"` for shells and Claude `Monitor` watches, `"other"` otherwise; treat any unknown value as `"other"`), `description` (or `null`) and `startedAt`. The list empties when the provider process restarts or the agent closes. Nothing survives a daemon restart.
+`subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list on every change. Use `list()` for a one-shot read. Each item has `id`, `kind` (`"shell"`, `"monitor"`, or `"other"`; treat unknown values as `"other"`), `description` (or `null`) and `startedAt`, the time Paseo first observed it. Inventory is scoped to the current provider session and is not persisted. When its runtime is lost, its old items are discarded. An unavailable inventory is reported as an error rather than an empty list.
 
 Pass `subscribe(listener, { onError })` to receive the error when reading the current list fails; the listener is not called and the list is read again on the next reconnect. Without `onError`, the error is logged.
 

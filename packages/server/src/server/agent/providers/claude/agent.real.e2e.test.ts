@@ -146,7 +146,7 @@ function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelin
 function hasBackgroundShell(events: AgentStreamEvent[]): boolean {
   return events.some(
     (event) =>
-      event.type === "background_work" && event.items.some((item) => item.kind === "shell"),
+      event.type === "background_work" && event.items?.some((item) => item.kind === "shell"),
   );
 }
 
@@ -433,7 +433,7 @@ describe("ClaudeAgentSession integration", () => {
         handle.session,
         (event, events) =>
           event.type === "background_work" &&
-          event.items.length === 0 &&
+          event.items?.length === 0 &&
           hasBackgroundShell(events),
         90_000,
       );

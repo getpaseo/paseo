@@ -40,6 +40,7 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     titleState: label ? "ready" : "loading",
     statusBucket: deriveSidebarStateBucket({
       status,
+      backgroundWork: row.kind === "paseo" ? row.backgroundWork : undefined,
       requiresAttention: false,
     }),
   };

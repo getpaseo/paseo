@@ -98,7 +98,7 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
-import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/store.js";
+import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
 
@@ -1323,6 +1323,10 @@ export class AgentManager {
   listAgentBackgroundWork(agentId: string): AgentBackgroundWorkItem[] {
     this.requirePublicAgent(agentId);
     return this.backgroundWork.list(agentId);
+  }
+
+  getAgentBackgroundWorkSummary(agentId: string): { count: number } | undefined {
+    return this.backgroundWork.summary(agentId);
   }
 
   private clearBackgroundWork(agentId: string): void {
@@ -4219,7 +4223,10 @@ export class AgentManager {
       return;
     }
     if (event.type === "background_work") {
-      const items = this.backgroundWork.apply(agent.id, event.items);
+      const items =
+        event.items === null
+          ? this.backgroundWork.clear(agent.id)
+          : this.backgroundWork.apply(agent.id, event.items);
       if (items) this.dispatch({ type: "background_work", agentId: agent.id, items });
       return;
     }

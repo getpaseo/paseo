@@ -12847,6 +12847,8 @@ test("folds provider background work and clears it when the agent closes", async
     agentId: snapshot.id,
     items: [expect.objectContaining({ id: "bash-1" })],
   });
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toEqual({ count: 1 });
   expect(
     events.some((event) => event.type === "agent_stream" && event.event.type === "background_work"),
   ).toBe(false);
@@ -12854,6 +12856,7 @@ test("folds provider background work and clears it when the agent closes", async
   await manager.closeAgent(snapshot.id);
 
   expect(events).toContainEqual({ type: "background_work", agentId: snapshot.id, items: [] });
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toBeUndefined();
 });
 
 test("does not deliver an internal agent's background work to global subscribers", async () => {

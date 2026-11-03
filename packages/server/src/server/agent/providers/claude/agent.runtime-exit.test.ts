@@ -340,7 +340,7 @@ describe("Claude runtime exit", () => {
       child.emit("exit", 1, null);
 
       expect(events).toContainEqual(
-        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+        expect.objectContaining({ type: "background_work", provider: "claude", items: null }),
       );
     } finally {
       await session.close();
@@ -375,7 +375,7 @@ describe("Claude runtime exit", () => {
       await session.listCommands();
 
       expect(events).toContainEqual(
-        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+        expect.objectContaining({ type: "background_work", provider: "claude", items: null }),
       );
     } finally {
       await session.close();
@@ -430,7 +430,7 @@ describe("Claude runtime exit", () => {
 
       const backgroundWork = events.filter((event) => event.type === "background_work");
       expect(backgroundWork.at(-1)).toEqual(
-        expect.objectContaining({ type: "background_work", provider: "claude", items: [] }),
+        expect.objectContaining({ type: "background_work", provider: "claude", items: null }),
       );
     } finally {
       await session.close();

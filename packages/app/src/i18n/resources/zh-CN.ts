@@ -379,6 +379,17 @@ export const zhCN: TranslationResources = {
       answerPlaceholder: "输入你的回答...",
       otherPlaceholder: "其他...",
     },
+    backgroundWork: {
+      label: "后台",
+      title: "后台任务",
+      waiting: "正在等待后台任务详情",
+      error: "无法加载后台任务",
+      retry: "重试",
+      running: "后台任务运行中",
+      shell: "Shell",
+      monitor: "监控",
+      other: "其他任务",
+    },
     todo: {
       title: "任务",
       empty: "还没有任务。",

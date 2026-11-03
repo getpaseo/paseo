@@ -376,6 +376,17 @@ export const en = {
       answerPlaceholder: "Type your answer...",
       otherPlaceholder: "Other...",
     },
+    backgroundWork: {
+      label: "Background",
+      title: "Background work",
+      waiting: "Waiting for background work details",
+      error: "Could not load background work",
+      retry: "Retry",
+      running: "Background work running",
+      shell: "Shell",
+      monitor: "Monitor",
+      other: "Other work",
+    },
     todo: {
       title: "Tasks",
       empty: "No tasks yet.",

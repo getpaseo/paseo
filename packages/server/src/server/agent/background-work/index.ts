@@ -1,6 +1,6 @@
 export interface AgentBackgroundWorkInput {
   id: string;
-  /** Open string: "shell" or "other" today (Claude Monitor watches report as "shell"). */
+  /** Provider-neutral kind; consumers treat unknown kinds as other work. */
   kind: string;
   description: string | null;
 }
@@ -12,7 +12,7 @@ export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
 /**
  * Live background work per agent. Providers report the whole list on every change, so `apply`
  * replaces it. `startedAt` is stamped the first time an id is seen and kept while it stays listed.
- * Nothing is persisted: the work dies with the provider process.
+ * Nothing is persisted; providers determine when their live inventory is no longer available.
  */
 export class AgentBackgroundWorkStore {
   private readonly items = new Map<string, AgentBackgroundWorkItem[]>();
@@ -22,6 +22,7 @@ export class AgentBackgroundWorkStore {
     inputs: readonly AgentBackgroundWorkInput[],
     timestamp: string = new Date().toISOString(),
   ): AgentBackgroundWorkItem[] | null {
+    const known = this.items.has(agentId);
     const previous = this.items.get(agentId) ?? [];
     const startedAtById = new Map(previous.map((item) => [item.id, item.startedAt]));
     const seen = new Set<string>();
@@ -36,9 +37,8 @@ export class AgentBackgroundWorkStore {
         startedAt: startedAtById.get(input.id) ?? timestamp,
       });
     }
-    if (sameItems(previous, next)) return null;
-    if (next.length === 0) this.items.delete(agentId);
-    else this.items.set(agentId, next);
+    if (known && sameItems(previous, next)) return null;
+    this.items.set(agentId, next);
     return [...next];
   }
 
@@ -46,8 +46,14 @@ export class AgentBackgroundWorkStore {
     return [...(this.items.get(agentId) ?? [])];
   }
 
+  summary(agentId: string): { count: number } | undefined {
+    const items = this.items.get(agentId);
+    return items ? { count: items.length } : undefined;
+  }
+
   clear(agentId: string): AgentBackgroundWorkItem[] | null {
-    return this.apply(agentId, []);
+    if (!this.items.delete(agentId)) return null;
+    return [];
   }
 }
 

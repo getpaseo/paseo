@@ -384,6 +384,17 @@ export const es: TranslationResources = {
       answerPlaceholder: "Escribe tu respuesta...",
       otherPlaceholder: "Otro...",
     },
+    backgroundWork: {
+      label: "Segundo plano",
+      title: "Trabajo en segundo plano",
+      waiting: "Esperando los detalles",
+      error: "No se pudo cargar el trabajo en segundo plano",
+      retry: "Reintentar",
+      running: "Trabajo en segundo plano en curso",
+      shell: "Consola",
+      monitor: "Monitor",
+      other: "Otro trabajo",
+    },
     todo: {
       title: "Tareas",
       empty: "Aún no hay tareas.",

@@ -6,6 +6,22 @@ import {
 } from "./agent-state-bucket.js";
 
 describe("deriveAgentStateBucket", () => {
+  it("shows idle agents with background work as running while preserving attention precedence", () => {
+    const backgroundWork = { count: 1 };
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        backgroundWork,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+    ).toBe("running");
+    expect(
+      deriveAgentStateBucket({ status: "idle", backgroundWork, attentionReason: "permission" }),
+    ).toBe("needs_input");
+    expect(deriveAgentStateBucket({ status: "error", backgroundWork })).toBe("failed");
+    expect(deriveAgentStateBucket({ status: "idle", backgroundWork: { count: 0 } })).toBe("done");
+  });
   it("prioritizes pending permissions as needs_input", () => {
     expect(
       deriveAgentStateBucket({

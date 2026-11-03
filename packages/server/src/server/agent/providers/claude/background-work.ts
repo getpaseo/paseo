@@ -1,4 +1,4 @@
-import type { AgentBackgroundWorkInput } from "../../background-work/store.js";
+import type { AgentBackgroundWorkInput } from "../../background-work/index.js";
 import { CLAUDE_SUBAGENT_TASK_TYPE, CLAUDE_WORKFLOW_TASK_TYPE } from "./subagents/live-source.js";
 
 export interface ClaudeBackgroundTask {
@@ -24,7 +24,7 @@ export function toBackgroundWorkInputs(
     }));
 }
 
-/** Claude Monitor watches report as `local_bash`, so they map to "shell" too. */
+/** The inventory owner refines shell entries when launch metadata identifies a monitor. */
 function toKind(taskType: string): string {
   if (taskType === "local_bash") return "shell";
   return "other";

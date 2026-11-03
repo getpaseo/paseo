@@ -383,6 +383,17 @@ export const ptBR: TranslationResources = {
       answerPlaceholder: "Digite sua resposta...",
       otherPlaceholder: "Outro...",
     },
+    backgroundWork: {
+      label: "Segundo plano",
+      title: "Trabalho em segundo plano",
+      waiting: "Aguardando os detalhes",
+      error: "Não foi possível carregar o trabalho em segundo plano",
+      retry: "Tentar novamente",
+      running: "Trabalho em segundo plano em andamento",
+      shell: "Shell",
+      monitor: "Monitor",
+      other: "Outro trabalho",
+    },
     todo: {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",

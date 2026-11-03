@@ -384,6 +384,17 @@ export const ja: TranslationResources = {
       answerPlaceholder: "回答を入力...",
       otherPlaceholder: "その他...",
     },
+    backgroundWork: {
+      label: "バックグラウンド",
+      title: "バックグラウンド作業",
+      waiting: "作業の詳細を待っています",
+      error: "バックグラウンド作業を読み込めませんでした",
+      retry: "再試行",
+      running: "バックグラウンド作業を実行中",
+      shell: "シェル",
+      monitor: "監視",
+      other: "その他の作業",
+    },
     todo: {
       title: "タスク",
       empty: "タスクがまだありません。",

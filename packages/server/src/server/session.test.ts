@@ -411,6 +411,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
+      getAgentBackgroundWorkSummary: () => undefined,
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),
@@ -6113,6 +6114,7 @@ test("answers an agent background work list request", async () => {
     agentManager: {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
       getAgent: vi.fn(() => ({ id: "agent-a" })),
+      getAgentBackgroundWorkSummary: () => ({ count: 1 }),
       listAgentBackgroundWork: vi.fn(() => [
         {
           id: "bash-1",
@@ -6148,7 +6150,7 @@ test("answers an agent background work list request", async () => {
   });
 });
 
-test("lists no background work for a stored agent without loading it", async () => {
+test("reports an unavailable inventory for a stored agent without loading it", async () => {
   const messages: SessionOutboundMessage[] = [];
   const resumeAgentFromPersistence = vi.fn();
   const createAgent = vi.fn();
@@ -6157,7 +6159,7 @@ test("lists no background work for a stored agent without loading it", async () 
     messages,
     agentManager: {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      getAgent: vi.fn(() => undefined),
+      getAgent: () => undefined,
       getRegisteredProviderIds: vi.fn(() => ["claude"]),
       resumeAgentFromPersistence,
       createAgent,
@@ -6183,7 +6185,12 @@ test("lists no background work for a stored agent without loading it", async () 
 
   expect(messages).toContainEqual({
     type: "agent.background_work.list.response",
-    payload: { requestId: "list-stored", agentId: "agent-a", items: [], error: null },
+    payload: {
+      requestId: "list-stored",
+      agentId: "agent-a",
+      items: [],
+      error: "Background work inventory is unavailable",
+    },
   });
   expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
   expect(createAgent).not.toHaveBeenCalled();
@@ -6212,7 +6219,7 @@ test.each([
     messages,
     agentManager: {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      getAgent: vi.fn(() => undefined),
+      getAgent: () => undefined,
       getRegisteredProviderIds: vi.fn(() => ["codex"]),
       resumeAgentFromPersistence: vi.fn(),
       createAgent: vi.fn(),
@@ -6240,6 +6247,7 @@ test("never pushes background work to an old app", async () => {
     messages,
     targetedMessages,
     agentManager: {
+      getAgent: vi.fn(() => undefined),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};
@@ -6271,6 +6279,7 @@ test("pushes background work only to clients that subscribed to it", async () =>
   const session = createSessionForTest({
     messages,
     agentManager: {
+      getAgent: vi.fn(() => undefined),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
         agentEventListeners.push(listener);
         return () => {};

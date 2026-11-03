@@ -384,6 +384,17 @@ export const fr: TranslationResources = {
       answerPlaceholder: "Saisissez votre réponse…",
       otherPlaceholder: "Autre…",
     },
+    backgroundWork: {
+      label: "Arrière-plan",
+      title: "Travail en arrière-plan",
+      waiting: "En attente des détails",
+      error: "Impossible de charger le travail en arrière-plan",
+      retry: "Réessayer",
+      running: "Travail en arrière-plan en cours",
+      shell: "Shell",
+      monitor: "Surveillance",
+      other: "Autre travail",
+    },
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l’instant.",

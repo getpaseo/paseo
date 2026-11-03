@@ -74,6 +74,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
+  backgroundWork?: { count: number };
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;

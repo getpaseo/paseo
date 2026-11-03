@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import {
   cleanupRewindFlow,
   launchAgent,
@@ -14,7 +14,11 @@ import {
   expectTaskListEntries,
   openCompletedTaskList,
 } from "../support/helpers/task-list";
-import { submitMessage } from "../support/helpers/composer";
+import { submitMessage, submitMessageWithButton } from "../support/helpers/composer";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import { gotoAppShell } from "../support/helpers/app";
 
 interface TaskScenario {
   provider: RewindFlowProvider;
@@ -113,4 +117,170 @@ test.describe("real provider composer task lists", () => {
       await cleanupRewindFlow({ handle, cwd });
     }
   });
+});
+
+async function openBackgroundWork(page: Page, compact: boolean): Promise<void> {
+  const pill = page.getByRole("button", { name: /Background · 1/ });
+  await expect(pill).toBeVisible({ timeout: 30_000 });
+  await pill.click();
+  const panel = page.getByTestId(
+    compact ? "background-work-panel-content" : "background-work-panel",
+  );
+  await expect(panel).toContainText(/sleep 120/);
+  if (compact) await waitForSettledPosition(panel);
+}
+
+async function closeBackgroundWork(page: Page, compact: boolean): Promise<void> {
+  const panel = page.getByTestId(
+    compact ? "background-work-panel-content" : "background-work-panel",
+  );
+  if (compact) {
+    await page
+      .getByRole("button", { name: "Bottom sheet backdrop" })
+      .click({ position: { x: 12, y: 12 } });
+  } else {
+    await page.keyboard.press("Escape");
+  }
+  await expect(panel).toBeHidden();
+}
+
+async function expectBackgroundAgentRunning(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-status-indicator-running").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
+}
+
+async function expectAssistantReply(page: Page, text: string): Promise<void> {
+  await expect(page.getByTestId("assistant-message").filter({ hasText: text }).last()).toBeVisible({
+    timeout: 120_000,
+  });
+}
+
+async function expectBackgroundPill(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: /Background · 1/ })).toBeVisible();
+}
+
+async function expectBackgroundWorkOnAnotherClient(page: Page): Promise<void> {
+  const another = await page.context().newPage();
+  try {
+    await another.goto(page.url());
+    await openBackgroundWork(another, false);
+  } finally {
+    await another.close();
+  }
+}
+
+async function startBackgroundWorkWithoutOpeningPane(workspace: SeededWorkspace): Promise<void> {
+  const agent = await workspace.client.createAgent({
+    provider: "claude",
+    model: "haiku",
+    modeId: "bypassPermissions",
+    cwd: workspace.workspaceDirectory,
+    workspaceId: workspace.workspaceId,
+    title: "Background work before opening",
+  });
+  await workspace.client.sendAgentMessage(
+    agent.id,
+    "Use Bash with run_in_background to run exactly sleep 120. Do not wait for it. Reply SPAWNED immediately.",
+  );
+  const result = await workspace.client.waitForFinish(agent.id, 120_000);
+  expect(result.status).toBe("idle");
+}
+
+async function expectWorkspaceRunning(page: Page, workspaceId: string): Promise<void> {
+  const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  await expect(row.getByTestId("workspace-status-indicator-running")).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+test("Claude keeps background work visible while accepting another turn", async ({ page }) => {
+  test.setTimeout(300_000);
+  const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-background-work-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({ page, provider: "claude", cwd, mode: "full-access" });
+    await sendMessage(
+      handle,
+      "Use Bash with run_in_background to run exactly sleep 120. Do not wait for it. Reply SPAWNED immediately.",
+    );
+    await expectBackgroundAgentRunning(page);
+    await openBackgroundWork(page, false);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/phase1-claude-background.png"),
+      animations: "disabled",
+    });
+    await closeBackgroundWork(page, false);
+    await sendMessage(handle, "Reply exactly HELLO without stopping the background command.");
+    await expectBackgroundPill(page);
+    await expectBackgroundWorkOnAnotherClient(page);
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
+
+test("Claude background work remains readable in dark mode", async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.addInitScript(() => {
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "pureBlack" }));
+  });
+  const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-background-dark-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({ page, provider: "claude", cwd, mode: "full-access" });
+    await sendMessage(
+      handle,
+      "Use Bash with run_in_background to run exactly sleep 120. Do not wait for it. Reply SPAWNED immediately.",
+    );
+    await openBackgroundWork(page, false);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/review-background-dark.png"),
+      animations: "disabled",
+    });
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
+
+test("Claude background work opens in a compact sheet", async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-background-compact-")));
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({ page, provider: "claude", cwd, mode: "full-access" });
+    await submitMessageWithButton(
+      page,
+      "Use Bash with run_in_background to run exactly sleep 120. Do not wait for it. Reply SPAWNED immediately.",
+    );
+    await expectAssistantReply(page, "SPAWNED");
+    await openBackgroundWork(page, true);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/phase1-claude-compact.png"),
+      animations: "disabled",
+    });
+    await closeBackgroundWork(page, true);
+    await submitMessageWithButton(
+      page,
+      "Reply exactly HELLO without stopping the background command.",
+    );
+    await expectAssistantReply(page, "HELLO");
+    await expectBackgroundPill(page);
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
+
+test("background work updates the sidebar before the agent is opened", async ({ page }) => {
+  test.setTimeout(300_000);
+  const workspace = await seedWorkspace({ repoPrefix: "background-unopened-" });
+  try {
+    await gotoAppShell(page);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`),
+    ).toBeVisible();
+    await startBackgroundWorkWithoutOpeningPane(workspace);
+    await expectWorkspaceRunning(page, workspace.workspaceId);
+  } finally {
+    await workspace.cleanup();
+  }
 });
