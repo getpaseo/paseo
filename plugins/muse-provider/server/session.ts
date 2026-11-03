@@ -425,6 +425,7 @@ export class Session {
   }
   private runtimeFailed(error: unknown): void {
     this.live().recovery.close();
+    this.live().children.stop();
     this.options.emit({
       type: "session.runtime_failed",
       sessionId: this.options.id,

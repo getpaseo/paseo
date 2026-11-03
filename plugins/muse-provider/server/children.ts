@@ -22,6 +22,7 @@ interface Child {
 }
 export class Children {
   private readonly children = new Map<string, Child>();
+  private stopped = false;
   constructor(
     private readonly host: MspConnection,
     private readonly parentId: string,
@@ -79,17 +80,18 @@ export class Children {
     });
   }
   // A failed final read must recover even after the parent finishes and stops its silence timer.
-  // Item updates and timer retries share one read so their cursors cannot race.
-  private read(id: string): Promise<void> {
+  // Each update reads fresh history after any older read, with serialized cursor advancement.
+  private async read(id: string): Promise<void> {
     const child = this.children.get(id);
-    if (!child) return Promise.resolve();
+    if (!child) return;
+    while (child.reading) await child.reading;
+    if (this.stopped || this.children.get(id) !== child) return;
     clearTimeout(child.retry);
     child.retry = undefined;
-    if (child.reading) return child.reading;
     child.reading = this.page(id)
       .catch((error: unknown) => {
         this.readFailed(id, error);
-        if (this.children.get(id) === child)
+        if (!this.stopped && this.children.get(id) === child)
           child.retry = setTimeout(() => {
             void this.read(id);
           }, READ_RETRY_MS);
@@ -151,11 +153,16 @@ export class Children {
       if (next !== null) child.cursor = next;
     } while (next !== null);
   }
-  close(): void {
-    for (const [sessionId, child] of this.children) {
+  stop(): void {
+    this.stopped = true;
+    for (const child of this.children.values()) {
       clearTimeout(child.retry);
-      this.emit({ type: "session.closed", sessionId });
+      child.retry = undefined;
     }
+  }
+  close(): void {
+    this.stop();
+    for (const sessionId of this.children.keys()) this.emit({ type: "session.closed", sessionId });
     this.children.clear();
   }
 }

@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,13 +24,14 @@ const rows = readFixture(scenario);
 if (process.env.MUSE_TEST_REQUESTS)
   appendFileSync(
     process.env.MUSE_TEST_REQUESTS,
-    JSON.stringify({ event: "hostStarted", args: process.argv.slice(2) }) + "\n",
+    JSON.stringify({ event: "hostStarted", pid: process.pid, args: process.argv.slice(2) }) + "\n",
   );
 const catalogRows = readFixture("catalog-controls");
 const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
 let pageHung = false;
+let deferredChildItem;
 const failedChildReads = new Set();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
@@ -144,7 +145,34 @@ function scriptedResponse(frame) {
     respond(frame, { status: "accepted", commandId: frame.params.commandId });
     return true;
   }
-  return (frame.method === "view/page" && failedPage(frame)) || failedChildRead(frame);
+  return (
+    deferredChildPage(frame) ||
+    (frame.method === "view/page" && failedPage(frame)) ||
+    failedChildRead(frame)
+  );
+}
+// Hold an old child page until the consumer has received the final item update.
+function deferredChildPage(frame) {
+  const releasePath = process.env.MUSE_TEST_CHILD_PAGE_RELEASE;
+  if (
+    !releasePath ||
+    frame.method !== "view/page" ||
+    frame.params.sessionId !== "fixture-child" ||
+    !deferredChildItem ||
+    !failedChildReads.has("view/page")
+  )
+    return false;
+  send(deferredChildItem);
+  deferredChildItem = undefined;
+  function release() {
+    if (!existsSync(releasePath)) {
+      setTimeout(release, 5);
+      return;
+    }
+    respond(frame, { events: [], nextCursor: null });
+  }
+  release();
+  return true;
 }
 const childReadFailures = {
   "view/page": "MUSE_TEST_CHILD_PAGE_FAIL",
@@ -412,6 +440,14 @@ function applyWireVariants(message) {
   }
 }
 function parityDelivery(message) {
+  if (
+    process.env.MUSE_TEST_CHILD_PAGE_RELEASE &&
+    message.method === "item/completed" &&
+    message.params.item?.childSessionId === "fixture-child"
+  ) {
+    deferredChildItem = message;
+    return true;
+  }
   if (process.env.MUSE_TEST_WORKFLOW && message.method === "turn/completed")
     send({
       jsonrpc: "2.0",

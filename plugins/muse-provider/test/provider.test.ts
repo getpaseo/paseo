@@ -1977,3 +1977,57 @@ test("closing a session cancels pending child history retries", async () => {
   await h.wait((e) => e.type === "session.closed" && e.sessionId === "paseo-session");
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test("a final child update refreshes history after an older retry read", async () => {
+  const h = await harness("subagent", {
+    MUSE_TEST_CHILD: "dedicated",
+    MUSE_TEST_CHILD_PAGE_FAIL: "once",
+  });
+  const release = path.join(h.root, "release-child-page");
+  h.launch.env.MUSE_TEST_CHILD_PAGE_RELEASE = release;
+  await h.open();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait(
+    (e) => e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+  );
+  await vi.advanceTimersByTimeAsync(120000);
+  await h.wait(
+    (e) =>
+      e.type === "timeline.item" &&
+      e.sessionId === "paseo-session" &&
+      e.item.type === "tool_call" &&
+      e.item.name === "subagent" &&
+      e.item.status === "completed",
+  );
+  await writeFile(release, "release");
+  await h.wait(
+    (e) => e.type === "session.turn" && e.sessionId === "fixture-child" && e.state === "completed",
+  );
+  expect(
+    h.events.some(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "fixture-child" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "SUBAGENT_PHASE0_OK",
+    ),
+  ).toBe(true);
+}, 10000);
+
+test("native process exit stops child history retry timers", async () => {
+  const h = await harness("subagent", {
+    MUSE_TEST_CHILD: "dedicated",
+    MUSE_TEST_CHILD_PAGE_FAIL: "always",
+  });
+  await h.open();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait(
+    (e) => e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+  );
+  const host = (await h.recorded()).find((f) => f.event === "hostStarted");
+  process.kill(host.pid, "SIGKILL");
+  await h.wait((e) => e.type === "session.runtime_failed");
+  expect(vi.getTimerCount()).toBe(0);
+});
