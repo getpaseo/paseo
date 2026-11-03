@@ -614,6 +614,7 @@ export const en = {
     terminal: {
       hostDisconnected: "Host is not connected",
       updateHost: "Update the host to use the native terminal renderer.",
+      restoreRequiresUpdate: "Update the host to view terminals.",
       unableToSubscribe: "Unable to subscribe to terminal",
       fileUploaded: "File uploaded",
       pasteFileFailed: "Failed to paste file: {{reason}}",
@@ -1564,6 +1565,9 @@ export const en = {
       cli: {
         statusFailed: "Unable to check CLI install status.",
         installFailed: "Unable to install the Paseo CLI.",
+        uninstallFailed: "Unable to uninstall the Paseo CLI.",
+        keptForeign:
+          "Kept a paseo command that Paseo didn't install. Remove it yourself to uninstall it.",
       },
     },
   },
@@ -1665,6 +1669,60 @@ export const en = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "Step {{current}} of {{total}}",
+      skip: "Skip setup",
+      continue: "Continue",
+      finish: "Finish",
+      steps: {
+        appearance: {
+          label: "Appearance",
+          title: "Welcome to Paseo",
+          description: "Let's start by picking a look",
+        },
+        providers: {
+          label: "Providers",
+          title: "Your agents",
+          description: "Paseo runs the agent CLIs already on this computer",
+        },
+        projects: {
+          label: "Projects",
+          title: "Add your projects",
+          description: "Where do you want your agents to work on",
+          addProject: "Add project",
+          added: "Added",
+          suggestions: {
+            loading: "Looking for folders you've worked in",
+            empty: "No recent projects found",
+            lastUsed: "Last used {{time}}",
+            addSelected_one: "Add {{count}} project",
+            addSelected_other: "Add {{count}} projects",
+            adding: "Adding…",
+            addFailed: "Couldn't add this folder",
+          },
+        },
+        orchestration: {
+          label: "Orchestration",
+          title: "Let agents use Paseo",
+          description: "Let your agents create workspaces and talk to other agents",
+        },
+        phone: {
+          label: "Mobile",
+          title: "Take your agents with you",
+          description:
+            "The fully featured native mobile app allows you to control any Paseo computer from your phone",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "Choose how to connect",
+          connectDocs: "Docs",
+          openConnectDocs: "Open connectivity documentation",
+          recommended: "Recommended",
+          relay: { title: "Relay", hint: "End-to-end encrypted, scan a QR code" },
+          tailscale: { title: "Tailscale", hint: "Requires some setup" },
+        },
+      },
+    },
     title: "Welcome to Paseo",
     subtitle: "Connect your computer to get started",
     actions: {
@@ -1883,6 +1941,8 @@ export const en = {
       notNow: "Not now",
       directConnectionHint:
         "Without relay, connect directly over TCP, Tailscale, or another VPN. No QR code is created.",
+      tailscaleDocs: "Set up Tailscale",
+      tailscaleDocsAccessibility: "Read how to connect over Tailscale",
       updateRequired: "Update the host to enable relay from Paseo Desktop.",
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
@@ -2038,7 +2098,6 @@ export const en = {
   toolCallDetails: {
     error: "Error",
     empty: "No additional details available",
-    subAgentActivity: "Sub-agent activity",
     input: "Input",
     output: "Output",
   },
@@ -2117,6 +2176,11 @@ export const en = {
     },
   },
   providerUsage: {
+    checkUsage: "Check usage",
+    checkUsageHint: "Applies to {{host}} on every device",
+    off: "Usage is off on {{host}}.",
+    turnOn: "Turn on",
+
     options: "Settings",
     refreshFailed: "Unable to refresh usage",
     noHosts: "No connected hosts",
@@ -2442,6 +2506,11 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      setup: {
+        label: "First-run setup",
+        description: "Walk through appearance, providers, projects and phone pairing again",
+        action: "Show setup again",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",
@@ -2728,11 +2797,7 @@ export const en = {
       commandLine: {
         title: "Command line",
         description: "Control and script agents from your terminal",
-      },
-      actions: {
-        install: "Install",
-        installing: "Installing...",
-        installed: "Installed",
+        accessibilityLabel: "Install the Paseo CLI",
       },
     },
     permissions: {
@@ -2809,7 +2874,7 @@ export const en = {
       skills: {
         sectionTitle: "Orchestration skills",
         title: "Orchestration skills",
-        description: "Teach your agents to orchestrate through the CLI",
+        description: "Teach your agents how to use Paseo tools",
         docs: "Skills",
         openDocs: "Open skills documentation",
         unavailable: "Connect to this host to manage orchestration skills",
@@ -2820,7 +2885,6 @@ export const en = {
         saveSelectionFailed: "Unable to save the orchestration skills selection.",
         updateAvailable: "Update available",
         updateTitle: "Update Paseo skills?",
-        updateFallback: "Sync bundled skills to this host.",
         uninstallTitle: "Uninstall Paseo skills?",
         uninstallMessage:
           "Removes all Paseo orchestration skills from ~/.agents, ~/.claude, ~/.codex on this host.",
@@ -2834,9 +2898,6 @@ export const en = {
           "{{skills}} will be deleted from ~/.agents, ~/.claude, and ~/.codex on this host. Anything you added inside those skill folders is deleted too.",
         saveFailed: "Could not save your skill selection.",
         actions: {
-          install: "Install",
-          installing: "Installing...",
-          installed: "Installed",
           update: "Update",
           working: "Working...",
           remove: "Remove",
@@ -2858,6 +2919,7 @@ export const en = {
           title: "Enable Paseo tools",
           hint: "Agents will be able to manage worktrees, agents and schedules",
           accessibilityLabel: "Inject Paseo tools",
+          updateFailed: "Unable to update Paseo tools.",
         },
         systemPrompt: {
           title: "System prompt",

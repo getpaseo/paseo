@@ -1,3 +1,5 @@
+import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -544,4 +546,103 @@ describe("PiCliRuntime", () => {
 
     await expect(session.abort()).resolves.toBeUndefined();
   });
+});
+
+async function createHistoryTestDirectory(prefix: string): Promise<string> {
+  const artifacts = path.resolve(".artifacts/pi-timeline");
+  await mkdir(artifacts, { recursive: true });
+  return mkdtemp(path.join(artifacts, prefix));
+}
+
+test("reads complete persisted history instead of compacted RPC context", async () => {
+  const root = await createHistoryTestDirectory("runtime-");
+  const file = path.join(root, "session.jsonl");
+  const records = [
+    { type: "session", version: 3, id: "session" },
+    {
+      type: "message",
+      id: "old-user",
+      parentId: "system",
+      message: { role: "user", content: "before compaction" },
+    },
+    {
+      type: "message",
+      id: "old-answer",
+      parentId: "old-user",
+      message: { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+    },
+    { type: "compaction", id: "compact", parentId: "old-answer", summary: "summary" },
+    {
+      type: "message",
+      id: "new-user",
+      parentId: "compact",
+      message: { role: "user", content: "after compaction" },
+    },
+  ];
+  records.splice(1, 0, {
+    type: "message",
+    id: "system",
+    parentId: null,
+    message: { role: "system", content: "private instructions" },
+  });
+  const contents = records.map((row) => JSON.stringify(row)).join("\n");
+  await writeFile(file, contents);
+  const child = createPiChild();
+  onPiCommand(child, (command) =>
+    writePiResponse(
+      child,
+      command,
+      command.type === "get_state" ? { sessionFile: file } : { messages: [records[5].message] },
+    ),
+  );
+  const runtime = await createRuntime(child).startSession({ cwd: root });
+  try {
+    const history = await runtime.getHistory();
+    expect(history.userEntries.map((entry) => entry.id)).toEqual(["old-user", "new-user"]);
+    expect(history.messages).toEqual([records[2].message, records[3].message, records[5].message]);
+    expect(await readFile(file, "utf8")).toBe(contents);
+    await writeFile(
+      file,
+      contents +
+        '\n{"type":"custom","id":"rewind","parentId":"old-answer","customType":"paseo_rewind"}',
+    );
+    expect((await runtime.getHistory()).userEntries.map((entry) => entry.id)).toEqual(["old-user"]);
+    await writeFile(
+      file,
+      contents + '\n{"type":"custom","id":"rewind","parentId":null,"customType":"paseo_rewind"}',
+    );
+    expect((await runtime.getHistory()).messages).toEqual([]);
+    await writeFile(file, contents + '\n{"type":"custom","id":"bad","parentId":"missing"}');
+    await expect(runtime.getHistory()).rejects.toThrow("Missing Pi transcript ancestor");
+  } finally {
+    await runtime.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("permits the unpersisted empty new session but refuses a missing resumed transcript", async () => {
+  const root = await createHistoryTestDirectory("empty-");
+  const file = path.join(root, "not-created.jsonl");
+  const child = createPiChild();
+  onPiCommand(child, (command) =>
+    writePiResponse(child, command, { sessionFile: file, messageCount: 0 }),
+  );
+  const runtime = createRuntime(child);
+  const fresh = await runtime.startSession({ cwd: root });
+  try {
+    expect(await fresh.getHistory()).toEqual({ messages: [], userEntries: [] });
+  } finally {
+    await fresh.close();
+  }
+  const resumedChild = createPiChild();
+  onPiCommand(resumedChild, (command) =>
+    writePiResponse(resumedChild, command, { sessionFile: file, messageCount: 0 }),
+  );
+  const resumed = await createRuntime(resumedChild).startSession({ cwd: root, session: file });
+  try {
+    await expect(resumed.getHistory()).rejects.toThrow("ENOENT");
+  } finally {
+    await resumed.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

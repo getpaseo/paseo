@@ -351,7 +351,22 @@ export async function expectDirectHostFormValues(
 }
 
 export async function expectDirectHostSslEnabled(page: Page): Promise<void> {
+  await expect(page.getByRole("checkbox", { name: "Use SSL", exact: true })).toBeChecked();
   await expect(page.getByTestId("direct-ssl-toggle-checked")).toBeVisible();
+}
+
+export async function fillDirectHostAddress(page: Page, host: string, port: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Host", exact: true }).fill(host);
+  await page.getByRole("textbox", { name: "Port", exact: true }).fill(port);
+}
+
+export async function toggleDirectHostSsl(page: Page): Promise<void> {
+  await page.getByRole("checkbox", { name: "Use SSL", exact: true }).click();
+}
+
+export async function expectDirectHostSslDisabled(page: Page): Promise<void> {
+  await expect(page.getByRole("checkbox", { name: "Use SSL", exact: true })).not.toBeChecked();
+  await expect(page.getByTestId("direct-ssl-toggle-checked")).toHaveCount(0);
 }
 
 export async function expectDirectHostUriValue(page: Page, uri: string): Promise<void> {

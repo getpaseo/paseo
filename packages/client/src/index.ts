@@ -1,3 +1,4 @@
+export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 export type { AgentAddress } from "@getpaseo/protocol/addresses";

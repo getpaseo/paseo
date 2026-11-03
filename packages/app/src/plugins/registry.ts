@@ -8,6 +8,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
+import { createPluginSubscribe } from "./subscriptions";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
@@ -89,12 +90,18 @@ export class PluginRegistry {
           return [existing];
         }
         const client = options.client;
+        const lifetime = new AbortController();
         installation = {
-          lifetime: new AbortController(),
+          lifetime,
           locale: this.dependencies.localeSource.getLocale(),
           i18n: new PluginTranslationRuntime(this.dependencies.localeSource),
           paseo: createPaseoApi(client),
           invoke: (method, input) => client.invokePluginRpc(entry.id, method, input),
+          subscribe: createPluginSubscribe({
+            client,
+            pluginId: entry.id,
+            lifetime: lifetime.signal,
+          }),
           id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
