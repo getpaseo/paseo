@@ -87,3 +87,53 @@ test("logs --follow preserves the same assistant text as one-shot logs", async (
     await daemon.close();
   }
 }, 60_000);
+
+test("omitted after limit pages forward while explicit zero preserves complete CLI history", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    const agent = await client.createAgent({ provider: "claude", cwd: daemon.paseoHome });
+    const initial = await client.fetchAgentTimeline(agent.id, { direction: "tail", limit: 0 });
+    const cursor = { epoch: initial.epoch, seq: initial.window.maxSeq };
+    for (let index = 0; index < 451; index++) {
+      await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: String(index),
+      });
+    }
+    const first = await client.fetchAgentTimeline(agent.id, { direction: "after", cursor });
+    expect(first.entries).toHaveLength(200);
+    expect(first.hasNewer).toBe(true);
+    expect(first.endCursor).toEqual({ epoch: cursor.epoch, seq: cursor.seq + 200 });
+    const second = await client.fetchAgentTimeline(agent.id, {
+      direction: "after",
+      cursor: first.endCursor!,
+    });
+    const third = await client.fetchAgentTimeline(agent.id, {
+      direction: "after",
+      cursor: second.endCursor!,
+    });
+    expect(second.entries).toHaveLength(200);
+    expect(third.entries).toHaveLength(51);
+    expect(third.hasNewer).toBe(false);
+    expect(
+      [...first.entries, ...second.entries, ...third.entries].map((entry) => entry.item),
+    ).toEqual(
+      Array.from({ length: 451 }, (_, index) => ({ type: "user_message", text: String(index) })),
+    );
+    const allAfter = await client.fetchAgentTimeline(agent.id, {
+      direction: "after",
+      cursor,
+      limit: 0,
+    });
+    const allTail = await client.fetchAgentTimeline(agent.id, { direction: "tail", limit: 0 });
+    expect(allAfter.entries).toHaveLength(451);
+    expect(allAfter.hasNewer).toBe(false);
+    expect(allTail.entries).toHaveLength(initial.entries.length + 451);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);

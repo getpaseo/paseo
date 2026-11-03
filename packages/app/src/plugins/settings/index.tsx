@@ -57,7 +57,7 @@ export function PluginSettingsMenuItems({
           serverId={serverId}
           pluginId={pluginId}
           screenId={screen.id}
-          title={screen.title}
+          title={plugin.i18n.resolve(screen.title, plugin.locale)}
           disabled={disabled}
         />
       ))}

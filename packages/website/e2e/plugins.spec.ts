@@ -2,6 +2,7 @@ import securityPlugin from "./overview.fixture.json" with { type: "json" };
 import { expect, test, type Page, type Locator } from "playwright/test";
 import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
+import copy from "../src/i18n/resources/en.json" with { type: "json" };
 
 async function openPlugins(page: Page) {
   await page.goto("/plugins");
@@ -635,7 +636,7 @@ test.describe("registry fixture layout", () => {
     await openPlugins(page);
     const categories = page.getByRole("region", { name: "Categories" });
     await expect(categories.getByRole("link")).toHaveText(
-      CATEGORIES.map((category) => new RegExp(`^${category.label}\\s*\\d+$`)),
+      CATEGORIES.map((slug) => new RegExp(`^${copy.plugins.categories[slug].label}\\s*\\d+$`)),
     );
     await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
     await expect(pluginCards(page, "What’s new")).toHaveText([

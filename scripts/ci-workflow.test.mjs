@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
@@ -21,7 +24,10 @@ const gatedCiJobs = new Map([
     "server-integration-windows",
     { name: "server-integration (windows-latest)", contract: "server" },
   ],
-  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
+  [
+    "server-tests-macos",
+    { name: "server-tests (macos-latest, file observation)", contract: "server" },
+  ],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -105,6 +111,18 @@ test("gated checks are statically named jobs with real job-level gating", () => 
   }
 });
 
+test("pull-request checks run for every base branch, including stacked PRs", () => {
+  for (const workflowPath of [
+    ciWorkflowPath,
+    new URL(".github/workflows/desktop-packages.yml", repoRoot),
+  ]) {
+    const trigger = readFileSync(workflowPath, "utf8").split("jobs:", 1)[0];
+    const pullRequest = trigger.match(/^  pull_request:\n((?:    .*\n)*)/m);
+    assert.ok(pullRequest, `${workflowPath.pathname} runs on pull requests`);
+    assert.doesNotMatch(pullRequest[1], /branches/);
+  }
+});
+
 test("change gating allows superseded workflow runs to cancel", () => {
   const ci = readFileSync(ciWorkflowPath, "utf8");
   assert.match(
@@ -142,6 +160,14 @@ test("focused contracts stay inside existing required checks", () => {
   assert.ok(!jobs.has("playwright-desktop"));
 });
 
+test("ordinary CI keeps app tests without prebuilding Android modules", () => {
+  const source = readFileSync(ciWorkflowPath, "utf8");
+  const app = jobBlocks(source).get("app-tests").join("\n");
+  assert.match(app, /npm run build:app-deps/);
+  assert.match(app, /npm run test --workspace=@getpaseo\/app/);
+  assert.doesNotMatch(source, /test:android|expo prebuild|gradlew|actions\/setup-java/);
+});
+
 test("server builds exclude test utilities at every domain depth", () => {
   const tsconfig = JSON.parse(readFileSync(serverTsconfigPath, "utf8"));
   assert.ok(tsconfig.exclude.includes("src/server/**/test-utils/**"));
@@ -176,6 +202,7 @@ test("PR routing declares stable behavior ownership", () => {
     desktop: [
       "packages/desktop/**",
       "packages/app/src/desktop/**",
+      "packages/app/src/**/*.electron.{ts,tsx}",
       "packages/server/src/server/browser-tools/**",
       "packages/app/e2e/support/**",
       "packages/app/*config.{cjs,js,ts}",
@@ -239,13 +266,11 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   const filters = loadFilters(filtersPath);
   const browserSpecs = filesUnder("packages/app/e2e", (path) => path.endsWith(".spec.ts"));
   const desktopSpecs = filesUnder("packages/desktop/e2e", (path) => path.endsWith(".spec.ts"));
-  const electronModules = filesUnder("packages/app/src", (path) => /\.electron\.tsx?$/.test(path));
 
   assert.ok(browserSpecs.length > 0);
   assert.ok(desktopSpecs.length > 0);
   assert.ok(browserSpecs.every((path) => path.startsWith("packages/app/e2e/browser/")));
   assert.ok(desktopSpecs.every((path) => path.startsWith("packages/desktop/e2e/")));
-  assert.ok(electronModules.every((path) => path.startsWith("packages/app/src/desktop/")));
 
   const desktopPackage = JSON.parse(readFileSync(desktopPackagePath, "utf8"));
   assert.match(desktopPackage.scripts.test, /--exclude ["']e2e\/\*\*["']/);
@@ -265,6 +290,7 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   assert.deepEqual(filters.desktop, [
     "packages/desktop/**",
     "packages/app/src/desktop/**",
+    "packages/app/src/**/*.electron.{ts,tsx}",
     "packages/server/src/server/browser-tools/**",
     "packages/app/e2e/support/**",
     "packages/app/*config.{cjs,js,ts}",
@@ -308,7 +334,7 @@ test("desktop packaging smokes main pushes and only the pull requests that touch
   const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
   const trigger = source.split("jobs:", 1)[0];
   assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /pull_request:\s*\n\s+paths:/);
   assert.match(trigger, /- "packages\/desktop\/\*\*"/);
   assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
@@ -468,14 +494,14 @@ test("Windows units and integration run independently with complete routed cover
   assert.equal(scripts.test, "npm run test:unit && npm run test:integration");
   assert.equal(scripts["test:unit"], 'vitest run --fileParallelism --exclude "**/*.e2e.test.ts"');
   const invocations = scripts["test:integration"].split(" && ");
-  // Each vitest start costs about half a minute on Windows, so the four
+  // Each vitest start costs about half a minute on Windows, so the
   // name-filtered files share one invocation and one combined filter.
   assert.equal(invocations.length, 2);
   assert.ok(invocations.every((command) => command.startsWith("vitest run --maxWorkers=1 ")));
   assert.doesNotMatch(invocations[0], / -t /);
   assert.equal(
     invocations[1],
-    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments"',
+    'vitest run --maxWorkers=1 src/server/agent/providers/omp/history.e2e.test.ts src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts|password-protected daemon refuses|replays selected OMP history"',
   );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers/);
@@ -516,5 +542,185 @@ test("Windows units and integration run independently with complete routed cover
     assert.equal(selected(hubStep, outputs), hub);
     assert.equal(selected(unitCondition, outputs, true), false);
     assert.equal(selected(integrationCondition, outputs, true), false);
+  }
+});
+
+test("macOS release retries only transient stapling failures without rebuilding the signed app", async (t) => {
+  const workflow = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  const wrapper = workflow
+    .match(/<<'STAPLER'\n([\s\S]*?)\n          STAPLER/)[1]
+    .replace(/^          /gm, "");
+  const networkError =
+    'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."';
+  const cases = [
+    {
+      name: "success",
+      outcomes: [0],
+      output: "stapled",
+      command: "stapler",
+      expected: 0,
+      attempts: 1,
+    },
+    {
+      name: "transient then success",
+      outcomes: [68, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 0,
+      attempts: 2,
+    },
+    {
+      name: "exhausted network retries",
+      outcomes: [68, 68, 68, 68, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 68,
+      attempts: 4,
+    },
+    {
+      name: "non-network staple error",
+      outcomes: [68, 0],
+      output: "ticket not found",
+      command: "stapler",
+      expected: 68,
+      attempts: 1,
+    },
+    {
+      name: "different exit code",
+      outcomes: [1, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 1,
+      attempts: 1,
+    },
+    {
+      name: "notary submission is not retried",
+      outcomes: [68, 0],
+      output: networkError,
+      command: "notarytool",
+      expected: 68,
+      attempts: 1,
+    },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const directory = mkdtempSync(join(tmpdir(), "stapler-retry-"));
+      try {
+        const statePath = join(directory, "state.json");
+        const realXcrun = join(directory, "real-xcrun");
+        const wrapperPath = join(directory, "xcrun");
+        writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+        writeFileSync(join(directory, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        writeFileSync(
+          statePath,
+          JSON.stringify({ outcomes: scenario.outcomes, output: scenario.output, calls: [] }),
+        );
+        writeFileSync(
+          realXcrun,
+          `#!/usr/bin/env node
+const fs = require("node:fs");
+const state = JSON.parse(fs.readFileSync(process.env.STAPLER_STATE, "utf8"));
+state.calls.push(process.argv.slice(2));
+const code = state.outcomes.shift();
+fs.writeFileSync(process.env.STAPLER_STATE, JSON.stringify(state));
+console.log(state.output);
+process.exit(code);
+`,
+          { mode: 0o755 },
+        );
+        const args = [scenario.command, "staple", "-v", "Paseo signed.app"];
+        const result = spawnSync("bash", [wrapperPath, ...args], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PASEO_REAL_XCRUN: realXcrun,
+            STAPLER_STATE: statePath,
+            PATH: `${directory}:${process.env.PATH}`,
+          },
+          timeout: 5000,
+        });
+        assert.equal(result.status, scenario.expected, result.stdout + result.stderr);
+        const state = JSON.parse(readFileSync(statePath, "utf8"));
+        assert.deepEqual(
+          state.calls,
+          Array.from({ length: scenario.attempts }, () => args),
+        );
+        assert.match(result.stdout, /stapled|network connection was lost|ticket not found/);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+// GitHub retires macOS 14 on 2026-11-02; brownouts already reject these jobs.
+test("workflows avoid retired macOS 14 runners", () => {
+  for (const path of filesUnder(".github/workflows", (candidate) => /\.ya?ml$/.test(candidate))) {
+    assert.doesNotMatch(
+      readFileSync(new URL(path, repoRoot), "utf8"),
+      /macos-14(?:-large|-xlarge)?\b/,
+      path,
+    );
+  }
+});
+
+test("macOS jobs use latest runners while preserving release architectures", () => {
+  for (const [workflow, jobId] of [
+    [ciWorkflowPath, "server-tests-macos"],
+    [nixWorkflowPath, "build-desktop-darwin"],
+  ]) {
+    assert.match(
+      jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
+      /^    runs-on: macos-latest$/m,
+    );
+  }
+  const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  assert.match(release, /runner: macos-latest\n\s+electron_arch: arm64/);
+  // GitHub has no standard macos-latest-intel alias; use the newest Intel image.
+  assert.match(release, /runner: macos-26-intel\n\s+electron_arch: x64/);
+});
+
+test("Nix desktop packaging resolves the workspace-local builder", () => {
+  const source = readFileSync(new URL("nix/desktop-package.nix", repoRoot), "utf8");
+  const invocation = source.match(/^\s+([^\n]*electron-builder) \\\n/m)?.[1];
+  assert.ok(invocation, "Nix invokes the desktop packaging tool");
+  const directory = mkdtempSync(join(tmpdir(), "nix-builder-resolution-"));
+  try {
+    const desktop = join(directory, "packages/desktop");
+    mkdirSync(join(desktop, "node_modules/.bin"), { recursive: true });
+    mkdirSync(join(desktop, "node_modules/electron-builder"));
+    writeFileSync(
+      join(desktop, "node_modules/electron-builder/package.json"),
+      JSON.stringify({
+        name: "electron-builder",
+        version: "1.0.0",
+        bin: { "electron-builder": "../.bin/electron-builder" },
+      }),
+    );
+    writeFileSync(
+      join(directory, "package.json"),
+      JSON.stringify({ private: true, workspaces: ["packages/desktop"] }),
+    );
+    writeFileSync(
+      join(desktop, "package.json"),
+      JSON.stringify({
+        name: "desktop-fixture",
+        private: true,
+        devDependencies: { "electron-builder": "1.0.0" },
+      }),
+    );
+    writeFileSync(
+      join(desktop, "node_modules/.bin/electron-builder"),
+      '#!/bin/sh\nprintf "workspace-builder\\n"\n',
+      { mode: 0o755 },
+    );
+    const result = spawnSync("sh", ["-c", `${invocation} --version`], {
+      cwd: desktop,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "workspace-builder");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -45,10 +45,10 @@ async function openCompactActionsMenu(page: Page, workspaceId: string) {
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
   await page.reload();
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  const changesTab = page.getByTestId("workspace-tab-changes_tree").filter({ visible: true });
   await expect(changesTab).toBeVisible({ timeout: 30_000 });
   await changesTab.click();
-  const explorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  const explorer = page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
   await expect(explorer.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
 
   const trigger = explorer.getByTestId("changes-actions-menu-trigger");

@@ -1,92 +1,104 @@
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
+import { useCallback, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useTranslation } from "react-i18next";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
-import type { Theme } from "@/styles/theme";
+import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
+import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
-import type { builtinFilePanels } from "./catalog";
+import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
+import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
-interface FilePanelPreviewProps {
-  content: string;
-  filePath: string;
-  workspaceRoot: string;
-  client: DaemonClient | null;
-  serverId: string;
-  imagePreviewUri: string | null;
+/** Source: the text file panel with no Preview, for text files no other built-in panel claims. */
+function SourcePanel(props: PluginFilePanelProps) {
+  return <TextFilePanel {...props} />;
 }
 
-function MarkdownPanel(props: FilePanelPreviewProps) {
+/** Markdown: the text file panel with the rendered document as its Preview. */
+function MarkdownPanel(props: PluginFilePanelProps) {
+  return <TextFilePanel {...props} preview={MarkdownPreview} />;
+}
+
+/** HTML: the text file panel with the sandboxed page as its Preview. */
+function HtmlPanel(props: PluginFilePanelProps) {
+  return <TextFilePanel {...props} preview={HtmlPreview} />;
+}
+
+/** Shows Loading until the rendered Markdown has laid out once; later edits keep the content. */
+function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewProps) {
+  const client = useSessionStore((state) => state.sessions[host.id]?.client ?? null);
+  const workspaceRoot = useWorkspace(workspaceId, (workspace) => workspace.directory);
+  const [rendered, setRendered] = useState(false);
+  const handleLayout = useCallback(() => setRendered(true), []);
   return (
-    <View style={styles.previewScrollContainer}>
-      <ScrollView style={styles.previewContent} showsVerticalScrollIndicator>
-        <FileMarkdownPreview
-          source={props.content}
-          filePath={props.filePath}
-          workspaceRoot={props.workspaceRoot}
-          client={props.client}
-          serverId={props.serverId}
-        />
+    <View style={styles.container}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator>
+        <View onLayout={handleLayout}>
+          <FileMarkdownPreview
+            source={text}
+            filePath={params.path}
+            workspaceRoot={workspaceRoot ?? ""}
+            client={client}
+            serverId={host.id}
+          />
+        </View>
       </ScrollView>
+      {rendered ? null : <FilePanelLoading />}
     </View>
   );
 }
 
-function HtmlPanel({ content }: FilePanelPreviewProps) {
+/** The page owns its scrolling, so there is no ScrollView around it. */
+function HtmlPreview({ text }: TextFilePreviewProps) {
   return (
-    <View style={styles.previewScrollContainer}>
-      <FileHtmlPreview html={content} testID="file-html-preview" />
+    <View style={styles.container}>
+      <FileHtmlPreview html={text} testID="file-html-preview" />
     </View>
   );
 }
 
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+function ImagePanel({ file }: PluginFilePanelProps) {
+  const url = useFileUrl(file);
+  if (url.status === "loading") return <FilePanelLoading />;
+  if (url.status === "error") return <FilePanelError message={url.error.message} />;
+  return <ZoomableImage uri={url.url} testID="image-file-preview" />;
+}
 
-function ImagePanel({ imagePreviewUri }: FilePanelPreviewProps) {
-  const { t } = useTranslation();
-  if (!imagePreviewUri) {
-    return (
-      <View style={styles.centerState}>
-        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-        <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
-      </View>
-    );
-  }
-  return <ZoomableImage uri={imagePreviewUri} testID="image-file-preview" />;
+function FilePanelError({ message }: { message: string }) {
+  return (
+    <View style={styles.centerState}>
+      <Text style={styles.errorText}>{message}</Text>
+    </View>
+  );
 }
 
 const components = {
   "builtin:markdown": MarkdownPanel,
   "builtin:html": HtmlPanel,
   "builtin:image": ImagePanel,
+  "builtin:source": SourcePanel,
 };
 
-export function FilePanelPreview({
+export function BuiltinFilePanelView({
   panel,
   ...props
-}: FilePanelPreviewProps & {
-  panel: (typeof builtinFilePanels)[number];
-}) {
+}: PluginFilePanelProps & { panel: RenderingFilePanel | SourceFilePanel }) {
   const Component = components[panel.id];
   return <Component {...props} />;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  previewScrollContainer: { flex: 1, minHeight: 0 },
-  previewContent: { flex: 1, minHeight: 0 },
+  container: { flex: 1, minHeight: 0 },
   centerState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing[3],
     padding: theme.spacing[4],
   },
-  loadingText: {
-    marginTop: theme.spacing[2],
-    color: theme.colors.foregroundMuted,
+  errorText: {
+    color: theme.colors.destructive,
     fontSize: theme.fontSize.base,
+    textAlign: "center",
   },
 }));

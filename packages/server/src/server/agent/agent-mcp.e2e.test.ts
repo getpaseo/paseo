@@ -787,7 +787,7 @@ describe("agent MCP end-to-end (offline)", () => {
     }
   }, 30_000);
 
-  test("create_agent with worktree is async and boots terminals only after setup success", async () => {
+  test("workspace creation owns async setup and terminal bootstrap before agent attachment", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
@@ -843,21 +843,30 @@ describe("agent MCP end-to-end (offline)", () => {
         stdio: "pipe",
       });
 
-      const result = await withTimeout({
+      const workspaceResult = await withTimeout({
         promise: client.callTool({
-          name: "create_agent",
+          name: "create_workspace",
           args: {
-            cwd: repoRoot,
-            title: "MCP worktree setup terminals",
-            provider: "claude/claude-test-model",
-            mode: "bypassPermissions",
-            initialPrompt: "say done and stop",
-            worktreeName: "mcp-worktree-setup-test",
+            isolation: "worktree",
+            path: repoRoot,
+            worktreeSlug: "mcp-worktree-setup-test",
             baseBranch: "main",
           },
         }),
         timeoutMs: 2500,
-        label: "create_agent should not block on setup",
+        label: "create_workspace should not block on setup",
+      });
+      const workspace = getStructuredContent(workspaceResult);
+      if (typeof workspace?.workspaceId !== "string") throw new Error("Expected created workspace");
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          workspaceId: workspace.workspaceId,
+          title: "MCP worktree setup terminals",
+          provider: "claude/claude-test-model",
+          settings: { modeId: "bypassPermissions" },
+          initialPrompt: "say done and stop",
+        },
       });
 
       const payload = getStructuredContent(result);

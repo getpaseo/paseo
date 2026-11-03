@@ -27,10 +27,16 @@ const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PAT
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
+
+// Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
+// Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
+const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
 function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
@@ -50,7 +56,11 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   };
 }
 
-function collectInlineCodePaths(source: string, workspaceRoot?: string): ReadonlySet<string> {
+function collectInlineCodePaths(
+  source: string,
+  workspaceRoot?: string,
+  commandNames?: ReadonlySet<string>,
+): ReadonlySet<string> {
   const paths = new Set<string>();
   const previousEnds = new Map<number, number>();
   // Collect candidates between consecutive runs of equal length. The engine owns
@@ -68,7 +78,11 @@ function collectInlineCodePaths(source: string, workspaceRoot?: string): Readonl
       value = value.slice(1, -1);
     }
     const classification = classifyAssistantFileLink(value, { workspaceRoot });
-    if (classification && classification.kind !== "external") paths.add(value);
+    if (
+      (classification && classification.kind !== "external") ||
+      (value.startsWith("/") && commandNames?.has(value.slice(1)))
+    )
+      paths.add(value);
   }
   return paths;
 }
@@ -106,7 +120,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean } = {},
+  options: { supportsSvg?: boolean; commandNames?: ReadonlySet<string> } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -116,12 +130,18 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
-  const metadata = linkMetadata(collectInlineCodePaths(source, workspaceRoot));
+  const metadata = linkMetadata(
+    collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+  );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
+    // Match content, header, and delimiter lines; quote-only lines count as blank.
+    !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
+      source,
+    ) &&
     !(workspaceRoot && source.includes("]("))
   ) {
     return { images, ...metadata, render: () => source };
@@ -196,11 +216,25 @@ export function prepareMarkdownSource(
       if (lineEnd < end) split(lineEnd);
     }
   }
-  function visit(node: Nodes) {
-    const start = node.position?.start.offset;
-    const end = node.position?.end.offset;
-    if (start !== undefined && end !== undefined) {
+  function visit(node: Nodes, previous?: Nodes) {
+    const position = node.position;
+    if (position?.start.offset !== undefined && position.end.offset !== undefined) {
+      const start = position.start.offset;
+      const end = position.end.offset;
       if (node.type === "paragraph") splitStandaloneImages(node, start, end);
+      if (
+        node.type === "table" &&
+        previous?.type === "paragraph" &&
+        previous.position?.end.line === position.start.line - 1
+      ) {
+        // MD4C only recognizes a table header on the first line of a paragraph.
+        const lineStart =
+          Math.max(source.lastIndexOf("\n", start - 1), source.lastIndexOf("\r", start - 1)) + 1;
+        const newline = source.slice(lineStart - 2, lineStart).replace(/[^\r\n]/g, "");
+        const blank = source.slice(lineStart, start).replace(/[^>]/g, " ").trimEnd();
+        const boundary = lineStart - newline.length;
+        edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
+      }
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
@@ -228,7 +262,8 @@ export function prepareMarkdownSource(
         if (text !== source.slice(start, end)) edits.push({ start, end, text });
       }
     }
-    if ("children" in node) node.children.forEach(visit);
+    if ("children" in node)
+      node.children.forEach((child, index) => visit(child, node.children[index - 1]));
   }
   visit(getTree());
   return {

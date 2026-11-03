@@ -11,6 +11,8 @@ function workspace(input: {
 }): CommandCenterWorkspaceResult {
   return {
     kind: "workspace",
+    serverId: "server",
+    workspaceId: "workspace",
     id: input.id,
     title: input.title ?? input.id,
     subtitle: input.subtitle ?? "",

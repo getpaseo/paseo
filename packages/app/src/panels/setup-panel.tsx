@@ -183,32 +183,19 @@ function resolveSetupStatusLabel(
   return labels.waiting;
 }
 
-function resolveCommandLog(
-  command: SetupCommand,
-  autoExpandIndex: number | null,
-  log: string,
-): string {
-  if ("log" in command && typeof command.log === "string") {
-    return command.log;
-  }
-  if (command.index === autoExpandIndex) return log;
-  return "";
-}
-
 interface BuildCommandRowPropsArgs {
   command: SetupCommand;
   autoExpandIndex: number | null;
-  log: string;
   expandedIndices: Set<number>;
   manuallyCollapsed: Set<number>;
   snapshotError: string | null | undefined;
 }
 
 function buildCommandRowState(args: BuildCommandRowPropsArgs) {
-  const { command, autoExpandIndex, log, expandedIndices, manuallyCollapsed, snapshotError } = args;
+  const { command, autoExpandIndex, expandedIndices, manuallyCollapsed, snapshotError } = args;
   const isExpanded = expandedIndices.has(command.index);
   const hasError = command.status === "failed" && Boolean(snapshotError);
-  const commandLog = resolveCommandLog(command, autoExpandIndex, log);
+  const commandLog = command.log;
   const hasLog = commandLog.trim().length > 0;
   const isExpandable = command.status !== "running" || hasLog || hasError;
   const isAutoExpanded = command.index === autoExpandIndex && !manuallyCollapsed.has(command.index);
@@ -285,9 +272,7 @@ function SetupPanel() {
   );
 
   const commands = snapshot?.detail.commands ?? EMPTY_COMMANDS;
-  const log = snapshot?.detail.log ?? "";
-  const hasNoSetupCommands =
-    snapshot?.status === "completed" && commands.length === 0 && log.trim().length === 0;
+  const hasNoSetupCommands = snapshot?.status === "completed" && commands.length === 0;
   const isWaiting = !snapshot || (snapshot.status === "running" && commands.length === 0);
 
   const { expandedIndices, manuallyCollapsed, toggleExpanded } = useExpandedSetupCommands();
@@ -323,7 +308,6 @@ function SetupPanel() {
           workspaceId={target.workspaceId}
           snapshot={snapshot}
           commands={commands}
-          log={log}
           isWaiting={isWaiting}
           hasNoSetupCommands={hasNoSetupCommands}
           autoExpandIndex={autoExpandIndex}
@@ -341,7 +325,6 @@ interface SetupPanelBodyProps {
   workspaceId: string;
   snapshot: WorkspaceSetupSnapshot | null;
   commands: SetupCommand[];
-  log: string;
   isWaiting: boolean;
   hasNoSetupCommands: boolean;
   autoExpandIndex: number | null;
@@ -352,7 +335,7 @@ interface SetupPanelBodyProps {
 
 function SetupPanelBody(props: SetupPanelBodyProps) {
   const { t } = useTranslation();
-  const { snapshot, commands, log } = props;
+  const { snapshot, commands } = props;
   if (snapshot?.status === "blocked" && snapshot.blockedSource) {
     return (
       <BlockedSetupNotice
@@ -389,7 +372,6 @@ function SetupPanelBody(props: SetupPanelBodyProps) {
         const rowState = buildCommandRowState({
           command,
           autoExpandIndex: props.autoExpandIndex,
-          log,
           expandedIndices: props.expandedIndices,
           manuallyCollapsed: props.manuallyCollapsed,
           snapshotError: snapshot?.error,
@@ -404,7 +386,6 @@ function SetupPanelBody(props: SetupPanelBodyProps) {
           />
         );
       })}
-      <StandaloneLogView commands={commands} log={log} />
       <TopLevelSetupError snapshotError={snapshot?.error ?? null} commands={commands} />
     </View>
   );
@@ -520,25 +501,6 @@ function SetupCommandChevron({ showDetail }: { showDetail: boolean }) {
   );
   return (
     <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} style={chevronStyle} />
-  );
-}
-
-function StandaloneLogView({ commands, log }: { commands: SetupCommand[]; log: string }) {
-  const { t } = useTranslation();
-  if (commands.length !== 0 || log.trim().length === 0) return null;
-  return (
-    <ScrollView
-      style={styles.logScroll}
-      contentContainerStyle={styles.logScrollContent}
-      showsVerticalScrollIndicator
-      testID="workspace-setup-log"
-      accessible
-      accessibilityLabel={t("workspace.setup.accessibility.log")}
-    >
-      <Text selectable dataSet={CODE_SURFACE_DATASET} style={styles.logText}>
-        {log}
-      </Text>
-    </ScrollView>
   );
 }
 

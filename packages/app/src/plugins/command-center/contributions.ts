@@ -81,7 +81,7 @@ export function buildPluginCommandCenterContributions(
         visibility: "always",
         presentation: {
           kind: "action",
-          title: item.title,
+          title: plugin.i18n.resolve(item.title, plugin.locale),
           sectionTitle: plugin.id,
           icon: getCommandCenterIcon(pluginIconComponent(item.icon)),
         },

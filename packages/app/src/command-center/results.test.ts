@@ -110,6 +110,8 @@ function workspace(
 ): CommandCenterWorkspaceResult {
   return {
     kind: "workspace",
+    serverId: "server",
+    workspaceId: "workspace",
     id,
     title,
     subtitle,

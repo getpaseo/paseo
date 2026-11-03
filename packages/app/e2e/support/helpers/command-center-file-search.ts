@@ -210,3 +210,30 @@ export async function expectOneLineTruncatedFileResult(
   expect(overflow.overflow).toBe("hidden");
   expect(overflow.whiteSpace).toBe("nowrap");
 }
+
+/** Hold real daemon responses until the user has finished the interaction under test. */
+export async function holdDirectorySuggestionResponses(page: Page) {
+  let holding = false;
+  const pending: Array<() => void> = [];
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (holding && parseSessionMessage(message)?.type === "directory_suggestions_response") {
+        pending.push(() => ws.send(message));
+      } else {
+        ws.send(message);
+      }
+    });
+  });
+  return {
+    hold() {
+      holding = true;
+    },
+    async release() {
+      await expect.poll(() => pending.length).toBeGreaterThan(0);
+      holding = false;
+      for (const send of pending.splice(0)) send();
+    },
+  };
+}

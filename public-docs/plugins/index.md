@@ -11,6 +11,7 @@ category: Plugins
 A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [screens and sidebar items](/docs/plugins/reference#screens-and-sidebar-items),
 [workspace panels](/docs/plugins/reference#workspace-panels),
+[file panels](/docs/plugins/reference#file-panels),
 [Command Center items](/docs/plugins/reference#command-center-items),
 [slash commands](/docs/plugins/reference#slash-commands),
 [composer pills](/docs/plugins/reference#composer-pills),

@@ -1,22 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopHostBridge } from "@/desktop/host";
-import {
-  extractTerminalDropPaths,
-  isTerminalDragLeaveOutside,
-  isTerminalFileDrag,
-  prepareDroppedPathForTerminal,
-  prepareDroppedPathsForTerminal,
-} from "./terminal-file-drop";
+import { routeTerminalDrop } from "./terminal-file-drop";
 
-function dataTransfer(input: { types?: string[]; files?: File[] }): DataTransfer {
-  return {
-    types: input.types ?? [],
-    files: input.files ?? [],
-  } as unknown as DataTransfer;
-}
-
-function fakeFile(input: { name: string; legacyPath?: string }): File {
-  const file = { name: input.name } as unknown as File;
+function fakeFile(input: { name: string; type?: string; legacyPath?: string }): File {
+  const file = { name: input.name, type: input.type ?? "" } as unknown as File;
   if (input.legacyPath !== undefined) {
     Object.defineProperty(file, "path", {
       configurable: true,
@@ -26,45 +13,34 @@ function fakeFile(input: { name: string; legacyPath?: string }): File {
   return file;
 }
 
-function makeNode(children: readonly EventTarget[] = []): EventTarget {
-  return {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-    contains: (other: EventTarget | null) => other !== null && children.includes(other),
-  } as unknown as EventTarget;
-}
+describe("terminal file drop routing", () => {
+  const notes = fakeFile({ name: "notes.txt", type: "text/plain" });
+  const electron: DesktopHostBridge = {
+    webUtils: { getPathForFile: (file) => `/Users/me/Desktop/${file.name}` },
+  };
 
-describe("terminal file drop", () => {
-  it("detects file drags", () => {
-    expect(isTerminalFileDrag(dataTransfer({ types: ["Files"] }))).toBe(true);
-    expect(isTerminalFileDrag(dataTransfer({ types: ["text/plain"] }))).toBe(false);
-    expect(isTerminalFileDrag(null)).toBe(false);
-  });
-
-  it("keeps drag highlight active when moving between terminal children", () => {
-    const child = makeNode();
-    const outside = makeNode();
-    const root = makeNode([child]);
-
-    expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: child })).toBe(false);
-    expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: outside })).toBe(true);
-    expect(isTerminalDragLeaveOutside({ currentTarget: root, relatedTarget: null })).toBe(true);
-    expect(isTerminalDragLeaveOutside({ currentTarget: null, relatedTarget: child })).toBe(true);
-  });
-
-  it("extracts paths through Electron webUtils", () => {
-    const file = fakeFile({ name: "photo.png" });
-    const getPathForFile = vi.fn(() => "/Users/me/Desktop/photo.png");
-    const bridge: DesktopHostBridge = { webUtils: { getPathForFile } };
-
+  it("pastes the file's own path when the host is the client's machine", () => {
     expect(
-      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), bridge),
-    ).toEqual(["/Users/me/Desktop/photo.png"]);
-    expect(getPathForFile).toHaveBeenCalledWith(file);
+      routeTerminalDrop({ kind: "web-file", file: notes }, { hostIsLocal: true, bridge: electron }),
+    ).toEqual({ kind: "path", path: "/Users/me/Desktop/notes.txt" });
   });
 
-  it("falls back to legacy Electron file paths", () => {
+  it("uploads the same file when the host is another machine", () => {
+    expect(
+      routeTerminalDrop(
+        { kind: "web-file", file: notes },
+        { hostIsLocal: false, bridge: electron },
+      ),
+    ).toMatchObject({ kind: "upload" });
+  });
+
+  it("uploads browser files, which have no path on any machine", () => {
+    expect(
+      routeTerminalDrop({ kind: "web-file", file: notes }, { hostIsLocal: true, bridge: null }),
+    ).toMatchObject({ kind: "upload" });
+  });
+
+  it("falls back to legacy Electron file paths on a local host", () => {
     const file = fakeFile({ name: "photo.png", legacyPath: "/tmp/legacy-photo.png" });
     const bridge: DesktopHostBridge = {
       webUtils: {
@@ -74,45 +50,21 @@ describe("terminal file drop", () => {
       },
     };
 
-    expect(
-      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), bridge),
-    ).toEqual(["/tmp/legacy-photo.png"]);
+    expect(routeTerminalDrop({ kind: "web-file", file }, { hostIsLocal: true, bridge })).toEqual({
+      kind: "path",
+      path: "/tmp/legacy-photo.png",
+    });
   });
 
-  it("drops browser files that have no filesystem path", () => {
-    const file = fakeFile({ name: "photo.png" });
+  it("routes desktop paths by host locality too", () => {
+    const item = { kind: "desktop-path", path: "/tmp/report.pdf" } as const;
 
-    expect(
-      extractTerminalDropPaths(dataTransfer({ types: ["Files"], files: [file] }), null),
-    ).toEqual([]);
-  });
-
-  it("prepares POSIX paths with conservative escaping", () => {
-    const bridge: DesktopHostBridge = { platform: "darwin" };
-
-    expect(prepareDroppedPathForTerminal("/tmp/my image.png", bridge)).toBe("'/tmp/my image.png'");
-    expect(prepareDroppedPathForTerminal("/tmp/a$(touch bad).png", bridge)).toBe(
-      "'/tmp/a(touch bad).png'",
-    );
-    expect(prepareDroppedPathForTerminal("/tmp/it's.png", bridge)).toBe("'/tmp/it\\'s.png'");
-  });
-
-  it("prepares Windows paths with space quoting", () => {
-    const bridge: DesktopHostBridge = { platform: "win32" };
-
-    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo.png", bridge)).toBe(
-      "C:\\Users\\me\\photo.png",
-    );
-    expect(prepareDroppedPathForTerminal("C:\\Users\\me\\photo one.png", bridge)).toBe(
-      '"C:\\Users\\me\\photo one.png"',
-    );
-  });
-
-  it("joins multiple dropped paths for one terminal input", () => {
-    const bridge: DesktopHostBridge = { platform: "darwin" };
-
-    expect(prepareDroppedPathsForTerminal(["/tmp/a.png", "/tmp/b c.png"], bridge)).toBe(
-      "'/tmp/a.png' '/tmp/b c.png'",
-    );
+    expect(routeTerminalDrop(item, { hostIsLocal: true, bridge: null })).toEqual({
+      kind: "path",
+      path: "/tmp/report.pdf",
+    });
+    expect(routeTerminalDrop(item, { hostIsLocal: false, bridge: null })).toMatchObject({
+      kind: "upload",
+    });
   });
 });

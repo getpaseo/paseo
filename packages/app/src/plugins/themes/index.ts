@@ -1,6 +1,8 @@
+import type { PluginMessage } from "@getpaseo/plugin/client";
+import { isPluginMessage } from "@getpaseo/plugin/client/host";
 import { useMemo } from "react";
 import { z } from "zod";
-import type { PluginThemeContribution } from "@getpaseo/plugin";
+import type { PluginThemeContribution } from "../types";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import {
   buildDarkSemanticColors,
@@ -24,7 +26,7 @@ const hexColorSchema = z
 
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
-  name: z.string().trim().min(1).max(60),
+  name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
   appearance: z.enum(["light", "dark"]),
   colors: z.strictObject({
     background: hexColorSchema,
@@ -49,6 +51,7 @@ export interface PluginThemeOption {
 interface PluginThemeTarget {
   serverId: string;
   contribution: PluginThemeContribution;
+  plugin: InstalledPlugin;
 }
 
 export function parsePluginThemeContribution(value: unknown): PluginThemeContribution {
@@ -133,7 +136,7 @@ export function collectPluginThemes(
     if (!supportedHosts.has(plugin.serverId)) continue;
     for (const contribution of plugin.themes) {
       const id = `${plugin.id}/theme/${contribution.id}`;
-      const target = { serverId: plugin.serverId, contribution };
+      const target = { serverId: plugin.serverId, contribution, plugin };
       const targets = targetsById.get(id);
       if (targets) targets.push(target);
       else targetsById.set(id, [target]);
@@ -145,7 +148,7 @@ export function collectPluginThemes(
     return {
       id,
       serverId: target.serverId,
-      name: target.contribution.name,
+      name: target.plugin.i18n.resolve(target.contribution.name, target.plugin.locale),
       swatch: target.contribution.colors.background,
       theme: buildPluginTheme(target.contribution),
     };

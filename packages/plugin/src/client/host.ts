@@ -1,3 +1,4 @@
+import type { PluginText } from "../text.js";
 import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export {
@@ -7,10 +8,10 @@ export {
 import type { PluginAttachmentSourceContribution } from "../contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
-import { callPluginRpc } from "../rpc.js";
+import { callPluginRpc, subscribePluginRpc, type PluginSubscriptionObserver } from "../rpc.js";
 
 export async function searchPluginAttachments(
-  source: PluginAttachmentSourceContribution,
+  source: PluginAttachmentSourceContribution<PluginText>,
   invoke: (method: string, input: unknown) => Promise<unknown>,
   query: string,
 ) {
@@ -18,4 +19,15 @@ export async function searchPluginAttachments(
   return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
-export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
+export { callPluginRpc, subscribePluginRpc, PaseoApiProvider, PluginRpcProvider };
+export type { PluginSubscriptionObserver };
+export type { PluginSubscribe } from "./rpc-context.js";
+
+export {
+  PluginTranslationRuntime,
+  PluginTranslationProvider,
+  usePluginTranslationRuntime,
+  requirePluginText,
+  isPluginMessage,
+} from "./translations.js";
+export type { PluginLocaleSource } from "./translations.js";

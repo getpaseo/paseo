@@ -15,6 +15,7 @@ import {
   fetchDaemonResolution,
   type AssistantFileLinkResolution,
   type AssistantFileLinkSource,
+  type AssistantFileLinkContext,
 } from "./resolver";
 
 export interface UseFileLinkResult {
@@ -54,13 +55,15 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   const stableSource = useStableSource(source);
   const activeConfig = context.configRef.current;
   const workspaceRoot = activeConfig.workspaceRoot;
+  const relativePathBase = activeConfig.relativePathBase;
   const serverId = activeConfig.serverId;
   const resolution = useMemo(
     () =>
       classifyForResolution(stableSource, {
         workspaceRoot,
+        relativePathBase,
       }),
-    [stableSource, workspaceRoot],
+    [stableSource, workspaceRoot, relativePathBase],
   );
   const queryKey = useMemo(
     () =>
@@ -154,12 +157,12 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
   );
   const canOpen = useCallback(
     (source: AssistantFileLinkSource) =>
-      canOpenAssistantFileLink(source, context.configRef.current.workspaceRoot),
+      canOpenAssistantFileLink(source, context.configRef.current),
     [context.configRef],
   );
   const canResolveFile = useCallback(
     (source: AssistantFileLinkSource) =>
-      canResolveAssistantFileLinkToFile(source, context.configRef.current.workspaceRoot),
+      canResolveAssistantFileLinkToFile(source, context.configRef.current),
     [context.configRef],
   );
 
@@ -176,6 +179,7 @@ function openAssistantFileLink(input: {
   const capturedConfig = input.context.configRef.current;
   const capturedResolution = classifyForResolution(input.source, {
     workspaceRoot: capturedConfig.workspaceRoot,
+    relativePathBase: capturedConfig.relativePathBase,
   });
 
   if (capturedResolution.kind === "resolved") {
@@ -233,17 +237,17 @@ function openAssistantFileLink(input: {
 
 function canOpenAssistantFileLink(
   source: AssistantFileLinkSource,
-  workspaceRoot: string | undefined,
+  context: AssistantFileLinkContext,
 ): boolean {
-  const resolution = classifyForResolution(source, { workspaceRoot });
+  const resolution = classifyForResolution(source, context);
   return resolution.kind === "needsLookup" || resolution.value.kind !== "ignored";
 }
 
 function canResolveAssistantFileLinkToFile(
   source: AssistantFileLinkSource,
-  workspaceRoot: string | undefined,
+  context: AssistantFileLinkContext,
 ): boolean {
-  const resolution = classifyForResolution(source, { workspaceRoot });
+  const resolution = classifyForResolution(source, context);
   return resolution.kind === "needsLookup" || resolution.value.kind === "file";
 }
 

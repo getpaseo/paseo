@@ -1,0 +1,6 @@
+{
+  "id": "pdf-panel",
+  "requirements": {
+    "paseo": ">=0.13.0"
+  }
+}

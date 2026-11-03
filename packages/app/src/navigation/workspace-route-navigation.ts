@@ -2,7 +2,7 @@ import type {
   NavigationAction,
   NavigationContainerRef,
   NavigationContainerRefWithCurrent,
-} from "@react-navigation/native";
+} from "expo-router/react-navigation";
 import { router, type Href } from "expo-router";
 import {
   encodeWorkspaceIdForPathSegment,

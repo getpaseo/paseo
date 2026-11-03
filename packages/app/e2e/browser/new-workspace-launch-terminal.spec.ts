@@ -247,9 +247,7 @@ test.describe("New workspace: fullscreen composer across the compact breakpoint"
       await expectNewWorkspaceDraft(page, `${draft} wide`);
     });
 
-    // Terminal mode and its prompt are screen state, and the shell remounts the screen
-    // at the breakpoint, so the terminal prompt's fullscreen is exercised on the phone
-    // layout only.
+    // Exercise the terminal prompt's fullscreen and compact launch sheet on the phone.
     await test.step("terminal: the prompt's fullscreen shows only exit and Launch", async () => {
       await resizeComposerViewport(page, "portrait");
       // The compact launch control opens a sheet, not the desktop menu.

@@ -1,7 +1,6 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { pickAttentionAgent } from "@/utils/agent-attention";
 import {
-  buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseHostWorkspaceRouteFromPathname,
@@ -13,6 +12,7 @@ import {
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { prepareWorkspaceTab, type PrepareWorkspaceTabDeps } from "@/utils/prepare-workspace-tab";
+import type { OpenWorkspaceTabInput } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 
 export interface RouteSelectionInput {
@@ -35,8 +35,11 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
   isWorkspaceLayoutHydrated: () => boolean;
+  deferOpenTab: (input: OpenWorkspaceTabInput) => null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
+  revealTab: (workspaceKey: string, tabId: string | null) => void;
+  revealWorkspace: () => void;
 }
 
 export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {
@@ -91,13 +94,15 @@ export function navigateToWorkspace(
     workspaces,
     workspaceId: input.workspaceId,
   });
-  const shouldDeferAgentOpen = Boolean(
-    input.target?.kind === "agent" && (!resolvedWorkspaceId || !deps.isWorkspaceLayoutHydrated()),
-  );
+  const shouldDeferOpen = !resolvedWorkspaceId || !deps.isWorkspaceLayoutHydrated();
+  const openTab: NavigateToWorkspaceDeps["openTab"] = (request) => {
+    if (shouldDeferOpen) return deps.deferOpenTab(request);
+    const tabId = deps.openTab(request);
+    deps.revealTab(request.workspaceKey, tabId);
+    return tabId;
+  };
   if (input.target) {
-    if (!shouldDeferAgentOpen) {
-      prepareWorkspaceTab({ ...input, target: input.target }, deps);
-    }
+    prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
   } else {
     const workspaceAgents = resolvedWorkspaceId
       ? Array.from(deps.getSessionAgents(input.serverId)).filter(
@@ -106,22 +111,17 @@ export function navigateToWorkspace(
       : [];
     const attentionAgentId = pickAttentionAgent(workspaceAgents);
     if (attentionAgentId && resolvedWorkspaceId) {
-      deps.openTab({
+      openTab({
         workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
         target: { kind: "agent", agentId: attentionAgentId },
         intent: "reveal",
       });
+    } else {
+      deps.revealWorkspace();
     }
   }
 
-  const route =
-    input.target?.kind === "agent" && shouldDeferAgentOpen
-      ? buildHostWorkspaceOpenRoute(
-          input.serverId,
-          input.workspaceId,
-          `agent:${input.target.agentId}`,
-        )
-      : buildHostWorkspaceRoute(input.serverId, input.workspaceId);
+  const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
   deps.rememberLastWorkspace({ serverId: input.serverId, workspaceId: input.workspaceId });
   deps.navigateToRoute(route);
   return route;

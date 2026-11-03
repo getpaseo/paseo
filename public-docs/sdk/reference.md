@@ -59,6 +59,8 @@ Create a new client after `close()`.
 
 Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `background`, and `labels`.
 
+`parent` accepts a host-local agent ID, an `AgentAddress` (`{ serverId, agentId }`), or an agent handle. A handle’s `address` keeps its host identity after disconnect. When creating through `hosts.client(serverId)`, pass the parent handle or complete address; the SDK carries parent metadata to the destination.
+
 `background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
 See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
 
@@ -80,6 +82,7 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 | Member                         | Result                            | Behavior                                                                                                |
 | ------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `id`                           | `string`                          | Stable daemon agent ID.                                                                                 |
+| `address`                      | `AgentAddress`                    | Complete `{ serverId, agentId }` identity; requires a connected host to establish it.                   |
 | `workspaceId`                  | `string \| null`                  | Current workspace placement.                                                                            |
 | `cwd`                          | `string \| null`                  | Current working directory.                                                                              |
 | `status`                       | Agent status or `null`            | Current lifecycle status.                                                                               |
@@ -202,6 +205,63 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 `config.get(requestId?)` returns the daemon's mutable configuration.
 
 `config.patch(patch, requestId?)` validates, persists, and returns an updated configuration. Use this administrative surface for host configuration, not per-agent choices. A patch affects every client and future agent using that daemon.
+
+## `client.hosts`
+
+Manage hosts connected to the selected daemon. Both the managing daemon and destination must support connected hosts.
+
+```ts
+const directory = await client.hosts.list();
+const registration = await client.hosts.add({
+  connection: "ssh://deploy@build-box",
+  label: "Build box",
+  metadata: { team: "infra" },
+  sourceKey: "build-box",
+});
+await client.hosts.update(registration.registrationId, { enabled: false });
+await client.hosts.remove(registration.registrationId);
+```
+
+`list()` returns `{ self: { serverId, label }, hosts }`. Each host includes its registration and server
+IDs, label, authenticated source, string metadata, enabled state, connection status, safe target
+description, last-online/retry timestamps, and an actionable error. Credentials are never returned.
+A valid but unreachable connection is saved and retried. Invalid syntax fails without saving.
+
+`update(registrationId, patch)` accepts `label`, `metadata`, `enabled`, `connection`, and
+`replaceIdentity`. Metadata replaces the whole map. Replacing a connection preserves the expected
+server ID unless `replaceIdentity: true` explicitly accepts a new destination.
+
+`observe()` returns an owned subscription. Await `ready`, subscribe for snapshots and `hosts.changed`
+updates, then call `release()`. Observations restore a current snapshot after reconnect.
+
+```ts
+const remote = await client.hosts.client("srv_build_box");
+try {
+  const workspaces = await remote.workspaces.list();
+  const providers = await remote.providers.listAvailable();
+  await remote.agents.ref("agent_on_build_box").send("Continue the investigation");
+} finally {
+  await remote.dispose();
+}
+```
+
+`client(serverId)` returns a caller-owned `PaseoApi` bound to that destination through the selected
+daemon. The ordinary APIs keep their signatures. Paths and IDs belong to the destination. Selecting
+the local server ID returns a local scope. Routing supports one hop.
+
+Disposing one scope releases its observations without closing siblings or deleting the saved host.
+Origin disposal cascades. Observations recover through the ordinary client lifecycle. While connecting,
+new requests use the existing bounded send queue; disconnected requests fail. Connection loss clears
+old waiters and queued sends. Ordinary non-recoverable requests are not replayed; existing
+acknowledged/idempotent creation recovery retains its request identity. A submitted request whose response
+is lost rejects with `DaemonConnectionError` (`code: "DAEMON_CONNECTION_LOST"`), optional
+`outcome: "unknown"` and known `serverId`. Inspect before retrying a mutation.
+
+Registration and host acquisition failures expose a stable `code`: `host_unknown`, `host_disabled`, `host_offline`,
+`permission_denied`, `unsupported_capability`, `authentication_failed`, `server_id_mismatch`,
+`self_host`, or `duplicate_host`. Ordinary RPC permission codes, including `access_denied`, pass through
+unchanged. Multiplexing is a transport; consumers use the same client/API operations and lifecycle.
+Discovery does not grant execution authority.
 
 ## Errors and cleanup
 

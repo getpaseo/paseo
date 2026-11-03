@@ -64,6 +64,31 @@ Entries may also include `loginErrors`. Structured output preserves numeric valu
 
 A completed query exits with status `0`, including when individual reports are unavailable or failed. Connection or request failures, unsupported hosts, unknown report IDs, and conflicting selectors exit with status `1` and write the error to stderr. Human output says **No usage reports returned** for an empty result; this does not establish whether account discovery succeeded for every source.
 
+## Connected hosts
+
+`--host` selects the daemon whose saved connections you manage. Registrations use their
+`registrationId`, not their label.
+
+```sh
+paseo --host localhost:6767 host add 'ssh://deploy@build-box' --label build-box --meta team=infra
+paseo --host localhost:6767 host ls --json
+paseo --host localhost:6767 host inspect hst_123
+paseo --host localhost:6767 host update hst_123 --meta team=tools --remove-meta obsolete
+paseo --host localhost:6767 host update hst_123 --connection 'ssh://deploy@new-address'
+paseo --host localhost:6767 host disable hst_123
+paseo --host localhost:6767 host enable hst_123
+paseo --host localhost:6767 host rm hst_123
+```
+
+Add accepts TCP/host-and-port, `ws://`/`wss://`, local socket/pipe, SSH, and relay/pairing URLs.
+SSH connects to an already running daemon. Add `?password=...` to an SSH URI when that daemon requires a password (`&password=...` after `daemonPort`). Unreachable targets remain saved and retry automatically.
+`ls` includes disabled and failed hosts. `inspect` includes safe connection details and recovery guidance.
+JSON output never includes connection credentials.
+
+`update --meta` replaces supplied keys; `--remove-meta` removes keys. Replacing a connection retains
+the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
+destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
+
 ## Provider diagnostics
 
 Ask the daemon to inspect the provider environment it actually uses:

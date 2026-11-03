@@ -5,17 +5,22 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
+import Ajv from "ajv";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import { PaseoToolInputError } from "../../tools/types.js";
-import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
+import { createTestAgentClients } from "../../../test-utils/fake-agent-client.js";
+import { createTestAgentMessages } from "../../../test-utils/agent-messages.js";
+import { createPaseoAgentToolManifest, createPaseoToolCatalog } from "../../tools/paseo-tools.js";
+import { serializePaseoToolInputParameters } from "../../tools/paseo-tool-serialization.js";
 import {
   OpenCodeBridge,
+  decorateOpenCodeV2Env,
   loadOpenCodeBridgePluginArtifact,
   materializeOpenCodeV2Plugin,
 } from "./bridge.js";
@@ -72,6 +77,148 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("advertises agent-scoped schemas that execute through both bridge plugins", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-manifest-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const clients = createTestAgentClients();
+    const agentStorage = new AgentStorage(path.join(paseoHome, "agents"), logger);
+    const agentManager = new AgentManager({ clients, registry: agentStorage, logger });
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger, extraClients: clients });
+    const agentMessages = createTestAgentMessages({ agentManager, agentStorage, logger });
+    const dependencies = {
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      logger,
+      agentMessages: () => agentMessages,
+    };
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    await bridge.start();
+    bridge.setManifestCatalog(createPaseoAgentToolManifest(dependencies));
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "codex", cwd: paseoHome },
+        undefined,
+        { workspaceId: "manifest-workspace" },
+      );
+      const catalog = createPaseoToolCatalog({ ...dependencies, callerAgentId: parent.id });
+      bridge.bindSession({ sessionId: "bound", env: {}, tools: catalog });
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const response = await fetch(`${plugin.baseUrl}/_internal/opencode/tools`, {
+        headers: { Authorization: `Bearer ${plugin.token}` },
+      });
+      expect(response.status).toBe(200);
+      const manifest = z
+        .object({
+          tools: z.array(
+            z.object({
+              name: z.string(),
+              description: z.string(),
+              inputSchema: z.record(z.string(), z.unknown()),
+            }),
+          ),
+        })
+        .parse(await response.json());
+      const definitions = new Map(manifest.tools.map((tool) => [tool.name, tool]));
+      const createDefinition = definitions.get("create_agent")!;
+      const sendDefinition = definitions.get("send_agent_prompt")!;
+      const topLevelCatalog = createPaseoToolCatalog(dependencies);
+      for (const name of ["create_agent", "send_agent_prompt"]) {
+        expect(serializePaseoToolInputParameters(topLevelCatalog.getTool(name)!)).toMatchObject({
+          properties: { notifyOnFinish: { default: false } },
+        });
+      }
+      const ajv = new Ajv({ useDefaults: true, strict: false });
+      const createInput = {
+        title: "Bridge child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Hello",
+        notifyOnFinish: false,
+      };
+      expect(ajv.compile(createDefinition.inputSchema)(createInput)).toBe(true);
+
+      const tools = new Map<string, V2TestTool>();
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform) => {
+              transform({
+                add: (tool) => {
+                  tools.set(tool.name, tool);
+                },
+              });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async () => ({ parentID: "bound" }),
+            hook: async () => ({ dispose: async () => undefined }),
+          },
+        },
+        ["bound"],
+      );
+      try {
+        const created = await tools
+          .get("paseo_create_agent")!
+          .execute(createInput, { sessionID: "bound" });
+        const children = agentManager.listAgents().filter((agent) => agent.id !== parent.id);
+        expect(children).toHaveLength(1);
+        const child = children[0]!;
+        expect(created).toMatchObject({
+          content: [{ type: "text", text: expect.stringContaining(child.id) }],
+        });
+        expect(child.workspaceId).toBe("manifest-workspace");
+        expect([...definitions.keys()]).toEqual([...catalog.tools.keys()]);
+        for (const definition of manifest.tools) {
+          const accepted = catalog.getTool(definition.name)!;
+          expect(definition.inputSchema).toEqual(serializePaseoToolInputParameters(accepted));
+          expect(definition.description).toBe(accepted.description);
+          expect(tools.get(`paseo_${definition.name}`)!.input).toEqual(definition.inputSchema);
+        }
+        expect(createDefinition.inputSchema).toMatchObject({
+          properties: { notifyOnFinish: { default: true } },
+        });
+        expect(createDefinition.inputSchema.properties).not.toHaveProperty("background");
+        expect(sendDefinition.inputSchema).toMatchObject({
+          properties: { notifyOnFinish: { default: true } },
+        });
+        await expect(
+          catalog.executeTool("create_agent", { ...createInput, background: true }),
+        ).rejects.toThrow("background");
+
+        const v1Module = await import(plugin.pluginUrl);
+        const hooks = await v1Module.default({}, plugin);
+        expect(Object.keys(hooks.tool.paseo_create_agent.args)).toEqual(
+          Object.keys(
+            z.record(z.string(), z.unknown()).parse(createDefinition.inputSchema.properties),
+          ),
+        );
+        const sendInput = { agentId: child.id, prompt: "Hello again", notifyOnFinish: false };
+        expect(ajv.compile(sendDefinition.inputSchema)(sendInput)).toBe(true);
+        await expect(
+          hooks.tool.paseo_send_agent_prompt.execute(sendInput, {
+            sessionID: "bound",
+            ask: async () => undefined,
+          }),
+        ).resolves.toMatchObject({ output: expect.stringContaining('"deliveryStatus": "queued"') });
+        await agentMessages.waitForDispatch(child.id, new AbortController().signal);
+      } finally {
+        await dispose();
+      }
+    } finally {
+      await agentMessages.close();
+      await bridge.close();
+      await Promise.all(
+        agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+      );
+      await agentManager.flushForShutdown();
+      await providerSnapshotManager.shutdown();
+    }
+  });
+
   test("loads packaged bundle bytes without invoking source compilation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-artifact-"));
     temporaryDirectories.push(root);
@@ -251,45 +398,35 @@ describe("OpenCodeBridge", () => {
     const release = bridge.bindSession({ sessionId: "parent", env: {}, tools: catalog });
     const releaseDisabled = bridge.bindSession({ sessionId: "disabled", env: {} });
     try {
-      const env = await bridge.decorateV2ServerEnv({});
-      const config = z
-        .object({
-          plugins: z.array(
-            z.object({
-              package: z.string(),
-              options: z.object({ baseUrl: z.string(), token: z.string() }),
-            }),
-          ),
-        })
-        .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT));
-      expect(await bridge.decorateV2ServerEnv(env)).toEqual(env);
-      const plugin = config.plugins[0]!;
+      const pluginUrl = await bridge.materializeV2Plugin();
+      const env = decorateOpenCodeV2Env({}, pluginUrl);
+      expect(decorateOpenCodeV2Env(env, pluginUrl)).toEqual(env);
       const tools = new Map<string, V2TestTool>();
       let filter!: (input: V2TestContext) => Promise<void>;
-      const module: {
-        default: { setup(context: V2TestPluginContext): Promise<() => Promise<void>> };
-      } = await import(pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href);
-      const dispose = await module.default.setup({
-        options: plugin.options,
-        tool: {
-          transform: async (transform) => {
-            transform({
-              add: (tool) => {
-                tools.set(tool.name, tool);
-              },
-            });
-            return { dispose: async () => undefined };
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform) => {
+              transform({
+                add: (tool) => {
+                  tools.set(tool.name, tool);
+                },
+              });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async ({ sessionID }) => ({ parentID: sessionID === "child" ? "parent" : "" }),
+            hook: async (_name, callback) => {
+              filter = callback;
+              return { dispose: async () => undefined };
+            },
           },
         },
-        session: {
-          context: async () => [],
-          get: async () => ({ parentID: "parent" }),
-          hook: async (_name, callback) => {
-            filter = callback;
-            return { dispose: async () => undefined };
-          },
-        },
-      });
+        ["parent", "disabled"],
+      );
       const allowed: V2TestContext = {
         sessionID: "child",
         tools: { paseo_echo_context: {}, native: {} },
@@ -302,6 +439,12 @@ describe("OpenCodeBridge", () => {
       };
       await filter(disabled);
       expect(Object.keys(disabled.tools)).toEqual(["native"]);
+      const unrelated: V2TestContext = {
+        sessionID: "unrelated",
+        tools: { paseo_echo_context: {}, native: {} },
+      };
+      await filter(unrelated);
+      expect(Object.keys(unrelated.tools)).toEqual(["native"]);
       await expect(
         tools.get("paseo_echo_context")!.execute({ value: "child result" }, { sessionID: "child" }),
       ).resolves.toMatchObject({ content: [{ type: "text", text: "child result" }] });
@@ -335,35 +478,33 @@ describe("OpenCodeBridge", () => {
     await bridge.start();
     const release = bridge.bindSession({ sessionId: "caller", env: {}, tools: catalog });
     try {
-      const env = await bridge.decorateV2ServerEnv({});
-      const { plugins } = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
-      const plugin = plugins[0];
-      const module = await import(
-        pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
-      );
+      const options = bridge.sharedV2Connection();
       const tools = new Map<string, V2TestTool>();
-      const dispose = await module.default.setup({
-        options: plugin.options,
-        tool: {
-          transform: async (transform: (editor: { add(tool: V2TestTool): void }) => void) => {
-            transform({ add: (tool) => tools.set(tool.name, tool) });
-            return { dispose: async () => undefined };
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform: (editor: { add(tool: V2TestTool): void }) => void) => {
+              transform({ add: (tool) => tools.set(tool.name, tool) });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async () => ({ parentID: "" }),
+            hook: async () => ({ dispose: async () => undefined }),
           },
         },
-        session: {
-          context: async () => [],
-          get: async () => ({ parentID: "" }),
-          hook: async () => ({ dispose: async () => undefined }),
-        },
-      } satisfies V2TestPluginContext);
+        ["caller"],
+      );
       try {
         const input = { provider: "codex", title: "Invalid provider", initialPrompt: "Hello" };
         const response = await fetch(
-          `${plugin.options.baseUrl}/_internal/opencode/sessions/caller/tools/create_agent`,
+          `${options.baseUrl}/_internal/opencode/sessions/caller/tools/create_agent`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${plugin.options.token}`,
+              Authorization: `Bearer ${options.token}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(input),
@@ -421,35 +562,24 @@ describe("OpenCodeBridge", () => {
     await bridge.start();
     const release = bridge.bindSession({ sessionId: "session", env: {}, tools: catalog });
     try {
-      const env = await bridge.decorateV2ServerEnv({});
-      const plugin = z
-        .object({
-          plugins: z.array(
-            z.object({
-              package: z.string(),
-              options: z.object({ baseUrl: z.string(), token: z.string() }),
-            }),
-          ),
-        })
-        .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT)).plugins[0]!;
       const pluginTools = new Map<string, V2TestTool>();
-      const module: {
-        default: { setup(context: V2TestPluginContext): Promise<() => Promise<void>> };
-      } = await import(pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href);
-      const dispose = await module.default.setup({
-        options: plugin.options,
-        tool: {
-          transform: async (transform) => {
-            transform({ add: (tool) => pluginTools.set(tool.name, tool) });
-            return { dispose: async () => undefined };
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform) => {
+              transform({ add: (tool) => pluginTools.set(tool.name, tool) });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async () => ({ parentID: undefined }),
+            hook: async () => ({ dispose: async () => undefined }),
           },
         },
-        session: {
-          context: async () => [],
-          get: async () => ({ parentID: undefined }),
-          hook: async () => ({ dispose: async () => undefined }),
-        },
-      });
+        ["session"],
+      );
       const result = await pluginTools
         .get("paseo_browser_screenshot")!
         .execute({}, { sessionID: "session" });
@@ -491,7 +621,8 @@ describe("OpenCodeBridge", () => {
     const tools = new Map<string, V2TestTool>();
     let hook!: (input: V2TestContext) => Promise<void>;
     const dispose = await module.default.setup({
-      options: { baseUrl: "", token: "" },
+      options: { mode: "structured-only" },
+      location: { directory: root },
       tool: {
         transform: async (transform) => {
           transform({
@@ -506,7 +637,7 @@ describe("OpenCodeBridge", () => {
         context: async () => history,
         get: async () => ({ parentID: "parent" }),
         hook: async (_name, callback) => {
-          hook = callback;
+          hook ??= callback;
           return { dispose: async () => undefined };
         },
       },
@@ -550,9 +681,13 @@ describe("OpenCodeBridge", () => {
           name.startsWith("paseo-v2-"),
         ),
       ).toEqual([]);
-      const env = await bridge.decorateV2ServerEnv({
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugins: ["user-plugin"] }),
-      });
+      const pluginUrl = await bridge.materializeV2Plugin();
+      const env = decorateOpenCodeV2Env(
+        {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugins: ["user-plugin"] }),
+        },
+        pluginUrl,
+      );
       const config = z
         .object({ plugins: z.tuple([z.literal("user-plugin"), z.object({ package: z.string() })]) })
         .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT));
@@ -560,6 +695,9 @@ describe("OpenCodeBridge", () => {
       expect((await stat(directory)).isDirectory()).toBe(true);
       const entry = await readFile(path.join(directory, "server.js"), "utf8");
       expect(entry).toContain('id: "paseo"');
+      expect(await readFile(path.join(directory, "state.mjs"), "utf8")).toBe(
+        await readFile(new URL("./v2/state.mjs", import.meta.url), "utf8"),
+      );
       const manifest = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
       expect(manifest).toMatchObject({ type: "module", exports: { "./server": "./server.js" } });
     } finally {
@@ -696,6 +834,7 @@ describe("OpenCodeBridge", () => {
 
 interface V2TestTool {
   name: string;
+  input?: unknown;
   execute(input: unknown, call: { sessionID: string }): Promise<unknown>;
 }
 interface V2TestContext {
@@ -704,7 +843,8 @@ interface V2TestContext {
   system?: Array<{ type: "text"; text: string }>;
 }
 interface V2TestPluginContext {
-  options: { baseUrl: string; token: string };
+  options: Record<string, string>;
+  location?: { directory: string };
   tool: {
     transform(
       callback: (editor: { add(tool: V2TestTool): void }) => void,
@@ -712,10 +852,33 @@ interface V2TestPluginContext {
   };
   session: {
     context(input: { sessionID: string }): Promise<SessionMessageInfo[]>;
-    get(input: { sessionID: string }): Promise<{ parentID: string }>;
+    get(input: { sessionID: string }): Promise<{ parentID: string | undefined }>;
     hook(
       name: string,
       callback: (input: V2TestContext) => Promise<void>,
     ): Promise<{ dispose(): Promise<void> }>;
   };
+}
+
+async function setupBoundV2Plugin(
+  bridge: OpenCodeBridge,
+  context: Pick<V2TestPluginContext, "tool" | "session">,
+  sessionIds: string[],
+): Promise<() => Promise<void>> {
+  const directory = fileURLToPath(await bridge.materializeV2Plugin());
+  const module = await import(pathToFileURL(path.join(directory, "server.js")).href);
+  let bind!: (input: { sessionID: string; baseUrl: string; token: string }) => Promise<unknown>;
+  const dispose: () => Promise<void> = await module.default.setup({
+    ...context,
+    options: {},
+    location: { directory },
+    rpc: {
+      register: async (_definition: unknown, handlers: { bind: typeof bind }) => {
+        bind = handlers.bind;
+        return { dispose: async () => undefined };
+      },
+    },
+  });
+  for (const sessionID of sessionIds) await bind({ sessionID, ...bridge.sharedV2Connection() });
+  return dispose;
 }

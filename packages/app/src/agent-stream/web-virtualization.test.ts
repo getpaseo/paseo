@@ -70,6 +70,17 @@ function indexEntries(items: StreamItem[]): IndexedStreamItem[] {
 }
 
 describe("findMountedWindowStart", () => {
+  it("mounts complete autonomous runs and keeps same-run steers together", () => {
+    const items = [
+      { ...userMessage("human", 1), turnId: "first" },
+      { ...assistantMessage("reply", 2), turnId: "first" },
+      { ...toolCall("wake", 3), turnId: "autonomous" },
+      { ...userMessage("steer", 4), turnId: "autonomous" },
+      { ...assistantMessage("done", 5), turnId: "autonomous" },
+    ];
+    expect(findMountedWindowStart({ items, minMountedCount: 1 })).toBe(2);
+  });
+
   it("keeps all items mounted when the chat is below the threshold", () => {
     const items = [userMessage("u1", 1), assistantMessage("a1", 2)];
 

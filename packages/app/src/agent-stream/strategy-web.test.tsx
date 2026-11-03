@@ -7,7 +7,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RetainedPanelActivity } from "@/components/retained-panel";
-import type { StreamItem } from "@/types/stream";
+import { reduceStreamUpdate, type StreamItem } from "@/types/stream";
 import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
 
@@ -130,6 +130,79 @@ describe("createWebStreamStrategy", () => {
     }
     vi.restoreAllMocks();
   });
+
+  it.each(["liveHead", "historyMounted"] as const)(
+    "keeps one rendered tool row after late prior-turn updates in %s",
+    (lane) => {
+      const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      const input: StreamRenderInput = {
+        agentId: "agent",
+        segments: { historyVirtualized: [], historyMounted: [], liveHead: [] },
+        boundary: {
+          hasVirtualizedHistory: false,
+          hasMountedHistory: lane === "historyMounted",
+          hasLiveHead: lane === "liveHead",
+        },
+        renderers: createRenderers(() => {}),
+        listEmptyComponent: null,
+        viewportRef: React.createRef<StreamViewportHandle>(),
+        routeBottomAnchorRequest: null,
+        isAuthoritativeHistoryReady: true,
+        onNearBottomChange: () => {},
+        onNearHistoryStart: () => true,
+        isLoadingOlderHistory: false,
+        hasOlderHistory: false,
+        olderHistoryProgressKey: null,
+        scrollEnabled: true,
+        listStyle: null,
+        baseListContentContainerStyle: null,
+        forwardListContentContainerStyle: null,
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      };
+      let items: StreamItem[] = [];
+      const updates = [
+        { callId: "background", turnId: "old", status: "running" },
+        { callId: "exec", turnId: "current", status: "running" },
+        { callId: "background", turnId: "old", status: "completed" },
+        { callId: "exec", turnId: "current", status: "completed" },
+      ] as const;
+      for (const [index, update] of updates.entries()) {
+        items = reduceStreamUpdate(
+          items,
+          {
+            type: "timeline",
+            provider: "codex",
+            turnId: update.turnId,
+            item: {
+              type: "tool_call",
+              callId: update.callId,
+              name: "exec_command",
+              status: update.status,
+              error: null,
+              detail: { type: "shell", command: update.callId },
+            },
+          },
+          new Date(index),
+        );
+        act(() =>
+          root?.render(
+            strategy.render({
+              ...input,
+              segments: { ...input.segments, [lane]: items },
+            }),
+          ),
+        );
+      }
+      const rows = [...container.querySelectorAll("[data-history-row-id]")];
+      expect(rows.map((row) => row.getAttribute("data-history-row-id"))).toEqual([
+        "agent_tool_turn:old/background",
+        "agent_tool_turn:current/exec",
+      ]);
+    },
+  );
 
   it("mounts virtualized history without recursive row measurement updates", () => {
     const rowRenderCount = vi.fn();

@@ -240,6 +240,8 @@ async function openTwoDraftTabs(page: Page, workspaceId: string) {
 
 async function expectTabNumberNavigation(page: Page) {
   const tabs = page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true });
+  await expect(page.getByTestId("settings-sidebar")).not.toBeVisible();
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Control+1");
   await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Control+2");

@@ -13,3 +13,7 @@ useDefaultAndroidSdkVersions()
 android {
   namespace "sh.paseo.trace"
 }
+
+dependencies {
+  testImplementation "junit:junit:4.13.2"
+}

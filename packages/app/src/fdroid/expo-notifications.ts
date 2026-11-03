@@ -38,3 +38,5 @@ export function addNotificationResponseReceivedListener() {
 export async function getLastNotificationResponseAsync() {
   return null;
 }
+
+export function clearLastNotificationResponse(): void {}
