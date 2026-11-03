@@ -65,7 +65,9 @@ async function savedSidebarWidth(page: Page) {
 
 async function dragTouchSidebar(page: Page, testID: string, delta: number) {
   const grip = page.getByTestId(`${testID}-grip`);
-  await expect(grip).toHaveCSS("opacity", "0.15");
+  const idleOpacity = testID === "left-sidebar-resize-handle" ? "0.5" : "0.15";
+  const pressedOpacity = testID === "left-sidebar-resize-handle" ? "1" : "0.3";
+  await expect(grip).toHaveCSS("opacity", idleOpacity);
   const box = await page.getByTestId(testID).boundingBox();
   if (!box) throw new Error("Expected the touch resize target to be visible.");
   const x = box.x + box.width / 2;
@@ -81,10 +83,10 @@ async function dragTouchSidebar(page: Page, testID: string, delta: number) {
       touchPoints: [{ x: x + delta * progress, y }],
     });
   }
-  await expect(grip).toHaveCSS("opacity", "0.3");
+  await expect(grip).toHaveCSS("opacity", pressedOpacity);
   await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await session.detach();
-  await expect(grip).toHaveCSS("opacity", "0.15");
+  await expect(grip).toHaveCSS("opacity", idleOpacity);
 }
 
 async function openWorkspace(
@@ -104,7 +106,8 @@ test.describe("Settings shared sidebar width on touch tablets", () => {
     await gotoAppShell(page);
     const handle = page.getByTestId("left-sidebar-resize-handle");
     const grip = page.getByTestId("left-sidebar-resize-handle-grip");
-    await expect(grip).toHaveCSS("opacity", "0.15");
+    await expect(grip).toHaveCSS("opacity", "0.5");
+    await expect(grip).toHaveCSS("height", "40px");
     await page.screenshot({ path: testInfo.outputPath("tablet-before-drag.png") });
     await dragTouchSidebar(page, "left-sidebar-resize-handle", 80);
     let savedWidth = await savedSidebarWidth(page);
@@ -129,7 +132,7 @@ test.describe("Settings shared sidebar width on touch tablets", () => {
     await expect(settingsSidebar).toHaveCSS("width", `${savedWidth}px`);
     await clickSettingsBackToWorkspace(page);
     await expect(handle).toBeVisible();
-    await expect(grip).toHaveCSS("opacity", "0.15");
+    await expect(grip).toHaveCSS("opacity", "0.5");
     const restoredHandle = await handle.boundingBox();
     expect(restoredHandle).not.toBeNull();
     // The touch target sits inside the sidebar's one-pixel border.

@@ -14,6 +14,7 @@ interface SidebarResizeHandleProps {
   gesture: GestureType;
   pressed: boolean;
   testID: string;
+  prominent?: boolean;
 }
 
 const HIGHLIGHT_DELAY_MS = 100;
@@ -28,13 +29,27 @@ function edgeOffsetStyle(edge: SidebarResizeEdge, edgeOffset: number) {
   return edge === "left" ? { left: edgeOffset } : { right: edgeOffset };
 }
 
-export function SidebarResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
+export function SidebarResizeHandle({
+  edge,
+  gesture,
+  pressed,
+  testID,
+  prominent,
+}: SidebarResizeHandleProps) {
   const finePointer = useHasFinePointer();
 
   if (finePointer) {
     return <PointerResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
   }
-  return <TouchResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
+  return (
+    <TouchResizeHandle
+      edge={edge}
+      gesture={gesture}
+      pressed={pressed}
+      testID={testID}
+      prominent={prominent}
+    />
+  );
 }
 
 function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
@@ -85,7 +100,13 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
   );
 }
 
-function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
+function TouchResizeHandle({
+  edge,
+  gesture,
+  pressed,
+  testID,
+  prominent,
+}: SidebarResizeHandleProps) {
   const geometry = resolveSidebarResizeHandleGeometry(false);
   // `box-none` keeps the full-height column out of hit-testing so only the
   // grab target steals taps from the rows behind it.
@@ -102,6 +123,7 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
     styles.grip,
     edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
     pressed ? styles.visibleGrip : styles.idleGrip,
+    prominent && (pressed ? styles.prominentPressedGrip : styles.prominentIdleGrip),
   ];
 
   return (
@@ -154,6 +176,16 @@ const styles = StyleSheet.create((theme) => ({
     height: 36,
     borderRadius: 2,
     backgroundColor: theme.colors.foreground,
+  },
+  prominentIdleGrip: {
+    height: 40,
+    backgroundColor: theme.colors.foregroundMuted,
+    opacity: 0.5,
+  },
+  prominentPressedGrip: {
+    height: 40,
+    backgroundColor: theme.colors.accent,
+    opacity: 1,
   },
   idleGrip: {
     opacity: 0.15,
