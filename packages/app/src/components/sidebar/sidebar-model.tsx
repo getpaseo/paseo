@@ -111,14 +111,20 @@ export function SidebarModelProvider({
   const revealRequest = useSidebarRevealStore((state) => state.request);
   useEffect(() => {
     if (!revealRequest) return;
+    // The host gate runs on the requested identity before the entry lookup: an excluded host's
+    // entries are never hydrated, so the lookup cannot see the workspace until this clears.
+    const separatorIndex = revealRequest.workspaceKey.indexOf(":");
+    const requestServerId = revealRequest.workspaceKey.slice(0, separatorIndex);
+    const view = useSidebarViewStore.getState();
+    if (view.hostFilters.length > 0 && !view.hostFilters.includes(requestServerId)) {
+      view.clearHostFilters();
+    }
     const entry = workspaceEntriesByKey.get(revealRequest.workspaceKey);
     if (!entry) return;
-    const view = useSidebarViewStore.getState();
     const sections = useSidebarCollapsedSectionsStore.getState();
     repairRevealVisibility({
       entry,
       filters: {
-        hostFilters: view.hostFilters,
         resolvedProjectFilters,
         labelFilter: view.labelFilter,
         showBackground: view.showBackground,
@@ -128,8 +134,8 @@ export function SidebarModelProvider({
         workspaceGroupKeys: sections.collapsedWorkspaceGroupKeys,
         pinned: sections.collapsedPinned,
       },
+      groupMode,
       actions: {
-        clearHostFilters: view.clearHostFilters,
         clearProjectFilters: view.clearProjectFilters,
         clearLabelFilter: view.clearLabelFilter,
         showBackground: view.toggleBackground,
@@ -138,7 +144,7 @@ export function SidebarModelProvider({
         expandPinned: () => sections.togglePinnedCollapsed(),
       },
     });
-  }, [revealRequest, resolvedProjectFilters, workspaceEntriesByKey]);
+  }, [groupMode, revealRequest, resolvedProjectFilters, workspaceEntriesByKey]);
   const filteredWorkspaceEntriesByKey = useMemo(() => {
     const byProject = filterWorkspacesByProjects({
       workspaces: [...workspaceEntriesByKey.values()],

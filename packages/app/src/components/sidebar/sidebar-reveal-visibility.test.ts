@@ -17,10 +17,10 @@ function buildEntry(overrides?: Partial<Parameters<typeof repairRevealVisibility
 function buildHarness(input?: {
   filters?: Partial<Parameters<typeof repairRevealVisibility>[0]["filters"]>;
   collapsed?: Partial<Parameters<typeof repairRevealVisibility>[0]["collapsed"]>;
+  groupMode?: Parameters<typeof repairRevealVisibility>[0]["groupMode"];
 }) {
   const calls: string[] = [];
   const actions: SidebarRevealVisibilityActions = {
-    clearHostFilters: () => calls.push("clearHostFilters"),
     clearProjectFilters: () => calls.push("clearProjectFilters"),
     clearLabelFilter: () => calls.push("clearLabelFilter"),
     showBackground: () => calls.push("showBackground"),
@@ -29,7 +29,6 @@ function buildHarness(input?: {
     expandPinned: () => calls.push("expandPinned"),
   };
   const filters = {
-    hostFilters: [],
     resolvedProjectFilters: [],
     labelFilter: { labels: [] },
     showBackground: true,
@@ -41,7 +40,8 @@ function buildHarness(input?: {
     pinned: false,
     ...input?.collapsed,
   };
-  return { calls, filters, collapsed, actions };
+  const groupMode = input?.groupMode ?? "project";
+  return { calls, filters, collapsed, groupMode, actions };
 }
 
 describe("reveal visibility repair", () => {
@@ -50,39 +50,12 @@ describe("reveal visibility repair", () => {
   });
 
   it("leaves a fully visible workspace alone", () => {
-    const { calls, filters, collapsed, actions } = buildHarness();
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness();
     const changed = repairRevealVisibility({
       entry: buildEntry(),
       filters,
       collapsed,
-      actions,
-    });
-    expect(changed).toBe(false);
-    expect(calls).toEqual([]);
-  });
-
-  it("clears a host filter that excludes the workspace's host", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
-      filters: { hostFilters: ["other-host"] },
-    });
-    const changed = repairRevealVisibility({
-      entry: buildEntry({ serverId: "local" }),
-      filters,
-      collapsed,
-      actions,
-    });
-    expect(changed).toBe(true);
-    expect(calls).toEqual(["clearHostFilters"]);
-  });
-
-  it("keeps a host filter that includes the workspace's host", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
-      filters: { hostFilters: ["local", "other-host"] },
-    });
-    const changed = repairRevealVisibility({
-      entry: buildEntry({ serverId: "local" }),
-      filters,
-      collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(false);
@@ -90,13 +63,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("clears a project filter that excludes the workspace's project", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { resolvedProjectFilters: ["local:other"] },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ projectViewKey: "local:paseo" }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
@@ -104,13 +78,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("clears a label filter that hides the workspace", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { labelFilter: { labels: ["wip"] } },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ labels: ["shipping"] }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
@@ -118,13 +93,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("keeps a label filter the workspace satisfies", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { labelFilter: { labels: ["wip"] } },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ labels: ["WIP"] }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(false);
@@ -132,13 +108,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("treats the unlabelled key as matching a workspace with no labels", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { labelFilter: { labels: [""] } },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ labels: [] }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(false);
@@ -146,13 +123,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("shows background workspaces when the target is one", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { showBackground: false },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ background: true }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
@@ -160,55 +138,93 @@ describe("reveal visibility repair", () => {
   });
 
   it("leaves background hiding alone for a foreground workspace", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: { showBackground: false },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ background: false }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(false);
     expect(calls).toEqual([]);
   });
 
-  it("expands the collapsed project section", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+  it("expands the collapsed project section in project mode", () => {
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       collapsed: { projectKeys: new Set(["local:paseo"]) },
+      groupMode: "project",
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ projectViewKey: "local:paseo" }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
     expect(calls).toEqual(["expandProject:local:paseo"]);
   });
 
-  it("expands the collapsed status group the workspace sits in", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+  it("expands the collapsed status group the workspace sits in, in status mode", () => {
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       collapsed: { workspaceGroupKeys: new Set(["needs_input"]) },
+      groupMode: "status",
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ statusBucket: "needs_input" }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
     expect(calls).toEqual(["expandWorkspaceGroup:needs_input"]);
   });
 
+  it("does not touch status-group collapses while rendering project mode", () => {
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
+      collapsed: { workspaceGroupKeys: new Set(["needs_input"]) },
+      groupMode: "project",
+    });
+    const changed = repairRevealVisibility({
+      entry: buildEntry({ statusBucket: "needs_input" }),
+      filters,
+      collapsed,
+      groupMode,
+      actions,
+    });
+    expect(changed).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("does not touch project collapses while rendering status mode", () => {
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
+      collapsed: { projectKeys: new Set(["local:paseo"]) },
+      groupMode: "status",
+    });
+    const changed = repairRevealVisibility({
+      entry: buildEntry({ projectViewKey: "local:paseo" }),
+      filters,
+      collapsed,
+      groupMode,
+      actions,
+    });
+    expect(changed).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it("expands the pinned section for a pinned workspace", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       collapsed: { pinned: true },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ pinnedAt: "2026-10-19T00:00:00Z" }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
@@ -216,13 +232,14 @@ describe("reveal visibility repair", () => {
   });
 
   it("ignores the pinned section for an unpinned workspace", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       collapsed: { pinned: true },
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ pinnedAt: null }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(false);
@@ -230,22 +247,24 @@ describe("reveal visibility repair", () => {
   });
 
   it("repairs every gate that hides the workspace, in one pass", () => {
-    const { calls, filters, collapsed, actions } = buildHarness({
+    const { calls, filters, collapsed, groupMode, actions } = buildHarness({
       filters: {
-        hostFilters: ["other-host"],
+        resolvedProjectFilters: ["local:other"],
         showBackground: false,
       },
       collapsed: { projectKeys: new Set(["local:paseo"]), pinned: true },
+      groupMode: "project",
     });
     const changed = repairRevealVisibility({
       entry: buildEntry({ background: true, pinnedAt: "2026-10-19T00:00:00Z" }),
       filters,
       collapsed,
+      groupMode,
       actions,
     });
     expect(changed).toBe(true);
     expect(calls).toEqual([
-      "clearHostFilters",
+      "clearProjectFilters",
       "showBackground",
       "expandProject:local:paseo",
       "expandPinned",
