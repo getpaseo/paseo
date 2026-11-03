@@ -119,9 +119,20 @@ inside one row instead of as separate rows would remove the index shift and the 
 
 ### Content clamp
 
-`ReactScrollView` clamps its offset to the new maximum during a mount when the content shrinks
-below it, and the helper then adds its correction on top of the clamp. A collapse near the oldest
-history moved the trigger by the collapsed height twice. During the hold, the content container
-carries extra bottom padding (native bottom is the visual top) equal to the offset plus the
-viewport height, so the content cannot shrink below the offset. The padding moves no child, and
-releasing it leaves the corrected offset valid.
+A mount that shrinks the content while `maintainVisibleContentPosition` is set applies the shrink
+twice on both platforms: the scroll view clamps its offset to the new end during the mount, and
+React Native then adds the anchor's movement to the clamped offset
+([RN #58578](https://github.com/react/react-native/issues/58578), fix in
+[PR #58695](https://github.com/react/react-native/pull/58695)). A turn that folds while the list
+follows its end lands above the end. Each platform fixes it in its own subclass of React Native's
+scroll view in `modules/paseo-scroll`: Android's `PaseoScrollView` defers the clamp to the pre-draw
+pass, and iOS's `PaseoScrollViewComponentView` restores the pre-mount offset for the adjustment and
+clamps after it. `VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
+
+The iOS subclass also keeps the offset when the mount removes its anchor view. Detaching removes the
+end pin in the same mount that opens the tapped disclosure, and React Native 0.86 moves the offset by
+the removed view's frame. Android keeps a removed view's last frame, so it keeps the offset. React
+Native 0.88 skips the adjustment for a removed anchor
+([PR #57294](https://github.com/react/react-native/pull/57294)).
+
+Remove each override once the installed React Native includes its fix.
