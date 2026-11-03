@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import type { ProviderEvent, ProviderInput } from "@getpaseo/plugin/server/provider";
@@ -33,6 +36,23 @@ const sessionConfig = {
   persist: false,
 };
 
+/** Waits until the given number of sessions reported themselves ready. */
+async function waitForReadySessions(events: ProviderEvent[], count: number) {
+  await vi.waitFor(() => {
+    const ready = events.filter((event) => event.type === "session.ready");
+    expect(ready).toHaveLength(count);
+  });
+}
+
+/** Waits for the completion of the request with the given id. */
+async function waitForCompleted(events: ProviderEvent[], requestId: string) {
+  await vi.waitFor(() => {
+    expect(
+      events.some((event) => event.type === "request.completed" && event.requestId === requestId),
+    ).toBe(true);
+  });
+}
+
 /** Waits for an event of the given type to arrive. */
 async function waitForEvent(events: ProviderEvent[], type: ProviderEvent["type"]) {
   await vi.waitFor(() => {
@@ -66,10 +86,13 @@ async function openSession(
   await waitForEvent(events, "session.ready");
 }
 
-async function sendHello(connection: Awaited<ReturnType<typeof connect>>["connection"]) {
+async function sendHello(
+  connection: Awaited<ReturnType<typeof connect>>["connection"],
+  sessionId = "p1",
+) {
   await connection.send({
     type: "session.prompt",
-    sessionId: "p1",
+    sessionId,
     prompt: {
       clientMessageId: "m1",
       delivery: "auto",
@@ -178,6 +201,106 @@ describe("ZCode provider", () => {
     } as ProviderInput);
 
     await waitForEvent(events, "session.runtime_failed");
+    await connection.close();
+  });
+
+  test("completes the requests that change a running session", async () => {
+    // The host waits for `request.completed` before it considers a
+    // configure, an interrupt, an archive or an unarchive done. Without it the
+    // caller waits forever.
+    const { connection, events } = await connect("ok", [
+      "prompt.message",
+      "session.configure",
+      "session.persistence",
+    ]);
+    await openSession(connection, events);
+
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure-1",
+      sessionId: "p1",
+      changes: { model: "zai/glm-4" },
+    } as ProviderInput);
+    await waitForCompleted(events, "configure-1");
+
+    await connection.send({
+      type: "session.interrupt",
+      requestId: "interrupt-1",
+      sessionId: "p1",
+    } as ProviderInput);
+    await waitForCompleted(events, "interrupt-1");
+
+    await connection.close();
+  });
+
+  test("gives the bundled runtime the provider config it needs", async () => {
+    // The daemon owns the environment and replaces the one the discovery
+    // found. The bundled runtime needs the path of the built-in provider
+    // config, or it exits before it answers anything.
+    const root = await mkdtemp(join(tmpdir(), "zcode-bundle-"));
+    const bundleDir = join(root, "resources", "glm");
+    const configDir = join(root, "resources", "config", "provider");
+    await mkdir(bundleDir, { recursive: true });
+    await mkdir(configDir, { recursive: true });
+    const bundle = join(bundleDir, "zcode.cjs");
+    // The desktop bundle is a CommonJS file that runs the app-server.
+    await writeFile(bundle, `import(${JSON.stringify(fakeServer)});\n`);
+    const configPath = join(configDir, "zcode-builtin.json");
+    await writeFile(configPath, "{}\n");
+    const envFile = join(root, "child-env.json");
+
+    const provider = createZCodeProvider();
+    const connection = await provider.connect({
+      launch: {
+        command: process.execPath,
+        args: [bundle, "app-server", "--stdio"],
+        // The daemon's environment: it does not carry the config path.
+        env: {
+          PATH: process.env.PATH ?? "",
+          FAKE_ZCODE_MODE: "report-env",
+          FAKE_ZCODE_ENV_FILE: envFile,
+        },
+      },
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+
+    await connection.send({ type: "catalog", requestId: "r1", cwd: "/tmp" } as ProviderInput);
+    await waitForEvent(events, "catalog");
+
+    const childEnv = JSON.parse(await readFile(envFile, "utf8")) as Record<string, string>;
+    expect(childEnv["ELECTRON_RUN_AS_NODE"]).toBe("1");
+    expect(childEnv["ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"]).toBe(configPath);
+    await connection.close();
+  });
+
+  test("keeps another session's events out of a session's timeline", async () => {
+    // The transport is shared, so every session sees every event. A session
+    // that forwards them all labels another agent's messages with its own id.
+    const { connection, events } = await connect("ok", ["prompt.message"]);
+    await openSession(connection, events);
+    await connection.send({
+      type: "session.open",
+      requestId: "r2",
+      sessionId: "p2",
+      config: sessionConfig,
+      history: "skip",
+    } as ProviderInput);
+    await waitForReadySessions(events, 2);
+
+    await sendHello(connection, "p2");
+
+    await vi.waitFor(() => {
+      expect(hasAssistantMessage(events)).toBe(true);
+    });
+    // The reply belongs to the session that asked for it.
+    const messages = events.filter(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(messages.every((event) => event.sessionId === "p2")).toBe(true);
+
     await connection.close();
   });
 });

@@ -17,14 +17,18 @@ function textPrompt(clientMessageId: string, text: string): ProviderPrompt {
 
 function fakeTransport() {
   const sent: Array<{ method: string; params: unknown }> = [];
+  const created: Array<unknown> = [];
   const listeners = new Set<(event: ZCodeEvent) => void>();
   const transport: ZCodeTransport = {
     capabilities: ["prompt.message", "permission"],
     unavailableMethods: new Set<string>(),
-    createSession: async () => ({
-      sessionId: "zcode-1",
-      workspace: { workspacePath: "/w", workspaceKey: "/w" },
-    }),
+    createSession: async (input) => {
+      created.push(input);
+      return {
+        sessionId: "zcode-1",
+        workspace: { workspacePath: "/w", workspaceKey: "/w" },
+      };
+    },
     resumeSession: async () => ({
       sessionId: "zcode-1",
       workspace: { workspacePath: "/w", workspaceKey: "/w" },
@@ -51,6 +55,7 @@ function fakeTransport() {
   return {
     transport,
     sent,
+    created,
     emit(event: ZCodeEvent) {
       for (const listener of listeners) listener(event);
     },
@@ -244,6 +249,26 @@ describe("ZCode session turn state", () => {
     expect(turns.filter((event) => event.state === "completed")).toHaveLength(0);
   });
 
+  test("creates the session with the model, mode and thought level it was asked for", async () => {
+    const harness = fakeTransport();
+    const session = new ZCodeSession({
+      id: "paseo-1",
+      transport: harness.transport,
+      emit: () => undefined,
+    });
+
+    await session.open({
+      cwd: "/w",
+      settings: { model: "zai/glm-5", mode: "plan", thinkingOption: "high" },
+    });
+
+    expect(harness.created[0]).toMatchObject({
+      model: "zai/glm-5",
+      mode: "plan",
+      thoughtLevel: "high",
+    });
+  });
+
   test("publishes a tool call with the detail of its scheduled variant", async () => {
     const harness = fakeTransport();
     const events: ProviderEvent[] = [];
@@ -253,6 +278,7 @@ describe("ZCode session turn state", () => {
       emit: (event) => events.push(event),
     });
     expect(session).toBeInstanceOf(ZCodeSession);
+    await session.open({ cwd: "/w" });
 
     // ZCode carries a tool call's input only on the scheduled variant. The
     // later result variant describes the same call without it, so the item

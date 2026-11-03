@@ -51,9 +51,12 @@ export class ZCodeSession {
     return this.options.id;
   }
 
-  async open(input: { cwd: string }): Promise<string> {
+  async open(input: { cwd: string; settings?: ProviderConfigChanges }): Promise<string> {
     const handle = await this.options.transport.createSession({
       workspace: { workspacePath: input.cwd, workspaceKey: input.cwd },
+      ...(input.settings?.model ? { model: input.settings.model } : {}),
+      ...(input.settings?.mode ? { mode: input.settings.mode } : {}),
+      ...(input.settings?.thinkingOption ? { thoughtLevel: input.settings.thinkingOption } : {}),
     });
     this.nativeSessionId = handle.sessionId;
     this.options.emit({
@@ -81,12 +84,22 @@ export class ZCodeSession {
    * The persistence handle carries the ZCode session id, so a restored agent
    * continues in the conversation it left instead of starting a new one.
    */
-  async resume(input: { cwd: string; nativeSessionId: string }): Promise<string> {
+  async resume(input: {
+    cwd: string;
+    nativeSessionId: string;
+    settings?: ProviderConfigChanges;
+  }): Promise<string> {
     const handle = await this.options.transport.resumeSession({
       sessionId: input.nativeSessionId,
       workspace: { workspacePath: input.cwd, workspaceKey: input.cwd },
+      ...(input.settings?.model ? { model: input.settings.model } : {}),
+      ...(input.settings?.mode ? { mode: input.settings.mode } : {}),
+      ...(input.settings?.thinkingOption ? { thoughtLevel: input.settings.thinkingOption } : {}),
     });
     this.nativeSessionId = handle.sessionId;
+    // A restored session keeps the settings it had, so the ones the host asks
+    // for are applied on top of them.
+    if (input.settings) await this.configure(input.settings);
     this.options.emit({
       type: "session.opened",
       sessionId: this.options.id,
@@ -237,6 +250,10 @@ export class ZCodeSession {
   }
 
   private handleEvent(event: ZCodeEvent): void {
+    // The transport is shared by every session on this connection, so it
+    // delivers every session's events. An event that belongs to another
+    // ZCode session is not this session's business.
+    if (event.sessionId !== this.nativeSessionId) return;
     this.recordToolDetail(event);
     if (event.type === "turn.started") {
       this.handleTurnStarted(event);

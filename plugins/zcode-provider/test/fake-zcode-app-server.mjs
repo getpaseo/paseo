@@ -1,9 +1,12 @@
+import { writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const lines = createInterface({ input: process.stdin });
 const mode = process.env.FAKE_ZCODE_MODE ?? "ok";
 const queue = [];
 let seq = 0;
+/** The sessions this fake created, each with its own id. */
+let created = 0;
 /** The turn waiting on the host's answer to the fake's permission request. */
 let pendingTurn = null;
 
@@ -71,7 +74,8 @@ for await (const line of lines) {
   }
 
   if (request.method === "session/create") {
-    respond(id, { sessionId: "s1" });
+    created += 1;
+    respond(id, { sessionId: `s${created}` });
     continue;
   }
   if (request.method === "session/read") {
@@ -96,7 +100,11 @@ for await (const line of lines) {
   }
   if (request.method === "session/events") {
     const afterSeq = request.params?.afterSeq ?? 0;
-    respond(id, { events: queue.filter((event) => event.seq > afterSeq) });
+    const sessionId = request.params?.sessionId;
+    // The app-server answers with the requested session's own events only.
+    respond(id, {
+      events: queue.filter((event) => event.seq > afterSeq && event.sessionId === sessionId),
+    });
     continue;
   }
   if (request.method === "session/send") {
@@ -167,7 +175,19 @@ for await (const line of lines) {
     continue;
   }
   if (request.method === "runtime/capabilities") {
-    respond(id, { ok: true });
+    // The env the child was started with, so a test can assert what the
+    // runtime received.
+    respond(id, { ok: true, env: process.env });
+    if (mode === "report-env") {
+      // The env the child was started with, written where the test can read
+      // it.
+      writeFileSync(process.env.FAKE_ZCODE_ENV_FILE, JSON.stringify(process.env));
+    }
+    if (mode === "crash") {
+      // The child answers, then dies. A crash after the startup is only
+      // visible on the exit promise.
+      setTimeout(() => process.exit(4), 10);
+    }
     continue;
   }
   respond(id, {});

@@ -1,3 +1,4 @@
+import { access, constants } from "node:fs/promises";
 import {
   negotiateProviderCapabilities,
   requireProviderCapabilities,
@@ -17,6 +18,7 @@ import {
   ZCODE_NOT_FOUND_DIAGNOSTIC,
   defaultDesktopRoots,
   listDesktopAppRoots,
+  providerConfigEnv,
   resolveZCodeLaunch,
   type ZCodeLaunch,
 } from "./internal/binary.js";
@@ -27,6 +29,16 @@ import { ZCodeSession } from "./internal/session.js";
 import { mapPermissionRequest, permissionResponseFor } from "./internal/signals.js";
 import type { ZCodeTransport } from "./internal/transport.js";
 import { ZCodeError } from "./internal/wire.js";
+
+/** Whether the path names an existing file. */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function createZCodeProvider(): ProviderRegistration {
   return {
@@ -183,23 +195,32 @@ function createConnection(
   }
 
   /**
-   * The bundled JavaScript runtime is an Electron app bundle. It only runs as
-   * Node when ELECTRON_RUN_AS_NODE is set, and only the bundled runtime needs
-   * it. The check reads the launch the daemon handed over, not the resolution
-   * the plugin proposed, because a user override can replace the command.
+   * The environment the child process runs with.
+   *
+   * The daemon owns the environment and replaces the one the discovery
+   * found, so the values the bundled runtime needs are restored here: the
+   * Electron runtime flag and the path of the built-in provider config.
+   *
+   * Both come from the runtime in the launch's own arguments. The daemon
+   * builds the launch from the plugin's resolution, so the bundle is still
+   * the first argument, and a user command override points at a different
+   * runtime that needs neither.
    */
-  function childEnv(): Record<string, string> {
+  async function childEnv(): Promise<Record<string, string>> {
     const env = { ...launch.env };
-    if (launch.args[0]?.endsWith(".cjs")) env["ELECTRON_RUN_AS_NODE"] = "1";
+    const runtime = launch.args[0];
+    if (!runtime?.endsWith(".cjs") && !runtime?.endsWith(".js")) return env;
+    env["ELECTRON_RUN_AS_NODE"] = "1";
+    Object.assign(env, await providerConfigEnv(runtime, isFile));
     return env;
   }
 
-  function ensureTransportProcess(): ZCodeProcess {
+  async function ensureTransportProcess(): Promise<ZCodeProcess> {
     if (!child) {
       child = startZCodeProcess({
         command: launch.command,
         args: launch.args,
-        env: childEnv(),
+        env: await childEnv(),
       });
       transport = createLegacyTransport(child);
       transport.onRequest(async (request) => {
@@ -219,18 +240,22 @@ function createConnection(
         });
         return answer;
       });
-      // The child reports its own death through the ready promise. Every
-      // session it hosted has to learn about it, or the daemon waits for a
-      // reply that never arrives.
+      // The child reports its own death through the ready promise while it
+      // starts up. Once it is ready that promise stays resolved, so a later
+      // crash has to be watched on its own: every session the child hosted has
+      // to learn about it, or the daemon waits for a reply that never arrives.
       void child.ready.catch((error) => {
+        onProcessExit(error instanceof Error ? error : new Error(String(error)));
+      });
+      void child.exited.catch((error: unknown) => {
         onProcessExit(error instanceof Error ? error : new Error(String(error)));
       });
     }
     return child;
   }
 
-  function ensureTransport(): ZCodeTransport {
-    ensureTransportProcess();
+  async function ensureTransport(): Promise<ZCodeTransport> {
+    await ensureTransportProcess();
     return transport!;
   }
 
@@ -256,14 +281,53 @@ function createConnection(
    */
   async function readCatalog(cwd: string | undefined): Promise<ProviderCatalog> {
     const workspacePath = cwd ?? process.cwd();
-    const handle = await ensureTransport().createSession({
+    const handle = await (
+      await ensureTransport()
+    ).createSession({
       workspace: { workspacePath, workspaceKey: workspacePath },
     });
     try {
-      const snapshot = await ensureTransport().readSnapshot({ sessionId: handle.sessionId });
+      const snapshot = await (
+        await ensureTransport()
+      ).readSnapshot({ sessionId: handle.sessionId });
       return mapCatalog(snapshot);
     } finally {
-      await ensureTransport().archive({ sessionId: handle.sessionId });
+      await (await ensureTransport()).archive({ sessionId: handle.sessionId });
+    }
+  }
+
+  /**
+   * Opens a session, restoring it when the host carries a persistence handle.
+   */
+  async function openSession(
+    input: Extract<ProviderInput, { type: "session.open" }>,
+  ): Promise<void> {
+    if (sessions.has(input.sessionId)) {
+      throw new ZCodeError(`Session already exists: ${input.sessionId}`);
+    }
+    const opened = new ZCodeSession({
+      id: input.sessionId,
+      transport: await ensureTransport(),
+      emit,
+    });
+    sessions.set(input.sessionId, opened);
+    try {
+      const settings = {
+        ...(input.config.model ? { model: input.config.model } : {}),
+        ...(input.config.mode ? { mode: input.config.mode } : {}),
+        ...(input.config.thinkingOption ? { thinkingOption: input.config.thinkingOption } : {}),
+      };
+      const native = input.persistence
+        ? await opened.resume({
+            cwd: input.config.cwd,
+            nativeSessionId: nativeSessionIdOf(input.persistence),
+            settings,
+          })
+        : await opened.open({ cwd: input.config.cwd, settings });
+      nativeIndex.set(native, input.sessionId);
+    } catch (error) {
+      sessions.delete(input.sessionId);
+      throw error;
     }
   }
 
@@ -278,7 +342,9 @@ function createConnection(
         return;
       }
       case "sessions": {
-        const list = await ensureTransport().listSessions({
+        const list = await (
+          await ensureTransport()
+        ).listSessions({
           ...(input.cwd
             ? { workspace: { workspacePath: input.cwd, workspaceKey: input.cwd } }
             : {}),
@@ -292,27 +358,7 @@ function createConnection(
         return;
       }
       case "session.open": {
-        if (sessions.has(input.sessionId)) {
-          throw new ZCodeError(`Session already exists: ${input.sessionId}`);
-        }
-        const opened = new ZCodeSession({
-          id: input.sessionId,
-          transport: ensureTransport(),
-          emit,
-        });
-        sessions.set(input.sessionId, opened);
-        try {
-          const native = input.persistence
-            ? await opened.resume({
-                cwd: input.config.cwd,
-                nativeSessionId: nativeSessionIdOf(input.persistence),
-              })
-            : await opened.open({ cwd: input.config.cwd });
-          nativeIndex.set(native, input.sessionId);
-        } catch (error) {
-          sessions.delete(input.sessionId);
-          throw error;
-        }
+        await openSession(input);
         return;
       }
       case "session.prompt": {
@@ -321,11 +367,11 @@ function createConnection(
       }
       case "session.configure": {
         await session(input.sessionId).configure(input.changes);
-        return;
+        break;
       }
       case "session.interrupt": {
         await session(input.sessionId).interrupt();
-        return;
+        break;
       }
       case "session.permission": {
         const request = pendingPermissions.get(input.permissionId);
@@ -341,18 +387,18 @@ function createConnection(
       }
       case "session.archive": {
         const nativeId = nativeSessionIdOf(input.persistence);
-        await ensureTransport().archive({ sessionId: nativeId });
+        await (await ensureTransport()).archive({ sessionId: nativeId });
         emit({
           type: "session.persistence",
           sessionId: paseoIdForNative(nativeId),
           persistence: input.persistence,
         });
-        return;
+        break;
       }
       case "session.unarchive": {
         const nativeId = nativeSessionIdOf(input.persistence);
-        await ensureTransport().resumeSession({ sessionId: nativeId });
-        return;
+        await (await ensureTransport()).resumeSession({ sessionId: nativeId });
+        break;
       }
       case "session.can_stop_runtime": {
         // The daemon already refuses the probe while a turn is active or a
@@ -371,11 +417,13 @@ function createConnection(
         await session(input.sessionId).close();
         sessions.delete(input.sessionId);
         emit({ type: "session.closed", sessionId: input.sessionId });
-        return;
+        break;
       }
       default:
         throw new ZCodeError(`Unsupported ZCode operation: ${input.type}`);
     }
+    // The host waits for this reply before it treats the request as done.
+    emit({ type: "request.completed", requestId: input.requestId });
   }
 
   function failed(input: ProviderInput, error: unknown): void {
