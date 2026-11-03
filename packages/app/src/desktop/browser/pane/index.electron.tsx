@@ -1635,10 +1635,10 @@ function BrowserElementAnnotationCard({
           initialValue={comment}
         />
         <View style={styles.annotationActions}>
-          <Button variant="ghost" size="sm" onPress={onCancel}>
+          <Button variant="ghost" onPress={onCancel}>
             {t("workspace.browser.annotate.cancel")}
           </Button>
-          <Button variant="default" size="sm" onPress={handleSubmit}>
+          <Button variant="default" onPress={handleSubmit}>
             {t("workspace.browser.annotate.submit")}
           </Button>
         </View>

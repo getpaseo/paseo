@@ -67,6 +67,7 @@ interface FakeAgentSessionOptions {
 
 export interface TestAgentClientOptions {
   beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
+  beforeResumeSession?: (handle: AgentPersistenceHandle) => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
@@ -1254,6 +1255,7 @@ class FakeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.options.beforeResumeSession?.(handle);
     const cfg: AgentSessionConfig = {
       provider: this.provider,
       cwd: overrides?.cwd ?? process.cwd(),
