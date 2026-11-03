@@ -12,6 +12,7 @@
  */
 import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import type { ForgeReferenceSigil } from "@/git/client-forge-module";
 import { getClientForgeLogicModule } from "@/git/forges";
 
 export interface ForgeBlobUrlInput {
@@ -25,6 +26,14 @@ export interface ForgeBlobUrlInput {
 export interface ForgeBranchTreeUrlInput {
   remoteUrl: string | null | undefined;
   branch: string | null | undefined;
+}
+
+export interface ForgeReferenceUrlInput {
+  remoteUrl: string | null | undefined;
+  /** Repository path of a cross-repository reference; the remote's repository when absent. */
+  repo?: string | null;
+  sigil: ForgeReferenceSigil;
+  number: number;
 }
 
 export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): string | null {
@@ -148,6 +157,33 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }
   return url;
+}
+
+/**
+ * Web URL of a shorthand reference such as `#12` or `group/project!12`. A
+ * cross-repository reference stays on the remote's host. Null when the forge
+ * has no shorthand for the sigil.
+ */
+export function buildForgeReferenceUrl(
+  forge: string,
+  input: ForgeReferenceUrlInput,
+): string | null {
+  const referencePath = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths?.find(
+    (path) => path.sigil === input.sigil,
+  );
+  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const repo = input.repo ?? location?.repo;
+  if (
+    !referencePath ||
+    !location ||
+    !repo ||
+    !isValidRepoPath(repo) ||
+    !Number.isSafeInteger(input.number) ||
+    input.number <= 0
+  ) {
+    return null;
+  }
+  return `https://${forgeAuthority(location)}/${repo}${referencePath.infix}${input.number}`;
 }
 
 /** Whether the forge has web URL builders (i.e. a known URL grammar). */
