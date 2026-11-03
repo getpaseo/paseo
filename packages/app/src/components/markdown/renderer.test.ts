@@ -37,6 +37,50 @@ it("resolves authored root-relative links only when the target is a known comman
   expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
 });
 
+describe("CJK emphasis flanking", () => {
+  const flags = { latexMath: false };
+  it("renders a bold CJK label without spaces after its punctuation", async () => {
+    const source = "**Obsidian：**决定去哪找、哪些文件算更新包、应该加载哪个版本。";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Strong", children: [{ type: "Text", content: "Obsidian：" }] },
+      { type: "Text", content: "决定去哪找、哪些文件算更新包、应该加载哪个版本。" },
+    ]);
+  });
+  it.each([
+    ["前**「中文」**后", "Strong", "「中文」"],
+    ["前*「日本語。」*后", "Emphasis", "「日本語。」"],
+    ["前**（한국어）**后", "Strong", "（한국어）"],
+  ])("renders CJK punctuation inside emphasis: %s", async (source, type, text) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    const content = tree.children?.[0]?.children;
+    expect(content?.map((node) => node.type)).toEqual(["Text", type, "Text"]);
+    function nodeText(node: ASTNode): string {
+      return node.content ?? node.children?.map(nodeText).join("") ?? "";
+    }
+    expect(content?.map(nodeText)).toEqual(["前", text, "后"]);
+  });
+  it.each([
+    "\\*\\*Obsidian：\\*\\*决定",
+    "before**word:**after",
+    "前__「中文」__后",
+    "** 中文 **",
+    "unfinished **「中文」",
+  ])("keeps escaped, unfinished and non-CJK delimiters literal: %s", async (source) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Text", content: source.replace(/\\([*=])/g, "$1") },
+    ]);
+  });
+  it("keeps emphasis delimiters literal in code", async () => {
+    const source = "`**Obsidian：**决定`";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Code", children: [{ type: "Text", content: "**Obsidian：**决定" }] },
+    ]);
+  });
+});
+
 describe("shared Markdown source adaptation", () => {
   it("keeps paragraphs, fences and quotes together for the library", () => {
     const source = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
