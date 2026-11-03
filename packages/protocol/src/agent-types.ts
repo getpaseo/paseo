@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { AgentMessage } from "./agent-message.js";
 import type {
   AgentAttachment,
@@ -22,8 +24,18 @@ export type AgentProvider = string;
  *
  * A provider that reports a budget reason stopped mid-task, so the UI shows it
  * as a truncated turn rather than a finished one.
+ *
+ * The schema is the single list of reasons. The type is inferred from it, so a
+ * reason added in one place is present in both.
  */
-export type AgentTurnStopReason = "end_turn" | "max_turn_requests" | "max_tokens" | "refusal";
+export const AgentTurnStopReasonSchema = z.enum([
+  "end_turn",
+  "max_turn_requests",
+  "max_tokens",
+  "refusal",
+]);
+
+export type AgentTurnStopReason = z.infer<typeof AgentTurnStopReasonSchema>;
 
 export interface AgentMetadata {
   [key: string]: unknown;
