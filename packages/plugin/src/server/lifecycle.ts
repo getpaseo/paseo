@@ -170,12 +170,18 @@ export interface PluginHookRequests {
   "command.run.before": PluginCommandRunRequest;
 }
 
-/** What a hook may return. An omitted `metadata` stays as it was. */
-type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
+/** What a hook may return. An omitted `metadata` or `workspaceId` stays as it was. */
+type PluginHookRequestResults = Omit<
+  PluginHookRequests,
+  "agent.open.before" | "agent.create.before"
+> & {
   // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
   "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
     readonly background?: boolean;
     metadata?: Readonly<Record<string, JsonValue>>;
+  };
+  "agent.create.before": Omit<PluginHookRequests["agent.create.before"], "workspaceId"> & {
+    readonly workspaceId?: string | null;
   };
 };
 
