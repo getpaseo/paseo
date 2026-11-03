@@ -869,7 +869,7 @@ function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   } else if (newString) {
     const contentLines = newString.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
     lines.push(`@@ -0,0 +1,${contentLines.length} @@`);
-    lines.push(...contentLines.map((line) => `+${line}`));
+    for (const line of contentLines) lines.push(`+${line}`);
   }
   return lines.join("\n");
 }

@@ -1387,3 +1387,26 @@ describe("multi-file preview metadata", () => {
     expect(diff.length).toBeLessThanOrEqual(12000);
   });
 });
+
+describe("large multi-file additions", () => {
+  it("bounds a generated addition without throwing before later files are mapped", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "large-addition",
+        status: "completed",
+        changes: [
+          { path: "/repo/generated.txt", kind: { type: "add" }, diff: "x\n".repeat(150000) },
+          { path: "/repo/second.txt", kind: { type: "add" }, diff: "second\n" },
+        ],
+      },
+      { cwd: "/repo" },
+    );
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.status).toBe("completed");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/generated.txt b/generated.txt");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+    expect(item.detail.unifiedDiff).toContain("+second");
+    expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
+  });
+});
