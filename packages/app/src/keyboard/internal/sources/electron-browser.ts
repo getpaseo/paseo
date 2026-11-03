@@ -3,8 +3,8 @@ import {
   matchesKeyboardShortcutContext,
   type KeyboardShortcutInput,
   type ParsedShortcutBinding,
-} from "../../keyboard/keyboard-shortcuts";
-import type { KeyCombo } from "../../keyboard/shortcut-string";
+} from "../../keyboard-shortcuts";
+import type { KeyCombo } from "../../shortcut-string";
 
 export interface BrowserShortcutPrefix {
   alt: boolean;
@@ -32,7 +32,7 @@ interface BrowserShortcutPolicyInput {
   bindings: readonly ParsedShortcutBinding[];
   chordState?: ChordState;
   isMac: boolean;
-  isDesktop: boolean;
+  usesDesktopBindings: boolean;
 }
 
 export function shouldPublishBrowserShortcutPolicy(input: {
@@ -149,7 +149,7 @@ function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): Browse
   const prefixes = new Map<string, BrowserShortcutPrefix>();
   const context = {
     isMac: input.isMac,
-    isDesktop: input.isDesktop,
+    usesDesktopBindings: input.usesDesktopBindings,
     focusScope: "browser" as const,
     commandCenterOpen: false,
   };
@@ -208,4 +208,27 @@ export function buildBrowserKeyboardPolicy(
     }
   }
   return { menuPrefixes, prefixes };
+}
+
+interface ElectronBrowserKeySource {
+  subscribe(handler: (payload: unknown) => void): (() => void) | Promise<() => void>;
+  captureFocusRestore(browserId: string): void;
+}
+export function attachElectronBrowserSource(
+  source: ElectronBrowserKeySource,
+  handlers: import("./contract").KeyboardSourceHandlers,
+): () => void {
+  const subscription = source.subscribe((payload) => {
+    const input = parseBrowserShortcutInput(payload);
+    if (!input) return;
+    handlers.keyDown({
+      event: { ...input, preventDefault() {}, stopPropagation() {} },
+      focusScope: "browser",
+      captureFocusRestore: () => source.captureFocusRestore(input.browserId),
+    });
+  });
+  return () => {
+    if (typeof subscription === "function") subscription();
+    else void subscription.then((dispose) => dispose());
+  };
 }
