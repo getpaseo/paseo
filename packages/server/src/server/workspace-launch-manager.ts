@@ -696,13 +696,9 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (!workspaceConfig.ok) {
       return ports;
     }
-    const workspaceLaunchNames = new Set([
-      ...projectLaunchNames,
-      ...getWorkspaceLaunchConfigs(workspaceConfig.config).keys(),
-    ]);
     for (const port of getExplicitWorkspaceServicePorts(
       workspaceConfig.config,
-      workspaceLaunchNames,
+      projectLaunchNames,
     )) {
       ports.add(port);
     }

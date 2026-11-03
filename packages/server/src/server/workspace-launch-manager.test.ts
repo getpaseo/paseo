@@ -873,6 +873,67 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("reserves service ports shadowed only by a worktree-local launch", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-launch-project-service-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "paseo-launch-worktree-service-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "43000-43004", blockSize: 4 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({
+        scripts: { api: { type: "service", command: "./bin/api", port: 43_000 } },
+        launches: { api: { command: "./bin/worktree-api" } },
+      }),
+    );
+    const context = {
+      workspaceId: "workspace-launch-worktree-service",
+      workspaceDirectory,
+      projectConfigDirectory: projectDirectory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: runtimeEnvironment,
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+      logger: pino({ level: "silent" }),
+    });
+
+    try {
+      await expect(manager.start(context, "dev")).resolves.toMatchObject({
+        portBase: 43_001,
+        portEnd: 43_004,
+        portCount: 4,
+      });
+      const servicePorts = await ensureWorkspaceServicePortPlan({
+        workspaceId: context.workspaceId,
+        services: [{ scriptName: "api", port: 43_000 }],
+        getReservedPorts: () => runtimeEnvironment.getReservedPorts(),
+        allocatePort: async () => {
+          throw new Error("An explicit service port must not request dynamic allocation");
+        },
+      });
+      expect(servicePorts).toEqual(new Map([["api", 43_000]]));
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+      releaseWorkspaceServicePortPlan(context.workspaceId);
+    }
+  });
+
   it("waits for an in-flight service plan before leasing a launch port block", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-service-race-"));
     tempDirs.push(directory);
