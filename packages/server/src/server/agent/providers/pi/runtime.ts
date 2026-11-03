@@ -1,4 +1,5 @@
 import type { PiTranscript } from "./transcript.js";
+import { z } from "zod";
 import type {
   PiModel,
   PiPromptAck,
@@ -39,10 +40,11 @@ export interface PiStartSessionInput {
   extraArgs?: string[];
 }
 
-export interface PiClearedQueue {
-  steering: string[];
-  followUp: string[];
-}
+export const PiClearedQueueSchema = z.object({
+  steering: z.array(z.string()),
+  followUp: z.array(z.string()),
+});
+export type PiClearedQueue = z.infer<typeof PiClearedQueueSchema>;
 
 export interface PiRuntimeSession {
   readonly environment: Record<string, string>;

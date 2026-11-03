@@ -1582,6 +1582,9 @@ export class PiRpcAgentSession implements AgentSession {
         (submission) => !submission.consumed && submission.text === text,
       );
       const submission = index >= 0 ? this.pendingSteerSubmissions.splice(index, 1)[0] : undefined;
+      // Pi retains consumed image-only entries in its text queue. An empty native
+      // entry proves removal only when we still have an unconsumed submission.
+      if (!text && !submission) continue;
       const label = submission?.label ?? (text || "queued message");
       this.emit({
         type: "timeline",

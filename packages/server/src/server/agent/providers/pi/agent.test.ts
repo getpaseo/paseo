@@ -2490,6 +2490,34 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test.each([false, true])(
+    "does not warn for Pi's stale consumed image queue entry (native echo: %s)",
+    async (echoEntry) => {
+      const { pi, session, events } = await createSession();
+      const native = pi.latestSession();
+      native.setModelResult = {
+        provider: "openai",
+        id: "gpt-4o",
+        input: ["text", "image"],
+      };
+      await session.setModel("openai/gpt-4o");
+      const { turnId } = await session.startTurn("work");
+      await session.steerActiveTurn(
+        [{ type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" }],
+        { expectedTurnId: turnId },
+      );
+      if (echoEntry) {
+        native.finishSubmittedUserMessage({ id: "image-steer", parentId: null, text: "" });
+      } else {
+        native.emit({ type: "message_end", message: { role: "user", content: [] } });
+      }
+
+      await session.interrupt();
+
+      expect(events.timelineItems().filter((item) => item.type === "notification")).toEqual([]);
+    },
+  );
+
   test("does not report a consumed steer rewritten by a Pi input extension", async () => {
     const { pi, session, events } = await createSession();
     pi.latestSession().steerTextTransform = (text) => text.replace("please ", "");

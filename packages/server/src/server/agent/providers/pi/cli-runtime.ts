@@ -3,7 +3,6 @@ import { readPiTranscript, type PiTranscript } from "./transcript.js";
 import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
-import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
@@ -13,6 +12,7 @@ import {
 } from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
+  PiClearedQueueSchema,
   type PiRuntime,
   type PiRuntimeLaunch,
   type PiRuntimeSession,
@@ -154,7 +154,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   async clearQueue(): Promise<PiClearedQueue | undefined> {
     const result = await this.options.process.requestStopWork({ type: "clear_queue" });
     if (result === undefined) return undefined;
-    return z.object({ steering: z.array(z.string()), followUp: z.array(z.string()) }).parse(result);
+    return PiClearedQueueSchema.parse(result);
   }
 
   async compact(customInstructions?: string): Promise<void> {

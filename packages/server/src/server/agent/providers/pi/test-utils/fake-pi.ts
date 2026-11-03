@@ -443,7 +443,7 @@ export class FakePiSession implements PiRuntimeSession {
       const text = getUserMessageText(message.content);
       if (this.foregroundMessage === text) {
         this.foregroundMessage = null;
-      } else {
+      } else if (text) {
         const index = this.steeringMessages.indexOf(text);
         if (index >= 0) this.steeringMessages.splice(index, 1);
       }
