@@ -1540,16 +1540,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnId || this.activeTurnStarted ? { turnId, error: null } : null;
     this.interruptingTurn = interruption;
     try {
-      try {
-        await this.runtimeSession.clearQueue();
-      } catch (error) {
-        // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
-        // the pi floor supports clear_queue (added in pi 0.84.4).
-        if (!isPiMissingClearQueueRpc(error)) {
-          throw error;
-        }
-      }
-      await this.runtimeSession.abort();
+      await this.abortRuntimeWork();
     } catch (error) {
       const terminalError = this.interruptingTurn === interruption ? interruption?.error : null;
       if (this.interruptingTurn === interruption) {
@@ -1599,6 +1590,19 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.interruptingTurn === interruption) {
       this.interruptingTurn = null;
     }
+  }
+
+  private async abortRuntimeWork(): Promise<void> {
+    try {
+      await this.runtimeSession.clearQueue();
+    } catch (error) {
+      // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
+      // the pi floor supports clear_queue (added in pi 0.84.4).
+      if (!isPiMissingClearQueueRpc(error)) {
+        throw error;
+      }
+    }
+    await this.runtimeSession.abort();
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1655,6 +1659,13 @@ export class PiRpcAgentSession implements AgentSession {
     this.extensionHost.close();
     this.usagePoller.close();
     try {
+      if (this.activeTurnId || this.activeTurnStarted) {
+        // Pi persists terminal tool results before acknowledging abort. Keep its
+        // event stream alive until then so restart history cannot strand the tool.
+        await this.abortRuntimeWork().catch((err) => {
+          this.logger.warn({ err }, "Failed to abort Pi work before closing its runtime");
+        });
+      }
       await this.runtimeSession.close();
     } finally {
       await Promise.all([this.pendingOutput, ...this.pendingExtensionHydrations]);

@@ -208,6 +208,52 @@ async function createSession(
   return { pi, session, events };
 }
 
+test("close preserves a foreground tool's terminal update before releasing Pi", async () => {
+  const { pi, session, events } = await createSession();
+  const native = pi.latestSession();
+  const stopped = Promise.withResolvers<void>();
+  native.abortCompletion = stopped.promise;
+  await session.startTurn("Run a foreground command");
+  native.emit({
+    type: "tool_execution_start",
+    toolCallId: "foreground-bash",
+    toolName: "bash",
+    args: { command: "sleep 120" },
+  });
+
+  const closing = session.close();
+  await flushTurnScheduling();
+  // Pi's abort acknowledgement follows its final tool result and durable transcript write.
+  native.emit({
+    type: "tool_execution_end",
+    toolCallId: "foreground-bash",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "Command aborted" }] },
+    isError: true,
+  });
+  stopped.resolve();
+  await closing;
+
+  expect(
+    events
+      .timelineItems()
+      .findLast((item) => item.type === "tool_call" && item.callId === "foreground-bash"),
+  ).toMatchObject({
+    callId: "foreground-bash",
+    status: "failed",
+  });
+});
+
+test("close releases Pi when stopping its active work fails", async () => {
+  const { pi, session } = await createSession();
+  const native = pi.latestSession();
+  await session.startTurn("Run a foreground command");
+  native.clearQueueError = new Error("Pi control plane is unavailable");
+
+  await expect(session.close()).resolves.toBeUndefined();
+  expect(native.closeCalls).toBe(1);
+});
+
 test("forwards launch-context env to the Pi process launch", async () => {
   const pi = new FakePi();
   const client = createClient(pi);
