@@ -1352,6 +1352,32 @@ for (const [variant, env] of [
     ).toMatchObject({ item: { text: env.MUSE_TEST_AGENT_TEXT } });
   });
 }
+for (const ending of ["split-crlf", "eof"] as const) {
+  test(`a final assistant frame with ${ending} is delivered exactly once`, async () => {
+    const text = `Final message with ${ending}`;
+    const h = await harness("text-reasoning", {
+      MUSE_TEST_AGENT_TEXT: text,
+      MUSE_TEST_FRAME_ENDING: ending,
+    });
+    await h.open();
+    await h.prompt();
+    const isFinalMessage = (event: ProviderEvent) =>
+      event.type === "timeline.item" &&
+      event.item.type === "assistant_message" &&
+      event.item.text === text;
+    await h.wait(isFinalMessage);
+    if (ending === "split-crlf") {
+      await h.wait(
+        (event) =>
+          (event.type === "session.turn" && event.state === "completed") ||
+          event.type === "session.runtime_failed",
+      );
+    }
+    await h.connection.close();
+    expect(h.events.filter(isFinalMessage)).toHaveLength(1);
+    expect(h.events.filter((event) => event.type === "session.runtime_failed")).toEqual([]);
+  });
+}
 test("sessions with a null model import and resume without a null persistence model", async () => {
   const h = await harness("resume-without-cursor", { MUSE_TEST_NULL_MODEL: "1" });
   await h.send({
