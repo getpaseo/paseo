@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -62,3 +63,30 @@ test.each(["agent", "workspace"] as const)(
   },
   60_000,
 );
+
+test("creation still rejects a caller removed by workspace archive", async () => {
+  const artifacts = path.resolve(".artifacts");
+  await mkdir(artifacts, { recursive: true });
+  const root = await mkdtemp(path.join(artifacts, "archived-caller-"));
+  const cwd = path.join(root, "project");
+  await mkdir(cwd);
+  execFileSync("git", ["init", cwd], { stdio: "pipe" });
+  const ctx = await createDaemonTestContext({
+    paseoHomeRoot: root,
+    staticDir: cwd,
+    cleanup: false,
+    mcpEnabled: false,
+  });
+  try {
+    const parent = await ctx.client.createAgent({ provider: "claude", cwd });
+    const archived = await ctx.client.archiveWorkspace(parent.workspaceId);
+    expect(archived.error).toBeNull();
+    expect(ctx.daemon.daemon.agentManager.getAgent(parent.id)).toBeNull();
+    await expect(
+      ctx.client.createAgent({ provider: "claude", cwd, callerAgentId: parent.id }),
+    ).rejects.toThrow(`Caller agent ${parent.id} not found`);
+  } finally {
+    await ctx.cleanup();
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60_000);

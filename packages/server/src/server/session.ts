@@ -6979,10 +6979,19 @@ export class Session {
     callerAgentId?: string,
   ): Promise<(CreateAgentCaller & { background?: boolean }) | null> {
     if (!callerAgentId) return null;
-    const caller =
-      this.agentManager.getAgent(callerAgentId) ?? (await this.agentStorage.get(callerAgentId));
+    let caller: (CreateAgentCaller & { background?: boolean }) | null =
+      this.agentManager.getAgent(callerAgentId);
+    if (!caller) {
+      const stored = await this.agentStorage.get(callerAgentId);
+      if (stored && !stored.archivedAt) caller = stored;
+    }
     if (!caller) throw new Error(`Caller agent ${callerAgentId} not found`);
-    return { id: caller.id, cwd: caller.cwd, workspaceId: caller.workspaceId, background: caller.background };
+    return {
+      id: caller.id,
+      cwd: caller.cwd,
+      workspaceId: caller.workspaceId,
+      background: caller.background,
+    };
   }
 
   private async workspaceBackgroundIntent(
