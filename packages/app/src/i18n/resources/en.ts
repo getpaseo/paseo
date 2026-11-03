@@ -530,6 +530,8 @@ export const en = {
         renameFailed: "Failed to rename entry",
         duplicateFailed: "Failed to duplicate entry",
         revealFailed: "Failed to reveal entry",
+        externalFolderUnavailable:
+          "Folders outside the workspace can only be opened in the system file manager.",
         deleteFailed: "Failed to delete entry",
       },
       draft: {
@@ -2289,6 +2291,7 @@ export const en = {
         destinations: {
           main: "Main panel",
           side: "On the side",
+          bottom: "At the bottom",
           explorer: "Explorer sidebar",
         },
         sources: {
@@ -2311,6 +2314,9 @@ export const en = {
           subagents: {
             label: "Clicking a subagent in an agent chat",
             description: "Open subagents beside their parent agent",
+          },
+          terminal: {
+            label: "Opening a terminal",
           },
           pullRequests: {
             label: "Clicking a pull request in the Explorer sidebar",

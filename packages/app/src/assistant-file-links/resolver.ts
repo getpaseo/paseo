@@ -34,8 +34,8 @@ export interface DirectorySuggestionResult {
 export type GetDirectorySuggestions = (input: {
   query: string;
   cwd: string;
-  includeFiles: true;
-  includeDirectories: false;
+  includeFiles: boolean;
+  includeDirectories: boolean;
   matchMode: "suffix";
   limit: number;
 }) => Promise<DirectorySuggestionResult>;
@@ -81,21 +81,55 @@ export async function fetchDaemonResolution({
     throw new UnresolvedFileLinkError(token);
   }
 
-  let suggestions: DirectorySuggestionResult;
-  try {
-    suggestions = await getDirectorySuggestions({
-      query: ambiguousQuery,
-      cwd: trimmedRoot,
-      includeFiles: true,
-      includeDirectories: false,
-      matchMode: "suffix",
-      limit: 1,
-    });
-  } catch {
-    throw new UnresolvedFileLinkError(token);
+  const searchSuggestions = async (query: string): Promise<DirectorySuggestionResult> => {
+    try {
+      return await getDirectorySuggestions({
+        query,
+        cwd: trimmedRoot,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+        limit: 1,
+      });
+    } catch {
+      throw new UnresolvedFileLinkError(token);
+    }
+  };
+
+  // The stripped retry also accepts folders: a workspace-name-prefixed link like
+  // `project/docs` names a directory, and the caller's open plan probes the hit before
+  // choosing how to open it.
+  const searchSuggestionsWithFolders = async (
+    query: string,
+  ): Promise<DirectorySuggestionResult> => {
+    try {
+      return await getDirectorySuggestions({
+        query,
+        cwd: trimmedRoot,
+        includeFiles: true,
+        includeDirectories: true,
+        matchMode: "suffix",
+        limit: 1,
+      });
+    } catch {
+      throw new UnresolvedFileLinkError(token);
+    }
+  };
+
+  let suggestions = await searchSuggestions(ambiguousQuery);
+  let match = suggestions.entries.find((entry) => entry.kind === "file");
+  if (!match && !suggestions.error) {
+    // Agents often prefix workspace-relative paths with the workspace folder's own name.
+    // The strict suffix search misses those, so retry once without that prefix.
+    const strippedQuery = stripWorkspaceFolderNamePrefix(ambiguousQuery, trimmedRoot);
+    if (strippedQuery !== ambiguousQuery) {
+      suggestions = await searchSuggestionsWithFolders(strippedQuery);
+      match = suggestions.entries.find(
+        (entry) => entry.kind === "file" || entry.kind === "directory",
+      );
+    }
   }
 
-  const match = suggestions.entries.find((entry) => entry.kind === "file");
   if (!match || suggestions.error) {
     throw new UnresolvedFileLinkError(token);
   }
@@ -104,6 +138,21 @@ export async function fetchDaemonResolution({
     ...target,
     path: joinWorkspacePath(trimmedRoot, match.path),
   };
+}
+
+function stripWorkspaceFolderNamePrefix(query: string, workspaceRoot: string): string {
+  // Windows roots arrive with backslashes; normalize before extracting the folder name.
+  const trimmedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+  const rootFolderName = trimmedRoot === "/" ? null : (trimmedRoot.split("/").pop() ?? null);
+  if (!rootFolderName) {
+    return query;
+  }
+  const segments = query.split("/");
+  const firstSegment = segments[0];
+  if (segments.length > 1 && firstSegment?.toLowerCase() === rootFolderName.toLowerCase()) {
+    return segments.slice(1).join("/");
+  }
+  return query;
 }
 
 /** Only file-looking paths nested inside the workspace need suffix search. */

@@ -81,6 +81,10 @@ import {
   openPreferredWorkspaceTarget,
   openWorkspaceTargetBeside,
 } from "@/workspace-tabs/open-beside";
+import {
+  placeTerminalTabInPane,
+  resolveImplicitTerminalPlacement,
+} from "@/workspace-tabs/terminal-open-location";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -105,7 +109,7 @@ import {
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
-import { useSettings } from "@/hooks/use-settings";
+import { useSettings, type TerminalOpenLocation } from "@/hooks/use-settings";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type {
@@ -892,6 +896,8 @@ function paneLocalPlacement(paneId: string | null | undefined): WorkspaceTabPlac
 
 interface WorkspaceTerminalTabActionsInput {
   persistenceKey: string | null;
+  isCompact: boolean;
+  terminalOpenLocation: TerminalOpenLocation;
   openWorkspaceTabFocused: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
@@ -917,6 +923,8 @@ interface WorkspaceTerminalTabActions {
     terminalId: string;
     destination: TerminalTabDestination;
   }) => void;
+  /** A script spawned its terminal: implicit open that follows the Open location preference. */
+  handleScriptTerminalStarted: (terminalId: string) => void;
   handleScriptTerminalSelected: (terminalId: string) => void;
   handleWorkspacePathUnavailable: () => void;
   handleTerminalCreateQueued: () => void;
@@ -925,6 +933,8 @@ interface WorkspaceTerminalTabActions {
 
 function useWorkspaceTerminalTabActions({
   persistenceKey,
+  isCompact,
+  terminalOpenLocation,
   openWorkspaceTabFocused,
   replaceWorkspaceTabTarget,
   labels,
@@ -942,13 +952,54 @@ function useWorkspaceTerminalTabActions({
         });
         return;
       }
+      const placement = resolveImplicitTerminalPlacement({
+        isCompact,
+        supportsPaneSplits: supportsDesktopPaneSplits(),
+        persistenceKey,
+        location: terminalOpenLocation,
+        destination,
+      });
+      if (placement) {
+        placeTerminalTabInPane({ workspaceKey: persistenceKey, placement, terminalId });
+        return;
+      }
       openWorkspaceTabFocused(
         persistenceKey,
         { kind: "terminal", terminalId },
         paneLocalPlacement(destination.paneId),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      isCompact,
+      openWorkspaceTabFocused,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+      terminalOpenLocation,
+    ],
+  );
+  const handleScriptTerminalStarted = useCallback(
+    (terminalId: string) => {
+      if (!persistenceKey) {
+        return;
+      }
+      const placement = resolveImplicitTerminalPlacement({
+        isCompact,
+        supportsPaneSplits: supportsDesktopPaneSplits(),
+        persistenceKey,
+        location: terminalOpenLocation,
+        destination: { kind: "open" },
+      });
+      if (placement) {
+        placeTerminalTabInPane({ workspaceKey: persistenceKey, placement, terminalId });
+        return;
+      }
+      openWorkspaceTabFocused(
+        persistenceKey,
+        { kind: "terminal", terminalId },
+        FOCUSED_PANE_PLACEMENT,
+      );
+    },
+    [isCompact, openWorkspaceTabFocused, persistenceKey, terminalOpenLocation],
   );
   const handleScriptTerminalSelected = useCallback(
     (terminalId: string) => {
@@ -978,6 +1029,7 @@ function useWorkspaceTerminalTabActions({
 
   return {
     handleTerminalCreated,
+    handleScriptTerminalStarted,
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
@@ -1166,14 +1218,19 @@ function WorkspaceScreenContent({
     workspaceAgentVisibilityEqual,
   );
 
+  const terminalOpenLocation = useSettings((settings) => settings.terminalOpenLocation);
+
   const {
     handleTerminalCreated,
+    handleScriptTerminalStarted,
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
     handleTerminalCreateFailed,
   } = useWorkspaceTerminalTabActions({
     persistenceKey,
+    isCompact: isMobile,
+    terminalOpenLocation,
     openWorkspaceTabFocused,
     replaceWorkspaceTabTarget,
     labels: {
@@ -1186,7 +1243,7 @@ function WorkspaceScreenContent({
   const {
     createMutation: createTerminalMutation,
     createTerminal,
-    handleScriptTerminalStarted,
+    handleScriptTerminalStarted: handleScriptTerminalStartedEvent,
     handleViewScriptTerminal,
     invalidateTerminals,
     killMutation: killTerminalMutation,
@@ -1208,6 +1265,7 @@ function WorkspaceScreenContent({
     hasHydratedWorkspaces,
     isMissingWorkspaceDirectory,
     onTerminalCreated: handleTerminalCreated,
+    onScriptTerminalStarted: handleScriptTerminalStarted,
     onScriptTerminalSelected: handleScriptTerminalSelected,
     onWorkspacePathUnavailable: handleWorkspacePathUnavailable,
     onTerminalCreateQueued: handleTerminalCreateQueued,
@@ -3193,7 +3251,7 @@ function WorkspaceScreenContent({
             workspaceId={normalizedWorkspaceId}
             scripts={workspaceDescriptor.scripts}
             liveTerminalIds={liveTerminalIds}
-            onScriptTerminalStarted={handleScriptTerminalStarted}
+            onScriptTerminalStarted={handleScriptTerminalStartedEvent}
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
             hideLabels
@@ -3231,7 +3289,7 @@ function WorkspaceScreenContent({
       workspaceDirectory,
       activeFileLocation,
       liveTerminalIds,
-      handleScriptTerminalStarted,
+      handleScriptTerminalStartedEvent,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
       handleToggleExplorerSidebar,

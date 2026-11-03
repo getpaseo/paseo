@@ -6,11 +6,15 @@ import type {
   MarkdownRenderers,
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useFileLink } from "@/assistant-file-links";
+import { useAssistantFileLinkEnvironment, useFileLink } from "@/assistant-file-links";
+import { AssistantFileLinkContextMenuContent } from "@/assistant-file-links/file-context-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { isWeb } from "@/constants/platform";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
+import type { ViewStyle } from "react-native";
 import { MermaidFence } from "./fence/mermaid";
 import { markdownLinkSource } from "./source";
 
@@ -28,6 +32,9 @@ function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   return <ThemedCodeBlock code={code} language={language} uniProps={codeStyle} />;
 }
 
+const LINK_CONTEXT_TRIGGER_STYLE: ViewStyle = {
+  display: "inline-flex" as ViewStyle["display"],
+};
 // The library styles links inline, so a stylesheet :hover rule cannot underline them.
 const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
 
@@ -35,9 +42,11 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const forgeShorthand = useForgeShorthand();
   // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
   const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
-  const { tooltipPath, onHoverIn } = useFileLink(
-    forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
-  );
+  const source = forgeUrl
+    ? markdownLinkSource(forgeUrl)
+    : markdownLinkSource(link.url, link.sourceType);
+  const { target, open, tooltipPath, onHoverIn } = useFileLink(source);
+  const { workspaceRoot, serverId } = useAssistantFileLinkEnvironment();
   const tooltip = forgeUrl ?? tooltipPath;
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
@@ -61,10 +70,28 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       {children}
     </a>
   );
+  const anchorWithContextMenu =
+    target && isWeb ? (
+      <ContextMenu>
+        <ContextMenuTrigger contextOnly style={LINK_CONTEXT_TRIGGER_STYLE}>
+          {anchor}
+        </ContextMenuTrigger>
+        <AssistantFileLinkContextMenuContent
+          source={source}
+          target={target}
+          serverId={serverId ?? ""}
+          workspaceRoot={workspaceRoot}
+          onOpen={open}
+          testIDPrefix="assistant-file-link"
+        />
+      </ContextMenu>
+    ) : (
+      anchor
+    );
   return (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
-        <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
+        <InlineLinkTrigger>{anchorWithContextMenu}</InlineLinkTrigger>
       </TooltipTrigger>
       {tooltip ? (
         <TooltipContent side="top" align="start" maxWidth={520}>

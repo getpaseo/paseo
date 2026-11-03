@@ -48,8 +48,8 @@ interface TestClient {
   getDirectorySuggestions: (input: {
     query: string;
     cwd: string;
-    includeFiles: true;
-    includeDirectories: false;
+    includeFiles: boolean;
+    includeDirectories: boolean;
     matchMode: "suffix";
     limit: number;
   }) => Promise<DirectorySuggestionResult>;
