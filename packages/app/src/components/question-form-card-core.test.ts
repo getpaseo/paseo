@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
-  normalizeQuestionText,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -197,14 +196,62 @@ describe("question form card core", () => {
     expect(questions?.[0]?.options[0]?.description).toBe("包含 zcode -credentials .ts，合并顺序");
   });
 
+  test("keeps the markdown structure of a question while folding its prose", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Pick one:\n\n- Alpha\n- Beta\n\nSome more\nwrapped prose.",
+          header: "pick",
+          options: [{ label: "plain" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    // A list is a list: folding its breaks would merge the items into one
+    // line. A paragraph inside the list stays prose and folds.
+    expect(questions?.[0]?.question).toBe(
+      "Pick one:\n\n- Alpha\n- Beta\n\nSome more wrapped prose.",
+    );
+  });
+
+  test("keeps the line boundaries of a fenced code block", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Run this:\n\n```sh\nnpm run build\nnpm test\n```",
+          header: "cmd",
+          options: [{ label: "plain" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    // The code block's own lines are content, not wraps.
+    expect(questions?.[0]?.question).toBe("Run this:\n\n```sh\nnpm run build\nnpm test\n```");
+  });
+
   test("keeps a blank line as a paragraph break while folding lone breaks", () => {
-    expect(normalizeQuestionText("First paragraph\n\nSecond paragraph")).toBe(
-      "First paragraph\n\nSecond paragraph",
-    );
-    expect(normalizeQuestionText("只存在于\nPR\n#8343\n（feat\n/zai）里")).toBe(
-      "只存在于 PR #8343 （feat /zai）里",
-    );
-    expect(normalizeQuestionText("one\r\ntwo")).toBe("one two");
-    expect(normalizeQuestionText("plain text")).toBe("plain text");
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "First paragraph\n\nSecond paragraph",
+          header: "paragraphs",
+          options: [
+            {
+              label: "只存在于\nPR\n#8343\n（feat\n/zai）里",
+              description: "one\r\ntwo",
+            },
+            { label: "plain text" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(questions?.[0]?.question).toBe("First paragraph\n\nSecond paragraph");
+    expect(questions?.[0]?.options[0]?.label).toBe("只存在于 PR #8343 （feat /zai）里");
+    expect(questions?.[0]?.options[0]?.description).toBe("one two");
+    expect(questions?.[0]?.options[1]?.label).toBe("plain text");
   });
 });

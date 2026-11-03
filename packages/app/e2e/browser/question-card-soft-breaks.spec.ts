@@ -47,10 +47,9 @@ test.describe("question card soft breaks", () => {
       // A break that survived would show up as more than one rendered line.
       expect(question.split("\n").filter((line) => line.trim().length > 0)).toHaveLength(1);
 
-      // The same holds for the option label and its description.
-      const option = card
-        .getByRole("radio", { name: WRAPPED_OPTION })
-        .or(card.getByRole("checkbox", { name: WRAPPED_OPTION }));
+      // The same holds for the option label and its description. The mock
+      // question is single-select, so the option is a radio.
+      const option = card.getByRole("radio", { name: WRAPPED_OPTION });
       await expect(option).toBeVisible();
       const optionText = await option.innerText();
       expect(optionText.replace(/\s+/g, " ").trim()).toBe(

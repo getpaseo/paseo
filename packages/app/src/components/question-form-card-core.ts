@@ -27,15 +27,73 @@ export type QuestionOtherTexts = Record<number, string>;
  * break, which stacks every token on its own line inside the option rows.
  * Form labels read as prose, so a lone break is a wrap, not a break; a blank
  * line still starts a new paragraph.
+ *
+ * Only prose folds. The breaks that carry Markdown structure — a blank line
+ * between paragraphs, the line a list item or a heading starts on, the lines
+ * inside a fenced code block — stay, because those are the document's shape
+ * rather than a wrap.
  */
-export function normalizeQuestionText(text: string): string {
-  // A blank line separates paragraphs and keeps its breaks; a lone break (not
-  // adjacent to another break) is a wrap and folds into a space. Trailing space
-  // from a folded final break goes.
-  return text
-    .replace(/(?<!\r?\n)\r?\n(?!\r?\n)/g, " ")
+function normalizeQuestionText(text: string): string {
+  // Fenced code blocks are content, not prose. Their lines are kept as they
+  // are and only the prose around them folds.
+  const fenced = /```[\s\S]*?```/g;
+  const protectedBlocks: string[] = [];
+  const shielded = text.replace(fenced, (block) => {
+    protectedBlocks.push(block);
+    return `\uE000${protectedBlocks.length - 1}\uE001`;
+  });
+
+  const folded = foldProseBreaks(shielded);
+
+  return folded.replace(/\uE000(\d+)\uE001/g, (_match, index: string) => {
+    return protectedBlocks[Number(index)] ?? "";
+  });
+}
+
+/**
+ * Fold the lone breaks of a document into spaces.
+ *
+ * A break that ends a line of prose is a wrap. A break that starts a block —
+ * a list item, a heading, a quote, a table row — is the document's shape, and
+ * a blank line is a paragraph boundary.
+ */
+function foldProseBreaks(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const folded: string[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (index === 0) {
+      folded.push(line);
+      continue;
+    }
+    const previous = lines[index - 1] ?? "";
+    // A blank line is a paragraph boundary and a fenced code block's own
+    // lines are content; both keep their break.
+    if (previous.trim() === "" || line.trim() === "" || startsBlock(line) || isFence(previous)) {
+      folded.push(line);
+      continue;
+    }
+    // The break before a block line is that line's own boundary.
+    if (startsBlock(previous)) {
+      folded.push(line);
+      continue;
+    }
+    // A prose line continues the previous one, so the break becomes a space.
+    folded[folded.length - 1] = `${folded[folded.length - 1] ?? ""} ${line}`;
+  }
+  return folded
+    .join("\n")
     .replace(/[ \t]{2,}/g, " ")
     .trimEnd();
+}
+
+/** Whether a line opens a Markdown block: a list item, a heading, a quote, a table row. */
+function startsBlock(line: string): boolean {
+  return /^\s*(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>\s|\|)/.test(line);
+}
+
+/** Whether a line opens or closes a fenced code block. */
+function isFence(line: string): boolean {
+  return /^\s*(?:```|~~~)/.test(line);
 }
 
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
