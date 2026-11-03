@@ -659,11 +659,26 @@ class FakeDaemon {
 
   finishTransfer(): void {
     // Four MiB of JSON whitespace precedes this valid application message.
-    const bytes = new TextEncoder().encode('{"type":"pong"}');
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "status",
+          payload: {
+            status: "server_info",
+            serverId: "srv_heartbeat_test",
+            hostname: null,
+            version: null,
+            features: { binaryChunkingV1: true },
+          },
+        },
+      }),
+    );
     const frame = new Uint8Array(bytes.length + 4);
     frame.set([0x31, 1, 0, 2]);
     frame.set(bytes, 4);
     this.onMessage(frame);
+    this.onMessage(JSON.stringify({ type: "pong" }));
     this.daemonAnswersPingsAfter("fast");
   }
 
