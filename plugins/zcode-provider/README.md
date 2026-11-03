@@ -86,6 +86,7 @@ first, then hand the variable to `--api-key-env VAR`:
 printf 'BigModel team API key: '
 IFS= read -rs ZCODE_SETUP_API_KEY
 printf '\n'
+export ZCODE_SETUP_API_KEY
 node scripts/zcode-setup.js add-provider \
   --name "BigModel Team CodingPlan" \
   --api-key-env ZCODE_SETUP_API_KEY \
@@ -94,7 +95,8 @@ unset ZCODE_SETUP_API_KEY
 ```
 
 `read -s` keeps the key out of the command line, the shell history and the
-terminal, and `unset` keeps it out of the environment of later commands.
+terminal. `export` hands the variable to the script, because the script reads
+it from the environment, and `unset` keeps it out of later commands.
 
 Notes:
 

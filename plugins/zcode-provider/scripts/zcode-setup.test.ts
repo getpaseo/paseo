@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmod, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,5 +63,42 @@ describe.skipIf(process.platform === "win32")("zcode setup config permissions", 
     expect(backup).toBeDefined();
     expect(await modeOf(configFile)).toBe(0o600);
     expect(await modeOf(join(dir, backup!))).toBe(0o600);
+  });
+});
+
+/**
+ * The README documents a shell flow for entering the key without echoing it.
+ * The script reads the key from the environment, so the flow has to export
+ * the variable; a shell variable that is never exported is invisible to the
+ * script and the setup fails with a usage error.
+ */
+describe("zcode setup documented key flow", () => {
+  test("registers a provider from a key read without echoing it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-setup-"));
+    const configFile = join(dir, "provider_config.json");
+
+    // The documented flow, with the key piped in instead of typed.
+    const run = spawnSync(
+      "/bin/sh",
+      [
+        "-c",
+        [
+          "IFS= read -rs ZCODE_SETUP_API_KEY",
+          "export ZCODE_SETUP_API_KEY",
+          `"${process.execPath}" "${script}" add-provider --name "BigModel Team CodingPlan" --api-key-env ZCODE_SETUP_API_KEY --kind team --config-file "${configFile}"`,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", input: "test-key\n" },
+    );
+
+    expect(run.status).toBe(0);
+    const config = JSON.parse(await readFile(configFile, "utf8")) as {
+      config: {
+        providerConfigRules: { providerRules: Array<{ config: { access: { apiKey: string } } }> };
+      };
+    };
+    expect(config.config.providerConfigRules.providerRules[0]?.config.access.apiKey).toBe(
+      "test-key",
+    );
   });
 });
