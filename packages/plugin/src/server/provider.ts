@@ -17,6 +17,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.revert.both",
   "session.revert.conversation",
   "session.revert.files",
+  "session.subagent_presentation",
   "session.subsession",
   "session.unarchive",
   "permission",
@@ -572,7 +573,24 @@ export type ProviderEvent =
       persistence?: ProviderPersistence;
       title?: string;
       description?: string;
+      /**
+       * Compact provider-owned label for a provider child row, such as model, effort, or usage.
+       * The provider owns its contents and formatting; Paseo displays and truncates it without
+       * interpreting provider-specific model, thinking, or usage fields. Omit when there is none.
+       */
+      subtitle?: string;
       cwd: string;
+    }
+  | {
+      type: "session.subagent_presentation";
+      sessionId: string;
+      /**
+       * Replaces the subtitle of a provider child row. Child facts change while it runs (model
+       * handoffs, growing token counts), so providers re-emit this event with the complete new
+       * label instead of relying on the one sent with `session.opened`; `null` clears it.
+       * Only sent when the host advertises `session.subagent_presentation`.
+       */
+      subtitle: string | null;
     }
   | { type: "session.ready"; requestId?: string; sessionId: string }
   | { type: "session.closed"; sessionId: string; error?: ProviderError }
@@ -1328,7 +1346,15 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       persistence: persistenceSchema.optional(),
       title: z.string().optional(),
       description: z.string().optional(),
+      subtitle: z.string().optional(),
       cwd: z.string(),
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.subagent_presentation"),
+      sessionId: idSchema,
+      subtitle: z.string().nullable(),
     })
     .strip(),
   z
