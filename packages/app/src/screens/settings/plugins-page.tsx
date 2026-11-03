@@ -66,10 +66,6 @@ function pluginMatchesFilter(plugin: PluginListItem, query: string): boolean {
     .includes(query);
 }
 
-function pluginsEmptyKey(filterQuery: string): string {
-  return filterQuery ? "settings.plugins.states.noMatches" : "settings.plugins.states.empty";
-}
-
 /** The plugins-page filter; hidden until a catalog exists to filter. */
 function PluginFilterField({
   plugins,
@@ -235,6 +231,66 @@ function PluginRow({
         />
       </View>
     </SettingsRow>
+  );
+}
+
+/**
+ * The ready catalog: filtered rows, or the one-line state that explains an
+ * empty result — no plugins configured, or none matching the filter.
+ */
+function PluginCatalog({
+  plugins,
+  visiblePlugins,
+  serverId,
+  mutationPending,
+  mutationVariables,
+  onAction,
+  onOpenLogs,
+  supportsLogs,
+}: {
+  plugins: PluginListItem[] | undefined;
+  visiblePlugins: PluginListItem[];
+  serverId: string;
+  mutationPending: boolean;
+  mutationVariables: { action: string; pluginId?: string; run(): Promise<string> } | undefined;
+  onAction(action: PluginRowAction, plugin: PluginListItem): void;
+  onOpenLogs(pluginId: string): void;
+  supportsLogs: boolean;
+}) {
+  const { t } = useTranslation();
+  const catalog = plugins ?? [];
+  return (
+    <SettingsCard>
+      {visiblePlugins.length ? (
+        visiblePlugins.map((plugin) => {
+          const clientError = pluginRegistry.getEvaluationError(serverId, plugin.id);
+          const pending = mutationPending && mutationVariables?.pluginId === plugin.id;
+          return (
+            <PluginRow
+              key={plugin.id}
+              serverId={serverId}
+              plugin={plugin}
+              clientError={clientError}
+              pending={mutationPending}
+              pendingAction={pending ? pluginRowAction(mutationVariables?.action) : undefined}
+              onAction={onAction}
+              onOpenLogs={onOpenLogs}
+              supportsLogs={supportsLogs}
+            />
+          );
+        })
+      ) : (
+        <View style={styles.empty}>
+          <Text style={settingsStyles.rowHint}>
+            {t(
+              catalog.length === 0
+                ? "settings.plugins.states.empty"
+                : "settings.plugins.states.noMatches",
+            )}
+          </Text>
+        </View>
+      )}
+    </SettingsCard>
   );
 }
 
@@ -501,31 +557,16 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     );
   } else if (pageState !== "loading") {
     catalogContent = (
-      <SettingsCard>
-        {visiblePlugins.length ? (
-          visiblePlugins.map((plugin) => {
-            const clientError = pluginRegistry.getEvaluationError(serverId, plugin.id);
-            const pending = mutation.isPending && mutation.variables?.pluginId === plugin.id;
-            return (
-              <PluginRow
-                key={plugin.id}
-                serverId={serverId}
-                plugin={plugin}
-                clientError={clientError}
-                pending={mutation.isPending}
-                pendingAction={pending ? pluginRowAction(mutation.variables?.action) : undefined}
-                onAction={action}
-                onOpenLogs={setLogsPluginId}
-                supportsLogs={logsSupported}
-              />
-            );
-          })
-        ) : (
-          <View style={styles.empty}>
-            <Text style={settingsStyles.rowHint}>{t(pluginsEmptyKey(filterQuery))}</Text>
-          </View>
-        )}
-      </SettingsCard>
+      <PluginCatalog
+        plugins={plugins.data}
+        visiblePlugins={visiblePlugins}
+        serverId={serverId}
+        mutationPending={mutation.isPending}
+        mutationVariables={mutation.variables}
+        onAction={action}
+        onOpenLogs={setLogsPluginId}
+        supportsLogs={logsSupported}
+      />
     );
   }
 

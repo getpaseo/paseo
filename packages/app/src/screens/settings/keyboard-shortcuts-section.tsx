@@ -18,6 +18,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { SearchField } from "@/components/ui/search-field";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
+  buildEffectiveBindings,
   buildKeyboardShortcutHelpSections,
   getBindingIdForAction,
   normalizeCapturedShortcutCombo,
@@ -347,7 +348,13 @@ export function KeyboardShortcutsSection() {
   const shortcutOs = getShortcutOs();
   const isMac = shortcutOs === "mac";
   const isDesktopApp = getIsElectronRuntime();
-  const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  // The rows display saved keys, so the search has to match them too: build
+  // the sections from the effective bindings, as the shortcuts dialog does.
+  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const sections = useMemo(
+    () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }, bindings),
+    [bindings, isDesktopApp, isMac],
+  );
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -464,33 +471,46 @@ export function KeyboardShortcutsSection() {
     translate: t,
     shortcutOs,
   });
+  // The filter lives outside the keyed sections: when a query removes the
+  // first visible section, a field nested inside it would unmount and drop
+  // focus mid-typing. One node, one fragment position, on every render path.
   const filterField = (
-    <SearchField
-      value={filterInput}
-      onChangeText={setFilterInput}
-      placeholder={t("settings.shortcuts.searchPlaceholder")}
-      clearAccessibilityLabel={t("settings.shortcuts.clearSearch")}
-      testID="shortcuts-filter-input"
-      clearTestID="shortcuts-filter-clear"
-    />
+    <View style={styles.filterRow}>
+      {/* While a capture owns the keyboard, the filter has nothing to offer:
+          its row may be filtered away and its keystrokes would be swallowed
+          by the capture listener anyway. */}
+      {capturingBindingId === null ? (
+        <SearchField
+          value={filterInput}
+          onChangeText={setFilterInput}
+          placeholder={t("settings.shortcuts.searchPlaceholder")}
+          clearAccessibilityLabel={t("settings.shortcuts.clearSearch")}
+          testID="shortcuts-filter-input"
+          clearTestID="shortcuts-filter-clear"
+        />
+      ) : null}
+    </View>
   );
 
   if (visibleSections.length === 0) {
     return (
-      <SettingsSection
-        title={t("settings.sections.shortcuts")}
-        trailing={hasOverrides ? resetAllButton : undefined}
-      >
-        {capturingBindingId === null ? filterField : null}
-        <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>{t("common.empty.noResults")}</Text>
-        </View>
-      </SettingsSection>
+      <>
+        {filterField}
+        <SettingsSection
+          title={t("settings.sections.shortcuts")}
+          trailing={hasOverrides ? resetAllButton : undefined}
+        >
+          <View style={[settingsStyles.card, styles.mobileCard]}>
+            <Text style={styles.mobileText}>{t("common.empty.noResults")}</Text>
+          </View>
+        </SettingsSection>
+      </>
     );
   }
 
   return (
     <>
+      {filterField}
       {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
@@ -498,10 +518,6 @@ export function KeyboardShortcutsSection() {
             title={t(section.titleKey)}
             trailing={sectionIndex === 0 ? resetAllButton : undefined}
           >
-            {/* While a capture owns the keyboard, the filter has nothing to
-                offer: its row may be filtered away and its keystrokes would be
-                swallowed by the capture listener anyway. */}
-            {sectionIndex === 0 && capturingBindingId === null ? filterField : null}
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
                 const platform = { isMac, isDesktop: isDesktopApp };
@@ -545,6 +561,9 @@ export function KeyboardShortcutsSection() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  filterRow: {
+    marginBottom: theme.spacing[3],
+  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
