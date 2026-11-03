@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import type { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { WSOutboundMessageSchema } from "../../src/messages.js";
+import { PluginRpcInvokeResponseSchema, WSOutboundMessageSchema } from "../../src/messages.js";
 import { validateWSOutboundMessage } from "../../src/validation/ws-outbound.js";
 
 interface GeneratedSchema {
@@ -498,4 +498,9 @@ describe("network tunnel generated validation", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it("accepts omitted RPC output so the receiving client can apply schema defaults", () => {
+  const message = { type: "plugin.rpc.invoke.response", payload: { requestId: "default-output" } };
+  expect(PluginRpcInvokeResponseSchema.safeParse(message).success).toBe(true);
 });

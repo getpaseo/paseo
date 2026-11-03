@@ -87,7 +87,7 @@ export function ComposerInputPresentation({
         <View style={styles.exitRow}>
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             accessibilityLabel={t("composer.input.exitFullscreen")}
             onPointerDown={keepEditorFocused}
             onPress={onExit}
@@ -111,7 +111,7 @@ export function ComposerInputPresentation({
             {showFullscreenButton && !fullscreen ? (
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 accessibilityLabel={t("composer.input.fullscreen")}
                 leftIcon={maximizeIcon}
                 onPointerDown={keepEditorFocused}

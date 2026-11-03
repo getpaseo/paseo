@@ -5,6 +5,7 @@ import {
   FileTransferOpcode,
   type FileTransferFrame,
 } from "./file-transfer.js";
+import { decodePluginFrame, PluginFrameOpcode, type PluginFrame } from "./plugin.js";
 import {
   decodeTerminalStreamFrame,
   TerminalStreamOpcode,
@@ -15,6 +16,7 @@ export type BinaryFrame =
   | { kind: "host_route"; frame: HostRouteFrame }
   | { kind: "terminal"; frame: TerminalStreamFrame }
   | { kind: "file_transfer"; frame: FileTransferFrame }
+  | { kind: "plugin"; frame: PluginFrame }
   | { kind: "tunnel"; frame: TunnelFrame };
 
 export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
@@ -40,11 +42,20 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
       const frame = decodeFileTransferFrame(bytes);
       return frame ? { kind: "file_transfer", frame } : null;
     }
-    default: {
-      // A predicate keeps the tunnel's opcode range out of this switch's case count.
-      if (!isTunnelOpcode(bytes[0])) return null;
-      const frame = decodeTunnelFrame(bytes);
-      return frame ? { kind: "tunnel", frame } : null;
+    case PluginFrameOpcode.Event:
+    case PluginFrameOpcode.Output:
+    case PluginFrameOpcode.Input: {
+      const frame = decodePluginFrame(bytes);
+      return frame ? { kind: "plugin", frame } : null;
     }
+    default:
+      return decodeTunnelBinaryFrame(bytes);
   }
+}
+
+// Kept out of decodeBinaryFrame so the tunnel's opcodes don't count toward its complexity limit.
+function decodeTunnelBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
+  if (!isTunnelOpcode(bytes[0])) return null;
+  const frame = decodeTunnelFrame(bytes);
+  return frame ? { kind: "tunnel", frame } : null;
 }

@@ -68,7 +68,7 @@ describe("binary frame demux", () => {
     expect(decodeBinaryFrame(encodeTunnelFrame(frame))).toEqual({ kind: "tunnel", frame });
   });
 
-  it.each([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x2f])(
+  it.each([0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x4f])(
     "rejects malformed or reserved tunnel opcode %i",
     (opcode) => {
       expect(decodeBinaryFrame(new Uint8Array([opcode, 0]))).toBeNull();

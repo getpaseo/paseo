@@ -30,6 +30,7 @@ import {
   getBundledCliShimPath,
   getCliInstallStatus,
   installCli,
+  uninstallCli,
 } from "../integrations/cli-install/index.js";
 import {
   openLocalTransportSession,
@@ -538,6 +539,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
+    uninstall_cli: () => uninstallCli(),
     get_cli_install_status: () => getCliInstallStatus(),
     read_legacy_skill_selection: () => readLegacySkillSelection(),
     delete_legacy_skill_selection: () => deleteLegacySkillSelection(),

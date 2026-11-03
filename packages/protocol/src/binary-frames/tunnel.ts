@@ -1,9 +1,10 @@
+/** Opcodes 0x40-0x4f are reserved for network tunnel traffic. */
 export const TunnelOpcode = {
-  Data: 0x20,
-  Close: 0x21,
-  Open: 0x22,
-  Connected: 0x23,
-  WindowUpdate: 0x24,
+  Data: 0x40,
+  Close: 0x41,
+  Open: 0x42,
+  Connected: 0x43,
+  WindowUpdate: 0x44,
 } as const;
 
 const tunnelOpcodes: ReadonlySet<number> = new Set(Object.values(TunnelOpcode));

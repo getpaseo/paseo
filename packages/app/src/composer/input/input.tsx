@@ -1,3 +1,4 @@
+import { useKeyboardFocusSurface } from "@/keyboard";
 import type { SendShortcut } from "@/hooks/use-settings";
 import {
   useComposerEditingSession,
@@ -1288,6 +1289,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const dictationToggleKeys = useShortcutKeys("dictation-toggle");
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [isInputFocused, setIsInputFocused] = useState(false);
+    useKeyboardFocusSurface("message-input", isInputFocused && isPaneFocused);
     // Web text is DOM-owned between deferred draft publications. The action button only needs
     // this boundary, so publish empty/non-empty transitions without rerendering for every key.
     const initialHasLiveText = value.trim().length > 0;
