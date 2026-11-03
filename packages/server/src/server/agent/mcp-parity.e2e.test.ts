@@ -404,6 +404,7 @@ describe("Suite A: Core Fixes", () => {
           expect(parseAgentMessage(callerPrompts[0]).source).toEqual({
             kind: "agent-notification",
             agentId: childId,
+            serverId: daemon.daemon.getServerId(),
             title: "Notification child",
             event: "finished",
           });
@@ -517,6 +518,7 @@ describe("Suite A: Core Fixes", () => {
         expect(notification.source).toEqual({
           kind: "agent-notification",
           agentId: childId,
+          serverId: daemon.daemon.getServerId(),
           title: "Watched child",
           event: "errored",
         });
@@ -579,7 +581,11 @@ describe("Suite A: Core Fixes", () => {
             type: "tool_call",
             agentMessage: {
               event: outcome,
-              sender: { id: childId, title: "Follow-up child" },
+              sender: {
+                id: childId,
+                serverId: daemonHandle.daemon.getServerId(),
+                title: "Follow-up child",
+              },
               text: expect.stringContaining(`(Follow-up child) ${outcome}.`),
             },
           }),

@@ -1,6 +1,6 @@
+import { Modal } from "@/components/ui/modal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal,
   Pressable,
   StyleSheet as RNStyleSheet,
   ScrollView,

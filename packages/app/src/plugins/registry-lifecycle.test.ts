@@ -62,6 +62,9 @@ function registry(
         openPanel: () => {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
+        subscribe: () => {
+          throw new Error("Subscriptions are not used here");
+        },
       };
     },
   });

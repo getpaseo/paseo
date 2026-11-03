@@ -99,7 +99,7 @@ const styles = StyleSheet.create((theme) => ({
     maxHeight: "85%",
     flexShrink: 1,
     minHeight: 0,
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.surface0,
     borderRadius: theme.borderRadius.xl,
     borderWidth: 1,
     borderColor: theme.colors.surface2,
@@ -139,6 +139,12 @@ const styles = StyleSheet.create((theme) => ({
   closeButton: {
     padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
+  },
+  // Without a header the close button floats over the card's top-right corner.
+  floatingClose: {
+    position: "absolute",
+    top: theme.spacing[4],
+    right: theme.spacing[4],
   },
   searchRow: {
     flexDirection: "row",
@@ -493,8 +499,27 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
   );
 }
 
+/**
+ * The sheet's action row: a top border, the sheet's side inset, and children spread across it.
+ * The sheet draws it for `footer`; a body that splits into panes renders it at the bottom of one.
+ */
+export function SheetFooter({
+  style,
+  children,
+}: {
+  style?: StyleProp<ViewStyle>;
+  children: ReactNode;
+}) {
+  return <View style={[styles.footer, style]}>{children}</View>;
+}
+
 export interface AdaptiveModalSheetProps {
-  header: SheetHeader;
+  /**
+   * The title row with the close button. Leave it out when the body draws its own chrome, such as
+   * a full-height side rail: the desktop card then floats the close button over its top-right
+   * corner, and the compact sheet closes from its handle.
+   */
+  header?: SheetHeader;
   visible: boolean;
   onClose: () => void;
   onDismiss?: () => void;
@@ -534,7 +559,7 @@ function CompactSheetBody({
   contentStyle,
   children,
 }: {
-  header: SheetHeader;
+  header?: SheetHeader;
   onClose: () => void;
   testID?: string;
   footer: ReactNode;
@@ -564,7 +589,7 @@ function CompactSheetBody({
   );
   return (
     <SheetVisibleFrame footer={footerView}>
-      <SheetHeaderView header={header} onClose={onClose} testID={testID} />
+      {header ? <SheetHeaderView header={header} onClose={onClose} testID={testID} /> : null}
       <View style={[styles.compactStaticContent, bodyStyle]}>
         {scrollable ? (
           <ScrollView
@@ -612,7 +637,7 @@ export function AdaptiveModalSheet({
   const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const footerView = useMemo(
-    () => (footer ? <View style={[styles.footer, footerContainerStyle]}>{footer}</View> : null),
+    () => (footer ? <SheetFooter style={footerContainerStyle}>{footer}</SheetFooter> : null),
     [footer, footerContainerStyle],
   );
   useEffect(() => {
@@ -730,7 +755,7 @@ export function AdaptiveModalSheet({
     desktopHeight == null ? styles.desktopStaticContent : styles.compactStaticContent;
   const cardInner = (
     <OverlayLayerProvider layer={modalLayer}>
-      <SheetHeaderView header={header} onClose={onClose} />
+      {header ? <SheetHeaderView header={header} onClose={onClose} /> : null}
       <View style={[scrollable ? styles.desktopScrollContainer : desktopStaticStyle, bodyStyle]}>
         {scrollable ? (
           <ScrollView
@@ -746,6 +771,15 @@ export function AdaptiveModalSheet({
         )}
       </View>
       {footerView}
+      {header ? null : (
+        <View style={styles.floatingClose}>
+          <SheetHeaderIconButton
+            icon={X}
+            accessibilityLabel={t("common.actions.close")}
+            onPress={onClose}
+          />
+        </View>
+      )}
     </OverlayLayerProvider>
   );
 

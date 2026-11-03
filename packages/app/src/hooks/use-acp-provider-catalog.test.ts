@@ -62,7 +62,9 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code")).toMatchObject({
       title: "MiniMax Code",
       version: "0.6.13",
-      command: ["npx", "-y", "@minimax-ai/code@0.6.13", "acp"],
+      // The package publishes `mcode`, not `code`, so npx needs the package and
+      // the binary named separately.
+      command: ["npx", "-y", "-p", "@minimax-ai/code@0.6.13", "mcode", "acp"],
     });
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });

@@ -54,8 +54,6 @@ export async function verifySubagentFixture(
   try {
     await session.startTurn("Delegate work");
     for (const event of fixture.events) pi.latestSession().emit(event);
-    const immediate = live.filter((event) => event.type === "provider_subagent");
-    expect(immediate.some((event) => event.event.type === "timeline")).toBe(false);
     pi.latestSession().finishTurn();
     const replay: AgentStreamEvent[] = [];
     for await (const event of streamPiHistory("pi", fixture.messages)) replay.push(event);

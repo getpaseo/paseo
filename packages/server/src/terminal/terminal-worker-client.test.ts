@@ -72,3 +72,46 @@ describe("terminal worker authentication", () => {
     await waitUntil(() => !existsSync(recordPath), 10_000);
   });
 });
+
+it("bounds a stalled framed writer to one chunk and resumes in order", async () => {
+  const { createServer, createConnection } = await import("node:net");
+  const { attachFramedSocket } = await import("./terminal-worker-frames.js");
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing test address");
+  const accepted = new Promise<import("node:net").Socket>((resolve) =>
+    server.once("connection", resolve),
+  );
+  const reader = createConnection(address.port, "127.0.0.1");
+  reader.pause();
+  const writer = await accepted;
+  const framed = attachFramedSocket(writer, () => {});
+  let completed = 0;
+  let peakQueuedBytes = 0;
+  const received: number[] = [];
+  attachFramedSocket(reader, (value) => received.push((value as { index: number }).index));
+  const sending = (async () => {
+    for (let index = 0; index < 512; index++) {
+      const pending = framed.sendAndWait({ index, data: Buffer.alloc(64 * 1024) });
+      peakQueuedBytes = Math.max(peakQueuedBytes, writer.writableLength);
+      await pending;
+      completed++;
+    }
+  })();
+  try {
+    await waitUntil(() => writer.writableLength > 0, 10000);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(completed).toBeLessThan(512);
+    expect(peakQueuedBytes).toBeLessThan(65 * 1024);
+    reader.resume();
+    await sending;
+    await waitUntil(() => received.length === 512, 10000);
+    expect(received).toEqual(Array.from({ length: 512 }, (_, index) => index));
+    expect(writer.destroyed).toBe(false);
+  } finally {
+    reader.destroy();
+    writer.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
