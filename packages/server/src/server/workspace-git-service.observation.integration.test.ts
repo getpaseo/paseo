@@ -871,6 +871,7 @@ test.skipIf(process.platform !== "linux")(
     } finally {
       subscription.unsubscribe();
       await service.dispose();
+      await flushGitCommandTrace();
       if (previousTrace === undefined) delete process.env.PASEO_GIT_TRACE_FILE;
       else process.env.PASEO_GIT_TRACE_FILE = previousTrace;
       rmSync(root, { recursive: true, force: true });
