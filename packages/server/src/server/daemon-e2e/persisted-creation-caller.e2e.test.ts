@@ -57,7 +57,7 @@ test.each(["agent", "workspace"] as const)(
       expect(ctx.daemon.daemon.agentManager.getAgent(parent.id)).toBeNull();
     } finally {
       await ctx?.cleanup();
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   60_000,
