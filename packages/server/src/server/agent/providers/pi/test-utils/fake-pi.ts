@@ -5,6 +5,7 @@ import type {
   PiRuntimeLaunch,
   PiRuntimeSession,
   PiStartSessionInput,
+  PiClearedQueue,
 } from "../runtime.js";
 import type {
   PiAgentMessage,
@@ -16,6 +17,7 @@ import type {
   PiSessionStats,
 } from "../rpc-types.js";
 import { buildPiLaunch } from "../runtime.js";
+import { getUserMessageText } from "../history-mapper.js";
 
 type FakePiSubagentSubscriptionLevel = "off" | "progress" | "events";
 type FakePiSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
@@ -135,6 +137,7 @@ export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
+  steerTextTransform: (text: string) => string = (text) => text;
   readonly controlRequests: string[] = [];
   clearQueueError: Error | null = null;
   clearQueueCompletion: Promise<void> | null = null;
@@ -182,6 +185,8 @@ export class FakePiSession implements PiRuntimeSession {
   state: PiSessionState;
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
+  private readonly steeringMessages: string[] = [];
+  private foregroundMessage: string | null = null;
   private readonly subagentMessageResults = new Map<string, FakePiSubagentMessagesResult[]>();
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
@@ -217,6 +222,7 @@ export class FakePiSession implements PiRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    if (!message.startsWith("/")) this.foregroundMessage = message;
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
       this.nextHeldPrompt = null;
@@ -262,14 +268,16 @@ export class FakePiSession implements PiRuntimeSession {
     if (this.steerError) {
       throw this.steerError;
     }
+    this.steeringMessages.push(this.steerTextTransform(message));
   }
 
-  async clearQueue(): Promise<void> {
+  async clearQueue(): Promise<PiClearedQueue> {
     this.controlRequests.push("clear_queue");
     await this.clearQueueCompletion;
     if (this.clearQueueError) {
       throw this.clearQueueError;
     }
+    return { steering: this.steeringMessages.splice(0), followUp: [] };
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -430,6 +438,16 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   emit(event: PiRuntimeEvent): void {
+    const message = event.type === "message_end" ? (event.message as PiAgentMessage) : null;
+    if (message?.role === "user") {
+      const text = getUserMessageText(message.content);
+      if (this.foregroundMessage === text) {
+        this.foregroundMessage = null;
+      } else {
+        const index = this.steeringMessages.indexOf(text);
+        if (index >= 0) this.steeringMessages.splice(index, 1);
+      }
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

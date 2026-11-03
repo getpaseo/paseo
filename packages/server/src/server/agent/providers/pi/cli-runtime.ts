@@ -3,6 +3,7 @@ import { readPiTranscript, type PiTranscript } from "./transcript.js";
 import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
@@ -16,6 +17,7 @@ import {
   type PiRuntimeLaunch,
   type PiRuntimeSession,
   type PiStartSessionInput,
+  type PiClearedQueue,
 } from "./runtime.js";
 import type {
   PiModel,
@@ -149,8 +151,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     });
   }
 
-  async clearQueue(): Promise<void> {
-    await this.requestStopWork({ type: "clear_queue" });
+  async clearQueue(): Promise<PiClearedQueue | undefined> {
+    const result = await this.options.process.requestStopWork({ type: "clear_queue" });
+    if (result === undefined) return undefined;
+    return z.object({ steering: z.array(z.string()), followUp: z.array(z.string()) }).parse(result);
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -268,8 +272,8 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return this.options.process.request(command, timeoutMs);
   }
 
-  private requestStopWork(command: PiRpcCommand): Promise<void> {
-    return this.options.process.requestStopWork(command);
+  private async requestStopWork(command: PiRpcCommand): Promise<void> {
+    await this.options.process.requestStopWork(command);
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {

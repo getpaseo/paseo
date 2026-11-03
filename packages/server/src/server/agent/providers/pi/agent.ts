@@ -83,7 +83,12 @@ import {
   listPiImportableSessions,
   readPiImportSessionConfig,
 } from "./session-descriptor.js";
-import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
+import type {
+  PiClearedQueue,
+  PiRuntime,
+  PiRuntimeSession,
+  PiStartSessionInput,
+} from "./runtime.js";
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
@@ -1566,6 +1571,31 @@ export class PiRpcAgentSession implements AgentSession {
     };
   }
 
+  private reportClearedSteers(
+    cleared: PiClearedQueue | undefined,
+    turnId: string | undefined,
+  ): void {
+    if (!cleared) return;
+    // Pi returns what it actually removed, after any input-extension rewrites.
+    for (const text of cleared.steering) {
+      const index = this.pendingSteerSubmissions.findIndex(
+        (submission) => !submission.consumed && submission.text === text,
+      );
+      const submission = index >= 0 ? this.pendingSteerSubmissions.splice(index, 1)[0] : undefined;
+      const label = submission?.label ?? (text || "queued message");
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "notification",
+          level: "warning",
+          message: `Not delivered (stopped): ${label}`,
+        },
+      });
+    }
+  }
+
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId ?? undefined;
     const interruption: typeof this.interruptingTurn =
@@ -1573,24 +1603,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.interruptingTurn = interruption;
     try {
       try {
-        await this.runtimeSession.clearQueue();
-        // Only an acknowledged clear_queue proves queued messages were dropped.
-        for (const submission of this.pendingSteerSubmissions.splice(0)) {
-          if (submission.consumed) {
-            this.pendingSteerSubmissions.push(submission);
-            continue;
-          }
-          this.emit({
-            type: "timeline",
-            provider: this.provider,
-            turnId,
-            item: {
-              type: "notification",
-              level: "warning",
-              message: `Not delivered (stopped): ${submission.label}`,
-            },
-          });
-        }
+        const cleared = await this.runtimeSession.clearQueue();
+        this.reportClearedSteers(cleared, turnId);
       } catch (error) {
         // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
         // the pi floor supports clear_queue (added in pi 0.84.4).

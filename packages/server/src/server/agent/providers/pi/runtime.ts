@@ -39,6 +39,11 @@ export interface PiStartSessionInput {
   extraArgs?: string[];
 }
 
+export interface PiClearedQueue {
+  steering: string[];
+  followUp: string[];
+}
+
 export interface PiRuntimeSession {
   readonly environment: Record<string, string>;
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void;
@@ -50,7 +55,7 @@ export interface PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void>;
-  clearQueue(): Promise<void>;
+  clearQueue(): Promise<PiClearedQueue | undefined>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;

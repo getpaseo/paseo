@@ -2490,6 +2490,40 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("does not report a consumed steer rewritten by a Pi input extension", async () => {
+    const { pi, session, events } = await createSession();
+    pi.latestSession().steerTextTransform = (text) => text.replace("please ", "");
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("please continue", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    pi.latestSession().finishSubmittedUserMessage({
+      id: "native-transformed-steer",
+      parentId: null,
+      text: "continue",
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems().filter((item) => item.type === "notification")).toEqual([]);
+  });
+
+  test("names the rewritten steer that Pi actually removed", async () => {
+    const { pi, session, events } = await createSession();
+    pi.latestSession().steerTextTransform = (text) => text.replace("please ", "");
+    const { turnId } = await session.startTurn("work");
+    await session.steerActiveTurn("please continue", { expectedTurnId: turnId });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "notification",
+      level: "warning",
+      message: "Not delivered (stopped): continue",
+    });
+  });
+
   test("does not consume a queued steer when the outstanding foreground prompt has the same text", async () => {
     const { pi, session, events } = await createSession();
     const { turnId } = await session.startTurn("continue", {
