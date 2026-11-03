@@ -6,13 +6,28 @@ Define shortcuts in [the shared binding table](../packages/app/src/keyboard/keyb
 
 Keep badge visibility separate from key routing. Hiding badges on a phone without a keyboard must not disable shortcuts when a hardware keyboard is attached. See [availability.ts](../packages/app/src/keyboard/availability.ts) for the current policy.
 
-## Native constraints
+## Native sources
 
-The iOS bridge carries key combinations back to the shared resolver. Keep JavaScript named-key support and Swift mappings aligned when extending it; UIKit-specific key values belong in Swift. The supported combinations and binding filters live in [native-shortcuts.ts](../packages/app/src/keyboard/native-shortcuts.ts), with UIKit registration in [PaseoHardwareKeyboardModule.swift](../packages/app/modules/paseo-hardware-keyboard/ios/PaseoHardwareKeyboardModule.swift).
+Use the iOS window press stream for hardware keys. `UIKeyCommand` only takes keys
+that must bypass the focused text control: composer Return and the top overlay's
+Enter and arrows. Keep the stream as the sole shortcut emitter: a command-owned
+press is still observed by the window.
 
-Native command registration affects the focused control before JavaScript can decide what to do with a press. Treat registration as keyboard ownership: registering Enter, arrows, or Backspace can take submission, caret movement, or deletion away from a text field. Do not register a key globally merely because one surface needs it.
+The source spike used an iPad Pro 11-inch (M4) simulator on iOS 18.6 with a
+`UITextView` first responder. Both `UIWindow.sendEvent` and the root controller's
+`pressesBegan` received Cmd+B, Cmd+P and Escape. With Escape registered as a
+`UIKeyCommand`, the window observed it and the command handler also ran.
 
-Changes to the native module require a native rebuild; an over-the-air JavaScript update cannot deliver them.
+Simulator reserves Cmd+K for Toggle Software Keyboard. Injecting it produced
+HID 184 with empty characters rather than K; plain K, Cmd+B and Cmd+P arrived
+normally. Keep Simulator input capture off: Send Keyboard Input to Device
+prevented synthetic AppleScript input from arriving, including plain text.
+For simulator QA, use Cmd+B/P to check delivery and rebind the command center to
+Cmd+J to check toggle and rebind behavior. Cmd+K delivery needs a physical iPad.
+
+Never register Backspace: it would take deletion away from text fields. Changes
+to the native module require a native rebuild; an over-the-air JavaScript update
+cannot deliver them.
 
 ## Overlays and text input
 
