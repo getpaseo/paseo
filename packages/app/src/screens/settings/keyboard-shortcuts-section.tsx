@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { SearchField } from "@/components/ui/search-field";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
   buildKeyboardShortcutHelpSections,
@@ -25,6 +26,7 @@ import {
   resolveShortcutKeysForAction,
   type KeyboardShortcutHelpRow,
 } from "@/keyboard/keyboard-shortcuts";
+import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import {
   comboStringToShortcutKeys,
   heldModifiersFromEvent,
@@ -335,13 +337,15 @@ export function KeyboardShortcutsSection() {
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
   const [capturedCombos, setCapturedCombos] = useState<string[]>([]);
   const [heldModifiers, setHeldModifiers] = useState<string | null>(null);
+  const [filterInput, setFilterInput] = useState("");
   const { overrides, hasOverrides, setOverride, clearOverride, removeOverride, resetAll } =
     useKeyboardShortcutOverrides();
   const setCapturingShortcut = useKeyboardShortcutsStore((s) => s.setCapturingShortcut);
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
-  const isMac = getShortcutOs() === "mac";
+  const shortcutOs = getShortcutOs();
+  const isMac = shortcutOs === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
@@ -452,15 +456,52 @@ export function KeyboardShortcutsSection() {
     </Button>
   ) : undefined;
 
+  // Same search the shortcuts dialog runs, so both surfaces match on the same
+  // labels, notes, and key spellings.
+  const visibleSections = filterShortcutHelpSections({
+    sections,
+    query: filterInput,
+    translate: t,
+    shortcutOs,
+  });
+  const filterField = (
+    <SearchField
+      value={filterInput}
+      onChangeText={setFilterInput}
+      placeholder={t("settings.shortcuts.searchPlaceholder")}
+      clearAccessibilityLabel={t("settings.shortcuts.clearSearch")}
+      testID="shortcuts-filter-input"
+      clearTestID="shortcuts-filter-clear"
+    />
+  );
+
+  if (visibleSections.length === 0) {
+    return (
+      <SettingsSection
+        title={t("settings.sections.shortcuts")}
+        trailing={hasOverrides ? resetAllButton : undefined}
+      >
+        {capturingBindingId === null ? filterField : null}
+        <View style={[settingsStyles.card, styles.mobileCard]}>
+          <Text style={styles.mobileText}>{t("common.empty.noResults")}</Text>
+        </View>
+      </SettingsSection>
+    );
+  }
+
   return (
     <>
-      {sections.map(function (section, sectionIndex) {
+      {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
             key={section.id}
             title={t(section.titleKey)}
             trailing={sectionIndex === 0 ? resetAllButton : undefined}
           >
+            {/* While a capture owns the keyboard, the filter has nothing to
+                offer: its row may be filtered away and its keystrokes would be
+                swallowed by the capture listener anyway. */}
+            {sectionIndex === 0 && capturingBindingId === null ? filterField : null}
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
                 const platform = { isMac, isDesktop: isDesktopApp };

@@ -2640,6 +2640,7 @@ export const ru: TranslationResources = {
     shortcuts: {
       dialogTitle: "Сочетания клавиш",
       searchPlaceholder: "Поиск сочетаний клавиш",
+      clearSearch: "Очистить поиск сочетаний клавиш",
       unavailableOnMobile: "Сочетания клавиш доступны только на рабочем столе.",
       capturePrompt: "Нажмите сочетание клавиш...",
       captureIndexPrompt: "Завершите цифрой от 1 до 9.",
