@@ -371,6 +371,87 @@ test("a prompt rejected for a stuck provider turn reloads the session and redeli
 });
 
 /**
+ * A controller that reports a newer run in flight, so the recovery of the
+ * failed run has to step aside.
+ *
+ * The failed run released its slot before the recovery starts, so a prompt
+ * sent in that window is the newest intent. Reloading the session under it
+ * would cancel that newer run, and redelivering the failed prompt would
+ * replace it.
+ */
+class SupersededRunController {
+  reloadCount = 0;
+  redelivered: string[] = [];
+  /** How often the recovery asked whether a newer run took over. */
+  inFlightChecks = 0;
+
+  getAgent() {
+    return null;
+  }
+  tryRunOutOfBand() {
+    return false;
+  }
+  hasInFlightRun() {
+    this.inFlightChecks += 1;
+    return true;
+  }
+  reloadStalePluginSession() {
+    return false;
+  }
+  replaceAgentRun() {
+    throw new Error("the recovery must not replace the newer run");
+  }
+  steerOrReplaceActiveTurn() {
+    return { status: "inactive" as const };
+  }
+  streamAgent() {
+    return this.failingIterator();
+  }
+  async reloadAgentSession() {
+    this.reloadCount += 1;
+    return null;
+  }
+  private failingIterator(): AsyncGenerator<AgentStreamEvent> {
+    const events: AgentStreamEvent[] = [
+      {
+        type: "turn_failed",
+        provider: "codex",
+        turnId: "turn-1",
+        error:
+          "Internal error: MiniMax Code Runtime failed: Session already has an active Turn. " +
+          "Use queue send to deliver the message after it.",
+        code: "-32603",
+      },
+    ];
+    return (async function* () {
+      for (const event of events) {
+        yield event;
+      }
+    })();
+  }
+}
+
+test("a busy turn recovery steps aside when a newer run took over the agent", async () => {
+  const controller = new SupersededRunController();
+
+  await startAgentRun(
+    controller as unknown as Parameters<typeof startAgentRun>[0],
+    "agent-1",
+    "first",
+    createTestLogger(),
+  );
+
+  // The recovery belongs to the run that failed. A newer run already owns the
+  // agent, so the session is not reloaded under it and the failed prompt is
+  // not redelivered over it.
+  await vi.waitFor(() => {
+    expect(controller.inFlightChecks).toBeGreaterThan(0);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(controller.reloadCount).toBe(0);
+});
+
+/**
  * Real AgentManager driving a real agent, so the run-start wait exercises the production
  * run-state and agent_state subscription path rather than a replaced method.
  */

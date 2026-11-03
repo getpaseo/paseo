@@ -217,14 +217,14 @@ async function drainAgentRunEvents(input: {
   } catch (error) {
     if (!isStaleProviderSessionError(error)) throw error;
     logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
-    if (isSuperseded(agentManager, agentId, logger)) {
-      logRunDrained(agentId, snapshot, logger);
+    if (isSuperseded({ agentManager, agentId, logger })) {
+      logRunDrained({ agentId, snapshot, logger });
       return;
     }
     await agentManager.reloadAgentSession(agentId);
     const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
     await drainAgentRunIterator(retry.iterator);
-    logRunDrained(agentId, snapshot, logger);
+    logRunDrained({ agentId, snapshot, logger });
     return;
   }
   if (failure && isRecoveredBusyTurnFailure(failure)) {
@@ -241,8 +241,8 @@ async function drainAgentRunEvents(input: {
     // may have sent another prompt in that window. Reloading the session would
     // cancel that newer run, and redelivering this prompt would replace it.
     // The recovery belongs to the run that failed, so it steps aside.
-    if (isSuperseded(agentManager, agentId, logger)) {
-      logRunDrained(agentId, snapshot, logger);
+    if (isSuperseded({ agentManager, agentId, logger })) {
+      logRunDrained({ agentId, snapshot, logger });
       return;
     }
     await agentManager.reloadAgentSession(agentId);
@@ -252,7 +252,7 @@ async function drainAgentRunEvents(input: {
       throw new Error(`Provider still holds an active turn after reload: ${retryFailure.error}`);
     }
   }
-  logRunDrained(agentId, snapshot, logger);
+  logRunDrained({ agentId, snapshot, logger });
 }
 
 /**
@@ -262,7 +262,12 @@ async function drainAgentRunEvents(input: {
  * after the failure already carries the user's newest intent, and reloading
  * the session under it would cancel work the user asked for.
  */
-function isSuperseded(agentManager: AgentRunController, agentId: string, logger: Logger): boolean {
+function isSuperseded(input: {
+  agentManager: AgentRunController;
+  agentId: string;
+  logger: Logger;
+}): boolean {
+  const { agentManager, agentId, logger } = input;
   if (!agentManager.hasInFlightRun(agentId)) {
     return false;
   }
@@ -270,7 +275,12 @@ function isSuperseded(agentManager: AgentRunController, agentId: string, logger:
   return true;
 }
 
-function logRunDrained(agentId: string, snapshot: ManagedAgent | null, logger: Logger): void {
+function logRunDrained(input: {
+  agentId: string;
+  snapshot: ManagedAgent | null;
+  logger: Logger;
+}): void {
+  const { agentId, snapshot, logger } = input;
   logger.trace(
     {
       agentId,
