@@ -19,6 +19,7 @@ import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
+  ArrowRight,
   ChevronDown,
   Columns2,
   ExternalLink,
@@ -202,6 +203,7 @@ const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
+const ThemedArrowRight = withUnistyles(ArrowRight);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
@@ -471,7 +473,8 @@ interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | 
 }
 
 interface ChangesRepositoryToolbarModel {
-  baseBranchPicker: ReactNode;
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
@@ -498,7 +501,8 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
-  baseBranchPicker: ReactNode;
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
@@ -522,7 +526,8 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 } {
   return {
     repository: {
-      baseBranchPicker: input.baseBranchPicker,
+      baseRef: input.baseRef,
+      isWorktree: input.isWorktree,
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
@@ -662,8 +667,18 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
-        <Text style={styles.baseArrow}>→</Text>
-        {model.baseBranchPicker}
+        {model.baseRef ? (
+          <>
+            <ThemedArrowRight size={14} uniProps={foregroundMutedIconColorMapping} />
+            <WorkspaceBaseBranchPicker
+              serverId={model.serverId}
+              workspaceId={model.workspaceId}
+              cwd={model.cwd}
+              baseRef={model.baseRef}
+              isWorktree={model.isWorktree}
+            />
+          </>
+        ) : null}
       </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         {model.pullRequest ? (
@@ -1914,15 +1929,8 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
-        baseBranchPicker: (
-          <WorkspaceBaseBranchPicker
-            serverId={serverId}
-            workspaceId={workspaceId}
-            cwd={cwd}
-            baseRef={baseRef ?? null}
-            isWorktree={isManagedWorktree(status)}
-          />
-        ),
+        baseRef: baseRef ?? null,
+        isWorktree: isManagedWorktree(status),
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -2012,7 +2020,6 @@ export function ChangesSurface({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  baseArrow: { color: theme.colors.foregroundMuted },
   container: {
     flex: 1,
     minHeight: 0,

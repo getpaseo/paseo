@@ -940,9 +940,6 @@ export const en = {
       diff: {
         baseBranch: {
           title: "Change base",
-          hint: "Used for committed changes, commits, Git updates and new pull requests. Shared by workspaces using this checkout.",
-          updateHost: "Update the host to change the base branch.",
-          saved: "Base branch updated",
         },
         openChangesTab: "Open Changes tab",
         openDiffTab: "Open Diff tab",

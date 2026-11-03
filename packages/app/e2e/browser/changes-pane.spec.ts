@@ -367,6 +367,7 @@ test("Changes lets a compact workspace change its base in a sheet", async ({ pag
   await page.screenshot({ path: testInfo.outputPath("compact-base-picker.png") });
   await release.click();
   await expect(picker).toContainText("release");
+  await page.screenshot({ path: testInfo.outputPath("compact-base-selected.png") });
 });
 
 test("Changes shows a failed base selection and lets the user retry", async ({ page }) => {
@@ -392,7 +393,9 @@ test("Changes shows a failed base selection and lets the user retry", async ({ p
   await expect(picker).toContainText("release");
 });
 
-test("Changes asks to update a host without the base-branch capability", async ({ page }) => {
+test("Changes shows the base as text on a host without the base-branch capability", async ({
+  page,
+}) => {
   let baseRequests = 0;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();

@@ -8,12 +8,10 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { ToolbarLabelSelectTrigger } from "@/components/ui/toolbar-label-trigger";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Button } from "@/components/ui/button";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { useToast } from "@/contexts/toast-context";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { invalidateCheckoutGitQueriesForClient } from "./query-keys";
 
@@ -21,7 +19,7 @@ interface Props {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
-  baseRef: string | null;
+  baseRef: string;
   isWorktree: boolean;
 }
 
@@ -48,7 +46,6 @@ export function WorkspaceBaseBranchPicker({
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceBaseBranch === true,
   );
   const queryClient = useQueryClient();
-  const toast = useToast();
   const anchorRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -78,7 +75,6 @@ export function WorkspaceBaseBranchPicker({
     },
     onSuccess: async () => {
       setOpen(false);
-      toast.show(t("workspace.git.diff.baseBranch.saved"));
       await invalidateCheckoutGitQueriesForClient(queryClient, { serverId, cwd });
     },
   });
@@ -88,22 +84,15 @@ export function WorkspaceBaseBranchPicker({
   );
   const error = mutation.error ?? branches.error;
   const title = t("workspace.git.diff.baseBranch.title");
-  const label = baseRef ? refLabel(baseRef).replace(/^origin\//, "") : title;
-  const hint = supported
-    ? t("workspace.git.diff.baseBranch.hint")
-    : t("workspace.git.diff.baseBranch.updateHost");
+  const label = refLabel(baseRef).replace(/^origin\//, "");
 
   const { reset, mutate, isPending } = mutation;
   const { refetch, isError } = branches;
   const handleOpen = useCallback(() => {
-    if (!supported) {
-      toast.error(t("workspace.git.diff.baseBranch.updateHost"));
-      return;
-    }
     reset();
     setSearch("");
     setOpen(true);
-  }, [reset, supported, toast, t]);
+  }, [reset]);
   const handleSelect = useCallback(
     (ref: string) => {
       if (!isPending) mutate(ref);
@@ -150,26 +139,18 @@ export function WorkspaceBaseBranchPicker({
 
   return (
     <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild>
-          <ToolbarLabelSelectTrigger
-            testID="workspace-base-branch-trigger"
-            label={label}
-            open={open}
-            disabled={!connected || mutation.isPending}
-            accessibilityRole="button"
-            accessibilityLabel={title}
-            accessibilityHint={hint}
-            onPress={handleOpen}
-          />
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <Text style={styles.text}>{hint}</Text>
-        </TooltipContent>
-      </Tooltip>
+      <ToolbarLabelSelectTrigger
+        testID="workspace-base-branch-trigger"
+        label={label}
+        open={open}
+        disabled={!connected || mutation.isPending}
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        onPress={handleOpen}
+      />
       <Combobox
         options={options}
-        value={baseRef ?? ""}
+        value={baseRef}
         onSelect={handleSelect}
         keepOpenOnSelect
         searchable
