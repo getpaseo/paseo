@@ -719,6 +719,7 @@ function createToolCatalog(
   const hostResolver = createHostResolver({
     serverId: options.serverId ?? "self",
     callerAgentId,
+    caller: () => resolveCallerAgent(),
     lockedCwd: callerContext?.lockedCwd,
     hosts: () => {
       if (!options.hosts) throw new Error("Connected hosts are not configured");
