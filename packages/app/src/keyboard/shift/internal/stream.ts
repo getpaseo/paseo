@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import { useSettledKeyboardShift } from "./context";
 import { resolveStreamKeyboardInset } from "./policy";
 
-/** Preserve the translated inverted list's far-end scroll range only after motion settles. */
+/** Keep the oldest rows of the translated list reachable, only after motion settles. */
 export function useKeyboardStreamInset() {
   const settledShift = useSettledKeyboardShift();
   return useMemo(

@@ -340,10 +340,7 @@ describe("bottom anchor controller driver", () => {
     const harness = createDriverHarness();
 
     harness.driver.detachByUser();
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 1200,
-      contentHeight: 1500,
-    });
+    harness.driver.handleContentSizeChange();
     harness.driver.handleViewportMetricsChange({
       previousViewportWidth: 800,
       viewportWidth: 640,
@@ -356,7 +353,7 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollAttempts).toHaveLength(0);
   });
 
-  it("pauses sticky maintenance while a user scroll owns the viewport", () => {
+  it("leaves the viewport to a user scroll that owns it", () => {
     const harness = createDriverHarness({
       transportBehavior: {
         verificationDelayFrames: 2,
@@ -364,12 +361,8 @@ describe("bottom anchor controller driver", () => {
       },
     });
 
-    harness.driver.prepareForStickyContentChange();
     harness.driver.beginUserScroll();
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 1200,
-      contentHeight: 1400,
-    });
+    harness.driver.handleContentSizeChange();
     harness.context.nearBottom = false;
     harness.driver.handleScrollNearBottomChange({
       nextIsNearBottom: false,
@@ -377,19 +370,15 @@ describe("bottom anchor controller driver", () => {
     });
     harness.scheduler.flushAll();
 
-    expect(harness.scrollAttempts).toHaveLength(1);
-    expect(harness.driver.getSnapshot()).toMatchObject({
-      mode: "sticky-bottom",
-      pendingRequest: null,
-      pendingVerification: null,
-    });
+    expect(harness.scrollAttempts).toHaveLength(0);
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
 
     harness.driver.endUserScroll({ isNearBottom: false });
 
     expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
 
-  it("restores sticky maintenance when a user scroll returns to the bottom", () => {
+  it("resumes following when a user scroll returns to the bottom", () => {
     const harness = createDriverHarness({
       transportBehavior: {
         verificationDelayFrames: 2,
@@ -403,10 +392,7 @@ describe("bottom anchor controller driver", () => {
       nextIsNearBottom: false,
       scrollDelta: 48,
     });
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 1200,
-      contentHeight: 1400,
-    });
+    harness.driver.handleContentSizeChange();
     harness.context.nearBottom = true;
     harness.driver.handleScrollNearBottomChange({
       nextIsNearBottom: true,
@@ -420,7 +406,54 @@ describe("bottom anchor controller driver", () => {
       pendingRequest: null,
       pendingVerification: null,
     });
-    expect(harness.scrollAttempts).toHaveLength(1);
+    expect(harness.scrollAttempts).toHaveLength(0);
+  });
+
+  it("holds a disclosure detached and resumes following when it is released at the end", () => {
+    const harness = createDriverHarness({
+      transportBehavior: {
+        verificationDelayFrames: 2,
+        verificationRetryMode: "recheck",
+      },
+    });
+
+    harness.driver.holdForDisclosure();
+    harness.driver.handleContentSizeChange();
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: true,
+      scrollDelta: -12,
+    });
+    harness.scheduler.flushAll();
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
+    expect(harness.scrollAttempts).toHaveLength(0);
+
+    harness.driver.releaseDisclosure({ isAtEnd: true });
+    harness.scheduler.flushAll();
+
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+  });
+
+  it("stays detached when a disclosure is released away from the end", () => {
+    const harness = createDriverHarness();
+
+    harness.driver.holdForDisclosure();
+    harness.driver.releaseDisclosure({ isAtEnd: false });
+    harness.scheduler.flushAll();
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
+    expect(harness.scrollAttempts).toHaveLength(0);
+  });
+
+  it("leaves a disclosure release to a user scroll that owns the viewport", () => {
+    const harness = createDriverHarness();
+
+    harness.driver.holdForDisclosure();
+    harness.driver.beginUserScroll();
+    harness.driver.releaseDisclosure({ isAtEnd: true });
+    harness.scheduler.flushAll();
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
 
   it("switches back to sticky-bottom for explicit jump-to-bottom", () => {
@@ -441,7 +474,7 @@ describe("bottom anchor controller driver", () => {
     expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
   });
 
-  it("schedules sticky maintenance on viewport and content growth", () => {
+  it("scrolls for a viewport resize while following", () => {
     const harness = createDriverHarness();
 
     harness.driver.handleViewportMetricsChange({
@@ -452,13 +485,44 @@ describe("bottom anchor controller driver", () => {
     });
     harness.scheduler.flushAll();
 
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 1200,
-      contentHeight: 1600,
+    expect(harness.scrollAttempts).toHaveLength(1);
+  });
+
+  it("never scrolls for a content change while following", () => {
+    const harness = createDriverHarness({
+      transportBehavior: {
+        verificationDelayFrames: 2,
+        verificationRetryMode: "recheck",
+      },
     });
+
+    harness.context.measurementState.contentHeight = 1600;
+    harness.driver.handleContentSizeChange();
+    harness.context.measurementState.contentHeight = 1250;
+    harness.driver.handleContentSizeChange();
     harness.scheduler.flushAll();
 
-    expect(harness.scrollAttempts).toHaveLength(2);
+    expect(harness.scrollAttempts).toHaveLength(0);
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "sticky-bottom",
+      pendingRequest: null,
+      pendingVerification: null,
+    });
+  });
+
+  it("detaches when the user scrolls away after a content change", () => {
+    const harness = createDriverHarness();
+
+    harness.context.measurementState.contentHeight = 1600;
+    harness.driver.handleContentSizeChange();
+    harness.context.nearBottom = false;
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 4,
+    });
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
+    expect(harness.scrollAttempts).toHaveLength(0);
   });
 
   it("keeps a pending request blocked when stale container measurements arrive", () => {
@@ -556,10 +620,7 @@ describe("bottom anchor controller driver", () => {
 
     harness.context.measurementState.contentHeight = 14804;
     harness.context.nearBottom = false;
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 14322,
-      contentHeight: 14804,
-    });
+    harness.driver.handleContentSizeChange();
 
     harness.scheduler.flushFrame();
 
@@ -628,10 +689,7 @@ describe("bottom anchor controller driver", () => {
 
     harness.context.measurementState.contentHeight = 16230;
     harness.context.nearBottom = false;
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 14322,
-      contentHeight: 16230,
-    });
+    harness.driver.handleContentSizeChange();
 
     harness.scheduler.flushFrame();
     harness.scheduler.flushFrame();
@@ -685,136 +743,6 @@ describe("bottom anchor controller driver", () => {
 
     expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
-
-  it("keeps sticky-bottom during streaming growth until bottom is re-verified", () => {
-    const harness = createDriverHarness();
-    harness.context.nearBottom = false;
-    harness.setScrollToBottomBehavior(() => {
-      harness.context.measurementState.offsetY = 900;
-    });
-
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 1200,
-      contentHeight: 1400,
-    });
-    harness.scheduler.flushAll();
-
-    expect(harness.scrollAttempts).toHaveLength(4);
-    expect(harness.driver.getSnapshot()).toMatchObject({
-      mode: "sticky-bottom",
-      pendingRequest: null,
-      pendingVerification: null,
-    });
-
-    harness.driver.handleScrollNearBottomChange({
-      nextIsNearBottom: false,
-      scrollDelta: 0,
-    });
-
-    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
-
-    harness.context.nearBottom = true;
-    harness.driver.handleScrollNearBottomChange({
-      nextIsNearBottom: true,
-      scrollDelta: 0,
-    });
-    harness.scheduler.flushAll();
-    harness.driver.handleScrollNearBottomChange({
-      nextIsNearBottom: false,
-      scrollDelta: 64,
-    });
-
-    expect(harness.driver.getSnapshot().mode).toBe("detached");
-  });
-
-  it("keeps initial native content growth anchored before layout scroll events arrive", () => {
-    const harness = createDriverHarness({
-      transportBehavior: {
-        verificationDelayFrames: 2,
-        verificationRetryMode: "recheck",
-      },
-      measurementState: createMeasurementState({
-        containerKey: "native-virtualized",
-        viewportWidth: 0,
-        viewportHeight: 0,
-        contentHeight: 0,
-        offsetY: 0,
-        viewportMeasuredForKey: null,
-        contentMeasuredForKey: null,
-      }),
-    });
-    harness.setScrollToBottomBehavior(() => {
-      harness.context.measurementState.offsetY = 0;
-    });
-
-    harness.context.measurementState.contentHeight = 1348;
-    harness.context.measurementState.contentMeasuredForKey = "native-virtualized";
-    harness.driver.handleContentSizeChange({
-      previousContentHeight: 0,
-      contentHeight: 1348,
-    });
-
-    expect(harness.scrollAttempts).toHaveLength(1);
-    expect(harness.driver.getSnapshot()).toMatchObject({
-      mode: "sticky-bottom",
-      pendingVerification: {
-        requestId: null,
-      },
-    });
-
-    harness.context.measurementState.viewportWidth = 390;
-    harness.context.measurementState.viewportHeight = 546;
-    harness.context.measurementState.viewportMeasuredForKey = "native-virtualized";
-    harness.context.measurementState.offsetY = 50;
-    harness.context.nearBottom = false;
-    harness.driver.handleScrollNearBottomChange({
-      nextIsNearBottom: false,
-      scrollDelta: 50,
-    });
-
-    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
-  });
-
-  it("keeps native sticky content changes anchored when measured height is unchanged", () => {
-    const harness = createDriverHarness({
-      transportBehavior: {
-        verificationDelayFrames: 2,
-        verificationRetryMode: "recheck",
-      },
-      measurementState: createMeasurementState({
-        containerKey: "native-virtualized",
-        viewportWidth: 390,
-        viewportHeight: 546,
-        contentHeight: 546,
-        offsetY: 0,
-        viewportMeasuredForKey: "native-virtualized",
-        contentMeasuredForKey: "native-virtualized",
-      }),
-    });
-    harness.setScrollToBottomBehavior(() => {
-      harness.context.measurementState.offsetY = 0;
-      harness.context.nearBottom = true;
-    });
-
-    harness.driver.prepareForStickyContentChange();
-
-    expect(harness.scrollAttempts).toHaveLength(1);
-    expect(harness.driver.getSnapshot()).toMatchObject({
-      mode: "sticky-bottom",
-      pendingVerification: {
-        requestId: null,
-      },
-    });
-
-    harness.context.measurementState.offsetY = 50;
-    harness.context.nearBottom = false;
-    harness.driver.handleScrollNearBottomChange({
-      nextIsNearBottom: false,
-      scrollDelta: 50,
-    });
-
-    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
-  });
 });
 
 describe("controller helper predicates", () => {
@@ -864,13 +792,6 @@ describe("controller helper predicates", () => {
   it("suppresses auto-anchor helpers while detached", () => {
     const mode: BottomAnchorMode = "detached";
 
-    expect(
-      __private__.shouldRestickOnContentChange({
-        mode,
-        previousContentHeight: 1000,
-        contentHeight: 1100,
-      }),
-    ).toBe(false);
     expect(
       __private__.shouldRestickOnViewportChange({
         mode,

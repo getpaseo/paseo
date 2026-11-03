@@ -43,6 +43,15 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // The native chat timeline (docs/agent-stream-disclosure.md). Each hunk carries a "Paseo patch"
+  // comment: content height from React state only, per-row size estimates, the MVCP anchor lock on
+  // native, the initial end kept only by lists that keep their end, header and footer revealed with
+  // the rows, one-pixel remeasures treated as noise, the Android silent initial scroll retry sent in
+  // one task, and the top-padding shrink hold limited to iOS.
+  {
+    nodeModulesPath: "node_modules/@legendapp/list",
+    patchPrefix: "@legendapp+list+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",

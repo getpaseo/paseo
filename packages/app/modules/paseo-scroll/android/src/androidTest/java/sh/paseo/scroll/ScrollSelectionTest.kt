@@ -26,20 +26,6 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ScrollSelectionTest {
-  @Test fun mouseWheelMovesInvertedViewportInVisualDirection() = withScroll(inverted = true) { scroll, _ ->
-    val before = scroll.scrollY
-    withWheel(1f) { event ->
-      assertTrue(scroll.dispatchGenericMotionEvent(event))
-      assertTrue("Wheel up must move toward older messages: $before -> ${scroll.scrollY}", scroll.scrollY > before)
-      assertEquals("The caller's event must not change", 1f, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
-    }
-    val afterUp = scroll.scrollY
-    withWheel(-1f) { event ->
-      assertTrue(scroll.dispatchGenericMotionEvent(event))
-      assertTrue("Wheel down must move toward newer messages: $afterUp -> ${scroll.scrollY}", scroll.scrollY < afterUp)
-    }
-  }
-
   @Test fun mouseWheelKeepsOrdinaryScrollDirection() = withScroll(inverted = false) { scroll, _ ->
     val before = scroll.scrollY
     withWheel(1f) { event ->
@@ -51,13 +37,6 @@ class ScrollSelectionTest {
       assertTrue(scroll.dispatchGenericMotionEvent(event))
       assertTrue(scroll.scrollY > afterUp)
     }
-  }
-
-  @Test fun mouseWheelRespectsDisabledScrolling() = withScroll(inverted = true) { scroll, _ ->
-    scroll.setScrollEnabled(false)
-    val before = scroll.scrollY
-    withWheel(1f) { scroll.dispatchGenericMotionEvent(it) }
-    assertEquals(before, scroll.scrollY)
   }
 
   @Test fun focusingSelectableTextKeepsInvertedViewportStill() = withScroll(inverted = true) { scroll, text ->
@@ -106,7 +85,7 @@ class ScrollSelectionTest {
       val appContext = instrumentation.targetContext
       DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(appContext)
       SoLoader.init(appContext, OpenSourceMergedSoMapping)
-      val reactContext = ScrollTestContext(appContext)
+      val reactContext = MountingReactContext(appContext)
       val context = ThemedReactContext(reactContext, appContext)
       val manager = PaseoScrollPackage().createViewManager(reactContext, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)

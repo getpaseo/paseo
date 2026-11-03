@@ -1408,9 +1408,6 @@ export function createWebStreamStrategy(input: CreateWebStreamStrategyInput): St
     historyLiveBoundaryEdge: "last",
     liveHeadHistoryBoundaryEdge: "first",
     frameChildOrder: "content-then-footer",
-    flatListInverted: false,
-    overlayScrollbarInverted: false,
-    maintainVisibleContentPosition: undefined,
     bottomAnchorTransportBehavior: {
       verificationDelayFrames: 0,
       verificationRetryMode: "rescroll",

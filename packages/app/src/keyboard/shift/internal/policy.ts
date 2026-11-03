@@ -14,18 +14,18 @@ export function resolveStreamKeyboardInset(input: {
   platform: "android" | "ios";
   settledShift: number;
 }): {
-  contentContainerPaddingBottom: number;
-  contentInset: { bottom: number } | undefined;
+  contentContainerPaddingTop: number;
+  contentInset: { top: number } | undefined;
 } {
   const settledShift = Math.max(0, input.settledShift);
   if (input.platform === "ios") {
     return {
-      contentContainerPaddingBottom: 0,
-      contentInset: { bottom: settledShift },
+      contentContainerPaddingTop: 0,
+      contentInset: { top: settledShift },
     };
   }
   return {
-    contentContainerPaddingBottom: settledShift,
+    contentContainerPaddingTop: settledShift,
     contentInset: undefined,
   };
 }
