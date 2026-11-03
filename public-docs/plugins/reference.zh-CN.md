@@ -1779,6 +1779,8 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 返回的 API 涵盖项目、工作区、Agent、终端、Provider 和 daemon 配置。其方法请参阅 [SDK API 参考](/docs/sdk/reference)。这里刻意没有连接生命周期方法，因为连接由 Paseo 负责。
 
+如果要运行用户不需要看到的辅助任务，例如分类或摘要，请在已有工作区中把它创建为[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent)。
+
 ### 发现主机并指定另一台主机 {#discover-hosts-and-target-another-host}
 
 使用 `useHosts()` 显示已配置的主机，并在操作回调中使用 `getPaseoClient(serverId)` 对其中一台主机
