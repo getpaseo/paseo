@@ -787,7 +787,7 @@ describe("WorkspaceGitServiceImpl", () => {
       force: true,
       includeForge: false,
       reason: "after-mutation",
-      afterCurrent: true,
+      afterInFlight: true,
     });
     gate.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "old-base" }));
     await first;
