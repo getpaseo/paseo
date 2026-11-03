@@ -1932,3 +1932,48 @@ test("Muse reports belong only to the session's account and remain available glo
   expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
   expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);
 });
+
+test("a child history read recovers after the parent finishes", async () => {
+  const h = await harness("subagent", {
+    MUSE_TEST_CHILD: "dedicated",
+    MUSE_TEST_CHILD_PAGE_FAIL: "twice",
+  });
+  await h.open();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait(
+    (e) => e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+  );
+  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+  expect(
+    h.events.some(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "fixture-child" &&
+        e.item.type === "assistant_message",
+    ),
+  ).toBe(false);
+  await vi.advanceTimersByTimeAsync(120000);
+  await h.wait(
+    (e) =>
+      e.type === "timeline.item" &&
+      e.sessionId === "fixture-child" &&
+      e.item.type === "assistant_message",
+  );
+}, 10000);
+
+test("closing a session cancels pending child history retries", async () => {
+  const h = await harness("subagent", {
+    MUSE_TEST_CHILD: "dedicated",
+    MUSE_TEST_CHILD_PAGE_FAIL: "always",
+  });
+  await h.open();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait(
+    (e) => e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+  );
+  await h.send({ type: "session.close", sessionId: "paseo-session" });
+  await h.wait((e) => e.type === "session.closed" && e.sessionId === "paseo-session");
+  expect(vi.getTimerCount()).toBe(0);
+});

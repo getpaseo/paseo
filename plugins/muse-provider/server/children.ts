@@ -10,10 +10,15 @@ import {
   type WireItem,
 } from "./wire.js";
 
+// Match the existing silence-recovery cadence, including after the parent becomes idle.
+const READ_RETRY_MS = 2 * 60 * 1000;
+
 interface Child {
   timeline: Timeline;
   cursor: string | undefined;
   ended: boolean;
+  reading: Promise<void> | undefined;
+  retry: ReturnType<typeof setTimeout> | undefined;
 }
 export class Children {
   private readonly children = new Map<string, Child>();
@@ -69,15 +74,30 @@ export class Children {
       timeline: new Timeline(this.host, id, id, this.emit),
       cursor: undefined,
       ended: false,
+      reading: undefined,
+      retry: undefined,
     });
   }
-  // The next item update or refresh() reads a failed child again from the same cursor.
-  private async read(id: string): Promise<void> {
-    try {
-      await this.page(id);
-    } catch (error) {
-      this.readFailed(id, error);
-    }
+  // A failed final read must recover even after the parent finishes and stops its silence timer.
+  // Item updates and timer retries share one read so their cursors cannot race.
+  private read(id: string): Promise<void> {
+    const child = this.children.get(id);
+    if (!child) return Promise.resolve();
+    clearTimeout(child.retry);
+    child.retry = undefined;
+    if (child.reading) return child.reading;
+    child.reading = this.page(id)
+      .catch((error: unknown) => {
+        this.readFailed(id, error);
+        if (this.children.get(id) === child)
+          child.retry = setTimeout(() => {
+            void this.read(id);
+          }, READ_RETRY_MS);
+      })
+      .finally(() => {
+        child.reading = undefined;
+      });
+    return child.reading;
   }
   private readFailed(id: string, error: unknown): void {
     process.stderr.write(
@@ -132,7 +152,10 @@ export class Children {
     } while (next !== null);
   }
   close(): void {
-    for (const sessionId of this.children.keys()) this.emit({ type: "session.closed", sessionId });
+    for (const [sessionId, child] of this.children) {
+      clearTimeout(child.retry);
+      this.emit({ type: "session.closed", sessionId });
+    }
     this.children.clear();
   }
 }

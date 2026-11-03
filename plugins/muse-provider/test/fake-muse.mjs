@@ -155,6 +155,12 @@ function failedChildRead(frame) {
   const failure = process.env[childReadFailures[frame.method]];
   if (!failure || frame.params.sessionId !== "fixture-child") return false;
   if (failure === "once" && failedChildReads.has(frame.method)) return false;
+  if (failure === "twice") {
+    const key = `child-fail:${frame.method}`;
+    const count = counts.get(key) ?? 0;
+    if (count >= 2) return false;
+    counts.set(key, count + 1);
+  }
   failedChildReads.add(frame.method);
   rpcError(frame, -32603, "internal", "view range read failed");
   return true;
