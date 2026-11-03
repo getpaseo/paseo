@@ -643,6 +643,7 @@ interface PendingPermission {
   resolve: (response: RequestPermissionResponse) => void;
   reject: (error: Error) => void;
   turnId: string | null;
+  toolCallId: string;
 }
 
 interface PendingUserMessage {
@@ -2644,6 +2645,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         resolve,
         reject,
         turnId: this.activeForegroundTurnId,
+        toolCallId: params.toolCall.toolCallId,
       });
     });
 
@@ -3207,6 +3209,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       snapshot = this.toolSnapshotTransformer(snapshot);
     }
     this.toolCalls.set(toolCallId, snapshot);
+    if (update.status === "completed" || update.status === "failed") {
+      this.cancelPendingPermissions((pending) => pending.toolCallId === toolCallId);
+    }
     return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
   }
 
@@ -3414,11 +3419,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
-    // A turn that ends without completing leaves no way to answer its open
-    // permission requests, so tell the agent they were cancelled.
-    if (event.type !== "turn_completed") {
-      this.cancelPendingPermissions();
-    }
+    // Failed and canceled turns clear every request in the manager. Answer the
+    // same set here so an outside-turn request cannot keep the provider blocked.
+    this.cancelPendingPermissions(
+      (pending) => event.type !== "turn_completed" || pending.turnId === event.turnId,
+    );
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
@@ -3427,11 +3432,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent(event);
   }
 
-  private cancelPendingPermissions(): void {
-    for (const pending of this.pendingPermissions.values()) {
+  private cancelPendingPermissions(
+    matches: (pending: PendingPermission) => boolean = () => true,
+  ): void {
+    for (const [requestId, pending] of this.pendingPermissions) {
+      if (!matches(pending)) continue;
+      this.pendingPermissions.delete(requestId);
       pending.resolve({ outcome: { outcome: "cancelled" } });
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: { behavior: "deny", message: "Permission request canceled" },
+        turnId: pending.turnId ?? undefined,
+      });
     }
-    this.pendingPermissions.clear();
   }
 
   private emitBootstrapThreadEvent(): void {

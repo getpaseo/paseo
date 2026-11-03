@@ -1,12 +1,11 @@
+import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
-import { usePanelStore } from "@/stores/panel-store";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
-import { router } from "expo-router";
 import { Server } from "lucide-react-native";
 import { create } from "zustand";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -20,7 +19,6 @@ import {
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
-import { buildSettingsAddHostRoute } from "@/utils/host-routes";
 
 type HostFilter = (host: HostProfile) => boolean;
 type HostChoiceHandler = (serverId: string) => void | Promise<void>;
@@ -65,6 +63,7 @@ function matchesHostQuery(host: HostProfile, query: string): boolean {
 }
 
 export function useHostChooser() {
+  const addHost = useAddHost();
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const open = useHostChooserStore((state) => state.open);
@@ -76,13 +75,7 @@ export function useHostChooser() {
       );
 
       if (availableHosts.length === 0) {
-        (
-          input.onNoHosts ??
-          (() => {
-            usePanelStore.getState().showMobileAgent();
-            router.push(buildSettingsAddHostRoute(Date.now()));
-          })
-        )();
+        (input.onNoHosts ?? addHost)();
         return false;
       }
 
@@ -98,7 +91,7 @@ export function useHostChooser() {
       });
       return true;
     },
-    [hosts, localServerId, open],
+    [hosts, localServerId, open, addHost],
   );
 }
 

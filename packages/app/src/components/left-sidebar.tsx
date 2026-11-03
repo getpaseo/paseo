@@ -1,3 +1,4 @@
+import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
 import {
   CircleGauge,
@@ -62,7 +63,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
+import { buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import { UsageSidebarItem, UsageSidebarRoot, useUsageSummary, useOpenSidebarUsage } from "@/usage";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
@@ -177,14 +178,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     router.push(buildSettingsRoute());
   }, []);
 
-  const handleAddHostMobile = useCallback(() => {
-    showMobileAgent();
-    router.push(buildSettingsAddHostRoute(Date.now()));
-  }, [showMobileAgent]);
-
-  const handleAddHostDesktop = useCallback(() => {
-    router.push(buildSettingsAddHostRoute(Date.now()));
-  }, []);
+  const handleAddHostMobile = useAddHost();
+  const handleAddHostDesktop = handleAddHostMobile;
 
   const handleOpenHostSettingsMobile = useCallback(
     (serverId: string) => {

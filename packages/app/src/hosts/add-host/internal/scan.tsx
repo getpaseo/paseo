@@ -1,17 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter, type Href } from "expo-router";
+import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult, BarcodeSettings } from "expo-camera";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { openPairScan } from "@/hosts/pair-scan-model";
-import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { openPairScan } from "./pair-scan-model";
 import { isWeb } from "@/constants/platform";
-import { BackHeader } from "@/components/headers/back-header";
-import { PairLinkModal } from "@/components/pair-link-modal";
+import { PairLinkModal } from "./pair-link-modal";
 import { Button } from "@/components/ui/button";
 
 const styles = StyleSheet.create((theme) => ({
@@ -113,49 +110,25 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-export default function PairScanScreen() {
-  const { theme } = useUnistyles();
+export function PairScanContent({
+  onConnected,
+  onClose,
+}: {
+  onConnected: (serverId: string) => void;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const params = useLocalSearchParams<{
-    source?: string;
-  }>();
-  const source = typeof params.source === "string" ? params.source : "settings";
-
   const [permission, requestPermission] = useCameraPermissions();
-
-  const navigateToPairedHost = useCallback(
-    (serverId: string) => {
-      if (source === "onboarding") {
-        router.replace(buildHostRootRoute(serverId));
-        return;
-      }
-      router.replace(buildSettingsHostRoute(serverId));
-    },
-    [router, source],
-  );
 
   const [scan] = useState(() =>
     openPairScan({
-      importConnectionLink: (link) =>
-        getHostRuntimeStore().importConnectionLink(
-          link,
-          source === "onboarding" ? "hostRoot" : "hostSettings",
-        ),
-      onConnected: navigateToPairedHost,
+      importConnectionLink: (link) => getHostRuntimeStore().importConnectionLink(link, "hostRoot"),
+      onConnected,
     }),
   );
   const scanState = useSyncExternalStore(scan.subscribe, scan.getState, scan.getState);
   useEffect(() => () => scan.close(), [scan]);
-
-  const closeToSource = useCallback(() => {
-    try {
-      router.back();
-    } catch {
-      router.replace("/" as Href);
-    }
-  }, [router]);
 
   useEffect(() => {
     if (isWeb) return;
@@ -169,35 +142,29 @@ export default function PairScanScreen() {
     [scan],
   );
 
-  const handleRouterBack = useCallback(() => router.back(), [router]);
   const savePasswordPairing = useCallback(
-    ({ serverId }: { serverId: string }) => navigateToPairedHost(serverId),
-    [navigateToPairedHost],
+    ({ serverId }: { serverId: string }) => onConnected(serverId),
+    [onConnected],
   );
   const handleRequestPermission = useCallback(() => {
     void requestPermission();
   }, [requestPermission]);
 
   const bodyStyle = useMemo(
-    () => [styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }],
-    [insets.bottom, theme.spacing],
-  );
-  const helperTextStyle = useMemo(
-    () => [styles.helperText, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
+    () => [styles.body, { paddingBottom: insets.bottom + 24 }],
+    [insets.bottom],
   );
 
   if (isWeb) {
     return (
       <View style={styles.container}>
-        <BackHeader title={t("pairing.scan.title")} onBack={handleRouterBack} />
         <View style={bodyStyle}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>{t("pairing.scan.webUnavailableTitle")}</Text>
             <Text style={styles.permissionBody}>{t("pairing.scan.webUnavailableBody")}</Text>
-            <Pressable style={styles.permissionButton} onPress={closeToSource}>
-              <Text style={styles.permissionButtonText}>{t("pairing.scan.backToSettings")}</Text>
-            </Pressable>
+            <Button style={styles.permissionButton} onPress={onClose}>
+              <Text style={styles.permissionButtonText}>{t("common.actions.back")}</Text>
+            </Button>
           </View>
         </View>
       </View>
@@ -208,16 +175,14 @@ export default function PairScanScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title={t("pairing.scan.title")} onBack={closeToSource} />
-
       <View style={bodyStyle}>
         {!granted ? (
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>{t("pairing.scan.cameraPermissionTitle")}</Text>
             <Text style={styles.permissionBody}>{t("pairing.scan.cameraPermissionBody")}</Text>
-            <Pressable style={styles.permissionButton} onPress={handleRequestPermission}>
+            <Button style={styles.permissionButton} onPress={handleRequestPermission}>
               <Text style={styles.permissionButtonText}>{t("pairing.scan.grantPermission")}</Text>
-            </Pressable>
+            </Button>
           </View>
         ) : (
           <View style={styles.cameraWrap}>
@@ -235,10 +200,10 @@ export default function PairScanScreen() {
                 <View style={[styles.corner, styles.cornerBR]} />
               </View>
               {scanState.status === "pairing" ? (
-                <Text style={helperTextStyle}>{t("pairing.scan.pairing")}</Text>
+                <Text style={styles.helperText}>{t("pairing.scan.pairing")}</Text>
               ) : null}
               {scanState.status === "stopped" && scanState.error ? (
-                <Text style={helperTextStyle}>{scanState.error}</Text>
+                <Text style={styles.helperText}>{scanState.error}</Text>
               ) : null}
               {scanState.status === "stopped" ? (
                 <Button

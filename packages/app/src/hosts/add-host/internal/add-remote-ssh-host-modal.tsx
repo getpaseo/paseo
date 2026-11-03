@@ -1,7 +1,7 @@
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Pressable,
   Text,
   View,
   type PressableStateCallbackType,
@@ -21,9 +21,8 @@ import {
   resolveControlInteractionStyles,
 } from "@/components/ui/control-geometry";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
-import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedTerminal = withUnistyles(Terminal);
@@ -49,18 +48,10 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
     },
     // Boxed adornment next to the field: same height and radius as the field
-    // chrome of the active form size, and the shared interaction phases.
-    iconButtonSm: {
-      minHeight: CONTROL_HEIGHTS.compact,
-      width: CONTROL_HEIGHTS.compact,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: theme.borderRadius.md,
-      backgroundColor: theme.colors.surface2,
-    },
-    iconButtonMd: {
-      minHeight: CONTROL_HEIGHTS.field,
-      width: CONTROL_HEIGHTS.field,
+    // chrome, and the shared interaction phases.
+    iconButton: {
+      minHeight: CONTROL_HEIGHTS.md,
+      width: CONTROL_HEIGHTS.md,
       alignItems: "center",
       justifyContent: "center",
       borderRadius: theme.borderRadius.lg,
@@ -106,7 +97,6 @@ export function AddRemoteSshHostModal({
 }: AddRemoteSshHostModalProps) {
   const { t } = useTranslation();
   const hosts = useHosts();
-  const isCompact = useIsCompactFormFactor();
   const { probeAndUpsertRemoteSshConnection } = useHostMutations();
   const targetRef = useRef("");
   const passwordRef = useRef("");
@@ -174,11 +164,11 @@ export function AddRemoteSshHostModal({
     }
 
     clear();
-    onClose();
     onSaved?.({
       ...result,
       isNewHost: !hosts.some((profile) => profile.serverId === result.serverId),
     });
+    onClose();
   }, [clear, hosts, isSaving, onClose, onSaved, probeAndUpsertRemoteSshConnection, t]);
   const handleTargetChange = useCallback((value: string) => {
     targetRef.current = value;
@@ -193,7 +183,7 @@ export function AddRemoteSshHostModal({
     (
       state: PressableStateCallbackType & { hovered?: boolean; focused?: boolean },
     ): StyleProp<ViewStyle> => [
-      isCompact ? styles.iconButtonMd : styles.iconButtonSm,
+      styles.iconButton,
       resolveControlInteractionStyles(
         {
           controlRest: styles.controlRest,
@@ -209,7 +199,7 @@ export function AddRemoteSshHostModal({
         },
       ),
     ],
-    [isCompact, isSaving],
+    [isSaving],
   );
   const handleSubmit = useCallback(() => void handleSave(), [handleSave]);
 
@@ -228,7 +218,6 @@ export function AddRemoteSshHostModal({
       >
         <FormTextInput
           ref={inputRef}
-          size={isCompact ? "md" : "sm"}
           testID="remote-ssh-target-input"
           accessibilityLabel={t("pairing.remoteSsh.fields.target")}
           initialValue=""
@@ -246,7 +235,6 @@ export function AddRemoteSshHostModal({
           <View style={styles.passwordInputWrap}>
             <FormTextInput
               ref={passwordInputRef}
-              size={isCompact ? "md" : "sm"}
               testID="remote-ssh-password-input"
               accessibilityLabel={t("pairing.remoteSsh.fields.password")}
               initialValue=""
@@ -260,7 +248,7 @@ export function AddRemoteSshHostModal({
               onSubmitEditing={handleSubmit}
             />
           </View>
-          <Pressable
+          <PressHighlight
             style={iconButtonStyle}
             onPress={handleTogglePasswordVisibility}
             disabled={isSaving}
@@ -273,7 +261,7 @@ export function AddRemoteSshHostModal({
             testID="remote-ssh-password-visibility-toggle"
           >
             {isPasswordVisible ? <ThemedEyeOff size={18} /> : <ThemedEye size={18} />}
-          </Pressable>
+          </PressHighlight>
         </View>
       </Field>
       <View style={styles.actions}>
