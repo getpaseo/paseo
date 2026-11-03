@@ -2990,6 +2990,7 @@ async function resolveCurrentPullRequestView(options: {
       return resolveForkPullRequestView({
         ...options,
         forkOwner,
+        viewMatch,
         repo: `${parentOwner}/${parentName}`,
       });
     }
@@ -3023,6 +3024,7 @@ async function resolveForkPullRequestView(options: {
   headRef: string;
   headSha?: string;
   forkOwner: string;
+  viewMatch: ResolvedPullRequestCandidate | null;
   repo: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
@@ -3038,12 +3040,15 @@ async function resolveForkPullRequestView(options: {
     ),
   );
   const match = pickPullRequestCandidate({
-    candidates: candidates.filter(
-      (candidate): candidate is ResolvedPullRequestCandidate => candidate !== null,
-    ),
+    candidates: [
+      ...candidates.filter(
+        (candidate): candidate is ResolvedPullRequestCandidate =>
+          candidate !== null && candidate.headRepositoryOwner === options.forkOwner,
+      ),
+      ...(options.viewMatch ? [options.viewMatch] : []),
+    ],
     headRef: options.headRef,
     headSha: options.headSha,
-    headRepositoryOwner: options.forkOwner,
   });
   return match?.status ?? null;
 }

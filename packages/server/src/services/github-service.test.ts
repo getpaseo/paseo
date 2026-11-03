@@ -3348,6 +3348,84 @@ describe("ForgeService", () => {
     expect(status).toMatchObject({ number: 43, state: "open" });
   });
 
+  it("keeps a merged PR targeting the fork itself", async () => {
+    const runner = createScriptedRunner([
+      currentPullRequestJson({
+        number: 7,
+        url: "https://github.com/alice/app/pull/7",
+        state: "MERGED",
+        mergedAt: "2026-07-17T12:00:00Z",
+        headRefOid: "checkout-head",
+        headRepositoryOwner: { login: "alice" },
+      }),
+      JSON.stringify({
+        owner: { login: "alice" },
+        name: "app",
+        parent: { owner: { login: "acme" }, name: "app" },
+      }),
+      "[]",
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: "checkout-head",
+    });
+    expect(status).toMatchObject({ number: 7, repoOwner: "alice", state: "merged" });
+  });
+
+  it("compares the fork's terminal PR against parent PRs by state, head and update time", async () => {
+    const local = JSON.parse(
+      currentPullRequestJson({
+        number: 7,
+        url: "https://github.com/alice/app/pull/7",
+        state: "MERGED",
+        mergedAt: "2026-07-17T12:00:00Z",
+        updatedAt: "2026-07-17T12:00:00Z",
+        headRefOid: "local-head",
+        headRepositoryOwner: { login: "alice" },
+      }),
+    );
+    for (const [state, headSha, updatedAt, expected] of [
+      ["OPEN", "other", "2026-07-16T12:00:00Z", 8],
+      ["CLOSED", "other", "2026-07-18T12:00:00Z", 7],
+      ["CLOSED", "other", "2026-07-18T12:00:00Z", 8],
+    ] as const) {
+      const parent = {
+        ...local,
+        number: 8,
+        url: "https://github.com/acme/app/pull/8",
+        state,
+        mergedAt: null,
+        headRefOid: headSha,
+        updatedAt,
+      };
+      const runner = createScriptedRunner([
+        JSON.stringify(local),
+        JSON.stringify({
+          owner: { login: "alice" },
+          name: "app",
+          parent: { owner: { login: "acme" }, name: "app" },
+        }),
+        JSON.stringify([{ number: 8 }]),
+        JSON.stringify(parent),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+      const status = await service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/fork",
+        headSha: state === "OPEN" || expected === 7 ? "local-head" : "neither",
+      });
+      expect(status?.number).toBe(expected);
+    }
+  });
+
   it("resolves fork PR heads to the parent repository when gh pr view returns a stale branch match", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
