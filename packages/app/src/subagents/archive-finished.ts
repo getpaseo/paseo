@@ -21,6 +21,10 @@ export interface ArchiveFinishedOutcome {
 
 export type ManagedSubagentSnapshot = Pick<Agent, "id" | "status" | "parentAgentId" | "archivedAt">;
 
+function isFinishedManagedStatus(status: ManagedSubagentSnapshot["status"]): boolean {
+  return status === "idle" || status === "error" || status === "closed";
+}
+
 export interface ArchiveFinishedSubagentsDeps {
   parentAgentId: string;
   getManagedSubagent: (address: AgentAddress) => ManagedSubagentSnapshot | undefined;
@@ -36,7 +40,7 @@ export interface ArchiveFinishedSubagents {
 }
 
 export function isFinishedSubagent(row: SubagentRow): boolean {
-  if (row.kind === "paseo") return row.status === "idle" || row.status === "error";
+  if (row.kind === "paseo") return isFinishedManagedStatus(row.status);
   return row.status === "completed" || row.status === "failed" || row.status === "canceled";
 }
 
@@ -48,7 +52,7 @@ function canArchiveManagedSubagent(
     agent &&
     !agent.archivedAt &&
     agent.parentAgentId === parentAgentId &&
-    (agent.status === "idle" || agent.status === "error"),
+    isFinishedManagedStatus(agent.status),
   );
 }
 

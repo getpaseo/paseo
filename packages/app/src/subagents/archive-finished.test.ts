@@ -119,6 +119,31 @@ describe("createArchiveFinishedSubagents", () => {
     expect(archive.getState()).toEqual({ eligibleCount: 4, status: { kind: "idle" } });
   });
 
+  it("archives closed managed children the daemon collected after they finished", async () => {
+    const archived: string[] = [];
+    const archive = createArchiveFinishedSubagents(
+      [paseo("closed-child", "closed"), paseo("idle-child")],
+      {
+        parentAgentId: "parent",
+        getManagedSubagent: ({ agentId: id }) =>
+          id === "closed-child" ? managed(id, "closed") : managed(id),
+        archiveManagedSubagent: async ({ agentId: id }) => {
+          archived.push(id);
+        },
+        dismissProviderSubagents: () => undefined,
+      },
+    );
+
+    expect(archive.getState().eligibleCount).toBe(2);
+    await expect(archive.archiveFinished()).resolves.toEqual({
+      archivedPaseoIds: ["closed-child", "idle-child"],
+      dismissedProviderIds: [],
+      skippedPaseoIds: [],
+      failures: [],
+    });
+    expect(archived).toEqual(["closed-child", "idle-child"]);
+  });
+
   it("retains failure through optimistic rollback, retries current rows, and resets for a later eligible-set change", async () => {
     const first = deferred<void>();
     const second = deferred<void>();
