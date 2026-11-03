@@ -78,11 +78,14 @@ interface ResolvedTarget {
   isIndexHtml: boolean;
 }
 
-function resolveTargetFile(
-  distDir: string,
-  requestPath: string,
-  spaFallback: boolean,
-): ResolvedTarget | null {
+interface ResolveTargetFileOptions {
+  distDir: string;
+  requestPath: string;
+  spaFallback: boolean;
+}
+
+function resolveTargetFile(options: ResolveTargetFileOptions): ResolvedTarget | null {
+  const { distDir, requestPath, spaFallback } = options;
   const safePath = path.normalize(requestPath).replace(/^(\.\.[/\\])+/, "");
   let filePath = path.join(distDir, safePath);
 
@@ -205,7 +208,7 @@ function serveWebUiFile(options: ServeWebUiFileOptions): void {
   const { distDir, requestPath, label, req, res } = options;
 
   const wellKnown = isWellKnownPath(requestPath);
-  const target = resolveTargetFile(distDir, requestPath, !wellKnown);
+  const target = resolveTargetFile({ distDir, requestPath, spaFallback: !wellKnown });
   if (!target) {
     if (wellKnown) {
       res.status(404).json({ error: "Not found" });
