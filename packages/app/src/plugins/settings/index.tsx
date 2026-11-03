@@ -6,11 +6,12 @@ import { router } from "expo-router";
 import { ArrowLeft, Settings } from "lucide-react-native";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Button } from "@/components/ui/button";
+import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import { PluginIconView } from "../icons";
 import { useInstalledPlugin } from "../registry";
 import type { InstalledPlugin } from "../types";
@@ -27,7 +28,6 @@ interface SettingsIdentity {
 
 const ThemedSettingsIcon = withUnistyles(Settings);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const settingsIcon = <ThemedSettingsIcon size={ICON_SIZE.md} uniProps={mutedIconMapping} />;
 
 /** Opens the plugin's settings at its first screen. Renders nothing when it has none. */
 export function PluginSettingsButton({ serverId, pluginId }: Omit<SettingsIdentity, "screenId">) {
@@ -38,15 +38,17 @@ export function PluginSettingsButton({ serverId, pluginId }: Omit<SettingsIdenti
   const open = useCallback(() => {
     if (firstScreenId) router.push(buildPluginSettingsRoute(serverId, pluginId, firstScreenId));
   }, [serverId, pluginId, firstScreenId]);
+  const compact = useIsCompactFormFactor();
   if (!supported || !firstScreenId) return null;
   return (
-    <Button
-      variant="ghost"
-      leftIcon={settingsIcon}
+    <ToolbarButton
+      label={t("settings.plugins.actions.settings")}
+      compact={compact}
       onPress={open}
-      accessibilityLabel={t("settings.plugins.actions.settings", { id: pluginId })}
       testID={`plugin-settings-${pluginId}`}
-    />
+    >
+      <ThemedSettingsIcon size={paneContentToolbarIconSize(compact)} uniProps={mutedIconMapping} />
+    </ToolbarButton>
   );
 }
 

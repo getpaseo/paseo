@@ -22,6 +22,8 @@ import {
   openTabbedSettings,
   selectSettingsTab,
   openTabbedSettingsLink,
+  expectSettingsTooltip,
+  expectNamedPluginRow,
 } from "../support/helpers/plugin-settings";
 
 test("display preferences survive a reload", async ({ page }) => {
@@ -57,6 +59,12 @@ test("Back to plugins returns from a plugin settings screen", async ({ page }) =
 
 test("plugin settings open from the cog and show a tab per screen", async ({ page }) => {
   await openPluginsPage(page);
+  await test.step("plugin rows show the display name", async () => {
+    await expectNamedPluginRow(page);
+  });
+  await test.step("the cog explains itself", async () => {
+    await expectSettingsTooltip(page);
+  });
   await test.step("the actions menu keeps only plugin actions", async () => {
     await expectActionsMenuWithoutSettings(page);
   });

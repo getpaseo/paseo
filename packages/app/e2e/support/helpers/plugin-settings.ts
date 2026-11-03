@@ -101,8 +101,15 @@ async function openPluginScreen(page: Page) {
   await openHostSection(page, getServerId(), "plugins");
   await openSettingsFromCog(page);
 }
+/** The cog on a plugin's row. Its label is "Settings"; the row tells plugins apart. */
+function settingsButton(page: Page, pluginId: string) {
+  return page
+    .getByTestId(`plugin-row-${pluginId}`)
+    .filter({ visible: true })
+    .getByRole("button", { name: "Settings", exact: true });
+}
 async function openSettingsFromCog(page: Page) {
-  await page.getByRole("button", { name: "Settings for settings-example", exact: true }).click();
+  await settingsButton(page, "settings-example").click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
   // A plugin with one settings screen shows no tabs, and the header names only the plugin.
   await expect(page.getByTestId("plugin-settings-tabs")).toHaveCount(0);
@@ -122,16 +129,29 @@ export async function expectActionsMenuWithoutSettings(page: Page) {
 export async function expectNoSettingsCogWithoutScreens(page: Page) {
   await page.getByRole("switch", { name: "settings-example: Disable" }).click();
   await expect(page.getByRole("switch", { name: "settings-example: Enable" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Settings for settings-example", exact: true }),
-  ).toHaveCount(0);
+  await expect(settingsButton(page, "settings-example")).toHaveCount(0);
   await page.getByRole("switch", { name: "settings-example: Enable" }).click();
+  await expect(settingsButton(page, "settings-example")).toBeVisible();
+}
+export async function expectSettingsTooltip(page: Page) {
+  await settingsButton(page, "settings-example").hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Settings");
+  await page.mouse.move(0, 0);
+}
+/** A manifest `name` titles the row and its controls; the id stays visible beneath it. */
+export async function expectNamedPluginRow(page: Page) {
+  const row = page.getByTestId(`plugin-row-${TABBED_PLUGIN_ID}`).filter({ visible: true });
+  await expect(row.getByText(TABBED_PLUGIN_NAME, { exact: true })).toBeVisible();
+  await expect(row.getByText(TABBED_PLUGIN_ID, { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Settings for settings-example", exact: true }),
+    page.getByRole("switch", { name: `${TABBED_PLUGIN_NAME}: Disable`, exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `Actions for ${TABBED_PLUGIN_NAME}`, exact: true }),
   ).toBeVisible();
 }
 export async function openTabbedSettings(page: Page) {
-  await page.getByRole("button", { name: `Settings for ${TABBED_PLUGIN_ID}`, exact: true }).click();
+  await settingsButton(page, TABBED_PLUGIN_ID).click();
   await expectSettingsTab(page, "General");
   // The Advanced icon reads the plugin's translations; the General icon throws and is dropped.
   await expect(page.getByTestId("advanced-tab-icon")).toBeVisible();
