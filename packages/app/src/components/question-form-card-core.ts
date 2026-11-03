@@ -1,5 +1,10 @@
 export interface QuestionOption {
   label: string;
+  /**
+   * The label as the agent sent it, when folding changed it. Answers go back
+   * with this text, so the card displays prose but submits the original.
+   */
+  rawLabel?: string;
   description?: string;
   preview?: string;
 }
@@ -127,8 +132,10 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       if (typeof opt !== "object" || opt === null) return null;
       const o = opt as Record<string, unknown>;
       if (typeof o.label !== "string") return null;
+      const label = normalizeQuestionText(o.label);
       options.push({
-        label: normalizeQuestionText(o.label),
+        label,
+        rawLabel: label === o.label ? undefined : o.label,
         description: readNormalizedString(o, "description"),
         preview: readOptionalString(o, "preview"),
       });
@@ -196,7 +203,9 @@ export function buildQuestionFormAnswers(
     const q = questions[i];
     const selected = selections[i];
     const otherText = otherTexts[i]?.trim();
-    const labels = selected ? Array.from(selected).map((idx) => q.options[idx].label) : [];
+    const labels = selected
+      ? Array.from(selected).map((idx) => q.options[idx].rawLabel ?? q.options[idx].label)
+      : [];
 
     if (questionShowsTextInput(q)) {
       if (otherText && otherText.length > 0) {

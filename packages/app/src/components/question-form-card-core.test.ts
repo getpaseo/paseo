@@ -196,6 +196,25 @@ describe("question form card core", () => {
     expect(questions?.[0]?.options[0]?.description).toBe("包含 zcode -credentials .ts，合并顺序");
   });
 
+  test("submits the option text the agent sent, not the folded display copy", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "新分支怎么办？",
+          header: "branch",
+          options: [{ label: "基于 #8343\n分支（推荐）" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    expect(questions[0]?.options[0]?.label).toBe("基于 #8343 分支（推荐）");
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([0]) }, {})).toEqual({
+      branch: "基于 #8343\n分支（推荐）",
+    });
+  });
+
   test("keeps the markdown structure of a question while folding its prose", () => {
     const questions = parseQuestionFormQuestions({
       questions: [
