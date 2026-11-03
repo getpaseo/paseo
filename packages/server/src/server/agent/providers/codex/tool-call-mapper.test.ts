@@ -1457,3 +1457,28 @@ describe("single-file move compatibility", () => {
     expect(JSON.stringify(item)).toContain("new.txt");
   });
 });
+
+describe("empty additions in multi-file previews", () => {
+  it.each(["inProgress", "completed"])(
+    "keeps an empty created file when the patch is %s",
+    (status) => {
+      const item = mapCodexToolCallFromThreadItem(
+        {
+          type: "fileChange",
+          id: "empty-addition",
+          status,
+          changes: [
+            { path: "/repo/empty.txt", kind: { type: "add" }, diff: "" },
+            { path: "/repo/second.txt", kind: "modify", diff: "@@ -1 +1 @@\n-old\n+new\n" },
+          ],
+        },
+        { cwd: "/repo" },
+      );
+      if (item?.detail.type !== "edit") throw new Error("Expected edit");
+      expect(item.detail.unifiedDiff).toContain(
+        "diff --git a/empty.txt b/empty.txt\n--- /dev/null\n+++ b/empty.txt",
+      );
+      expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+    },
+  );
+});

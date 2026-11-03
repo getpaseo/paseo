@@ -853,6 +853,13 @@ function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   const isMoveOnlyNotice = file.movePath && file.diff?.startsWith("\n\nMoved to: ");
   const { unifiedDiff, newString } = isMoveOnlyNotice ? {} : resolveFileChangeTextFields(file);
   if (!unifiedDiff && !newString) {
+    if (file.kind === "add") {
+      return [
+        `diff --git a/${file.path} b/${file.path}`,
+        "--- /dev/null",
+        `+++ b/${file.path}`,
+      ].join("\n");
+    }
     return file.movePath
       ? [
           `diff --git a/${file.path} b/${file.movePath}`,

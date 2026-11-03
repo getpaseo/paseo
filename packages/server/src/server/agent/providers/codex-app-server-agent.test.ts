@@ -8030,3 +8030,23 @@ describe("legacy move-only entries", () => {
     },
   );
 });
+
+describe("legacy empty additions", () => {
+  test.each([true, false])("keeps an empty new file while running: %s", (running) => {
+    const item = mapCodexPatchNotificationToToolCall({
+      callId: "legacy-empty",
+      cwd: "/repo",
+      running,
+      success: true,
+      changes: {
+        "/repo/empty.txt": { type: "add", content: "" },
+        "/repo/second.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new\n" },
+      },
+    });
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain(
+      "diff --git a/empty.txt b/empty.txt\n--- /dev/null\n+++ b/empty.txt",
+    );
+    expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+  });
+});
