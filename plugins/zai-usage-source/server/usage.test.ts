@@ -23,6 +23,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit";
+const SUBSCRIPTION_URL = "https://api.z.ai/api/biz/subscription/list";
 
 function quotaResponse(limits: unknown[]) {
   return jsonResponse({ code: 200, msg: "Operation successful", data: { level: "pro", limits } });
@@ -121,8 +122,10 @@ describe("zai usage source", () => {
       status: "available",
       planLabel: "GLM Coding Pro",
       windows: expect.arrayContaining([
-        expect.objectContaining({ label: "5-hour limit", usedPct: 93, remainingPct: 7 }),
-        expect.objectContaining({ label: "Weekly limit", usedPct: 59, remainingPct: 41 }),
+        // 900 of 12000 is 7.5% used, and the API's `percentage` of 7 agrees.
+        expect.objectContaining({ label: "5-hour limit", usedPct: 7.5, remainingPct: 92.5 }),
+        // 24600 of 60000 is 41% used, and the API's `percentage` agrees.
+        expect.objectContaining({ label: "Weekly limit", usedPct: 41, remainingPct: 59 }),
       ]),
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
     });
@@ -184,6 +187,53 @@ describe("zai usage source", () => {
       usedPct: 25,
       remainingPct: 75,
     });
+  });
+
+  it("keeps the quota when the subscription list is slow", async () => {
+    process.env["Z_AI_API_KEY"] = "zai_test_token";
+    // The daemon gives the whole fetch one deadline. A subscription request
+    // that answers slowly must not push the quota out of the result, so the
+    // two requests run together: the quota does not wait for the plan.
+    const requested: string[] = [];
+    fetchApi = mockFetch(
+      new Map([
+        [
+          QUOTA_URL,
+          () => {
+            requested.push("quota");
+            return quotaResponse([
+              {
+                type: "TOKENS_LIMIT",
+                unit: 3,
+                number: 5,
+                usage: 100,
+                currentValue: 25,
+                percentage: 75,
+              },
+            ]);
+          },
+        ],
+        [
+          SUBSCRIPTION_URL,
+          async () => {
+            requested.push("subscription");
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            return jsonResponse({ data: [] });
+          },
+        ],
+      ]),
+    );
+
+    const report = await fetchUsage({ store: "env", locator: "Z_AI_API_KEY" }, fetchApi);
+
+    expect(report).toMatchObject({ status: "available" });
+    expect(report.status === "available" ? report.windows[0] : null).toMatchObject({
+      usedPct: 25,
+      remainingPct: 75,
+    });
+    // The plan request starts without waiting for the quota to come back, so
+    // the two do not add up against the daemon's single deadline.
+    expect(requested).toEqual(["subscription", "quota"]);
   });
 
   it("ignores tool quota limits", async () => {

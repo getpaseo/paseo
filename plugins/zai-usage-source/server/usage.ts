@@ -79,29 +79,34 @@ function windowLabel(limit: { unit?: number; number?: number; type?: string }): 
 }
 
 /**
- * The percentage the API reports is the share still available, so the share
- * used is its complement.
+ * The share of a quota window that has been used, as a percentage.
+ *
+ * The API reports `currentValue` as the used amount, `usage` as the limit,
+ * `remaining` as what is left, and `percentage` as the used share: 24600 of
+ * 60000 with a `remaining` of 35400 comes back as 41. The percentages here
+ * follow that, so a barely used plan does not read as nearly exhausted.
  */
 function usedPct(limit: {
   percentage?: number;
   currentValue?: number;
   usage?: number;
+  remaining?: number;
 }): number | null {
-  if (typeof limit.percentage === "number" && Number.isFinite(limit.percentage)) {
-    return Math.max(0, Math.min(100, 100 - limit.percentage));
-  }
   const current = limit.currentValue;
   const total = limit.usage;
   if (
-    typeof current !== "number" ||
-    typeof total !== "number" ||
-    !Number.isFinite(current) ||
-    !Number.isFinite(total) ||
-    total <= 0
+    typeof current === "number" &&
+    typeof total === "number" &&
+    Number.isFinite(current) &&
+    Number.isFinite(total) &&
+    total > 0
   ) {
-    return null;
+    return Math.max(0, Math.min(100, (current / total) * 100));
   }
-  return Math.max(0, Math.min(100, (current / total) * 100));
+  if (typeof limit.percentage === "number" && Number.isFinite(limit.percentage)) {
+    return Math.max(0, Math.min(100, limit.percentage));
+  }
+  return null;
 }
 
 function resetsAtIso(nextResetTime: number | undefined): string | null {
@@ -195,6 +200,12 @@ export async function fetchUsage(
   const token = await readToken(input);
   if (!token) throw new Error("Z.ai login store no longer exists");
 
+  // The daemon gives the whole fetch one deadline. The plan details are
+  // optional, so their request starts alongside the quota request instead of
+  // after it: two requests in sequence can outlast that deadline and lose a
+  // quota that already arrived.
+  const planRequest = fetchPlanDetails(token, fetchApi);
+
   const quotaRes = await fetchApi(ZAI_QUOTA_URL, {
     signal: AbortSignal.timeout(15_000),
     headers: {
@@ -214,7 +225,7 @@ export async function fetchUsage(
   }
 
   const windows = quotaWindows(quota.data?.limits ?? []);
-  const plan = await fetchPlanDetails(token, fetchApi);
+  const plan = await planRequest;
 
   if (windows.length === 0 && !plan.planLabel) {
     return unavailable({ kind: "no_quota", detail: "No active coding plan" });
