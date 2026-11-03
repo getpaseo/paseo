@@ -1,3 +1,4 @@
+import { useHardwareKeyboardPresent } from "@/keyboard";
 import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -90,7 +91,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useKeyboardShortcuts } from "@/keyboard/use-shortcuts";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
@@ -549,8 +550,12 @@ function SidebarChrome({
   const isMobileActive = useIsMobilePanelActive("agent-list");
   const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
+  const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   return (
-    <SidebarModelProvider active={active}>
+    <SidebarModelProvider
+      active={active}
+      keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
+    >
       {mounted ? <LeftSidebar active={active} /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
