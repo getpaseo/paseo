@@ -763,15 +763,6 @@ function parseFileChangeDiff(entry: Record<string, unknown>): string | undefined
   ]);
 }
 
-function fileChangeDiffWithoutMoveNotice(
-  diff: string | undefined,
-  movePath: unknown,
-): string | undefined {
-  if (typeof diff !== "string" || typeof movePath !== "string") return diff;
-  const notice = `\n\nMoved to: ${movePath}`;
-  return diff.endsWith(notice) ? diff.slice(0, -notice.length) : diff;
-}
-
 function toFileChangeEntry(
   entry: Record<string, unknown>,
   options?: CodexMapperOptions,
@@ -786,7 +777,7 @@ function toFileChangeEntry(
   return {
     path,
     kind: parseFileChangeKind(entry),
-    diff: fileChangeDiffWithoutMoveNotice(parseFileChangeDiff(entry), movePath),
+    diff: parseFileChangeDiff(entry),
     movePath:
       typeof movePath === "string" ? normalizeCodexFilePath(movePath, options?.cwd) : undefined,
   };
@@ -858,7 +849,9 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
 }
 
 function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
-  const { unifiedDiff, newString } = resolveFileChangeTextFields(file);
+  // Codex formats a content-preserving move as a notice, not added file text.
+  const isMoveOnlyNotice = file.movePath && file.diff?.startsWith("\n\nMoved to: ");
+  const { unifiedDiff, newString } = isMoveOnlyNotice ? {} : resolveFileChangeTextFields(file);
   if (!unifiedDiff && !newString) {
     return file.movePath
       ? [

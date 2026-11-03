@@ -1436,3 +1436,24 @@ describe("move-only entries in multi-file previews", () => {
     expect(item.detail.unifiedDiff).not.toContain("@@ -0,0");
   });
 });
+
+describe("single-file move compatibility", () => {
+  it("retains the destination outside the multi-file preview path", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "single-move",
+        status: "completed",
+        changes: [
+          {
+            path: "/repo/old.txt",
+            kind: { type: "update", move_path: "/repo/new.txt" },
+            diff: "\n\nMoved to: /repo/new.txt",
+          },
+        ],
+      },
+      { cwd: "/repo" },
+    );
+    expect(JSON.stringify(item)).toContain("new.txt");
+  });
+});
