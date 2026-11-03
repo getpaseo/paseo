@@ -323,6 +323,10 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// Bounded wait after session/cancel for the provider to answer the original
+// session/prompt with its terminal stop reason. Matches the daemon's
+// INTERRUPT_SESSION_TIMEOUT_MS so cancel's settlement budget covers this wait.
+const ACP_INTERRUPT_RELEASE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -1739,6 +1743,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly usageSessionKey = randomUUID();
   private readonly harnessEnvironment: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  /** Called when the foreground turn ends, so an interrupt can stop watching. */
+  private readonly turnEndListeners = new Set<() => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
@@ -2543,7 +2549,35 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+      // session/cancel is only a notification: the provider must still answer
+      // the original session/prompt with stopReason "cancelled" before the turn
+      // is actually released. Waiting for that answer here (bounded) closes the
+      // window where a replacement prompt races the provider's own release and
+      // is rejected with "already has an active turn".
+      const cancelledTurnId = this.activeForegroundTurnId;
+      const check = () => {
+        if (this.activeForegroundTurnId !== cancelledTurnId) {
+          this.turnEndListeners.delete(check);
+          resolveReleased();
+        }
+      };
+      let resolveReleased!: () => void;
+      const released = new Promise<void>((resolve) => {
+        resolveReleased = resolve;
+        this.turnEndListeners.add(check);
+      });
+      try {
+        await this.connection.cancel({ sessionId: this.sessionId });
+        await withTimeout(
+          released,
+          ACP_INTERRUPT_RELEASE_TIMEOUT_MS,
+          `ACP interrupt timed out after ${ACP_INTERRUPT_RELEASE_TIMEOUT_MS}ms`,
+        ).catch(() => undefined);
+      } finally {
+        // The gate watches for the turn to end and has nothing left to watch
+        // once it fired, so it must not stay subscribed to later events.
+        this.turnEndListeners.delete(check);
+      }
     }
   }
 
@@ -2562,6 +2596,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    this.turnEndListeners.clear();
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
@@ -3430,6 +3465,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
+    // The turn is over, so anything waiting for it to end can stop waiting. The
+    // listeners are copied first: one of them may remove itself while it runs.
+    for (const listener of Array.from(this.turnEndListeners)) {
+      listener();
+    }
   }
 
   private cancelPendingPermissions(
