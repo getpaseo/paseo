@@ -41,6 +41,20 @@ describe("buildForgeReferenceUrl", () => {
       "https://codeberg.org/acme/repo/pulls/12",
     ],
     [
+      "gitea",
+      "http://forge.test:3000/team/repo.git",
+      "#",
+      null,
+      "http://forge.test:3000/team/repo/issues/12",
+    ],
+    [
+      "github",
+      "http://github.com/acme/repo.git",
+      "#",
+      null,
+      "https://github.com/acme/repo/issues/12",
+    ],
+    [
       "forgejo",
       "git@forge.example:acme/repo.git",
       "#",

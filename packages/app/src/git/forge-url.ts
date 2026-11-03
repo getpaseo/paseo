@@ -54,6 +54,8 @@ export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): st
 }
 
 interface ForgeWebLocation {
+  /** "http" only for a self-hosted http:// remote; every other remote browses over https. */
+  scheme: "http" | "https";
   host: string;
   /** Non-default port for a self-hosted http(s) origin, or undefined. */
   port?: string;
@@ -96,16 +98,18 @@ function resolveForgeWebLocation(
     !isCloudHost && (location.transport === "http" || location.transport === "https")
       ? location.port
       : undefined;
-  return { host: webHost, port, repo: location.path };
+  const scheme = !isCloudHost && location.transport === "http" ? "http" : "https";
+  return { scheme, host: webHost, port, repo: location.path };
 }
 
 function encodeBranch(branch: string): string {
   return branch.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Host, plus `:port` when the remote pins a non-default port. */
-function forgeAuthority(location: ForgeWebLocation): string {
-  return location.port ? `${location.host}:${location.port}` : location.host;
+/** Scheme and host, plus `:port` when the remote pins a non-default port. */
+function forgeOrigin(location: ForgeWebLocation): string {
+  const authority = location.port ? `${location.host}:${location.port}` : location.host;
+  return `${location.scheme}://${authority}`;
 }
 
 function normalizeBlobPath(path: string | null | undefined): string | null {
@@ -140,7 +144,7 @@ export function buildForgeBranchTreeUrl(
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
   }
-  return `https://${forgeAuthority(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
+  return `${forgeOrigin(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
 }
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
@@ -152,7 +156,7 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
     return null;
   }
   const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-  let url = `https://${forgeAuthority(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
+  let url = `${forgeOrigin(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
   if (input.lineStart && input.lineStart > 0) {
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }
@@ -183,7 +187,7 @@ export function buildForgeReferenceUrl(
   ) {
     return null;
   }
-  return `https://${forgeAuthority(location)}/${repo}${referencePath.infix}${input.number}`;
+  return `${forgeOrigin(location)}/${repo}${referencePath.infix}${input.number}`;
 }
 
 /** Whether the forge has web URL builders (i.e. a known URL grammar). */
