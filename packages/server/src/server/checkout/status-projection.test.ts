@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
+import {
+  CheckoutPrStatusSchema,
+  CheckoutPrStatusResponseSchema,
+} from "@getpaseo/protocol/messages";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import {
   buildCheckoutPrStatusPayloadFromSnapshot,
@@ -8,6 +11,55 @@ import {
 } from "./status-projection.js";
 
 describe("checkout status projection", () => {
+  test("sends the canonical repository web URL through the wire schema without a PR", () => {
+    const snapshot: WorkspaceGitRuntimeSnapshot = {
+      cwd: "/repo",
+      git: {
+        isGit: true,
+        repoRoot: "/repo",
+        mainRepoRoot: null,
+        currentBranch: "main",
+        remoteUrl: "ssh://git@git.example.com:7998/Acme/main.git",
+        isPaseoOwnedWorktree: false,
+        isDirty: false,
+        baseRef: "main",
+        aheadBehind: null,
+        upstreamRef: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: true,
+        diffStat: null,
+      },
+      forge: {
+        forge: "gitea",
+        featuresEnabled: true,
+        authState: "authenticated",
+        repositoryWebUrl: "https://projects.example.com/Acme/main",
+        pullRequest: null,
+        error: null,
+      },
+    };
+    const payload = buildCheckoutPrStatusPayloadFromSnapshot({
+      cwd: "/repo",
+      requestId: "web-url",
+      snapshot,
+    });
+    const response = CheckoutPrStatusResponseSchema.parse({
+      type: "checkout_pr_status_response",
+      payload,
+    });
+    expect(response.payload).toEqual({
+      cwd: "/repo",
+      requestId: "web-url",
+      forge: "gitea",
+      githubFeaturesEnabled: true,
+      authState: "authenticated",
+      repositoryWebUrl: "https://projects.example.com/Acme/main",
+      status: null,
+      error: null,
+    });
+  });
+
   test("includes repository identity fields on the PR status wire payload", () => {
     const payload = normalizeCheckoutPrStatusPayload(
       {
