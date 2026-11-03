@@ -69,7 +69,7 @@ interface BottomAnchorControllerDriver {
   applyRouteRequest: (request: BottomAnchorRouteRequest | null) => void;
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
   beginUserScroll: () => void;
-  endUserScroll: (params: { isNearBottom: boolean }) => void;
+  endUserScroll: (params: { isAtEnd: boolean }) => void;
   detachByUser: () => void;
   holdForDisclosure: () => void;
   releaseDisclosure: (params: { isAtEnd: boolean }) => void;
@@ -511,12 +511,12 @@ function createBottomAnchorControllerDriver(
       cancelPendingAttempt();
       setModeInternal("detached");
     },
+    // Following resumes only for a gesture that ends at the end. Resuming from short of it would
+    // scroll the rows the finger just let go of, so a release above the end, or with output that
+    // arrived below it during the gesture, stays detached with the pill.
     endUserScroll(params) {
       isUserScrollActive = false;
-      if (params.isNearBottom) {
-        // Released short of the end, or with output that arrived during the gesture below it. The
-        // scroll there is not animated: on Android a line mounting during a smooth scroll cancels it
-        // and the list follows from short of the end.
+      if (params.isAtEnd) {
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
           pendingVerification = { requestId: null, retries: 0 };
@@ -768,7 +768,7 @@ export function useBottomAnchorController(input: {
     beginUserScroll() {
       driverRef.current?.beginUserScroll();
     },
-    endUserScroll(params: { isNearBottom: boolean }) {
+    endUserScroll(params: { isAtEnd: boolean }) {
       driverRef.current?.endUserScroll(params);
     },
     detachByUser() {

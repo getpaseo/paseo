@@ -68,7 +68,8 @@ const HISTORY_START_SETTLE_FRAMES = 2;
 // Rendered distance on each side of the viewport. Smaller values blank the viewport while a fling
 // crosses rows that were never measured (docs/agent-stream-disclosure.md).
 const NATIVE_STREAM_DRAW_DISTANCE = 2000;
-// A disclosure resumes following only when it leaves the list exactly at its end.
+// Following resumes after a disclosure or a user scroll only from the end, so resuming never moves
+// the rows the user is looking at. Web resumes within the same distance (strategy-web.tsx).
 const AT_END_OFFSET_PX = 1;
 // A disclosure settles after this many frames without an item size change.
 const DISCLOSURE_QUIET_FRAMES = 2;
@@ -156,6 +157,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
   const streamKeyboardInset = useKeyboardStreamInset();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
+  const isReleasedAtEndRef = useRef(false);
   const programmaticScrollEventBudgetRef = useRef(0);
   const historyStartReadyRef = useRef(false);
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
@@ -313,10 +315,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
 
   const [rowLayoutSyncRegistry] = useState<RowLayoutSyncRegistry>(() => new Map());
+  const isAtEnd = useStableEvent(
+    () => distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
+  );
   const releaseDisclosure = useStableEvent(() => {
-    bottomAnchorController.releaseDisclosure({
-      isAtEnd: distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
-    });
+    bottomAnchorController.releaseDisclosure({ isAtEnd: isAtEnd() });
   });
   const [disclosureHold] = useState(() =>
     createNativeDisclosureHold({
@@ -466,6 +469,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
   );
 
+  const isScrollEventAtEnd = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    return (
+      distanceFromEnd({
+        offsetY: contentOffset.y,
+        contentHeight: contentSize.height,
+        viewportHeight: layoutMeasurement.height,
+      }) <= AT_END_OFFSET_PX
+    );
+  });
+
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const previousOffsetY = scrollOffsetYRef.current;
@@ -519,17 +533,22 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
   });
 
-  // Defer drag end so momentum can take ownership, but capture the terminal
-  // gesture position now because layout may move the viewport in the meantime.
+  // A gesture ends at the end when the finger lifts at or past it, or when its momentum stops there.
+  // A release past the end bounces back to it on iOS, and lines that land during the bounce scroll
+  // in as they do while following. Momentum stopping short of the end, or output that arrived below
+  // the viewport before the decision, leaves the list detached.
+  // Drag end is deferred a frame so momentum can take ownership.
   const handleScrollEndDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const isNearBottom = isScrollEventNearBottom(event);
     scrollKeyboardDismiss.onScrollEndDrag(event);
+    isReleasedAtEndRef.current = isScrollEventAtEnd(event);
 
     clearPendingUserScrollEnd();
     userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
       userScrollEndFrameIdRef.current = null;
       isUserScrollActiveRef.current = false;
-      bottomAnchorController.endUserScroll({ isNearBottom });
+      bottomAnchorController.endUserScroll({
+        isAtEnd: isReleasedAtEndRef.current || isAtEnd(),
+      });
     });
   });
 
@@ -544,10 +563,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       if (!isUserScrollActiveRef.current) {
         return;
       }
-      const isNearBottom = isScrollEventNearBottom(event);
       clearPendingUserScrollEnd();
       isUserScrollActiveRef.current = false;
-      bottomAnchorController.endUserScroll({ isNearBottom });
+      bottomAnchorController.endUserScroll({
+        isAtEnd: isReleasedAtEndRef.current || isScrollEventAtEnd(event),
+      });
     },
   );
 

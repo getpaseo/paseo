@@ -263,7 +263,7 @@ describe("bottom anchor controller driver", () => {
 
     expect(harness.scrollAttempts).toHaveLength(0);
 
-    harness.driver.endUserScroll({ isNearBottom: true });
+    harness.driver.endUserScroll({ isAtEnd: true });
     harness.scheduler.flushAll();
 
     expect(harness.scrollAttempts).toHaveLength(1);
@@ -293,7 +293,7 @@ describe("bottom anchor controller driver", () => {
     });
     harness.context.authoritativeReady = true;
     harness.driver.notifyAuthoritativeHistoryMaybeChanged();
-    harness.driver.endUserScroll({ isNearBottom: true });
+    harness.driver.endUserScroll({ isAtEnd: true });
     harness.scheduler.flushAll();
 
     expect(harness.scrollAttempts).toHaveLength(1);
@@ -321,7 +321,7 @@ describe("bottom anchor controller driver", () => {
       nextIsNearBottom: false,
       scrollDelta: 48,
     });
-    harness.driver.endUserScroll({ isNearBottom: false });
+    harness.driver.endUserScroll({ isAtEnd: false });
     harness.context.authoritativeReady = true;
     harness.driver.notifyAuthoritativeHistoryMaybeChanged();
     harness.driver.reevaluate();
@@ -375,12 +375,26 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollAttempts).toHaveLength(0);
     expect(harness.driver.getSnapshot().mode).toBe("detached");
 
-    harness.driver.endUserScroll({ isNearBottom: false });
+    harness.driver.endUserScroll({ isAtEnd: false });
 
     expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
 
-  it("resumes following when a user scroll returns to the bottom", () => {
+  // Resuming would scroll by the distance left to the end in one frame, right after the release.
+  it("stays detached when a user scroll ends near the end but short of it", () => {
+    const harness = createDriverHarness();
+
+    harness.driver.beginUserScroll();
+    harness.context.nearBottom = true;
+    harness.driver.handleContentSizeChange();
+    harness.driver.endUserScroll({ isAtEnd: false });
+    harness.scheduler.flushAll();
+
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
+    expect(harness.scrollAttempts).toHaveLength(0);
+  });
+
+  it("resumes following when a user scroll ends at the end", () => {
     const harness = createDriverHarness({
       transportBehavior: {
         verificationDelayFrames: 2,
@@ -400,7 +414,7 @@ describe("bottom anchor controller driver", () => {
       nextIsNearBottom: true,
       scrollDelta: -48,
     });
-    harness.driver.endUserScroll({ isNearBottom: true });
+    harness.driver.endUserScroll({ isAtEnd: true });
     harness.scheduler.flushAll();
 
     expect(harness.driver.getSnapshot()).toMatchObject({

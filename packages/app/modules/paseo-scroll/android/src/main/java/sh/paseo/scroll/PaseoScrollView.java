@@ -3,26 +3,33 @@ package sh.paseo.scroll;
 import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.Rect;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import androidx.annotation.Nullable;
+import com.facebook.react.R;
 import com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelper;
 import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with two corrections. Java, because the content-position
+ * React Native's vertical scroll view with three corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
+  // The chat timeline's end pin, packages/app/src/agent-stream/native-end-pin.tsx.
+  private static final String END_PIN_NATIVE_ID = "paseo-end-pin";
+
   private final float[] transformValues = new float[9];
   private final ViewTreeObserver.OnPreDrawListener clampBeforeDraw =
       () -> {
         clampToContentEnd();
         return true;
       };
-  private boolean keepsVisibleContentPosition = false;
+  private @Nullable MaintainVisibleScrollPositionHelper.Config visibleContentPosition = null;
   private boolean isClampPending = false;
+  private boolean isUserDragging = false;
 
   PaseoScrollView(Context context) {
     super(context);
@@ -43,7 +50,48 @@ final class PaseoScrollView extends ReactScrollView {
   public void setMaintainVisibleContentPosition(
       @Nullable MaintainVisibleScrollPositionHelper.Config config) {
     super.setMaintainVisibleContentPosition(config);
-    keepsVisibleContentPosition = config != null;
+    visibleContentPosition = config;
+  }
+
+  // While the timeline follows its end, its end pin anchors the content position, so every line that
+  // mounts scrolls the content by its height. A drag owns the offset from the frame it begins, and
+  // JS removes the pin only a round trip later. While the user drags, the correction for the pin is
+  // skipped, so the line grows below the rows under the finger. iOS's PaseoScrollViewComponentView
+  // does the same.
+  // MaintainVisibleScrollPositionHelper is the only caller: it moves the offset by its anchor's move.
+  @Override
+  public void scrollToPreservingMomentum(int x, int y) {
+    if (isUserDragging && isEndPinTheAnchor()) return;
+    super.scrollToPreservingMomentum(x, y);
+  }
+
+  // The drag begins where React Native emits onScrollBeginDrag.
+  @Override
+  protected void handleInterceptedTouchEvent(MotionEvent ev) {
+    super.handleInterceptedTouchEvent(ev);
+    isUserDragging = true;
+  }
+
+  @Override
+  public boolean onTouchEvent(MotionEvent ev) {
+    boolean handled = super.onTouchEvent(ev);
+    int action = ev.getActionMasked();
+    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+      isUserDragging = false;
+    }
+    return handled;
+  }
+
+  // The helper anchors on the first content child from minIndexForVisible that reaches into the
+  // viewport. The pin is the first child and sits at the bottom of the content, so it always does.
+  private boolean isEndPinTheAnchor() {
+    if (visibleContentPosition == null || visibleContentPosition.getMinIndexForVisible() != 0) {
+      return false;
+    }
+    View content = getChildAt(0);
+    if (!(content instanceof ViewGroup) || ((ViewGroup) content).getChildCount() == 0) return false;
+    Object nativeId = ((ViewGroup) content).getChildAt(0).getTag(R.id.view_tag_native_id);
+    return END_PIN_NATIVE_ID.equals(nativeId);
   }
 
   // With maintainVisibleContentPosition set, a mount that shrinks the content past the offset would
@@ -69,7 +117,7 @@ final class PaseoScrollView extends ReactScrollView {
       int oldTop,
       int oldRight,
       int oldBottom) {
-    if (!keepsVisibleContentPosition) {
+    if (visibleContentPosition == null) {
       super.onLayoutChange(v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom);
       return;
     }
@@ -83,6 +131,7 @@ final class PaseoScrollView extends ReactScrollView {
   @Override
   protected void onDetachedFromWindow() {
     cancelPendingClamp();
+    isUserDragging = false;
     super.onDetachedFromWindow();
   }
 

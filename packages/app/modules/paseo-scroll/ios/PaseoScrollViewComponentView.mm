@@ -1,13 +1,14 @@
 #import <React/RCTComponentViewFactory.h>
 #import <React/RCTCustomPullToRefreshViewProtocol.h>
 #import <React/RCTScrollViewComponentView.h>
+#import <React/RCTViewComponentView.h>
 #import <react/renderer/components/scrollview/ScrollViewProps.h>
 #import <react/renderer/components/scrollview/ScrollViewShadowNode.h>
 
 using namespace facebook::react;
 
 /**
- * React Native's scroll view with two maintainVisibleContentPosition corrections.
+ * React Native's scroll view with three maintainVisibleContentPosition corrections.
  *
  * An anchor removed by the mount it anchors. React Native picks the anchor before the mount and
  * moves the offset by the anchor's movement after it. When the mount removes that view, its frame
@@ -21,6 +22,13 @@ using namespace facebook::react;
  * here; its superview check also skips anchors that removeClippedSubviews detached
  * (https://github.com/react/react-native/issues/58910). Remove this part once the installed React
  * Native includes the tag check.
+ *
+ * The chat timeline's end pin during a drag. While the timeline follows its end, a zero-height view
+ * at the bottom of the content (native ID "paseo-end-pin", packages/app/src/agent-stream/
+ * native-end-pin.tsx) is the anchor, so every line that mounts scrolls the content by its height.
+ * A drag owns the offset from the frame it begins, and JS removes the pin only a round trip later.
+ * While the user drags, a mount anchored on the pin keeps the offset, so the line grows below the
+ * rows under the finger. Android's PaseoScrollView does the same.
  *
  * A shrink at the end. A mount that shrinks the content sets the smaller contentSize, and UIKit
  * clamps contentOffset to the new end. React Native then adds the anchor's movement to the clamped
@@ -58,9 +66,10 @@ using namespace facebook::react;
 - (void)mountingTransactionDidMount:(const MountingTransaction &)transaction
                withSurfaceTelemetry:(const SurfaceTelemetry &)surfaceTelemetry
 {
-  if (_anchorTagBeforeMount != 0 && _anchorBeforeMount.tag != _anchorTagBeforeMount) {
-    // The view registry sets a removed view's tag to 0; a released view reads nil here. Without the
-    // content-position props, React Native's mount completes without moving the offset.
+  // The view registry sets a removed view's tag to 0; a released view reads nil here.
+  BOOL isAnchorRemoved = _anchorTagBeforeMount != 0 && _anchorBeforeMount.tag != _anchorTagBeforeMount;
+  if (isAnchorRemoved || (self.scrollView.isDragging && [self isEndPin:_anchorBeforeMount])) {
+    // Without the content-position props, React Native's mount completes without moving the offset.
     SharedViewProps props = _props;
     _props = ScrollViewShadowNode::defaultSharedProps();
     [super mountingTransactionDidMount:transaction withSurfaceTelemetry:surfaceTelemetry];
@@ -110,6 +119,12 @@ using namespace facebook::react;
     }
   }
   return nil;
+}
+
+- (BOOL)isEndPin:(UIView *)view
+{
+  return [view isKindOfClass:[RCTViewComponentView class]] &&
+      [((RCTViewComponentView *)view).nativeId isEqualToString:@"paseo-end-pin"];
 }
 
 - (UIView *)contentView

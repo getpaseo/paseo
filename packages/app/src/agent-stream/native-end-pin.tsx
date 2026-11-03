@@ -16,6 +16,12 @@ import {
 // The anchor has to be the content's first native child: content-position keeping anchors on the
 // first child at or after `minIndexForVisible` that reaches into the viewport, and every child
 // LegendList renders can be flattened away. Absolute positioning keeps it out of the flow.
+//
+// A drag owns the offset from the frame it begins, but the pin stays until JS stops following a
+// round trip later. The scroll view subclasses in `modules/paseo-scroll` recognise the pin by its
+// native ID and skip its correction while the user drags, so a line mounting in those frames grows
+// below the rows under the finger.
+const END_PIN_NATIVE_ID = "paseo-end-pin";
 const END_ANCHOR_STYLE: ViewStyle = {
   position: "absolute",
   bottom: 0,
@@ -40,7 +46,14 @@ export const EndPinnedScrollView = forwardRef<ScrollView, EndPinnedScrollViewPro
           pinEnd ? END_ANCHOR_POSITION : maintainVisibleContentPosition
         }
       >
-        {pinEnd ? <View collapsable={false} pointerEvents="none" style={END_ANCHOR_STYLE} /> : null}
+        {pinEnd ? (
+          <View
+            collapsable={false}
+            nativeID={END_PIN_NATIVE_ID}
+            pointerEvents="none"
+            style={END_ANCHOR_STYLE}
+          />
+        ) : null}
         {children}
       </Animated.ScrollView>
     );

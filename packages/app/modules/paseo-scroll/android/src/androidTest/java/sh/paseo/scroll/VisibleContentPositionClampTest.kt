@@ -75,6 +75,29 @@ class VisibleContentPositionClampTest {
     assertEquals("Offset kept moving after the drag ended", settled, timeline.scrollY())
   }
 
+  @Test fun growthAtTheEndFollowsWithoutATouch() {
+    val timeline = openTimeline(anchor = Anchor.END)
+
+    timeline.growInOneMount()
+
+    assertEquals("Offset after the mount", CONTENT_HEIGHT + GROWTH - VIEWPORT, timeline.scrollY())
+  }
+
+  // The drag begins before JS stops following and removes the pin, so a line mounting in the drag's
+  // first frames must not scroll the rows the finger is on.
+  @Test fun growthAtTheEndDuringATouchDragKeepsTheRowsUnderTheFinger() {
+    val timeline = openTimeline(anchor = Anchor.END)
+
+    timeline.beginDrag()
+    val dragged = timeline.scrollY()
+    assertTrue("The drag owns the viewport", dragged < CONTENT_HEIGHT - VIEWPORT)
+    timeline.growInOneMount()
+
+    assertEquals("Offset after the mount", dragged, timeline.scrollY())
+    assertEquals("Offset in the first frame drawn after the mount", dragged, timeline.firstDrawnScrollY())
+    timeline.endDrag()
+  }
+
   private enum class Anchor {
     /** A zero-height view at the bottom of the content, first child: the end pin. */
     END,
@@ -98,10 +121,14 @@ class VisibleContentPositionClampTest {
       return y
     }
 
-    fun shrinkInOneMount() {
+    fun shrinkInOneMount() = resizeInOneMount(CONTENT_HEIGHT - SHRINK)
+
+    fun growInOneMount() = resizeInOneMount(CONTENT_HEIGHT + GROWTH)
+
+    private fun resizeInOneMount(height: Int) {
       instrumentation.runOnMainSync {
         probe.drawnScrollY.clear()
-        reactContext.mount { layoutContent(CONTENT_HEIGHT - SHRINK) }
+        reactContext.mount { layoutContent(height) }
         probe.invalidate()
       }
     }
@@ -203,7 +230,7 @@ class VisibleContentPositionClampTest {
           as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)
       val content = ReactViewGroup(context)
-      val endPin = View(context)
+      val endPin = View(context).apply { setTag(com.facebook.react.R.id.view_tag_native_id, END_PIN_NATIVE_ID) }
       val probe = DrawProbe(context)
       if (anchor == Anchor.END) {
         content.addView(endPin)
@@ -236,6 +263,8 @@ class VisibleContentPositionClampTest {
     const val VIEWPORT = 600
     const val CONTENT_HEIGHT = 1000
     const val SHRINK = 240
+    const val GROWTH = 120
+    const val END_PIN_NATIVE_ID = "paseo-end-pin"
     const val NEW_END = CONTENT_HEIGHT - SHRINK - VIEWPORT
     const val PROBE_HEIGHT = 700
   }
