@@ -657,6 +657,23 @@ class FakeDaemon {
     },
   };
 
+  finishTransfer(): void {
+    // Four MiB of JSON whitespace precedes this valid application message.
+    const bytes = new TextEncoder().encode('{"type":"pong"}');
+    const frame = new Uint8Array(bytes.length + 4);
+    frame.set([0x31, 1, 0, 2]);
+    frame.set(bytes, 4);
+    this.onMessage(frame);
+    this.daemonAnswersPingsAfter("fast");
+  }
+
+  receiveChunk(start: boolean): void {
+    const frame = new Uint8Array(1024 * 1024 + 4);
+    frame.set([0x31, 1, 0, start ? 1 : 0]);
+    frame.fill(32, 4);
+    this.onMessage(frame);
+  }
+
   openConnection(): void {
     this.onOpen();
     this.onMessage(
@@ -667,6 +684,7 @@ class FakeDaemon {
           payload: {
             status: "server_info",
             serverId: "srv_heartbeat_test",
+            features: { binaryChunkingV1: true },
             hostname: null,
             version: null,
           },
@@ -2571,7 +2589,7 @@ test("keeps default connect timeout shorter than session RPC waiters", async () 
   }
 });
 
-test("foreground verification replaces a silently broken socket without waiting for heartbeats", async () => {
+test("foreground checks a silently broken socket through two normal heartbeat misses", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();
   const second = new FakeDaemon();
@@ -2589,7 +2607,11 @@ test("foreground verification replaces a silently broken socket without waiting 
   await connection;
 
   client.ensureConnected({ verify: true });
-  await vi.advanceTimersByTimeAsync(3_000);
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(first.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  client.ensureConnected();
   expect(attempts).toBe(2);
   second.openConnection();
   expect(client.getConnectionState()).toEqual({ status: "connected" });
@@ -2617,7 +2639,67 @@ test("foreground verification preserves a healthy socket and deduplicates simult
   expect(daemon.closesFromClient()).toEqual([]);
 });
 
-test("an obsolete foreground probe cannot close a replacement connection", async () => {
+test("chunks extend the heartbeat deadline until silence causes two misses", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "bulk-resume",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  for (let index = 0; index < 4; index++) {
+    await vi.advanceTimersByTimeAsync(10_000);
+    daemon.receiveChunk(index === 0);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
+  // No complete message or pong has arrived, but chunks keep the ping alive.
+  expect(daemon.pingTimestamps()).toEqual(["0s"]);
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(daemon.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+});
+
+test("foreground preserves a multi-MB transfer with its pong queued behind chunks", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "bulk-resume",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(3_001);
+  expect(daemon.closesFromClient()).toEqual([]);
+  for (let index = 0; index < 4; index++) {
+    await vi.advanceTimersByTimeAsync(10_000);
+    daemon.receiveChunk(index === 0);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
+  // No complete message or pong has arrived, but chunks keep the ping alive.
+  expect(daemon.pingTimestamps()).toEqual(["0s"]);
+  daemon.finishTransfer();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+test("an obsolete heartbeat cannot close a replacement connection", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();
   const second = new FakeDaemon();
