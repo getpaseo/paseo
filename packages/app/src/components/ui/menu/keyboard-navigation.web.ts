@@ -11,11 +11,14 @@ export function navigateMenuKeyboard(event: KeyboardInputEvent): boolean {
   if (items.length === 0) return false;
   const currentIndex = items.findIndex((item) => item === document.activeElement);
   let nextIndex: number | null = null;
-  if (event.key === "ArrowDown")
-    nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-  if (event.key === "ArrowUp")
-    nextIndex =
-      currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+  if (event.key === "ArrowDown") {
+    if (currentIndex < 0) nextIndex = 0;
+    else nextIndex = (currentIndex + 1) % items.length;
+  }
+  if (event.key === "ArrowUp") {
+    if (currentIndex < 0) nextIndex = items.length - 1;
+    else nextIndex = (currentIndex - 1 + items.length) % items.length;
+  }
   if (event.key === "Home") nextIndex = 0;
   if (event.key === "End") nextIndex = items.length - 1;
   if (nextIndex !== null) {
