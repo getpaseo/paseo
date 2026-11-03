@@ -93,4 +93,30 @@ describe("createDoublePressHandler", () => {
     expect(onPress).toHaveBeenCalledTimes(2);
     expect(onRename).not.toHaveBeenCalled();
   });
+
+  it("keeps the press timing when the input's callbacks are replaced", () => {
+    // The hook feeds the handler live inputs: a first press that selects the row
+    // rebuilds the consumer's callbacks, and the second press must still rename.
+    let now = 1000;
+    let onPress = vi.fn();
+    let onRename: (() => void) | undefined = vi.fn();
+    const handler = createDoublePressHandler({
+      get onPress() {
+        return onPress;
+      },
+      get onRename() {
+        return onRename;
+      },
+      now: () => now,
+    });
+
+    handler();
+    onPress = vi.fn();
+    onRename = vi.fn();
+    now = 1200;
+    handler();
+
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onRename).toHaveBeenCalledTimes(1);
+  });
 });
