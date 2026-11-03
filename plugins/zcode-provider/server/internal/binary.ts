@@ -80,7 +80,7 @@ async function findOnPath(
  * desktop app keeps it under `resources/config/`, not next to the bundle.
  * Without it the app-server exits before it answers anything.
  */
-async function providerConfigEnv(
+export async function providerConfigEnv(
   bundlePath: string,
   configExists: (path: string) => Promise<boolean>,
 ): Promise<Record<string, string>> {

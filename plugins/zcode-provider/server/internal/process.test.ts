@@ -30,4 +30,17 @@ describe("ZCode process lifecycle", () => {
     await expect(zcode.ready).rejects.toThrow(/runtime missing/);
     await zcode.exit();
   });
+
+  test("reports a child that dies after it started", async () => {
+    // The child starts fine and answers its first request, so `ready` stays
+    // resolved. A crash afterwards is only visible on the exit promise.
+    const zcode = startZCodeProcess({
+      command: process.execPath,
+      args: [fakeServer],
+      env: { ...process.env, FAKE_ZCODE_MODE: "crash" },
+    });
+    await zcode.ready;
+    await expect(zcode.exited).rejects.toThrow(/exited with code/);
+    await zcode.exit();
+  });
 });

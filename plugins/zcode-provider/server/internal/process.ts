@@ -13,6 +13,12 @@ export interface ZCodeProcess {
   rpc: ZCodeRpcClient;
   /** Resolves once the child answered its first request. Rejects on startup failure. */
   ready: Promise<void>;
+  /**
+   * Rejects when the child is gone, whether it failed to start or died later.
+   * The startup failure also rejects `ready`, but a child that started fine
+   * keeps `ready` resolved, so a later crash is only visible here.
+   */
+  exited: Promise<Error>;
   stderr(): string;
   exit(): Promise<void>;
 }
@@ -58,15 +64,24 @@ export function startZCodeProcess(options: ZCodeProcessOptions): ZCodeProcess {
   });
   ready.catch(() => undefined);
 
+  let rejectExited: (error: Error) => void;
+  const exited = new Promise<Error>((_resolve, reject) => {
+    rejectExited = reject;
+  });
+  exited.catch(() => undefined);
+
   child.on("exit", (code) => {
     const error = new Error(
       `ZCode exited with code ${code ?? "unknown"}.${stderrText ? ` ${stderrText.trim()}` : ""}`,
     );
     rejectReady(error);
+    rejectExited(error);
     rpc.close();
   });
   child.on("error", (error) => {
-    rejectReady(error instanceof Error ? error : new Error(String(error)));
+    const failure = error instanceof Error ? error : new Error(String(error));
+    rejectReady(failure);
+    rejectExited(failure);
   });
 
   // The child is ready once it answers a request.
@@ -78,6 +93,7 @@ export function startZCodeProcess(options: ZCodeProcessOptions): ZCodeProcess {
   return {
     rpc,
     ready,
+    exited,
     stderr: () => stderrText,
     async exit() {
       rpc.close();
