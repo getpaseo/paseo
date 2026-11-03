@@ -82,6 +82,14 @@ export function consumeWorkspaceRowPointerUpIntent(): WorkspaceRowPressIntent | 
   const intent = pendingIntent;
   pendingIntent = null;
   handledAtPointerUp = intent !== null;
+  if (handledAtPointerUp) {
+    // The synthesized press (when one comes, e.g. for a Shift click) is dispatched synchronously
+    // with this same pointerup. Expire the flag once the dispatch ends so a Ctrl click that never
+    // produces a press cannot suppress a later keyboard press on a row.
+    queueMicrotask(() => {
+      handledAtPointerUp = false;
+    });
+  }
   return intent;
 }
 

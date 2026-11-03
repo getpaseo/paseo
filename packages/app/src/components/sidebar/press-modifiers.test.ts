@@ -114,6 +114,16 @@ describe("capture and pointerup", () => {
     expect(consumeWorkspaceRowPressSuppression()).toBe(false);
   });
 
+  it("expires an undelivered ctrl press's suppression after the pointer dispatch", async () => {
+    stubApplePlatform(false);
+    captureWorkspaceRowPointerModifiers(pointerEvent({ ctrlKey: true }));
+    expect(consumeWorkspaceRowPointerUpIntent()).toEqual({ kind: "toggle" });
+    // The flag must survive only within this dispatch: a synthesized press would read it here,
+    // but a later keyboard Enter/Space on a row must not be swallowed by the leftover flag.
+    await Promise.resolve();
+    expect(consumeWorkspaceRowPressSuppression()).toBe(false);
+  });
+
   it("captures Shift as a range", () => {
     stubApplePlatform(false);
     captureWorkspaceRowPointerModifiers(pointerEvent({ shiftKey: true }));
