@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
-import { actionsWithoutPrimary, buildGitActions, type BuildGitActionsInput } from "./policy";
+import {
+  actionsWithoutPrimary,
+  buildGitActions,
+  isCurrentBranchBase,
+  type BuildGitActionsInput,
+} from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
 
 type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
@@ -206,6 +211,28 @@ describe("git-actions-policy", () => {
       "pull-and-push",
       "archive-workspace",
     ]);
+  });
+
+  it("distinguishes exact local and remote base refs and retains legacy names", () => {
+    expect(isCurrentBranchBase("release", "refs/heads/release")).toBe(true);
+    expect(isCurrentBranchBase("release", "refs/remotes/origin/release")).toBe(false);
+    expect(isCurrentBranchBase("release", "release")).toBe(true);
+    expect(isCurrentBranchBase("release", "origin/release")).toBe(true);
+    expect(isCurrentBranchBase(null, "refs/heads/release")).toBe(false);
+  });
+
+  it("offers update from the same-named remote base when it is ahead", () => {
+    const actions = buildGitActions(
+      createInput({
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: isCurrentBranchBase("release", "refs/remotes/origin/release"),
+        baseRefLabel: "release",
+        behindBaseCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+      }),
+    );
+    expect(actions.primary?.id).toBe("merge-from-base");
   });
 
   it("drops a promoted merge action from the remaining menu actions", () => {

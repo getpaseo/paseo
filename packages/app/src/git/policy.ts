@@ -50,6 +50,17 @@ interface GitActionRuntimeState {
   handler: () => void;
 }
 
+export function isCurrentBranchBase(
+  currentBranch: string | null | undefined,
+  baseRef: string | null | undefined,
+): boolean {
+  if (!currentBranch || !baseRef) return false;
+  if (baseRef.startsWith("refs/heads/")) return baseRef === `refs/heads/${currentBranch}`;
+  if (baseRef.startsWith("refs/")) return false;
+  // Older hosts send a display name, which cannot distinguish a local ref from its remote.
+  return currentBranch === baseRef.replace(/^origin\//, "");
+}
+
 export interface BuildGitActionsInput {
   isGit: boolean;
   githubFeaturesEnabled: boolean;
