@@ -288,6 +288,9 @@ describe("lifecycle hook SDK types", () => {
           // @ts-expect-error The agent's workspace is read-only.
           request.workspaceId = "wks_other";
         });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
         server.addHook("terminal.create.before", async ({ request }) => {
           const source: "client" | "agent" | "script" | "worktree" = request.source;
           const input: string | null = request.input;

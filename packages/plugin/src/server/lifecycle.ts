@@ -158,10 +158,17 @@ export interface PluginHookRequests {
   "command.run.before": PluginCommandRunRequest;
 }
 
+/** What a request hook may return: `agent.create.before` may omit `workspaceId`, which keeps it. */
+export type PluginHookRequestResults = Omit<PluginHookRequests, "agent.create.before"> & {
+  "agent.create.before": Omit<PluginHookRequests["agent.create.before"], "workspaceId"> & {
+    readonly workspaceId?: string | null;
+  };
+};
+
 export type PluginHooks = {
   [Name in keyof PluginHookRequests]: {
     request: PluginHookRequests[Name];
-    result: PluginHookRequests[Name];
+    result: PluginHookRequestResults[Name];
   };
 } & { [Name in keyof PluginHookEvents]: { payload: PluginHookEvents[Name] } } & {
   "worktree.create.after": { payload: { worktree: PluginHookWorktree } };
@@ -203,7 +210,7 @@ export interface PluginLifecycleRegistration {
     handler: (
       input: { request: PluginBeforeRequests[Name] },
       context: PluginHookContext,
-    ) => PluginBeforeRequests[Name] | void | Promise<PluginBeforeRequests[Name] | void>,
+    ) => PluginBeforeRequestResults[Name] | void | Promise<PluginBeforeRequestResults[Name] | void>,
   ): () => void;
 }
 
@@ -249,6 +256,9 @@ export type PluginLifecycleEvents = {
 };
 export type PluginBeforeRequests = {
   [Name in keyof typeof legacyRequests]: PluginHookRequests[(typeof legacyRequests)[Name]];
+};
+export type PluginBeforeRequestResults = {
+  [Name in keyof typeof legacyRequests]: PluginHookRequestResults[(typeof legacyRequests)[Name]];
 };
 
 /** @internal SDK adapter for the daemon's hook registry. */

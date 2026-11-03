@@ -320,15 +320,16 @@ test("plugins wrap or refuse terminals and worktree setup and teardown commands"
   const repository = path.join(root, "repository");
   const pluginDirectory = path.join(root, "plugin");
   const hookLog = path.join(root, "hooks.jsonl");
+  // Node one-liners read the environment the same way under bash, PowerShell, and cmd.exe.
+  const setupCommand = `node -e "require('fs').writeFileSync('setup.txt', 'setup:' + process.env.HOOK_MARK)"`;
+  const teardownCommand = `node -e "require('fs').writeFileSync(require('path').join(process.env.PASEO_SOURCE_CHECKOUT_PATH, '..', 'teardown.txt'), 'teardown:' + process.env.HOOK_MARK)"`;
+  const scriptCommand = `node -e "console.log('script:' + process.env.HOOK_MARK)"`;
   execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
   await writeFile(
     path.join(repository, "paseo.json"),
     JSON.stringify({
-      worktree: {
-        setup: 'echo "setup:$HOOK_MARK" > setup.txt',
-        teardown: 'echo "teardown:$HOOK_MARK" > "$PASEO_SOURCE_CHECKOUT_PATH/../teardown.txt"',
-      },
-      scripts: { greet: { command: 'echo "script:$HOOK_MARK"' } },
+      worktree: { setup: setupCommand, teardown: teardownCommand },
+      scripts: { greet: { command: scriptCommand } },
     }),
   );
   execFileSync("git", ["add", "paseo.json"], { cwd: repository, stdio: "pipe" });
@@ -395,7 +396,7 @@ export default function contribute(server) {
       .poll(() => readFile(path.join(worktree, "setup.txt"), "utf8").catch(() => ""), {
         timeout: 30_000,
       })
-      .toBe("setup:setup-hooked\n");
+      .toBe("setup:setup-hooked");
 
     const wrapped = await sdk.terminals.create({ workspaceId, name: "Wrapped" });
     await expect
@@ -423,7 +424,7 @@ export default function contribute(server) {
       .poll(() => readFile(path.join(root, "teardown.txt"), "utf8").catch(() => ""), {
         timeout: 30_000,
       })
-      .toBe("teardown:teardown-hooked\n");
+      .toBe("teardown:teardown-hooked");
 
     const entries = (await readFile(hookLog, "utf8"))
       .trim()
@@ -436,12 +437,17 @@ export default function contribute(server) {
           workspaceId,
           cwd: worktree,
           purpose: "setup",
-          command: 'echo "setup:$HOOK_MARK" > setup.txt',
+          command: setupCommand,
         }),
       },
       {
         hook: "command",
-        request: expect.objectContaining({ workspaceId, cwd: worktree, purpose: "teardown" }),
+        request: expect.objectContaining({
+          workspaceId,
+          cwd: worktree,
+          purpose: "teardown",
+          command: teardownCommand,
+        }),
       },
     ]);
     expect(entries.filter((entry) => entry.hook === "terminal")).toEqual([
@@ -467,7 +473,7 @@ export default function contribute(server) {
           workspaceId,
           source: "script",
           name: "greet",
-          input: 'echo "script:$HOOK_MARK"',
+          input: scriptCommand,
         }),
       },
     ]);

@@ -17,6 +17,7 @@ export type {
   PluginHooks,
   PluginHookEvents,
   PluginHookRequests,
+  PluginHookRequestResults,
   PluginHookPayload,
   PluginHookResult,
   PluginHookContext,
@@ -30,6 +31,7 @@ export type {
   PluginTurnOutcome,
   PluginLifecycleEvents,
   PluginBeforeRequests,
+  PluginBeforeRequestResults,
   PluginLifecycleRegistration,
 } from "./lifecycle.js";
 
