@@ -10991,6 +10991,88 @@ test("concurrent explicit closes tear down the runtime once", async () => {
   }
 });
 
+test("close drains provider tool cleanup before retiring the runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const timeline = new InMemoryAgentTimelineStore();
+  class CleanupSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "cleanup-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      for (const callId of ["first-tool", "second-tool"]) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "tool_call",
+            callId,
+            name: "Bash",
+            detail: { type: "shell", command: "sleep 10" },
+            status: "running",
+            error: null,
+          },
+        });
+      }
+      return { turnId };
+    }
+    override async close(): Promise<void> {
+      for (const callId of ["first-tool", "second-tool"]) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId: "cleanup-turn",
+          item: {
+            type: "tool_call",
+            callId,
+            name: "Bash",
+            detail: { type: "shell", command: "sleep 10" },
+            status: "canceled",
+            error: null,
+          },
+        });
+      }
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CleanupSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    timelineStore: timeline,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = drainAsyncGenerator(manager.streamAgent(agent.id, "run both tools"));
+  try {
+    await manager.waitForAgentRunStart(agent.id);
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+    await run;
+    await manager.flush();
+    expect(
+      timeline
+        .getItems(agent.id)
+        .filter((item) => item.type === "tool_call")
+        .map((item) => ({ callId: item.callId, status: item.status })),
+    ).toEqual([
+      { callId: "first-tool", status: "canceled" },
+      { callId: "second-tool", status: "canceled" },
+    ]);
+    expect((await storage.get(agent.id))?.lastStatus).toBe("closed");
+  } finally {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await run;
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("provider close failure retains the runtime for cleanup instead of allowing another writer", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-failure-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
