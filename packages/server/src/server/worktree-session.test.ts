@@ -550,64 +550,118 @@ function createGitHubPrRemoteRepo() {
 
 describe("runWorktreeSetupInBackground", () => {
   const cleanupPaths: string[] = [];
+  let stopSetup: (() => Promise<void>) | undefined;
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopSetup?.();
+    stopSetup = undefined;
     for (const target of cleanupPaths.splice(0)) {
       rmSync(target, { recursive: true, force: true });
     }
   });
 
-  test("runs setup from an exact workspace subdirectory", async () => {
-    const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
-    cleanupPaths.push(tempDir);
-    const repoDir = path.join(tempDir, "source");
-    const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
-    const worktree: WorktreeConfig = {
-      branchName: "feature-subdirectory-setup",
-      worktreePath: path.join(tempDir, "worktree"),
+  // Temporary Windows discriminator: remove the repetitions and logging before delivery.
+  const firstCommand = (Number(process.env.GITHUB_RUN_ATTEMPT ?? "1") - 1) % 2;
+  const setupSamples = Array.from({ length: 100 }, (_, index) => {
+    const kind = (Math.floor(index / 2) + (index % 2) + firstCommand) % 2 === 0 ? "pwd" : "node";
+    return {
+      index,
+      kind,
+      command:
+        kind === "pwd"
+          ? "pwd > setup-cwd.txt"
+          : `node -e "require('fs').writeFileSync('setup-cwd.txt', process.cwd())"`,
     };
-    const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
-    // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
-    mkdirSync(sourceWorkspaceCwd, { recursive: true });
-    mkdirSync(workspaceCwd, { recursive: true });
-    execFileSync("git", ["init", "-b", worktree.branchName], {
-      cwd: worktree.worktreePath,
-      stdio: "pipe",
-    });
-    writeFileSync(
-      path.join(workspaceCwd, "paseo.json"),
-      JSON.stringify({
-        worktree: {
-          setup: ["pwd > setup-cwd.txt"],
-        },
-      }),
-    );
-    const paseoHome = path.join(tempDir, ".paseo");
-
-    await runWorktreeSetupInBackground(
-      {
-        paseoHome,
-        emitWorkspaceUpdateForWorkspaceId: async () => {},
-        cacheWorkspaceSetupSnapshot: () => {},
-        emit: () => {},
-        sessionLogger: createLogger(),
-        terminalManager: null,
-      },
-      {
-        requestCwd: sourceWorkspaceCwd,
-        repoRoot: repoDir,
-        workspaceId: "ws-subdirectory-setup",
-        worktree,
-        shouldBootstrap: true,
-        slug: "feature-subdirectory-setup",
-        worktreePath: worktree.worktreePath,
-        workspaceCwd,
-      },
-    );
-
-    expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
-    expect(existsSync(path.join(worktree.worktreePath, "setup-cwd.txt"))).toBe(false);
   });
+  test.each(setupSamples)(
+    "runs setup from an exact workspace subdirectory [$index $kind]",
+    async ({ index, kind, command }) => {
+      const startedAt = Date.now();
+      const started = new Date(startedAt).toISOString();
+      const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
+      cleanupPaths.push(tempDir);
+      const repoDir = path.join(tempDir, "source");
+      const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+      const worktree: WorktreeConfig = {
+        branchName: "feature-subdirectory-setup",
+        worktreePath: path.join(tempDir, "worktree"),
+      };
+      const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
+      // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
+      mkdirSync(sourceWorkspaceCwd, { recursive: true });
+      mkdirSync(workspaceCwd, { recursive: true });
+      execFileSync("git", ["init", "-b", worktree.branchName], {
+        cwd: worktree.worktreePath,
+        stdio: "pipe",
+      });
+      writeFileSync(
+        path.join(workspaceCwd, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: [command],
+          },
+        }),
+      );
+      const paseoHome = path.join(tempDir, ".paseo");
+
+      const fixtureMs = Date.now() - startedAt;
+      const controller = new AbortController();
+      let commandMs: number | undefined;
+      let status: string | undefined;
+      let settled = false;
+      const completion = runWorktreeSetupInBackground(
+        {
+          paseoHome,
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          cacheWorkspaceSetupSnapshot: () => {},
+          emit: (message) => {
+            if (message.type === "workspace_setup_progress") {
+              status = message.payload.status;
+              commandMs = message.payload.detail.commands[0]?.durationMs;
+            }
+          },
+          sessionLogger: createLogger(),
+          terminalManager: null,
+        },
+        {
+          requestCwd: sourceWorkspaceCwd,
+          repoRoot: repoDir,
+          workspaceId: "ws-subdirectory-setup",
+          worktree,
+          shouldBootstrap: true,
+          slug: "feature-subdirectory-setup",
+          worktreePath: worktree.worktreePath,
+          workspaceCwd,
+        },
+        controller.signal,
+      ).finally(() => {
+        settled = true;
+      });
+      stopSetup = async () => {
+        const interrupted = !settled;
+        controller.abort();
+        await completion;
+        process.stdout.write(
+          "SETUP_SAMPLE " +
+            JSON.stringify({
+              index,
+              kind,
+              started,
+              fixtureMs,
+              commandMs,
+              totalMs: Date.now() - startedAt,
+              interrupted,
+              status,
+            }) +
+            "\n",
+        );
+      };
+      await completion;
+
+      expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
+      expect(existsSync(path.join(worktree.worktreePath, "setup-cwd.txt"))).toBe(false);
+    },
+  );
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
