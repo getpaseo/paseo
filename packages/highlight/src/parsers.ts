@@ -1,5 +1,5 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
-import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { dart, kotlin } from "@codemirror/legacy-modes/mode/clike";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { ruby } from "@codemirror/legacy-modes/mode/ruby";
@@ -115,6 +115,9 @@ const languagesByExtension: Record<string, Language> = {
   jbuilder: rubyLanguage,
   podspec: rubyLanguage,
   thor: rubyLanguage,
+  // Kotlin
+  kt: StreamLanguage.define(kotlin),
+  kts: StreamLanguage.define(kotlin),
   // C#
   cs: csharpLanguage,
   // Nix
