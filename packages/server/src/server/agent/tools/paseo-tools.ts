@@ -41,7 +41,7 @@ import {
   requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
-import { createAgentCommand } from "../create-agent/create.js";
+import { createAgentCommand, formatProviderModel } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
@@ -607,6 +607,68 @@ function resolveTerminalKeyToken({ key, literal, preamble }: TerminalKeyTokenInp
   );
 }
 
+interface CreateAgentLaunch {
+  provider: string;
+  mode?: string;
+  thinking?: string;
+  features?: Record<string, unknown>;
+  config?: Pick<AgentSessionConfig, "providerOptions">;
+}
+
+interface CreateAgentLaunchSettings {
+  mode?: string | null;
+  thinking?: string | null;
+  features?: Record<string, unknown>;
+  providerOptions?: AgentSessionConfig["providerOptions"];
+}
+
+function readStringField(record: object, key: string): string | undefined {
+  const value = Reflect.get(record, key);
+  return typeof value === "string" ? value : undefined;
+}
+
+function isFeatureRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readCreateAgentSettings(value: unknown): {
+  modeId?: string;
+  thinkingOptionId?: string;
+  features?: Record<string, unknown>;
+} {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const modeId = readStringField(value, "modeId");
+  const thinkingOptionId = readStringField(value, "thinkingOptionId");
+  const featuresValue = Reflect.get(value, "features");
+  const features = isFeatureRecord(featuresValue) ? featuresValue : undefined;
+  return {
+    ...(modeId ? { modeId } : {}),
+    ...(thinkingOptionId ? { thinkingOptionId } : {}),
+    ...(features ? { features } : {}),
+  };
+}
+
+function createAgentLaunchFields(
+  settings: CreateAgentLaunchSettings,
+): Omit<CreateAgentLaunch, "provider"> {
+  const launch: Omit<CreateAgentLaunch, "provider"> = {};
+  if (settings.mode) {
+    launch.mode = settings.mode;
+  }
+  if (settings.thinking) {
+    launch.thinking = settings.thinking;
+  }
+  if (settings.features) {
+    launch.features = settings.features;
+  }
+  if (settings.providerOptions) {
+    launch.config = { providerOptions: settings.providerOptions };
+  }
+  return launch;
+}
+
 export function createPaseoToolCatalog(options: PaseoToolHostDependencies): PaseoToolCatalog {
   return createToolCatalog(options, options.callerAgentId ? "agent" : "top-level");
 }
@@ -734,6 +796,8 @@ function createToolCatalog(
       listAgents: (args, context) => localHostOperations.get("list_agents")!(args, context),
     },
   });
+  let prepareRemoteCreateAgentInput = (input: Record<string, unknown>): Record<string, unknown> =>
+    input;
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
@@ -764,14 +828,18 @@ function createToolCatalog(
       };
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
-        const remoteNotification = await prepareRemoteNotification(name, destination, input);
+        const toolInput =
+          name === "create_agent" && destination !== options.serverId
+            ? prepareRemoteCreateAgentInput(input)
+            : input;
+        const remoteNotification = await prepareRemoteNotification(name, destination, toolInput);
         try {
           const response = await hostResolver.use(serverId, (host) =>
-            host[operation](input, context),
+            host[operation](toolInput, context),
           );
           if (response.isError) await remoteNotification?.reject();
           else remoteNotification?.accept();
-          await registerRemoteCreation(name, destination, input, response);
+          await registerRemoteCreation(name, destination, toolInput, response);
           return {
             ...response,
             structuredContent: {
@@ -1210,8 +1278,12 @@ function createToolCatalog(
         "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
       ),
   };
+  const agentScopedProviderField = ProviderModelInputSchema.optional().describe(
+    "Provider/model pair. Omit to continue with your provider, model, mode, and features. Pass a pair only when the user or a selected profile names different settings.",
+  );
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    provider: agentScopedProviderField,
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1232,6 +1304,7 @@ function createToolCatalog(
   };
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
+    provider: agentScopedProviderField,
     ...legacyCreateAgentPlacementFields,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
@@ -1585,12 +1658,74 @@ function createToolCatalog(
     },
   );
 
+  const resolveCreateAgentLaunch = (parsed: {
+    provider?: string;
+    settings?: {
+      modeId?: string;
+      thinkingOptionId?: string;
+      features?: Record<string, unknown>;
+    };
+  }): CreateAgentLaunch => {
+    const explicitProvider = parsed.provider?.trim();
+    const settings = parsed.settings;
+    if (explicitProvider) {
+      const inherited = resolveInheritedProviderConfig(
+        resolveRequiredProviderModel(explicitProvider).provider,
+      );
+      return {
+        provider: explicitProvider,
+        ...createAgentLaunchFields({
+          mode: settings?.modeId,
+          thinking: settings?.thinkingOptionId,
+          features: settings?.features,
+          providerOptions: inherited?.providerOptions,
+        }),
+      };
+    }
+
+    const callerAgent = resolveCallerAgent();
+    if (!callerAgent) {
+      throw new PaseoToolInputError("provider is required");
+    }
+
+    return {
+      provider: formatProviderModel(callerAgent.provider, callerAgent.config.model),
+      ...createAgentLaunchFields({
+        mode: settings?.modeId ?? callerAgent.currentModeId,
+        thinking: settings?.thinkingOptionId ?? callerAgent.config.thinkingOptionId,
+        features: settings?.features ?? callerAgent.config.featureValues,
+        providerOptions: callerAgent.config.providerOptions,
+      }),
+    };
+  };
+
+  prepareRemoteCreateAgentInput = (input) => {
+    const provider = typeof input.provider === "string" ? input.provider.trim() : "";
+    if (provider) {
+      return input;
+    }
+    const settings = readCreateAgentSettings(input.settings);
+    const launch = resolveCreateAgentLaunch({ settings });
+    return {
+      ...input,
+      provider: launch.provider,
+      settings: {
+        ...settings,
+        ...(launch.mode ? { modeId: launch.mode } : {}),
+        ...(launch.thinking ? { thinkingOptionId: launch.thinking } : {}),
+        ...(launch.features ? { features: launch.features } : {}),
+      },
+    };
+  };
+
   registerTool(
     "create_agent",
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. For a different provider, set settings.modeId from inspect_provider; omission is accepted for targets with no modes and for unattended execution supported by the target. Do not guess; call list_providers and list_models first if uncertain.",
+        scope === "agent"
+          ? "Create a subagent in your workspace. Omit provider to continue with your provider, model, mode, and features. Pass a provider/model pair only when the user or a selected profile names different settings. For a different provider, set settings.modeId from inspect_provider; omission is accepted for targets with no modes and for unattended execution supported by the target."
+          : "Create an agent. Omitting workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1612,8 +1747,7 @@ function createToolCatalog(
       } else {
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
-      const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const launch = resolveCreateAgentLaunch(parsedArgs);
       const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
@@ -1631,21 +1765,21 @@ function createToolCatalog(
         },
         {
           kind: "mcp",
-          provider: parsedArgs.provider,
+          provider: launch.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
+          config: launch.config,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
-          thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
+          thinking: launch.thinking,
+          features: launch.features,
           labels: {
             ...parsedArgs.labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
               ? { "paseo.parent-server-id": options.serverId }
               : {}),
           },
-          mode: parsedArgs.settings?.modeId,
+          mode: launch.mode,
           promptFailure: "throw",
           notifyOnFinish,
           detached: resolvedArgs.detached,
@@ -3068,10 +3202,10 @@ function createToolCatalog(
       title: "List agent profiles",
       description:
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
-        "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
-        "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
+        "kinds of work. When the user names a profile or a specialty, read each profile's `notes` " +
+        "and copy the match into create_agent (there is no `profile` parameter). Omit create_agent " +
+        "provider to continue with your own provider and model. Returns an empty list if none are " +
+        "configured.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(AgentProfileSchema),

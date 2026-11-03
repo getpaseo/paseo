@@ -12,11 +12,20 @@ Use the user's request and current conversation as input, including any argument
 
 ## Prerequisites
 
-Read the **paseo** skill. Call `list_profiles` before choosing the receiving agent. Do not create it until you have read the configured profiles and their `notes`.
+Read the **paseo** skill.
+
+## Choosing the receiving agent
+
+A handoff starts a fresh agent on your provider, model, mode, and features.
+
+1. **Named profile, provider, or specialty** — the user named a profile, a provider, a model, or a specialty such as review or planning. Call `list_profiles` and apply the match as the **paseo** skill describes. When a named specialty has no matching profile, say so and continue with your own provider.
+2. **Otherwise** — omit `provider` and `settings` on `create_agent`. Skip `list_profiles`, `list_providers`, and `list_models`. Leave the provider field unset so the child keeps yours.
+
+Another agent is a new conversation. It keeps the provider you were started with.
 
 ## Parsing arguments
 
-1. **Agent profile** — explicit profile name first; otherwise choose the profile whose `notes` best match the work. Materialize it into `create_agent` as described by the **paseo** skill. If no profile fits, use Paseo's provider discovery fallback.
+1. **Receiving agent** — follow the choice above.
 2. **Isolation** — "in a worktree" / "worktree" → create a workspace with `isolation: "worktree"`, using a short branch name derived from the task.
 3. **Task description** — anything else the user said.
 

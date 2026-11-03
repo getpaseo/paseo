@@ -163,9 +163,9 @@ New-agent run workspaces are archived when each run ends by default. `create_sch
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `list_profiles` | Return the host's saved agent profiles, including their notes and launch settings. Returns an empty list when none are configured. |
 
-Before delegating, read each profile's `notes` and choose the profile the user named or the one that fits the task. See [Agent profiles](/docs/agent-profiles) for setup and example notes.
+When you name a profile or a specialty, read each profile's `notes` and apply the match. See [Agent profiles](/docs/agent-profiles) for setup and example notes.
 
-`create_agent` has no profile parameter and requires a `provider/model` pair. If the profile has no model, call `list_models` for its provider and choose an available model for the task before launching. Apply the chosen profile's values to the launch request:
+`create_agent` has no profile parameter. An agent-scoped call can omit `provider`; the new agent continues with the caller's provider, model, mode, and features. A top-level call requires `provider/model`. When a selected profile has no model, call `list_models` for its provider and choose an available model before launching. Apply the chosen profile's values to the launch request:
 
 | Profile field                   | `create_agent` field                                                        |
 | ------------------------------- | --------------------------------------------------------------------------- |
@@ -175,7 +175,7 @@ Before delegating, read each profile's `notes` and choose the profile the user n
 | `featureValues`                 | `settings.features`                                                         |
 | `notes`                         | Selection guidance for the orchestrator; supply the task in `initialPrompt` |
 
-Omit absent optional settings. If no profile fits, use provider discovery to choose available settings.
+Omit absent optional settings. Omit `provider` when the new agent should continue with the caller. Pass `provider/model` when applying a profile or when you asked for a different provider.
 
 ### Providers
 
