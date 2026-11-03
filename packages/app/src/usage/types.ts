@@ -10,6 +10,7 @@ export type UsageBalanceUnit = UsageBalance["unit"];
 
 /** What a host's usage surface shows. `unavailable` is a host state, not a failed request. */
 export type UsageView =
+  | { kind: "off"; message: string }
   | { kind: "unavailable"; message: string }
   | { kind: "loading" }
   | { kind: "error"; message: string }

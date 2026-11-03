@@ -61,6 +61,18 @@ Gradle auto-fetches the platform/build-tools it needs once licenses are accepted
 
 ## Local build + install
 
+The `react-native-svg@15.15.4` patch prevents header fades retaining their old painted size after
+rotation. Rebuild native Android after changing it; Metro reloads cannot update this code. Keep the
+resize hunks until upstream invalidates descendant geometry on canvas resize. Its instrumentation
+regression renders real gradient pixels across growing and shrinking layouts, including a nested
+group. From `packages/app/android`, run it on your selected emulator:
+
+```bash
+ANDROID_SERIAL=emulator-5562 ./gradlew :react-native-svg:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.horcrux.svg.SvgResizeTest \
+  --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
 The locked `expo-modules-core@57.0.23` needs the patch installed by `npm install`.
 It backports
 [Expo's Activity-result launcher fix](https://github.com/expo/expo/pull/49634): changing
@@ -215,13 +227,16 @@ fastlane/metadata/android/
 │   ├── images/
 │   │   ├── icon.png            (512x512)
 │   │   ├── featureGraphic.png  (1024x500)
-│   │   └── phoneScreenshots/   (1.png, 2.png, ...)
+│   │   ├── phoneScreenshots/   (1.png, 2.png, ... linked to the store renders)
+│   │   └── tenInchScreenshots/ (1.png, 2.png, ... linked to the store renders)
 │   └── changelogs/             (generated — see below)
 ├── ja/
 └── zh-CN/
 ```
 
 Locale directories generally match `packages/app/src/i18n/locales.ts`, but note that `en` becomes `en-US`.
+
+Google Play reads its screenshots from the same folders; see [Store screenshots](release.md#store-screenshots).
 
 F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:changelogs`; `npm run fdroid:changelogs:check` verifies without writing. It is wired into the npm `version` lifecycle, so a release picks it up automatically and `git add -A` stages the result.
 

@@ -18,7 +18,7 @@ const appendWorkspaceNote = defineAgentTool({
 });
 
 export default function contribute(server: PluginServerContext) {
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels["notes/enabled"] !== "true") return;
     return { ...request, tools: [...request.tools, appendWorkspaceNote] };
   });

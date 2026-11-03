@@ -59,13 +59,21 @@ export async function archiveIfSafe(input: {
   const cwd = snapshot.cwd;
   const pullRequest = snapshot.forge.pullRequest;
 
-  if (!pullRequest?.isMerged) {
+  if (
+    !pullRequest?.isMerged ||
+    !snapshot.git.headSha ||
+    snapshot.git.headSha !== pullRequest.headSha ||
+    snapshot.forge.error
+  ) {
     return;
   }
-  if (snapshot.git.isDirty === true) {
+  if (snapshot.git.isDirty !== false) {
     return;
   }
-  if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
+  if (
+    (snapshot.git.aheadOfOrigin !== null && snapshot.git.aheadOfOrigin !== 0) ||
+    (snapshot.git.behindOfOrigin !== null && snapshot.git.behindOfOrigin !== 0)
+  ) {
     return;
   }
 
