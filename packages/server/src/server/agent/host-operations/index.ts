@@ -1,6 +1,7 @@
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -12,7 +13,7 @@ import {
 import type { DaemonTransportFactory } from "@getpaseo/client/internal/daemon-client-transport-types";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
 import { OWNER_PERMISSIONS } from "../../authorization/index.js";
-import type { ConnectedHosts } from "../../connected-hosts/index.js";
+import { HostError, type ConnectedHosts } from "../../connected-hosts/index.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import { selectAgentListItems } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
@@ -43,6 +44,7 @@ export interface HostOperations {
   getStatus: HostOperation;
   getActivity: HostOperation;
   listAgents: HostOperation;
+  respondToPermission: HostOperation;
 }
 /** Connection authority at the host boundary, independent of child lifecycle. */
 export class HostObservationError extends Error {
@@ -293,6 +295,21 @@ export function createHostResolver(input: {
             const agent = (await client.fetchAgent(args.agentId as string))?.agent;
             if (!agent) throw new Error(`Agent ${args.agentId} not found`);
             return result({ status: agent.status, snapshot: agent });
+          },
+          async respondToPermission(args) {
+            // Unobserved permission responses need a request-scoped confirmation before disposal.
+            if (client.getLastServerInfoMessage()?.features?.ownedSubscriptions !== true)
+              throw new HostError(
+                "unsupported_capability",
+                "Update the destination host to confirm permission responses",
+                destination,
+              );
+            await client.respondToPermissionAndWait(
+              args.agentId as string,
+              args.requestId as string,
+              args.response as AgentPermissionResponse,
+            );
+            return result({ success: true });
           },
           async getActivity(args) {
             const agentId = args.agentId as string;

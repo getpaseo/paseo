@@ -1146,6 +1146,19 @@ async function hostWire(b: TestPaseoDaemon) {
   const wss = new WebSocketServer({ server: http });
   const frames: { binary: boolean; bytes: Buffer; direction: "toB" | "fromB" }[] = [];
   let connections = 0;
+  let holdPermissions = false;
+  let permissionConfirmation = true;
+  const heldPermissions: (() => void)[] = [];
+  function withoutPermissionConfirmation(data: string): string {
+    const frame = JSON.parse(data);
+    if (frame.type === "session")
+      frame.message = JSON.parse(withoutPermissionConfirmation(JSON.stringify(frame.message)));
+    if (frame.type === "hosts.route.frame")
+      frame.payload.data = withoutPermissionConfirmation(frame.payload.data);
+    if (frame.type === "status" && frame.payload.status === "server_info")
+      frame.payload.features.ownedSubscriptions = false;
+    return JSON.stringify(frame);
+  }
   wss.on("connection", (downstream) => {
     connections++;
     const upstream = new WebSocket(`ws://127.0.0.1:${b.port}/ws`);
@@ -1159,11 +1172,16 @@ async function hostWire(b: TestPaseoDaemon) {
       const send = () => {
         if (upstream.readyState === 1) upstream.send(bytes, { binary });
       };
-      if (upstream.readyState === 0) pending.push(send);
+      if (holdPermissions && !binary && bytes.includes("agent_permission_response"))
+        heldPermissions.push(send);
+      else if (upstream.readyState === 0) pending.push(send);
       else send();
     });
     upstream.on("message", (data, binary) => {
-      const bytes = Buffer.from(data as Buffer);
+      const bytes =
+        permissionConfirmation || binary
+          ? Buffer.from(data as Buffer)
+          : Buffer.from(withoutPermissionConfirmation(data.toString()));
       frames.push({ binary, bytes, direction: "fromB" });
       if (downstream.readyState === 1) downstream.send(bytes, { binary });
     });
@@ -1185,6 +1203,17 @@ async function hostWire(b: TestPaseoDaemon) {
     frames,
     connections: () => connections,
     active: () => wss.clients.size,
+    holdPermissions: () => {
+      holdPermissions = true;
+    },
+    heldPermissions: () => heldPermissions.length,
+    releasePermissions: () => {
+      holdPermissions = false;
+      for (const send of heldPermissions.splice(0)) send();
+    },
+    permissionConfirmation: (enabled: boolean) => {
+      permissionConfirmation = enabled;
+    },
   };
 }
 
@@ -2054,6 +2083,8 @@ test(
   { timeout: 30000 },
   async () => {
     const parentPrompts: string[] = [];
+    const childPrompts: string[] = [];
+    let interrupted = 0;
     const finish = Promise.withResolvers<void>();
     cleanup.push(async () => {
       finish.resolve();
@@ -2062,6 +2093,9 @@ test(
       mcpEnabled: true,
       logger: completionLogger(),
       agentClients: createTestAgentClients({
+        createPermissionId: () => "shared-permission",
+        beforeTurnComplete: (prompt) =>
+          prompt === "Run rm -f permission.txt" ? finish.promise : Promise.resolve(),
         onStartTurn: (prompt) => {
           if (String(prompt).includes('kind="agent-notification"'))
             parentPrompts.push(String(prompt));
@@ -2069,11 +2103,17 @@ test(
       }),
     });
     const b = await daemon({
-      agentClients: createTestAgentClients({ beforeTurnComplete: () => finish.promise }),
+      agentClients: createTestAgentClients({
+        createPermissionId: () => "shared-permission",
+        beforeTurnComplete: () => finish.promise,
+        onStartTurn: (prompt) => childPrompts.push(String(prompt)),
+        onInterrupt: () => interrupted++,
+      }),
     });
+    const wire = await hostWire(b);
     const origin = await api(a);
     const destination = await api(b);
-    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    await origin.paseo.hosts.add({ connection: wire.connection });
     const directory = await online(origin.paseo);
     const workspace = await origin.paseo.workspaces.create({
       source: { kind: "directory", path: a.staticDir },
@@ -2110,17 +2150,82 @@ test(
     expect(parentPrompts[0]).toContain("respond_to_permission");
     const child = (await destination.client.fetchAgent(childId))!.agent;
     expect(child.pendingPermissions).toHaveLength(1);
+    expect(child.activeTurn).toMatchObject({ turnId: expect.any(String) });
+    await origin.client.createAgent({
+      agentId: childId,
+      provider: "claude",
+      model: "claude-test",
+      cwd: a.staticDir,
+      workspaceId: workspace.id,
+      title: "Local equal ID",
+      modeId: "default",
+      initialPrompt: "Run rm -f permission.txt",
+    });
+    const local = await origin.client.waitForAgentUpsert(
+      childId,
+      (snapshot) => snapshot.pendingPermissions.length === 1,
+    );
+    expect(local.pendingPermissions[0]!.id).toBe(child.pendingPermissions[0]!.id);
     expect(
       JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
     ).toHaveLength(1);
-    await destination.client.respondToPermission(childId, child.pendingPermissions[0]!.id, {
-      behavior: "allow",
+    wire.holdPermissions();
+    let settled = false;
+    const approving = mcp
+      .callTool({
+        name: "respond_to_permission",
+        arguments: {
+          serverId: directory.hosts[0]!.serverId,
+          agentId: childId,
+          requestId: child.pendingPermissions[0]!.id,
+          response: { behavior: "allow" },
+        },
+      })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    await expect.poll(() => wire.heldPermissions()).toBe(1);
+    expect(settled).toBe(false);
+    expect((await destination.client.fetchAgent(childId))!.agent.pendingPermissions).toEqual(
+      child.pendingPermissions,
+    );
+    wire.releasePermissions();
+    const approved = await approving;
+    expect(approved.isError, JSON.stringify(approved)).not.toBe(true);
+    expect(approved.structuredContent).toEqual({
+      success: true,
+      serverId: directory.hosts[0]!.serverId,
     });
     expect(parentPrompts).toHaveLength(1);
-    expect((await destination.client.fetchAgent(childId))?.agent.status).toBe("running");
+    const resumed = (await destination.client.fetchAgent(childId))!.agent;
+    expect(resumed.status).toBe("running");
+    expect(resumed.activeTurn).toEqual(child.activeTurn);
+    expect(resumed.pendingPermissions).toEqual([]);
+    expect((await origin.client.fetchAgent(childId))!.agent.pendingPermissions).toEqual(
+      local.pendingPermissions,
+    );
+    const localApproved = await mcp.callTool({
+      name: "respond_to_permission",
+      arguments: {
+        agentId: childId,
+        requestId: local.pendingPermissions[0]!.id,
+        response: { behavior: "allow" },
+      },
+    });
+    expect(localApproved.isError, JSON.stringify(localApproved)).not.toBe(true);
+    expect(localApproved.structuredContent).toEqual({
+      success: true,
+      serverId: directory.self.serverId,
+    });
+    const localResumed = (await origin.client.fetchAgent(childId))!.agent;
+    expect(localResumed.pendingPermissions).toEqual([]);
+    expect(localResumed.activeTurn).toEqual(local.activeTurn);
     finish.resolve();
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(2);
     expect(parentPrompts[1]).toContain('event="finished"');
+    expect(childPrompts).toEqual(["Run rm -f permission.txt"]);
+    expect(interrupted).toBe(0);
     await expect
       // Provider start precedes dispatch acknowledgment and the durable removal commit.
       .poll(
@@ -2134,6 +2239,189 @@ test(
       .toEqual([]);
   },
 );
+
+test("MCP permission responses preserve destination failures and denials without local fallback", async () => {
+  const permissionId = "equal-permission-id";
+  const agentClients = () => createTestAgentClients({ createPermissionId: () => permissionId });
+  const a = await daemon({ mcpEnabled: true, agentClients: agentClients() });
+  const b = await daemon({ agentClients: agentClients() });
+  const wire = await hostWire(b);
+  const origin = await api(a);
+  const destination = await api(b);
+  const saved = await origin.paseo.hosts.add({ connection: wire.connection });
+  const directory = await online(origin.paseo);
+  const serverId = directory.hosts[0]!.serverId!;
+  const agentId = crypto.randomUUID();
+  for (const [instance, client] of [
+    [a, origin.client],
+    [b, destination.client],
+  ] as const) {
+    const workspace = await client.createWorkspace({
+      source: { kind: "directory", path: instance.staticDir },
+    });
+    expect(workspace.error).toBeNull();
+    await client.createAgent({
+      agentId,
+      provider: "claude",
+      model: "claude-test",
+      cwd: instance.staticDir,
+      workspaceId: workspace.workspace!.id,
+      modeId: "default",
+      initialPrompt: "Run rm -f permission.txt",
+    });
+    await client.waitForAgentUpsert(
+      agentId,
+      (snapshot) => snapshot.pendingPermissions.length === 1,
+    );
+  }
+  const local = (await origin.client.fetchAgent(agentId))!.agent;
+  const remote = (await destination.client.fetchAgent(agentId))!.agent;
+  expect(local.pendingPermissions[0]!.id).toBe(permissionId);
+  expect(remote.pendingPermissions[0]!.id).toBe(permissionId);
+  const mcp = new Client({ name: "permission-boundaries", version: "1" });
+  cleanup.push(() => mcp.close());
+  await mcp.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${a.port}/mcp/agents`)),
+  );
+  const args = { agentId, requestId: permissionId, response: { behavior: "allow" } };
+  const unchanged = async () => {
+    expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+      local.pendingPermissions,
+    );
+    expect((await destination.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+      remote.pendingPermissions,
+    );
+  };
+  const failure = async (target: string, code: string) => {
+    const response = await mcp.callTool({
+      name: "respond_to_permission",
+      arguments: { ...args, serverId: target },
+    });
+    expect(response.isError, JSON.stringify(response)).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      serverId: target,
+      code,
+      error: expect.any(String),
+    });
+    await unchanged();
+  };
+  await failure("srv_unknown", "host_unknown");
+  await origin.paseo.hosts.update(saved.registrationId, { enabled: false });
+  await failure(serverId, "host_disabled");
+  await origin.paseo.hosts.update(saved.registrationId, { enabled: true });
+  await online(origin.paseo);
+  const permissionFrames = () =>
+    wire.frames.filter(
+      (frame) => frame.direction === "toB" && frame.bytes.includes("agent_permission_response"),
+    );
+  wire.permissionConfirmation(false);
+  const unsupported = await mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId },
+  });
+  expect(unsupported.isError).toBe(true);
+  expect(unsupported.structuredContent).toMatchObject({
+    serverId,
+    code: "unsupported_capability",
+    error: expect.stringContaining("Update the destination host"),
+  });
+  expect(permissionFrames()).toEqual([]);
+  await unchanged();
+  wire.permissionConfirmation(true);
+  const physicalClientId = `host-link-${directory.self.serverId}-${saved.registrationId}`;
+  const restricted = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: physicalClientId,
+    sessionPermissions: ["daemon.read", "workspace.read"],
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => restricted.close());
+  await restricted.connect();
+  expect(restricted.getLastServerInfoMessage()!.permissions).not.toContain("workspace.write");
+  await failure(serverId, "access_denied");
+  expect(permissionFrames()).toHaveLength(1);
+  const restored = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: physicalClientId,
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => restored.close());
+  await restored.connect();
+  expect(restored.getLastServerInfoMessage()!.permissions).toContain("workspace.write");
+  const missing = await mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId, agentId: crypto.randomUUID() },
+  });
+  expect(missing.isError).toBe(true);
+  expect(missing.structuredContent).toMatchObject({
+    serverId,
+    error: expect.stringContaining("Unknown agent"),
+  });
+  await unchanged();
+  const denied = await mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId, response: { behavior: "deny", message: "Declined by parent" } },
+  });
+  expect(denied.isError, JSON.stringify(denied)).not.toBe(true);
+  expect(denied.structuredContent).toEqual({ success: true, serverId });
+  const completed = await destination.client.waitForAgentUpsert(
+    agentId,
+    (snapshot) => snapshot.status === "idle",
+  );
+  expect(completed.pendingPermissions).toEqual([]);
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    local.pendingPermissions,
+  );
+  const resolutions = wire.frames.flatMap((frame) => {
+    if (frame.direction !== "fromB" || frame.binary) return [];
+    const envelope = JSON.parse(frame.bytes.toString());
+    if (envelope.type !== "session" || envelope.message.type !== "hosts.route.frame") return [];
+    const routed = JSON.parse(envelope.message.payload.data);
+    if (routed.type !== "session" || routed.message.type !== "agent_permission_resolved") return [];
+    return [routed.message.payload];
+  });
+  expect(resolutions).toContainEqual({
+    agentId,
+    requestId: permissionId,
+    resolution: { behavior: "deny", message: "Declined by parent" },
+  });
+  wire.holdPermissions();
+  const sentBeforeDisconnect = permissionFrames().length;
+  const interruptedResponse = mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId },
+  });
+  await expect.poll(() => wire.heldPermissions()).toBe(1);
+  await b.close();
+  const lost = await interruptedResponse;
+  expect(lost.isError).toBe(true);
+  expect(lost.structuredContent).toMatchObject({
+    serverId,
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+  });
+  expect(permissionFrames()).toHaveLength(sentBeforeDisconnect + 1);
+  await expect
+    .poll(async () => (await origin.paseo.hosts.list()).hosts[0]!.status)
+    .not.toBe("online");
+  const offline = await mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId },
+  });
+  expect(offline.isError).toBe(true);
+  expect(offline.structuredContent).toMatchObject({ serverId, code: "host_offline" });
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    local.pendingPermissions,
+  );
+  const localApproved = await mcp.callTool({
+    name: "respond_to_permission",
+    arguments: { ...args, serverId: directory.self.serverId },
+  });
+  expect(localApproved.isError, JSON.stringify(localApproved)).not.toBe(true);
+  expect(localApproved.structuredContent).toEqual({
+    success: true,
+    serverId: directory.self.serverId,
+  });
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual([]);
+});
 
 test(
   "disabled remote send rejects unsent finish intent before reconnecting to an idle child",
