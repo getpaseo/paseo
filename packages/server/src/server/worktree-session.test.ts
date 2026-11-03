@@ -648,7 +648,8 @@ describe("runWorktreeSetupInBackground", () => {
         () => {
           try {
             pid = Number(readFileSync(path.join(setup.workspaceCwd, "setup-pid.txt"), "utf8"));
-          } catch {
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
             pid = 0;
           }
           return pid;
