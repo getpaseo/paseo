@@ -875,10 +875,6 @@ export function CommandCenter() {
       : {}),
     scrollEventThrottle: 16,
   };
-  const keyPress = useCallback(
-    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => state.key(key),
-    [state],
-  );
   const submit = useCallback(() => state.key("Enter"), [state]);
   const handleOverlayKeyDown = useCallback(
     (event: KeyboardInputEvent) => {
@@ -924,7 +920,6 @@ export function CommandCenter() {
               initialValue={state.query}
               variant="bottom-sheet"
               onChangeText={state.setQuery}
-              onKeyPress={keyPress}
               onSubmitEditing={submit}
               placeholder={
                 state.scope === "files"

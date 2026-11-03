@@ -72,7 +72,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useRevealActiveItem } from "@/components/ui/scroll-reveal";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
@@ -828,15 +828,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     onKeyDown: handleOverlayKeyDown,
   });
 
-  const handleNativeKeyPress = useCallback(
-    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => {
-      if (key === "ArrowDown" || key === "ArrowUp" || key === "Escape") {
-        handleKey(key);
-      }
-    },
-    [handleKey],
-  );
-
   const handleInputChange = useCallback((value: string) => {
     setState((current) =>
       currentAddProjectPage(current).kind === "new-directory-name"
@@ -890,29 +881,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 ) : null}
               </View>
             </View>
-            {page.kind === "method" && isNative ? (
-              // Native hardware-keyboard events need a focused responder even without a visible field.
-              <TextInput
-                ref={inputRef}
-                onKeyPress={handleNativeKeyPress}
-                onSubmitEditing={submitActive}
-                showSoftInputOnFocus={false}
-                caretHidden
-                contextMenuHidden
-                accessible={false}
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-                pointerEvents="none"
-                style={styles.keyboardCapture}
-                testID="add-project-flow-keyboard-capture"
-              />
-            ) : null}
             {page.kind !== "method" ? (
               <ThemedTextInput
                 ref={inputRef}
                 initialValue={pageInput(page)}
                 onChangeText={handleInputChange}
-                onKeyPress={isWeb ? undefined : handleNativeKeyPress}
                 onSubmitEditing={isWeb ? undefined : submitActive}
                 placeholder={pagePlaceholder(page)}
                 style={styles.input}
@@ -1068,12 +1041,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
   } as object,
-  keyboardCapture: {
-    position: "absolute",
-    width: 1,
-    height: 1,
-    opacity: 0,
-  },
   results: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   resultsContent: { paddingVertical: theme.spacing[2] },
   row: {
