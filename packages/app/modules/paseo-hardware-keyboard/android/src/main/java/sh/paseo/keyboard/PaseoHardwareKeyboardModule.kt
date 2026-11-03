@@ -52,7 +52,7 @@ internal object HardwareKeyboard {
       code.startsWith("Shift") -> "Shift"
       code.startsWith("Alt") -> "Alt"
       named && (character == 0 || code == "Enter" || code == "Tab" || code == "Backspace") -> code
-      character != 0 -> String(Character.toChars(character))
+      character != 0 -> hardwareCharacterKey(character)
       else -> code
     }
     module?.emit(mapOf(
@@ -63,7 +63,7 @@ internal object HardwareKeyboard {
       "phase" to if (event.action == KeyEvent.ACTION_UP) "up" else "down"
     ))
     if (event.action == KeyEvent.ACTION_UP) return consumedPresses.remove(event.keyCode)
-    val overlayOwnsKey = key in overlayKeys && !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !composing
+    val overlayOwnsKey = key != "Dead" && key in overlayKeys && !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !composing
     if (overlayOwnsKey) consumedPresses.add(event.keyCode)
     return overlayOwnsKey
   }
