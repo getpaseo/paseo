@@ -3942,7 +3942,7 @@ export async function mergeToBase(
   const normalizedBaseRef = resolveMergeTargetBranch(baseRef);
   const currentWorktreeRoot = (await getWorktreeRoot(cwd, context)) ?? cwd;
   if (normalizedBaseRef === currentBranch) {
-    return currentWorktreeRoot;
+    throw new Error("Cannot merge a branch into itself");
   }
 
   const baseWorktree = await getWorktreePathForBranch(cwd, normalizedBaseRef);

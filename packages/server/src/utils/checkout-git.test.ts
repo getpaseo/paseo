@@ -1971,6 +1971,13 @@ const x = 1;
     expect(status.currentBranch).toBe("feature/plain");
   });
 
+  it("rejects merging a branch into its own same-named remote base", async () => {
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repoDir });
+    await expect(mergeToBase(repoDir, { baseRef: "refs/remotes/origin/main" })).rejects.toThrow(
+      "Cannot merge a branch into itself",
+    );
+  });
+
   it("merges the current branch into base from a worktree checkout", async () => {
     const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
