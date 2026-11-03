@@ -281,10 +281,10 @@ jobs:
   # otherwise has no server-test coverage. Scoped to the observer/watcher suites to
   # bound runtime.
   server-tests-macos:
-    name: server-tests (macos-14, file observation)
+    name: server-tests (macos-latest, file observation)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

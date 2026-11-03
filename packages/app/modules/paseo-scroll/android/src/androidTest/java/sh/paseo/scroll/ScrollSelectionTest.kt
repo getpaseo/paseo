@@ -4,11 +4,13 @@ import android.graphics.Rect
 import android.text.Selection
 import android.text.Spannable
 import android.view.View
+import android.view.InputDevice
+import android.view.MotionEvent
+import android.os.SystemClock
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
@@ -24,6 +26,40 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ScrollSelectionTest {
+  @Test fun mouseWheelMovesInvertedViewportInVisualDirection() = withScroll(inverted = true) { scroll, _ ->
+    val before = scroll.scrollY
+    withWheel(1f) { event ->
+      assertTrue(scroll.dispatchGenericMotionEvent(event))
+      assertTrue("Wheel up must move toward older messages: $before -> ${scroll.scrollY}", scroll.scrollY > before)
+      assertEquals("The caller's event must not change", 1f, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
+    }
+    val afterUp = scroll.scrollY
+    withWheel(-1f) { event ->
+      assertTrue(scroll.dispatchGenericMotionEvent(event))
+      assertTrue("Wheel down must move toward newer messages: $afterUp -> ${scroll.scrollY}", scroll.scrollY < afterUp)
+    }
+  }
+
+  @Test fun mouseWheelKeepsOrdinaryScrollDirection() = withScroll(inverted = false) { scroll, _ ->
+    val before = scroll.scrollY
+    withWheel(1f) { event ->
+      assertTrue(scroll.dispatchGenericMotionEvent(event))
+      assertTrue(scroll.scrollY < before)
+    }
+    val afterUp = scroll.scrollY
+    withWheel(-1f) { event ->
+      assertTrue(scroll.dispatchGenericMotionEvent(event))
+      assertTrue(scroll.scrollY > afterUp)
+    }
+  }
+
+  @Test fun mouseWheelRespectsDisabledScrolling() = withScroll(inverted = true) { scroll, _ ->
+    scroll.setScrollEnabled(false)
+    val before = scroll.scrollY
+    withWheel(1f) { scroll.dispatchGenericMotionEvent(it) }
+    assertEquals(before, scroll.scrollY)
+  }
+
   @Test fun focusingSelectableTextKeepsInvertedViewportStill() = withScroll(inverted = true) { scroll, text ->
     val before = scroll.scrollY
     assertTrue(text.requestFocus())
@@ -70,7 +106,7 @@ class ScrollSelectionTest {
       val appContext = instrumentation.targetContext
       DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(appContext)
       SoLoader.init(appContext, OpenSourceMergedSoMapping)
-      val reactContext = BridgeReactContext(appContext)
+      val reactContext = ScrollTestContext(appContext)
       val context = ThemedReactContext(reactContext, appContext)
       val manager = PaseoScrollPackage().createViewManager(reactContext, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)
@@ -98,4 +134,26 @@ class ScrollSelectionTest {
   }
 
   private fun exact(size: Int) = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY)
+
+  private fun withWheel(axis: Float, check: (MotionEvent) -> Unit) {
+    val time = SystemClock.uptimeMillis()
+    val properties = MotionEvent.PointerProperties().apply {
+      id = 0
+      toolType = MotionEvent.TOOL_TYPE_MOUSE
+    }
+    val coordinates = MotionEvent.PointerCoords().apply {
+      x = 150f
+      y = 150f
+      setAxisValue(MotionEvent.AXIS_VSCROLL, axis)
+    }
+    val event = MotionEvent.obtain(
+      time, time, MotionEvent.ACTION_SCROLL, 1, arrayOf(properties), arrayOf(coordinates),
+      0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0,
+    )
+    try {
+      check(event)
+    } finally {
+      event.recycle()
+    }
+  }
 }

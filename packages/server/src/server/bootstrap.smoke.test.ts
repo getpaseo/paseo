@@ -670,11 +670,11 @@ describe("paseo daemon bootstrap", () => {
 
   test("rolls back standalone listener without starting plugins when main listen fails", async () => {
     const mainPort = await findFreePort();
-    const standalonePort = await findFreePort();
     const occupiedMain = http.createServer((_req, res) => {
       res.end("occupied-main");
     });
     await new Promise<void>((resolve) => occupiedMain.listen(mainPort, "127.0.0.1", resolve));
+    const standalonePort = await findFreePort();
 
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-main-rollback-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");

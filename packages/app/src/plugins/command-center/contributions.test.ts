@@ -71,6 +71,9 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         clientType: "cli",
       }),
     ),
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
     invoke: async (method: string, input: unknown) => {
       expect(method).toBe("review.inspect");
       return { value: inspect.input.parse(input).value + 1 };
