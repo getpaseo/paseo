@@ -209,12 +209,19 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
 
   // Agents and terminals emit VS Code-style `file:///C:/dir/file.ts:95` links although the
   // line suffix is not part of the URL spec: `new URL()` keeps it in the pathname, so a
-  // path that still carries `:95` would be opened verbatim and fail with ENOENT.
+  // path that still carries `:95` would be opened verbatim and fail with ENOENT. Split the
+  // literal suffix on the still-encoded pathname — before decoding — so an encoded filename
+  // like `report%3A12` keeps its colon instead of becoming a line number, the same order
+  // parseLocalPathParts uses.
   let path = normalizedPath;
   let { lineStart, lineEnd } = lines;
-  const suffix = splitColonLineSuffix(path);
+  const suffix = splitColonLineSuffix(parsedUrl.pathname);
   if (suffix && isAbsolutePath(suffix.basePath)) {
-    path = suffix.basePath;
+    const decodedBasePath = normalizeFileUrlPath(suffix.basePath);
+    if (!decodedBasePath) {
+      return null;
+    }
+    path = decodedBasePath;
     if (lineStart === undefined) {
       lineStart = suffix.lineStart;
       lineEnd = suffix.lineEnd;

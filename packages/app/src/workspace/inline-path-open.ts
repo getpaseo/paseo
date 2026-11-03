@@ -77,12 +77,13 @@ export function planInlinePathOpen(input: {
   const segments = normalizedPath.split("/");
   const basename = segments[segments.length - 1];
   const dirname = segments.slice(0, -1).join("/");
-  if (!dirname || !basename) {
+  if (!basename) {
     return { kind: "file" };
   }
   return {
     kind: "probe",
-    root: dirname,
+    // Root-level children such as /tmp have no dirname; list the filesystem root itself.
+    root: dirname || "/",
     relativePath: basename,
     underWorkspace: false,
   };

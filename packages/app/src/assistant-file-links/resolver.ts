@@ -119,7 +119,8 @@ export async function fetchDaemonResolution({
 }
 
 function stripWorkspaceFolderNamePrefix(query: string, workspaceRoot: string): string {
-  const trimmedRoot = workspaceRoot.replace(/\/+$/, "");
+  // Windows roots arrive with backslashes; normalize before extracting the folder name.
+  const trimmedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
   const rootFolderName = trimmedRoot === "/" ? null : (trimmedRoot.split("/").pop() ?? null);
   if (!rootFolderName) {
     return query;

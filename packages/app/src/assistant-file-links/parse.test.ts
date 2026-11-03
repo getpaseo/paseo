@@ -708,4 +708,22 @@ describe("encoded filename line markers", () => {
       ).toBeUndefined();
     },
   );
+
+  it("keeps an encoded colon filename in file:// URLs instead of reading a line number", () => {
+    const parsed = parseFileProtocolUrl("file:///repo/report%3A12");
+
+    expect(parsed).toMatchObject({ path: "/repo/report:12", lineStart: undefined });
+  });
+
+  it("still splits a literal VS Code-style line suffix in file:// URLs", () => {
+    const parsed = parseFileProtocolUrl("file:///repo/report.md:95");
+
+    expect(parsed).toMatchObject({ path: "/repo/report.md", lineStart: 95 });
+  });
+
+  it("splits the line suffix after an encoded colon filename", () => {
+    const parsed = parseFileProtocolUrl("file:///repo/report%3A12:95");
+
+    expect(parsed).toMatchObject({ path: "/repo/report:12", lineStart: 95 });
+  });
 });

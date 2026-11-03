@@ -108,6 +108,15 @@ describe("planInlinePathOpen", () => {
     });
   });
 
+  it("probes root-level external folders against the filesystem root", () => {
+    expect(planInlinePathOpen({ file: "/tmp", workspaceRoot: "/repo" })).toEqual({
+      kind: "probe",
+      root: "/",
+      relativePath: "tmp",
+      underWorkspace: false,
+    });
+  });
+
   it("keeps the extension shortcut for files inside the workspace only", () => {
     expect(
       planInlinePathOpen({ file: "/repo/reports.v1/data.txt", workspaceRoot: "/repo" }),

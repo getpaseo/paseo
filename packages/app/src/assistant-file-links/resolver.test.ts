@@ -453,6 +453,30 @@ describe("fetchDaemonResolution", () => {
     });
   });
 
+  it("strips the folder-name prefix for Windows workspace roots too", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "docs/report.html": [{ path: "docs/report.html", kind: "file" }],
+    });
+
+    await fetchDaemonResolution({
+      ambiguousQuery: "project/docs/report.html",
+      token: "project/docs/report.html",
+      target: {
+        raw: "project/docs/report.html",
+        path: "C:/Codes/project/project/docs/report.html",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      workspaceRoot: "C:\\Codes\\project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches.map((search) => search.query)).toEqual([
+      "project/docs/report.html",
+      "docs/report.html",
+    ]);
+  });
+
   it("does not retry the stripped query when the strict search already matched", async () => {
     const { getDirectorySuggestions, searches } = suggestionsFromMap({
       "project/docs/report.html": [{ path: "project/docs/report.html", kind: "file" }],
