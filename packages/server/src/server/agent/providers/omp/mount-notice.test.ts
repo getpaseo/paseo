@@ -392,6 +392,33 @@ class DaemonTimelineHarness {
 }
 
 describe("OMP mount notices in the daemon timeline", () => {
+  test("a mount staged near rewind completion is announced on the next runtime", async () => {
+    const daemon = new DaemonTimelineHarness(AGENT_ID);
+    const handle = persistenceHandle(await writeSessionFile());
+    await daemon.load(handle);
+    const user = daemon.fetchAll().rows.find((row) => row.item.type === "user_message")?.item;
+    if (user?.type !== "user_message" || !user.messageId) throw new Error("No rewind target");
+    const runtime = daemon.omp.latestSession();
+    const before = runtime.getStateRequestCount;
+    let release = runtime.holdStateRequests();
+    const rewind = daemon.manager.rewind(AGENT_ID, user.messageId, "conversation");
+    try {
+      await runtime.waitForStateRequests(before + 1);
+      release();
+      release = runtime.holdStateRequests();
+      await runtime.waitForStateRequests(before + 2);
+      await daemon.announce(BROWSER_AND_LINEAR);
+    } finally {
+      release();
+      await rewind;
+    }
+    expect(daemon.fetchedNotifications()).toEqual([]);
+    await daemon.manager.closeAgent(AGENT_ID);
+    await daemon.load(handle);
+    await daemon.announce(BROWSER_AND_LINEAR);
+    expect(daemon.fetchedNotifications()).toEqual([BROWSER_AND_LINEAR]);
+  });
+
   test("live delivery and fetched history agree after idle collection relaunches OMP", async () => {
     const daemon = new DaemonTimelineHarness(AGENT_ID);
     await daemon.load(persistenceHandle(await writeSessionFile()));
