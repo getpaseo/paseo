@@ -78,6 +78,7 @@ import { useSettingsRouteEntry } from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
+import { WindowViewReporter } from "@/desktop/use-report-window-view";
 import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
 import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
@@ -839,6 +840,7 @@ function AppShell() {
       <HorizontalScrollProvider>
         <OpenProjectListener />
         <AgentNavigationListener />
+        <WindowViewReporter />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
           <RootStack />
