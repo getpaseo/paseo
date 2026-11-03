@@ -13,6 +13,7 @@ import {
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
+  type WorkspaceMutation,
 } from "./workspace-registry.js";
 
 describe("resolveWorkspaceName", () => {
@@ -113,6 +114,35 @@ describe("workspace registries", () => {
     await projectRegistry.remove("remote:github.com/acme/repo");
     expect(await projectRegistry.get("remote:github.com/acme/repo")).toBeNull();
     expect(await projectRegistry.list()).toEqual([]);
+  });
+
+  test("writes once per mutation and skips missing-record mutations", async () => {
+    let writes = 0;
+    const registry = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "write-count.json"),
+      logger,
+      {
+        writeRecords: async (filePath, records) => {
+          writes++;
+          await writeJsonFileAtomic(filePath, records);
+        },
+      },
+    );
+    const project = createPersistedProjectRecord({
+      projectId: "counted",
+      rootPath: tmpDir,
+      kind: "git",
+      displayName: "Counted",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await registry.upsert(project);
+    expect(writes).toBe(1);
+    await registry.update("missing", (current) => current);
+    await registry.remove("missing");
+    expect(writes).toBe(1);
+    await registry.update(project.projectId, (current) => ({ ...current, customName: "Changed" }));
+    expect(writes).toBe(2);
   });
 
   test("preserves a concurrent project update when archiving", async () => {
@@ -430,6 +460,10 @@ describe("workspace registries", () => {
 
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
+    const mutations: WorkspaceMutation[] = [];
+    workspaceRegistry.subscribeToMutations((mutation) => {
+      mutations.push(mutation);
+    });
     await workspaceRegistry.upsert(
       createPersistedWorkspaceRecord({
         workspaceId: "/tmp/repo",
@@ -460,11 +494,16 @@ describe("workspace registries", () => {
     expect(archived?.archivedAt).toBe("2026-03-03T00:00:00.000Z");
 
     await workspaceRegistry.remove("/tmp/repo");
+    expect(mutations.at(-1)).toEqual({
+      kind: "remove",
+      workspaceId: "/tmp/repo",
+      workspace: archived,
+    });
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });
 
-  test("refreshes workspace archive timestamps when an archive is repeated", async () => {
+  test("preserves the first workspace archive and reports whether a queued archive applied", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(
       createPersistedWorkspaceRecord({
@@ -478,12 +517,24 @@ describe("workspace registries", () => {
       }),
     );
 
-    await workspaceRegistry.archive("workspace-one", "2026-03-02T00:00:00.000Z");
-    await workspaceRegistry.archive("workspace-one", "2026-03-03T00:00:00.000Z");
-
-    expect(await workspaceRegistry.get("workspace-one")).toMatchObject({
-      archivedAt: "2026-03-03T00:00:00.000Z",
-      updatedAt: "2026-03-03T00:00:00.000Z",
+    const events: WorkspaceMutation[] = [];
+    workspaceRegistry.subscribeToMutations((event) => {
+      events.push(event);
+    });
+    expect(
+      await Promise.all([
+        workspaceRegistry.archive("workspace-one", "2026-03-02T00:00:00.000Z"),
+        workspaceRegistry.archive("workspace-one", "2026-03-03T00:00:00.000Z"),
+      ]),
+    ).toEqual([true, false]);
+    expect(events.map((event) => event.kind)).toEqual(["archive"]);
+    const reloaded = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    expect(await reloaded.get("workspace-one")).toMatchObject({
+      archivedAt: "2026-03-02T00:00:00.000Z",
+      updatedAt: "2026-03-02T00:00:00.000Z",
     });
   });
 

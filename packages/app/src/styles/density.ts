@@ -26,7 +26,14 @@ export const density = {
   tightRowHeight: byLayout(36, 28),
   /** A square icon-only button that sits in a row or toolbar. */
   iconButton: byLayout(44, 28),
+  /** The space between two blocks of rich text, such as Markdown paragraphs, code and images. */
+  blockGap: byLayout(12, 16),
 };
+
+/** Resolves a density value for a prop, which Unistyles cannot resolve on its own. */
+export function resolveDensity<T>(rt: { breakpoint?: string }, value: { xs: T; md: T }): T {
+  return isCompactBreakpoint(rt.breakpoint) ? value.xs : value.md;
+}
 
 /** The width or height of a slot that holds an icon of `size`. */
 export function densityIconBox(size: DensityIconSize) {
@@ -34,7 +41,7 @@ export function densityIconBox(size: DensityIconSize) {
 }
 
 export function densityIconSize(rt: { breakpoint?: string }, size: DensityIconSize): number {
-  return isCompactBreakpoint(rt.breakpoint) ? COMPACT_ICON_SIZE[size] : ICON_SIZE[size];
+  return resolveDensity(rt, densityIconBox(size));
 }
 
 /** Extends a `withUnistyles` icon mapping so the icon also takes its density size. */

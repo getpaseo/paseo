@@ -232,17 +232,18 @@ test("scrolled chat does not exclude the workspace titlebar from dragging", asyn
     }
     await page.getByRole("button", { name: "Close Find", exact: true }).click();
     await expect(find).toBeHidden();
+    // Closing Find returns keyboard scrolling to the chat viewport, which emits no window region.
     await expect
-      .poll(() =>
-        chat.evaluate((scroll) => ({
-          focusReturned: document.activeElement?.contains(scroll),
-          tabindex: document.activeElement?.getAttribute("tabindex"),
-          appRegion: getComputedStyle(document.activeElement!).getPropertyValue(
-            "-webkit-app-region",
-          ),
-        })),
-      )
-      .toEqual({ focusReturned: true, tabindex: "-1", appRegion: "no-drag" });
+      .poll(() => chat.evaluate((scroll) => document.activeElement === scroll))
+      .toBe(true);
+    await expect
+      .poll(() => chat.evaluate(inspectChatDragExclusions))
+      .toEqual({
+        contentCrossesHeader: true,
+        contentCrossesTabRow: true,
+        focusScopeRegion: "no-drag",
+        exclusions: 0,
+      });
     await page.screenshot({ path: testInfo.outputPath("scrolled-chat-titlebar.png") });
   } finally {
     await agent.cleanup();

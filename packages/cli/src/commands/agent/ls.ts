@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { fetchAllAgents } from "../../utils/agent-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
@@ -207,18 +208,7 @@ export async function listAgents(
 
     const labelFilters = parseLabelFilters(options.label);
     const fetchOptions = buildAgentLsFetchOptions(options);
-    let agents: AgentSnapshotPayload[] = [];
-    let cursor: string | undefined;
-    // createdAt never changes, so agents cannot move past the cursor while the pages are read.
-    do {
-      const payload = await client.fetchAgents({
-        ...fetchOptions,
-        sort: [{ key: "created_at", direction: "desc" }],
-        page: { limit: 200, ...(cursor ? { cursor } : {}) },
-      });
-      agents.push(...payload.entries.map((entry) => entry.agent));
-      cursor = payload.pageInfo.nextCursor ?? undefined;
-    } while (cursor);
+    let agents = await fetchAllAgents(client, fetchOptions);
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {

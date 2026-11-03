@@ -160,6 +160,7 @@ export class DirectorySync {
   private readonly fullDemandSources = new Set<object>();
   private readonly scriptStatusDemand = new Map<object, string>();
   private demandRefresh: Promise<void> | null = null;
+  private subscriptionGeneration = 0;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
   private cursors: DirectoryCheckpoint = {};
 
@@ -262,6 +263,7 @@ export class DirectorySync {
   }
 
   private releaseSubscriptions(): void {
+    this.subscriptionGeneration += 1;
     for (const subscription of [
       this.agentSubscription,
       this.workspaceSubscription,
@@ -362,6 +364,7 @@ export class DirectorySync {
     this.observeDirectoryEvents();
     this.observeScriptStatusEvents();
     const source = this.connection.source;
+    const subscriptionGeneration = this.subscriptionGeneration;
     if (
       !force &&
       this.satisfiedDemandSource?.clientGeneration === source.clientGeneration &&
@@ -378,17 +381,19 @@ export class DirectorySync {
           ]).then(() => undefined);
     this.demandRefresh = refresh
       .then(() => {
-        this.satisfiedDemandSource = source;
+        if (this.subscriptionGeneration === subscriptionGeneration) {
+          this.satisfiedDemandSource = source;
+        }
         return undefined;
       })
       .finally(() => {
         this.demandRefresh = null;
         const current = this.connection.source;
-        if (
-          this.hasDemand() &&
-          (current.clientGeneration !== source.clientGeneration ||
-            current.connectionEpoch !== source.connectionEpoch)
-        ) {
+        const sourceChanged =
+          current.clientGeneration !== source.clientGeneration ||
+          current.connectionEpoch !== source.connectionEpoch;
+        const subscriptionsReleased = this.subscriptionGeneration !== subscriptionGeneration;
+        if (this.hasDemand() && (sourceChanged || subscriptionsReleased)) {
           void this.requestDemandRefresh().catch(() => undefined);
         }
       });
@@ -563,16 +568,20 @@ export class DirectorySync {
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
       const supportsProjectList = serverInfo?.features?.projectList === true;
       const supportsDirectorySync = serverInfo?.features?.directorySync === true;
-      if (supportsProjectList) {
-        await this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync);
-      }
-      await this.fetchWorkspaceSnapshot(
-        client,
-        source,
-        transaction,
-        input?.subscribe === true,
-        supportsDirectorySync,
-      );
+      const projectsReady = supportsProjectList
+        ? this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync)
+        : Promise.resolve();
+      await Promise.all([
+        projectsReady,
+        this.fetchWorkspaceSnapshot(
+          client,
+          source,
+          transaction,
+          input?.subscribe === true,
+          supportsDirectorySync,
+          projectsReady,
+        ),
+      ]);
       if (!supportsProjectList) {
         this.buildLegacyProjectSnapshot(transaction.snapshot);
         (transaction.snapshot.syncModes ??= {}).projects =
@@ -592,6 +601,7 @@ export class DirectorySync {
     transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
     initialSubscribe: boolean,
     supportsDirectorySync: boolean,
+    projectsReady: Promise<void>,
   ): Promise<void> {
     let cursor: string | null = null;
     let subscribe = initialSubscribe;
@@ -618,6 +628,9 @@ export class DirectorySync {
         });
         payload = await subscription.ready;
       } else payload = await client.fetchWorkspaces(query);
+      // Fetch both directories together, but apply the project baseline before the
+      // workspace page's empty-project overlays, regardless of response order.
+      await projectsReady;
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
       applyWorkspaceSnapshotPage(transaction.snapshot, payload, cursor === null);
       if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) return;

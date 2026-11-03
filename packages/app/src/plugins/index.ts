@@ -7,4 +7,5 @@ export {
   PluginComposerPills,
   PluginHeaderButtons,
   useHasPluginComposerPills,
+  usePluginWorkspaceMenu,
 } from "./buttons/view";

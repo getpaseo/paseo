@@ -9,6 +9,7 @@ import type {
   PluginSidebarItemContribution,
   PluginSidebarSection,
 } from "./types";
+import type { PluginIcon } from "@getpaseo/plugin/client";
 
 export interface PluginSidebarTarget {
   plugin: InstalledPlugin;
@@ -36,7 +37,7 @@ export type PluginSidebarGroup =
   | (PluginSidebarGroupBase & { kind: "item"; targets: PluginSidebarTarget[] })
   | (PluginSidebarGroupBase & {
       kind: "legacy";
-      icon: string;
+      icon: PluginIcon;
       targets: PluginLegacySidebarTarget[];
     });
 
@@ -63,7 +64,7 @@ export function groupPluginSidebarItems(
           key,
           pluginId: plugin.id,
           contributionId: item.id,
-          title: item.title,
+          title: plugin.i18n.resolve(item.title, plugin.locale),
           icon: item.icon,
           targets: [{ plugin, item }],
         });
@@ -79,7 +80,7 @@ export function groupPluginSidebarItems(
           key,
           pluginId: plugin.id,
           contributionId: item.id,
-          title: item.title,
+          title: plugin.i18n.resolve(item.title, plugin.locale),
           targets: [{ plugin, item }],
         });
       }

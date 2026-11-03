@@ -57,7 +57,7 @@ export function PluginSettingsMenuItems({
           serverId={serverId}
           pluginId={pluginId}
           screenId={screen.id}
-          title={screen.title}
+          title={plugin.i18n.resolve(screen.title, plugin.locale)}
           disabled={disabled}
         />
       ))}
@@ -85,7 +85,7 @@ function SettingsContent({
     (error: string) => (
       <View>
         <Text style={styles.message}>{error}</Text>
-        <Button variant="outline" size="sm" onPress={retry}>
+        <Button variant="outline" onPress={retry}>
           {t("common.actions.retry")}
         </Button>
       </View>
@@ -141,7 +141,6 @@ export function PluginSettingsContent({
         <Button
           onPress={onBackToPlugins}
           variant="ghost"
-          size="sm"
           leftIcon={ArrowLeft}
           style={styles.backButton}
         >

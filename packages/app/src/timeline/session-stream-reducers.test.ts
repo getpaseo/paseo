@@ -19,6 +19,66 @@ import {
   type TimelineCursor,
 } from "./session-stream-reducers";
 
+it("keeps streamed reasoning together while the initial history is loading", () => {
+  let head: StreamItem[] = [];
+  const chunks = ["Checking a long oper", "ation before", " the re", "sult arrives."];
+  for (const [index, text] of chunks.entries()) {
+    const result = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-18",
+        item: { type: "reasoning", text },
+      },
+      seq: index + 1,
+      epoch: "epoch-1",
+      currentTail: [],
+      currentHead: head,
+      currentCursor: undefined,
+      timestamp: new Date(1000 + index),
+      hasAuthoritativeBaseline: false,
+    });
+    head = result.head;
+    expect(head).toHaveLength(1);
+    expect(head[0]).toMatchObject({
+      kind: "thought",
+      text: chunks.slice(0, index + 1).join(""),
+      turnId: "turn-18",
+    });
+  }
+});
+
+it.each([false, true])(
+  "keeps adjacent reasoning from different turns separate (history loaded: %s)",
+  (hasAuthoritativeBaseline) => {
+    let head: StreamItem[] = [];
+    let tail: StreamItem[] = [];
+    for (const [index, turnId] of ["turn-1", "turn-2"].entries()) {
+      const result = processAgentStreamEvent({
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: { type: "reasoning", text: turnId },
+        },
+        seq: index + 1,
+        epoch: "epoch-1",
+        currentTail: tail,
+        currentHead: head,
+        currentCursor: undefined,
+        timestamp: new Date(1000),
+        hasAuthoritativeBaseline,
+      });
+      head = result.head;
+      tail = result.tail;
+    }
+    expect([...tail, ...head]).toMatchObject([
+      { kind: "thought", text: "turn-1", turnId: "turn-1" },
+      { kind: "thought", text: "turn-2", turnId: "turn-2" },
+    ]);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------

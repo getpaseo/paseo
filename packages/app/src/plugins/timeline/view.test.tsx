@@ -33,7 +33,7 @@ vi.mock("../client-runtime", () => ({
 }));
 vi.mock("../icons", () => ({
   Icon: () => null,
-  resolvePluginIcon: () => () => null,
+  pluginIconComponent: () => () => null,
 }));
 
 import { pluginRegistry } from "../registry";

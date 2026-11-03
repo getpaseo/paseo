@@ -28,11 +28,13 @@ export function encodeTerminalPaste(input: TerminalPasteInput): string {
   return `${BRACKETED_PASTE_START}${payload}${BRACKETED_PASTE_END}`;
 }
 
-export async function pasteTerminalClipboard(input: PasteTerminalClipboardInput): Promise<void> {
+/** Pastes clipboard text. Returns whether there was text to paste. */
+export async function pasteTerminalClipboard(input: PasteTerminalClipboardInput): Promise<boolean> {
   const text = await input.clipboard.readText();
   if (text.length === 0) {
-    return;
+    return false;
   }
 
   input.terminal.paste(text);
+  return true;
 }

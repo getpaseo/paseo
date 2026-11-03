@@ -11,14 +11,26 @@ import {
   addModelVisibleStructuredContent,
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
-import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError, type PaseoToolCatalog } from "../../tools/types.js";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
+class OpenCodeBridgeClientError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "OpenCodeBridgeClientError";
+  }
+}
+
 interface OpenCodeBridgeOptions {
   paseoHome: string;
   logger: Logger;
+  port?: number;
 }
 
 interface OpenCodeSessionBinding {
@@ -43,17 +55,19 @@ interface OpenCodeConfig {
 export class OpenCodeBridge {
   private readonly paseoHome: string;
   private readonly logger: Logger;
+  private readonly port: number;
   private readonly token = randomBytes(32).toString("hex");
   private readonly sessions = new Map<string, OpenCodeSessionBinding>();
   private server: Server | null = null;
   private baseUrl: string | null = null;
   private pluginUrl: string | null = null;
   private v2PluginUrl: string | null = null;
-  private manifestCatalog: PaseoToolCatalog | null = null;
+  private manifestCatalog: Pick<PaseoToolCatalog, "tools"> | null = null;
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
     this.logger = options.logger.child({ module: "agent", component: "opencode-bridge" });
+    this.port = options.port ?? 0;
   }
 
   async start(): Promise<void> {
@@ -64,7 +78,7 @@ export class OpenCodeBridge {
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
+      server.listen(this.port, "127.0.0.1", () => {
         server.off("error", reject);
         resolve();
       });
@@ -78,11 +92,13 @@ export class OpenCodeBridge {
     this.baseUrl = `http://127.0.0.1:${address.port}`;
   }
 
-  setManifestCatalog(catalog: PaseoToolCatalog | null): void {
+  setManifestCatalog(catalog: Pick<PaseoToolCatalog, "tools"> | null): void {
     this.manifestCatalog = catalog;
   }
 
   bindSession(input: BindOpenCodeSessionInput): () => void {
+    if (this.sessions.has(input.sessionId))
+      throw new Error(`OpenCode session ${input.sessionId} is already bound to a Paseo agent`);
     const binding: OpenCodeSessionBinding = {
       env: { ...input.env },
       ...(input.tools ? { tools: input.tools } : {}),
@@ -116,12 +132,13 @@ export class OpenCodeBridge {
     };
   }
 
-  async decorateV2ServerEnv(env: Record<string, string>): Promise<Record<string, string>> {
+  async materializeV2Plugin(): Promise<string> {
     this.v2PluginUrl ??= await this.materializePlugin(2);
-    return decorateOpenCodeV2Env(env, this.v2PluginUrl, {
-      baseUrl: this.requireBaseUrl(),
-      token: this.token,
-    });
+    return this.v2PluginUrl;
+  }
+
+  sharedV2Connection(baseUrl = this.requireBaseUrl()): OpenCodePluginOptions {
+    return { baseUrl, token: this.token };
   }
 
   async close(): Promise<void> {
@@ -187,10 +204,26 @@ export class OpenCodeBridge {
       sendJson(response, 404, { error: "Not found" });
     } catch (error) {
       this.logger.warn({ err: error }, "OpenCode bridge request failed");
+      const failure = error instanceof Error ? error : new Error(String(error));
       if (!response.headersSent) {
-        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof OpenCodeBridgeClientError) {
+          sendJson(response, error.status, {
+            error: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        } else if (error instanceof PaseoToolInputError) {
+          sendJson(
+            response,
+            error.status,
+            error.issues
+              ? { error: "Invalid tool input", issues: error.issues }
+              : { error: error.message },
+          );
+        } else {
+          sendJson(response, 500, { error: failure.message });
+        }
       } else {
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        response.destroy(failure);
       }
     }
   }
@@ -224,6 +257,9 @@ export class OpenCodeBridge {
       sendJson(input.response, 403, { error: "Paseo tools are disabled for this session" });
       return;
     }
+    if (!binding.tools.getTool(input.toolName)) {
+      throw new OpenCodeBridgeClientError(404, `Paseo tool not found: ${input.toolName}`);
+    }
     const body = await readJsonBody(input.request);
     const controller = new AbortController();
     input.request.once("aborted", () =>
@@ -252,6 +288,8 @@ export async function materializeOpenCodeV2Plugin(paseoHome: string): Promise<st
   // V2 ignores configured file paths; it loads a package directory's server entry point.
   const directory = path.join(paseoHome, "runtime", "opencode", `paseo-v2-${digest}`);
   await writeFileAtomic(path.join(directory, "server.js"), artifact);
+  const state = await readFile(new URL("./v2/state.mjs", import.meta.url));
+  await writeFileAtomic(path.join(directory, "state.mjs"), state);
   await writeFileAtomic(
     path.join(directory, "package.json"),
     JSON.stringify({
@@ -349,11 +387,17 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > MAX_REQUEST_BYTES) throw new Error("OpenCode bridge request body is too large");
+    if (size > MAX_REQUEST_BYTES) {
+      throw new OpenCodeBridgeClientError(413, "OpenCode bridge request body is too large");
+    }
     chunks.push(buffer);
   }
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new OpenCodeBridgeClientError(400, "Malformed JSON request body");
+  }
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

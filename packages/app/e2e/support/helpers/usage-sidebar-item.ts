@@ -301,3 +301,10 @@ export async function refreshAllUsage(page: Page): Promise<void> {
 export async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
 }
+
+export async function expectCompactSidebarOpen(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+}

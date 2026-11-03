@@ -5,6 +5,7 @@ const path = require("path");
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
+const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
   "expo-camera": path.resolve(appSrcRoot, "fdroid/expo-camera.tsx"),
@@ -16,6 +17,7 @@ const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .toLowerCase();
 
 const config = getDefaultConfig(projectRoot);
+config.cacheVersion = isWatchdogBuild ? "watchdog" : "standard";
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
 
 // Keep app exports deterministic across dev machines and CI. Metro's Watchman
@@ -75,6 +77,14 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
 }
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (
+    isWatchdogBuild &&
+    platform === "android" &&
+    /[/\\]Renderer[/\\]shims[/\\]/.test(context.originModulePath) &&
+    /implementations\/(ReactFabric|ReactNativeRenderer)-prod$/.test(moduleName)
+  ) {
+    return defaultResolveRequest(context, moduleName.replace(/-prod$/, "-profiling"), platform);
+  }
   if (isFdroidBuild && platform === "android" && fdroidModuleOverrides[moduleName]) {
     return resolveWithCustomWebOverlay(context, fdroidModuleOverrides[moduleName], platform);
   }

@@ -13,6 +13,7 @@ function row(
 ): PaseoSubagentRow {
   return {
     kind: "paseo",
+    address: overrides.address ?? { serverId: "server-1", agentId: overrides.id },
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,

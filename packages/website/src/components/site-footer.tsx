@@ -1,7 +1,9 @@
+import { useTranslation } from "react-i18next";
 import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
 import { SponsorsSection } from "~/components/sponsorship";
+import { useLocale, useLocalizePath } from "~/i18n";
 
 interface SiteFooterProps {
   width?: "default" | "prose" | "wide";
@@ -15,193 +17,83 @@ const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
   wide: "max-w-7xl p-6 md:p-20 md:pt-0",
 };
 
+const LINK_CLASS = "block text-muted-foreground hover:text-foreground transition-colors";
+
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+      {children}
+    </a>
+  );
+}
+
 export function SiteFooter({ width = "default", sponsors = true }: SiteFooterProps) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const localize = useLocalizePath();
   const widthClasses = WIDTH_CLASSES[width];
-  const alternatives = getAlternativePages();
+  const alternatives = getAlternativePages(locale);
+  const page = (path: string, label: string) => (
+    <a href={localize(path)} className={LINK_CLASS}>
+      {label}
+    </a>
+  );
   return (
     <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
       {sponsors ? <SponsorsSection placement="footer" /> : null}
       <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
-          <p className="text-extra-muted-foreground">Product</p>
+          <p className="text-extra-muted-foreground">{t("footer.product")}</p>
           <div className="space-y-2">
-            <a
-              href="/blog"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Blog
-            </a>
-            <a
-              href="/docs"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Docs
-            </a>
-            {PLUGINS_LINKED && (
-              <a
-                href="/plugins"
-                className="block text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Plugins
-              </a>
-            )}
-            <a
-              href="/changelog"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Changelog
-            </a>
-            <a
-              href="/hub"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Hub
-            </a>
-            <a
-              href="/docs/cli"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              CLI
-            </a>
-            <a
-              href="/privacy"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Privacy
-            </a>
-            <a
-              href="/terms"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Terms
-            </a>
-            <a
-              href="/sponsor"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Sponsor
-            </a>
+            {page("/blog", t("footer.blog"))}
+            {page("/docs", t("footer.docs"))}
+            {PLUGINS_LINKED && page("/plugins", t("footer.plugins"))}
+            {page("/changelog", t("footer.changelog"))}
+            {page("/hub", t("footer.hub"))}
+            {page("/docs/cli", t("footer.cli"))}
+            {page("/privacy", t("footer.privacy"))}
+            {page("/terms", t("footer.terms"))}
+            {page("/sponsor", t("footer.sponsor"))}
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-extra-muted-foreground">Agents</p>
+          <p className="text-extra-muted-foreground">{t("footer.agents")}</p>
           <div className="space-y-2">
-            <a
-              href="/claude-code"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Claude Code
-            </a>
-            <a
-              href="/codex"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Codex
-            </a>
-            <a
-              href="/opencode"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              OpenCode
-            </a>
-            <a
-              href="/antigravity"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Antigravity
-            </a>
-            <a
-              href="/muse-code"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Muse Code
-            </a>
-            <a
-              href="/agents"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              All providers
-            </a>
+            {page("/claude-code", "Claude Code")}
+            {page("/codex", "Codex")}
+            {page("/opencode", "OpenCode")}
+            {page("/antigravity", "Antigravity")}
+            {page("/muse-code", "Muse Code")}
+            {page("/agents", t("footer.allProviders"))}
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-extra-muted-foreground">Alternatives</p>
+          <p className="text-extra-muted-foreground">{t("footer.alternatives")}</p>
           <div className="space-y-2">
-            {alternatives.map((page) => (
-              <a
-                key={page.slug}
-                href={page.href}
-                className="block text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {page.name}
+            {alternatives.map((alternative) => (
+              <a key={alternative.slug} href={localize(alternative.href)} className={LINK_CLASS}>
+                {alternative.name}
               </a>
             ))}
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-extra-muted-foreground">Community</p>
+          <p className="text-extra-muted-foreground">{t("footer.community")}</p>
           <div className="space-y-2">
-            <a
-              href="https://discord.gg/jz8T2uahpH"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Discord
-            </a>
-            <a
-              href="https://www.reddit.com/r/PaseoAI/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Reddit
-            </a>
-            <a
-              href="https://github.com/getpaseo/paseo"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              GitHub
-            </a>
+            <ExternalLink href="https://discord.gg/jz8T2uahpH">Discord</ExternalLink>
+            <ExternalLink href="https://www.reddit.com/r/PaseoAI/">Reddit</ExternalLink>
+            <ExternalLink href="https://github.com/getpaseo/paseo">GitHub</ExternalLink>
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-extra-muted-foreground">Download</p>
+          <p className="text-extra-muted-foreground">{t("footer.download")}</p>
           <div className="space-y-2">
-            <a
-              href={appStoreUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              App Store
-            </a>
-            <a
-              href={playStoreUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Google Play
-            </a>
-            <a
-              href="https://github.com/getpaseo/paseo/releases"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Desktop
-            </a>
-            <a
-              href={webAppUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Web App
-            </a>
+            <ExternalLink href={appStoreUrl}>App Store</ExternalLink>
+            <ExternalLink href={playStoreUrl}>Google Play</ExternalLink>
+            <ExternalLink href="https://github.com/getpaseo/paseo/releases">
+              {t("footer.desktop")}
+            </ExternalLink>
+            <ExternalLink href={webAppUrl}>{t("footer.webApp")}</ExternalLink>
           </div>
         </div>
       </div>

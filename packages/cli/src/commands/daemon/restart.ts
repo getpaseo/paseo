@@ -3,8 +3,11 @@ import {
   readDaemonInstance,
   isSameDaemonInstance,
   DaemonInstanceError,
+  retryUnconfirmedTerminalCleanup,
+  TerminalCleanupNotConfirmedError,
 } from "@getpaseo/server/daemon-control";
 import { setTimeout as delay } from "node:timers/promises";
+import type { DaemonGetStatusResponse } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
@@ -20,13 +23,30 @@ export function daemonRestartCommand(): Command {
     ),
   )
     .option("--timeout <seconds>", "Replacement readiness deadline (default: 600)")
+    .option("--kill-terminals", "Close every terminal instead of keeping them across the restart")
     .action(withOutput(runRestartCommand));
 }
+
+type DaemonStatus = DaemonGetStatusResponse["payload"];
 
 export async function runRestartCommand(options: CommandOptions, _command: Command) {
   const target = options.daemonTarget;
   const deadline = Date.now() + parseTimeoutMs(options.timeout);
   const remaining = () => Math.max(1, deadline - Date.now());
+  const killTerminals = options.killTerminals === true;
+  // The supervisor reaps before the respawn and the replacement retries what that left;
+  // anything still named by a closing record survived both. A local caller retries once more
+  // itself; a remote one has only what the replacement reports.
+  const confirmTerminalsClosed = async (status: DaemonStatus) => {
+    if (!killTerminals) return;
+    if (target.kind === "instance") {
+      await retryUnconfirmedTerminalCleanup(target.home);
+      return;
+    }
+    // Absent on daemons without terminalsSurviveRestart, which have no terminal cleanup.
+    const unconfirmed = status.terminalCleanupUnconfirmed ?? [];
+    if (unconfirmed.length > 0) throw new TerminalCleanupNotConfirmedError(unconfirmed);
+  };
   const instance = target.kind === "instance" ? await readDaemonInstance(target.home) : null;
   async function checkSupervisor() {
     if (target.kind !== "instance") return;
@@ -54,7 +74,10 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
     workerPid = (await client.getDaemonStatus({ timeout: remaining() })).pid;
     await checkSupervisor();
     try {
-      await client.restartServer("cli_restart", undefined, { timeout: remaining() });
+      await client.restartServer("cli_restart", undefined, {
+        timeout: remaining(),
+        killTerminals,
+      });
       acknowledged = true;
     } catch (error) {
       if (!isReconnectFailure(error)) throw error;
@@ -77,6 +100,7 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
         const status = await replacement.getDaemonStatus({ timeout: remaining() });
         if (status.pid !== workerPid) {
           await checkSupervisor();
+          await confirmTerminalsClosed(status);
           return {
             type: "single" as const,
             data: {

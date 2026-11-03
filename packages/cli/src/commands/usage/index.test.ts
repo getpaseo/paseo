@@ -277,3 +277,40 @@ describe("usage CLI registration", () => {
     expect(usage.commands[1]!.helpInformation()).toContain("<report-id>");
   });
 });
+
+it("shows retained values with current failures and separates successful time from latest attempt", async () => {
+  const success: UsageReportEntry = { ...reports[0]!, successfulAt: "2026-10-09T12:00:15Z" };
+  const current = await runUsageCommand(
+    options,
+    { kind: "inspect", id: success.id },
+    host([success]).connect,
+  );
+  expect(render(current)).toContain("Latest attempt: 2026-10-09T12:00:00Z");
+  expect(render(current)).toContain("Last successful: 2026-10-09T12:00:15Z");
+  const currentList = await runUsageCommand(options, { kind: "list" }, host([success]).connect);
+  expect(render(currentList)).toContain("Last successful: 2026-10-09T12:00:15Z");
+  if (success.report.status !== "available") throw new Error("fixture must be available");
+  const retained: UsageReportEntry = {
+    ...success,
+    fetchedAt: "2026-10-09T12:06:00Z",
+    report: { status: "error", error: "Rate limited" },
+    successfulAt: undefined,
+    lastSuccessful: { fetchedAt: success.successfulAt!, report: success.report },
+  };
+  const daemon = host([retained]);
+  const listed = await runUsageCommand(options, { kind: "list" }, daemon.connect);
+  expect(render(listed)).toContain("Retained: Five hours: 12.5% used");
+  expect(render(listed)).toContain("Last successful: 2026-10-09T12:00:15Z");
+  expect(render(listed)).toContain("Rate limited");
+  expect(JSON.parse(render(listed, { format: "json" }))).toEqual([retained]);
+  const inspected = await runUsageCommand(
+    options,
+    { kind: "inspect", id: retained.id },
+    daemon.connect,
+  );
+  expect(render(inspected)).toContain("Latest attempt: 2026-10-09T12:06:00Z");
+  expect(render(inspected)).toContain("Last successful: 2026-10-09T12:00:15Z");
+  expect(render(inspected)).toContain("Retained usage:");
+  expect(render(inspected)).toContain("Five hours: 12.5% used");
+  expect(render(inspected)).toContain("Reason: Rate limited");
+});
