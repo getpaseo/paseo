@@ -5,9 +5,9 @@ import {
 } from "./terminal-worker-protocol.js";
 
 describe("classifyTerminalWorkerProtocol", () => {
-  it("drains the released worker protocol without closing its terminals", () => {
-    expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(7);
-    expect(classifyTerminalWorkerProtocol(6)).toBe("previous");
+  it("drains released v5 workers with one protocol bump for workspace launches", () => {
+    expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(6);
+    expect(classifyTerminalWorkerProtocol(5)).toBe("previous");
   });
   it("rejects the unreleased cell protocol without a draining adapter", () => {
     expect(classifyTerminalWorkerProtocol(1, 2)).toBe("obsolete");
@@ -16,18 +16,17 @@ describe("classifyTerminalWorkerProtocol", () => {
     expect(classifyTerminalWorkerProtocol(4, 5)).toBe("obsolete");
   });
   it.each([
-    [7, "current"],
-    [6, "previous"],
-    [5, "obsolete"],
+    [6, "current"],
+    [5, "previous"],
     [4, "obsolete"],
     [-1, "obsolete"],
-    [8, "newer"],
+    [7, "newer"],
     // A version this daemon cannot read comes from a Paseo it does not know.
-    ["7", "newer"],
+    ["6", "newer"],
     [4.5, "newer"],
     [Number.NaN, "newer"],
     [undefined, "newer"],
-  ])("a worker reporting %s to a daemon at 7 is %s", (reported, fit) => {
-    expect(classifyTerminalWorkerProtocol(reported, 7)).toBe(fit);
+  ])("a worker reporting %s to a daemon at 6 is %s", (reported, fit) => {
+    expect(classifyTerminalWorkerProtocol(reported, 6)).toBe(fit);
   });
 });
