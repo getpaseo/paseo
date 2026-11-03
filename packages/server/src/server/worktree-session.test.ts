@@ -560,108 +560,103 @@ describe("runWorktreeSetupInBackground", () => {
     }
   });
 
-  // Temporary Windows discriminator: remove the repetitions and logging before delivery.
-  const firstCommand = (Number(process.env.GITHUB_RUN_ATTEMPT ?? "1") - 1) % 2;
-  const setupSamples = Array.from({ length: 100 }, (_, index) => {
-    const kind = (Math.floor(index / 2) + (index % 2) + firstCommand) % 2 === 0 ? "pwd" : "node";
-    return {
-      index,
-      kind,
-      command:
-        kind === "pwd"
-          ? "pwd > setup-cwd.txt"
-          : `node -e "require('fs').writeFileSync('setup-cwd.txt', process.cwd())"`,
+  function startSubdirectorySetup(command: string) {
+    const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
+    cleanupPaths.push(tempDir);
+    const repoDir = path.join(tempDir, "source");
+    const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+    const worktree: WorktreeConfig = {
+      branchName: "feature-subdirectory-setup",
+      worktreePath: path.join(tempDir, "worktree"),
     };
-  });
-  test.each(setupSamples)(
-    "runs setup from an exact workspace subdirectory [$index $kind]",
-    async ({ index, kind, command }) => {
-      const startedAt = Date.now();
-      const started = new Date(startedAt).toISOString();
-      const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
-      cleanupPaths.push(tempDir);
-      const repoDir = path.join(tempDir, "source");
-      const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
-      const worktree: WorktreeConfig = {
-        branchName: "feature-subdirectory-setup",
-        worktreePath: path.join(tempDir, "worktree"),
-      };
-      const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
-      // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
-      mkdirSync(sourceWorkspaceCwd, { recursive: true });
-      mkdirSync(workspaceCwd, { recursive: true });
-      execFileSync("git", ["init", "-b", worktree.branchName], {
-        cwd: worktree.worktreePath,
-        stdio: "pipe",
-      });
-      writeFileSync(
-        path.join(workspaceCwd, "paseo.json"),
-        JSON.stringify({
-          worktree: {
-            setup: [command],
-          },
-        }),
-      );
-      const paseoHome = path.join(tempDir, ".paseo");
+    const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
+    // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
+    mkdirSync(sourceWorkspaceCwd, { recursive: true });
+    mkdirSync(workspaceCwd, { recursive: true });
+    execFileSync("git", ["init", "-b", worktree.branchName], {
+      cwd: worktree.worktreePath,
+      stdio: "pipe",
+    });
+    writeFileSync(
+      path.join(workspaceCwd, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [command],
+        },
+      }),
+    );
+    const paseoHome = path.join(tempDir, ".paseo");
 
-      const fixtureMs = Date.now() - startedAt;
-      const controller = new AbortController();
-      let commandMs: number | undefined;
-      let status: string | undefined;
-      let settled = false;
-      const completion = runWorktreeSetupInBackground(
-        {
-          paseoHome,
-          emitWorkspaceUpdateForWorkspaceId: async () => {},
-          cacheWorkspaceSetupSnapshot: () => {},
-          emit: (message) => {
-            if (message.type === "workspace_setup_progress") {
-              status = message.payload.status;
-              commandMs = message.payload.detail.commands[0]?.durationMs;
-            }
-          },
-          sessionLogger: createLogger(),
-          terminalManager: null,
-        },
-        {
-          requestCwd: sourceWorkspaceCwd,
-          repoRoot: repoDir,
-          workspaceId: "ws-subdirectory-setup",
-          worktree,
-          shouldBootstrap: true,
-          slug: "feature-subdirectory-setup",
-          worktreePath: worktree.worktreePath,
-          workspaceCwd,
-        },
-        controller.signal,
-      ).finally(() => {
-        settled = true;
-      });
-      stopSetup = async () => {
-        const interrupted = !settled;
-        controller.abort();
-        await completion;
-        process.stdout.write(
-          "SETUP_SAMPLE " +
-            JSON.stringify({
-              index,
-              kind,
-              started,
-              fixtureMs,
-              commandMs,
-              totalMs: Date.now() - startedAt,
-              interrupted,
-              status,
-            }) +
-            "\n",
-        );
-      };
+    const controller = new AbortController();
+    const completion = runWorktreeSetupInBackground(
+      {
+        paseoHome,
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: createLogger(),
+        terminalManager: null,
+      },
+      {
+        requestCwd: sourceWorkspaceCwd,
+        repoRoot: repoDir,
+        workspaceId: "ws-subdirectory-setup",
+        worktree,
+        shouldBootstrap: true,
+        slug: "feature-subdirectory-setup",
+        worktreePath: worktree.worktreePath,
+        workspaceCwd,
+      },
+      controller.signal,
+    );
+    const stop = async () => {
+      controller.abort();
       await completion;
+    };
+    stopSetup = stop;
+    return { tempDir, workspaceCwd, worktreePath: worktree.worktreePath, completion, stop };
+  }
 
-      expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
-      expect(existsSync(path.join(worktree.worktreePath, "setup-cwd.txt"))).toBe(false);
-    },
-  );
+  test("runs setup from an exact workspace subdirectory", async () => {
+    const setup = startSubdirectorySetup("pwd > setup-cwd.txt");
+    await setup.completion;
+
+    expect(existsSync(path.join(setup.workspaceCwd, "setup-cwd.txt"))).toBe(true);
+    expect(existsSync(path.join(setup.worktreePath, "setup-cwd.txt"))).toBe(false);
+  });
+
+  test("teardown stops unfinished setup before removing its workspace", async ({
+    onTestFinished,
+  }) => {
+    const setup = startSubdirectorySetup(
+      `node -e "require('fs').writeFileSync('setup-pid.txt', String(process.pid)); setInterval(()=>{},1000)"`,
+    );
+    let pid = 0;
+    const probeChild = () => process.kill(pid, 0);
+    onTestFinished(async () => {
+      try {
+        expect(pid).toBeGreaterThan(0);
+        expect(existsSync(setup.tempDir)).toBe(false);
+        expect(probeChild).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      } finally {
+        // Keep a failing cleanup regression from leaking its deliberately live child.
+        await setup.stop();
+      }
+    });
+    await expect
+      .poll(
+        () => {
+          try {
+            pid = Number(readFileSync(path.join(setup.workspaceCwd, "setup-pid.txt"), "utf8"));
+          } catch {
+            pid = 0;
+          }
+          return pid;
+        },
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
+  });
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
