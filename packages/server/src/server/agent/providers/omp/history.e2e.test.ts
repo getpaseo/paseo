@@ -1,3 +1,4 @@
+import { measureMainThreadWork } from "../../../../test-utils/main-thread-work.js";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,51 +51,45 @@ test("replays selected OMP history without blocking the event loop", async () =>
       } finally {
         await file.close();
       }
-      let last = performance.now();
-      let longestGap = 0;
-      const probe = setInterval(() => {
-        const now = performance.now();
-        longestGap = Math.max(longestGap, now - last);
-        last = now;
-      }, 5);
-      try {
-        const replayState = { finished: false };
-        let repliesDuringReplay = 0;
-        const replay = readActiveOmpEntryChain(sessionFile, "row-0").finally(() => {
-          replayState.finished = true;
-        });
-        // A real WebSocket RPC served by the isolated daemon on the same event loop.
-        const requests = (async () => {
-          while (!replayState.finished) {
-            await client.getDaemonStatus();
-            if (!replayState.finished) repliesDuringReplay++;
-            await delay(10);
-          }
-        })();
-        const [entries] = await Promise.all([replay, requests]);
-        await delay(10);
-        console.log(
-          JSON.stringify({
-            bytes,
-            count,
-            longestGap,
-            repliesDuringReplay,
-            generationAndLoadMs: performance.now() - started,
-          }),
-        );
-        expect(entries).toEqual([
-          {
-            type: "message",
-            id: "row-0",
-            parentId: null,
-            message: { role: "user", content: text },
-          },
-        ]);
-        expect(longestGap).toBeLessThan(50);
-        expect(repliesDuringReplay).toBeGreaterThan(0);
-      } finally {
-        clearInterval(probe);
-      }
+      let repliesDuringReplay = 0;
+      const { result: replayedEntries, blockingMs } = await measureMainThreadWork(
+        "OMP history main-thread work",
+        async () => {
+          const replayState = { finished: false };
+          const replay = readActiveOmpEntryChain(sessionFile, "row-0").finally(() => {
+            replayState.finished = true;
+          });
+          // A real WebSocket RPC served by the isolated daemon on the same event loop.
+          const requests = (async () => {
+            while (!replayState.finished) {
+              await client.getDaemonStatus();
+              if (!replayState.finished) repliesDuringReplay++;
+              await delay(10);
+            }
+          })();
+          const [entries] = await Promise.all([replay, requests]);
+          return entries;
+        },
+      );
+      console.log(
+        JSON.stringify({
+          bytes,
+          count,
+          blockingMs,
+          repliesDuringReplay,
+          generationAndLoadMs: performance.now() - started,
+        }),
+      );
+      expect(replayedEntries).toEqual([
+        {
+          type: "message",
+          id: "row-0",
+          parentId: null,
+          message: { role: "user", content: text },
+        },
+      ]);
+      expect(blockingMs).toBeLessThan(50);
+      expect(repliesDuringReplay).toBeGreaterThan(0);
     } finally {
       await client.close().finally(() => daemon.close());
     }

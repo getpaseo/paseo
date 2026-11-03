@@ -17,7 +17,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { actionsWithoutPrimary, type GitAction, type GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -273,7 +273,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButton: {
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     flexDirection: "row",
@@ -297,7 +297,7 @@ const styles = StyleSheet.create((theme) => ({
       md: 42,
     },
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     flexDirection: "row",
@@ -331,7 +331,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButtonCaret: {
     width: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     alignItems: "center",
@@ -341,11 +341,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconButton: {
     width: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     alignItems: "center",

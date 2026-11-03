@@ -234,7 +234,7 @@ export function selectReferenceProjectedTimelinePage(input: {
 
 // Existing selection fixtures exercise the retained owner through its public API.
 export function selectProjectedTimelinePage(
-  input: Parameters<typeof selectReferenceProjectedTimelinePage>[0],
+  input: Parameters<typeof selectReferenceProjectedTimelinePage>[0] & { wholeTurns?: boolean },
 ) {
   const projection = new TimelineProjection(input.rows);
   const bounds = input.bounds ?? getTimelineBounds(input.rows) ?? { minSeq: 0, maxSeq: 0 };

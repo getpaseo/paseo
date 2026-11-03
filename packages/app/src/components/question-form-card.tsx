@@ -43,19 +43,15 @@ const IS_WEB = isWeb;
 // drag to the preview's nested scroll, so lines past a cap would be unreachable.
 const OPTION_PREVIEW_MAX_HEIGHT = IS_WEB ? 240 : undefined;
 
-// Web clicks that must not answer: a link in the label, anything in the description, and the
-// second click of a double-click, which would otherwise land on the next question's options.
-function isNonAnsweringClick(event: GestureResponderEvent, description: View | null): boolean {
+// Links are independent actions. Ignore repeat clicks so double-click text selection
+// toggles an option only once.
+function isNonAnsweringClick(event: GestureResponderEvent): boolean {
   if (!IS_WEB) return false;
   const click = event.nativeEvent as unknown as MouseEvent;
   if (click.detail > 1) return true;
   const target = click.target as Element | null;
-  const descriptionElement = description as unknown as Element | null;
-  return Boolean(target?.closest("a") || descriptionElement?.contains(target));
+  return Boolean(target?.closest("a"));
 }
-
-// The description is selectable text, so a touch on it belongs to the text, not the option.
-const claimResponder = () => true;
 
 function getQuestionInputPlaceholder({
   question,
@@ -92,10 +88,9 @@ function QuestionOptionRow({
 }: QuestionOptionRowProps) {
   const { theme } = useUnistyles();
 
-  const descriptionRef = useRef<View>(null);
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
-      if (isNonAnsweringClick(event, descriptionRef.current)) return;
+      if (isNonAnsweringClick(event)) return;
       onToggle(qIndex, optIndex, multiSelect);
     },
     [onToggle, qIndex, optIndex, multiSelect],
@@ -152,11 +147,7 @@ function QuestionOptionRow({
         <View style={styles.optionTextBlock}>
           <MarkdownRenderer text={option.label} compact muted={!isSelected} selectable={false} />
           {option.description ? (
-            <View
-              ref={descriptionRef}
-              testID="question-form-option-description"
-              onStartShouldSetResponder={claimResponder}
-            >
+            <View testID="question-form-option-description">
               <MarkdownRenderer text={option.description} compact muted />
             </View>
           ) : null}
@@ -413,12 +404,8 @@ export function QuestionFormCard({
         });
         otherInputRef.current?.replaceText("");
       }
-
-      if (!multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
-        setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
-      }
     },
-    [activeQuestionIndex, otherTexts, questions, selections],
+    [otherTexts, selections],
   );
 
   const setOtherText = useCallback(

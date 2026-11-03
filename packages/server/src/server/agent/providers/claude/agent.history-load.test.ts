@@ -1,3 +1,4 @@
+import { measureMainThreadWork } from "../../../../test-utils/main-thread-work.js";
 import fs, { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -117,13 +118,6 @@ describe("ClaudeAgentSession persisted history load", () => {
       await file.close();
     }
     const daemon = await createTestPaseoDaemon();
-    let lastTick = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - lastTick);
-      lastTick = now;
-    }, 2);
     let loading = true;
     let answeredDuringLoad = false;
     const health = fetch(`http://127.0.0.1:${daemon.port}/api/health`).then(async (response) => {
@@ -134,33 +128,39 @@ describe("ClaudeAgentSession persisted history load", () => {
     });
     let session: AgentSession | undefined;
     try {
-      session = await resume(replyFactory("live after large resume"));
-      let index = 0;
-      for await (const event of session.streamHistory()) {
-        expect(event).toEqual({
-          type: "timeline",
-          provider: "claude",
-          timestamp: undefined,
-          item: { type: "assistant_message", text: `${index}:${text}` },
-        });
-        index++;
-      }
-      loading = false;
-      await health;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      const {
+        result: { resumed: loadedSession, historyCount },
+        blockingMs,
+      } = await measureMainThreadWork("Claude history main-thread work", async () => {
+        const resumed = await resume(replyFactory("live after large resume"));
+        session = resumed;
+        let index = 0;
+        for await (const event of resumed.streamHistory()) {
+          expect(event).toEqual({
+            type: "timeline",
+            provider: "claude",
+            timestamp: undefined,
+            item: { type: "assistant_message", text: `${index}:${text}` },
+          });
+          index++;
+        }
+        loading = false;
+        await health;
+        return { resumed, historyCount: index };
+      });
       console.info(
         JSON.stringify({
           bytes,
           count,
-          longestGap,
+          blockingMs,
           answeredDuringLoad,
           elapsedMs: performance.now() - startedAt,
         }),
       );
-      expect(index).toBe(count);
-      expect(longestGap).toBeLessThan(50);
+      expect(historyCount).toBe(count);
+      expect(blockingMs).toBeLessThan(50);
       expect(answeredDuringLoad).toBe(true);
-      const live = await collectSessionTurnEvents(session, "follow up");
+      const live = await collectSessionTurnEvents(loadedSession, "follow up");
       expect(
         live
           .filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
@@ -169,7 +169,6 @@ describe("ClaudeAgentSession persisted history load", () => {
         { type: "assistant_message", messageId: "live-reply", text: "live after large resume" },
       ]);
     } finally {
-      clearInterval(probe);
       await session?.close();
       await daemon.close();
     }
@@ -613,6 +612,43 @@ describe("ClaudeAgentSession persisted history load", () => {
         err: expect.objectContaining({ message: expect.stringContaining("EISDIR") }),
       }),
     );
+  });
+
+  test("replays a message steered into a running turn as the user's message", async () => {
+    const queued = (commandMode: string, prompt: unknown, sourceUuid?: string) => ({
+      type: "attachment",
+      uuid: `attachment-${commandMode}`,
+      parentUuid: "a1",
+      attachment: {
+        type: "queued_command",
+        commandMode,
+        prompt,
+        ...(sourceUuid ? { source_uuid: sourceUuid } : {}),
+      },
+    });
+    const entries = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "working" } },
+      queued("prompt", [{ type: "text", text: "steered while working" }], "steered-1"),
+      queued("task-notification", "<task-notification><task-id>t1</task-id></task-notification>"),
+      { type: "assistant", uuid: "a2", parentUuid: "a1", message: { content: "answer" } },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+
+    const session = await resume();
+    try {
+      const users = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "user_message") users.push(event.item);
+      }
+      expect(users).toEqual([
+        { type: "user_message", text: "first", messageId: "u1" },
+        { type: "user_message", text: "steered while working", messageId: "steered-1" },
+      ]);
+    } finally {
+      await session.close();
+    }
   });
 
   test("loads readable history when the temporary directory is unavailable", async () => {

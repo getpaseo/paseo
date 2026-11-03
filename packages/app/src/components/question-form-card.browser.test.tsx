@@ -41,8 +41,12 @@ afterEach(() => {
 
 function buildPermission(
   question: Record<string, unknown>,
-  structured: boolean,
+  followingOrStructured: Record<string, unknown>[] | boolean = [],
+  structured = false,
 ): PendingPermission {
+  const following = Array.isArray(followingOrStructured) ? followingOrStructured : [];
+  const isStructured =
+    typeof followingOrStructured === "boolean" ? followingOrStructured : structured;
   return {
     key: "perm-1",
     agentId: "agent-1",
@@ -51,12 +55,19 @@ function buildPermission(
       provider: "claude",
       name: "AskUserQuestion",
       kind: "question",
-      input: { questions: [question], ...(structured ? { answerFormat: "structured" } : {}) },
+      input: {
+        questions: [question, ...following],
+        ...(isStructured ? { answerFormat: "structured" } : {}),
+      },
     },
   };
 }
 
-function mountCard(question: Record<string, unknown>, structured = false) {
+function mountCard(
+  question: Record<string, unknown>,
+  followingOrStructured: Record<string, unknown>[] | boolean = [],
+  structured = false,
+) {
   const onRespond = vi.fn<(response: AgentPermissionResponse) => void>();
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -64,7 +75,7 @@ function mountCard(question: Record<string, unknown>, structured = false) {
   act(() =>
     root.render(
       <QuestionFormCard
-        permission={buildPermission(question, structured)}
+        permission={buildPermission(question, followingOrStructured, structured)}
         onRespond={onRespond}
         isResponding={false}
         responseError={null}
@@ -77,7 +88,12 @@ function mountCard(question: Record<string, unknown>, structured = false) {
   const optionRole = question.multiSelect ? "checkbox" : "radio";
   const otherInput = () =>
     view.getByRole<HTMLInputElement>("textbox", { name: String(question.question) });
-  const check = (label: string) => act(() => view.getByRole(optionRole, { name: label }).click());
+  const check = (label: string) =>
+    act(() =>
+      (
+        view.queryByRole("radio", { name: label }) ?? view.getByRole("checkbox", { name: label })
+      ).click(),
+    );
   const checkAt = (index: number) => act(() => view.getAllByRole(optionRole)[index].click());
   const type = (text: string) => {
     const input = otherInput();
@@ -99,7 +115,17 @@ function mountCard(question: Record<string, unknown>, structured = false) {
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
     return response.updatedInput;
   };
-  return { check, checkAt, type, otherInput, submit, submittedAnswers, submittedInput };
+  return {
+    check,
+    checkAt,
+    type,
+    otherInput,
+    submit,
+    submittedAnswers,
+    submittedInput,
+    view,
+    onRespond,
+  };
 }
 
 const multiSelectQuestion = {
@@ -216,5 +242,33 @@ describe("QuestionFormCard other answers", () => {
     expect(card.otherInput().value).toBe("");
     card.submit();
     expect(card.submittedAnswers()).toEqual({ Provider: "Codex" });
+  });
+});
+
+describe("QuestionFormCard explicit navigation", () => {
+  it("keeps a picked option visible until Next and submits only on Submit", () => {
+    const card = mountCard(singleSelectQuestion, [multiSelectQuestion]);
+    card.check("Codex");
+    expect(card.view.getByRole("radio", { name: "Codex" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(card.onRespond).not.toHaveBeenCalled();
+    act(() => card.view.getByRole("button", { name: "Next" }).click());
+    card.check("Apple");
+    expect(card.onRespond).not.toHaveBeenCalled();
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ Provider: "Codex", Fruits: "Apple" });
+  });
+
+  it("selects an option when its description is clicked without submitting", () => {
+    const card = mountCard({
+      ...singleSelectQuestion,
+      options: [{ label: "Codex", description: "Use this provider" }],
+    });
+    act(() => card.view.getByText("Use this provider").click());
+    expect(card.view.getByRole("radio", { name: "Codex" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(card.onRespond).not.toHaveBeenCalled();
   });
 });

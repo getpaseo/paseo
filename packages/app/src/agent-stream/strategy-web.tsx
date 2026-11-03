@@ -394,7 +394,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
       const anchorIndex = segments.historyVirtualized.findIndex(
-        (row) => row.id === readingAnchor.getRowId(),
+        (row) => row.id === readingAnchor.getRowId(props.readingRowReplacements),
       );
       const container = scrollContainerRef.current;
       // TanStack has computed the new measurements before calling the extractor.
@@ -404,10 +404,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const measurement = virtualizer.measurementsCache[anchorIndex];
       const correctedOffset =
         container && measurement
-          ? readingAnchor.project(container.scrollTop, {
-              id: String(measurement.key),
-              top: measurement.start,
-            })
+          ? readingAnchor.project(
+              container.scrollTop,
+              {
+                id: String(measurement.key),
+                top: measurement.start,
+              },
+              props.readingRowReplacements,
+            )
           : container?.scrollTop;
       let visibleRange = range;
       if (
@@ -428,7 +432,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ]),
       ].sort((left, right) => left - right);
     },
-    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized],
+    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized, props.readingRowReplacements],
   );
   const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
   const observeVirtualOffset = useCallback<typeof observeElementOffset>((instance, onOffset) => {
@@ -742,7 +746,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     );
     const shouldAnchor = !followOutputRef.current && !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
-    const correctedTop = readingAnchor.reconcile(container.scrollTop, rows);
+    const correctedTop = readingAnchor.reconcile(
+      container.scrollTop,
+      rows,
+      false,
+      props.readingRowReplacements,
+    );
     if (!shouldAnchor) {
       readingAnchor.reset();
       return;

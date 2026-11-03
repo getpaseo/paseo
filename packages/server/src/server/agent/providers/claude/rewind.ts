@@ -1,5 +1,7 @@
+import { createReadStream } from "node:fs";
 import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import {
   forkSession as claudeForkSession,
   type Query,
@@ -68,6 +70,54 @@ function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
     !Array.isArray(value) &&
     typeof (value as { type?: unknown }).type === "string"
   );
+}
+
+/**
+ * The entry a message steered into a running turn follows. Claude Code gives such a message no
+ * entry of its own: it records a queued_command attachment, under the uuid Paseo minted for the
+ * message, hung off the entry it was read after. Forking at that entry drops the message and
+ * everything after it. Null when the transcript holds no such attachment.
+ */
+export async function findSteeredMessageParent(
+  transcriptPath: string,
+  messageId: string,
+): Promise<string | null> {
+  const input = createReadStream(transcriptPath, { encoding: "utf8" });
+  const lines = createInterface({
+    input,
+    crlfDelay: Infinity,
+  });
+  try {
+    for await (const line of lines) {
+      if (!line.includes(messageId) || !line.includes('"queued_command"')) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const record = entry as {
+        type?: unknown;
+        parentUuid?: unknown;
+        attachment?: { type?: unknown; source_uuid?: unknown };
+      };
+      if (
+        record.type === "attachment" &&
+        record.attachment?.type === "queued_command" &&
+        record.attachment.source_uuid === messageId &&
+        typeof record.parentUuid === "string"
+      ) {
+        return record.parentUuid;
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  return null;
 }
 
 export async function revertClaudeConversation(input: {

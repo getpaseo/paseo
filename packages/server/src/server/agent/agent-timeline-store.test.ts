@@ -1,9 +1,45 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { selectReferenceProjectedTimelinePage } from "./test-utils/timeline-page-reference.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("resets stale forward cursors to complete available turns", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    for (let index = 0; index < 60; index++)
+      store.append(
+        "agent",
+        {
+          type: "tool_call",
+          callId: `call-${index}`,
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+        },
+        { turnId: "run" },
+      );
+    const page = store.fetch("agent", {
+      direction: "after",
+      cursor: { epoch: "old", seq: 10 },
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(page.rows).toHaveLength(60);
+    expect(page).toMatchObject({
+      reset: true,
+      staleCursor: true,
+      startSeq: 1,
+      endSeq: 60,
+      hasOlder: false,
+      hasNewer: false,
+    });
+  });
+
   it("clamps an overshooting before cursor into the bounded tail window", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent-1", {
@@ -145,6 +181,20 @@ describe("projected timeline retention", () => {
       },
     ]);
   });
+
+  it("serves a merged assistant message within the item budget", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "e" });
+    const chunk = "a".repeat(200 * 1024);
+    for (let index = 0; index < 10; index++) {
+      store.append("agent", { type: "assistant_message", messageId: "m", text: chunk });
+    }
+    const [row] = store.fetch("agent", { limit: 1 }).rows;
+    expect(row).toMatchObject({ seqStart: 1, seqEnd: 10 });
+    expect(row.item).toMatchObject({ type: "assistant_message", messageId: "m" });
+    expect(Buffer.byteLength(JSON.stringify(row.item))).toBeLessThanOrEqual(256 * 1024);
+    expect(store.getLastAssistantMessage("agent")).toHaveLength(10 * chunk.length);
+  });
 });
 
 describe("projected sequence ownership", () => {
@@ -217,31 +267,58 @@ it("includes transitive tool updates in a contiguous projected tail", () => {
   expect(tail).toMatchObject({ startSeq: 1, endSeq: 6, hasOlder: false });
 });
 
-it("serves tail 200 from 100,000 retained rows without stalling the loop", async () => {
-  const store = new InMemoryAgentTimelineStore();
-  store.initialize("large");
-  for (let index = 0; index < 100_000; index++) {
-    store.append("large", { type: "user_message", text: String(index) });
-  }
-  // Generation and its GC are outside the measured request window.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const started = performance.now();
-  const probe = new Promise<number>((resolve) =>
-    setImmediate(() => resolve(performance.now() - started)),
+async function measureTimelineTail(wholeTurns: boolean) {
+  const fixture = fileURLToPath(
+    new URL("./test-utils/timeline-responsiveness.ts", import.meta.url),
   );
-  let page = store.fetch("large", { limit: 200 });
-  for (let repeat = 1; repeat < 8; repeat++) page = store.fetch("large", { limit: 200 });
-  const duration = performance.now() - started;
-  const loopGap = await probe;
-  console.info({ duration, loopGap });
-  expect(page.rows).toHaveLength(200);
-  expect(page.startSeq).toBe(99_801);
-  expect(page.endSeq).toBe(100_000);
-  // CI runners can pause for scheduling/GC; the local per-request 2 ms gate
-  // is measured separately. Eight requests amplify the old full-history work.
-  expect(duration).toBeLessThan(50);
-  expect(loopGap).toBeLessThan(50);
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    ["--expose-gc", "--import", "tsx", fixture, String(wholeTurns)],
+    { timeout: 15_000 },
+  );
+  process.stderr.write(stderr);
+  return JSON.parse(stdout) as {
+    result: ReturnType<InMemoryAgentTimelineStore["fetch"]>;
+    blockingMs: number;
+  };
+}
+
+it("excludes unrelated test-runner CPU from the timeline fetch budget", async () => {
+  let unrelatedWork: ReturnType<typeof setImmediate>;
+  const burnCpu = () => {
+    const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+      process,
+      "threadCpuUsage",
+    );
+    const start = threadCpuUsage();
+    let elapsed: NodeJS.CpuUsage;
+    do {
+      elapsed = threadCpuUsage(start);
+    } while (elapsed.user + elapsed.system < 80_000);
+    unrelatedWork = setImmediate(burnCpu);
+  };
+  unrelatedWork = setImmediate(burnCpu);
+  try {
+    const { result: tail, blockingMs } = await measureTimelineTail(false);
+    expect(tail.rows).toHaveLength(200);
+    expect(tail.startSeq).toBe(99_801);
+    expect(tail.endSeq).toBe(100_000);
+    expect(blockingMs).toBeLessThan(50);
+  } finally {
+    clearImmediate(unrelatedWork);
+  }
 });
+
+it.each([false, true])(
+  "serves tail 200 from 100,000 retained rows without stalling the loop (wholeTurns=%s)",
+  async (wholeTurns) => {
+    const { result: tail, blockingMs } = await measureTimelineTail(wholeTurns);
+    expect(tail.rows).toHaveLength(200);
+    expect(tail.startSeq).toBe(99_801);
+    expect(tail.endSeq).toBe(100_000);
+    expect(blockingMs).toBeLessThan(50);
+  },
+);
 
 it("matches the previous reprojecting selector on seeded randomized timelines", () => {
   let seed = 0x76aabbcc;

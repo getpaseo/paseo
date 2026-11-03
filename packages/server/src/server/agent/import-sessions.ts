@@ -380,7 +380,7 @@ function toProviderSessionHandleKey(provider: string, providerHandleId: string):
   return `${provider}\0${providerHandleId}`;
 }
 
-function isMetadataGenerationSession(input: { firstPromptPreview: string | null }): boolean {
+export function isMetadataGenerationSession(input: { firstPromptPreview: string | null }): boolean {
   return (
     input.firstPromptPreview?.trimStart().startsWith(METADATA_GENERATION_PROMPT_PREFIX) ?? false
   );

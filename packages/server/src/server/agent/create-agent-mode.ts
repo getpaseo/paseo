@@ -77,7 +77,7 @@ export function resolveAndValidateCreateAgentMode(
   }
 
   throw new Error(
-    `cannot inherit mode '${formatCreateConfigParentMode(parent)}' from ${formatCreateConfigParentSource(parent)} for new agent (provider '${targetProvider}'). Pass an explicit mode. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
+    `cannot inherit mode '${formatCreateConfigParentMode(parent)}' from ${formatCreateConfigParentSource(parent)} for new agent (provider '${targetProvider}'). Pass an explicit mode in settings.modeId. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
   );
 }
 
