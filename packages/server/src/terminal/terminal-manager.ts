@@ -97,7 +97,12 @@ export interface TerminalManager {
   killTerminal(id: string): void;
   killTerminalAndWait(
     id: string,
-    options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+    options?: {
+      gracefulTimeoutMs?: number;
+      forceTimeoutMs?: number;
+      /** Stop a retained terminal's process while keeping its completed output available. */
+      preserveSession?: boolean;
+    },
   ): Promise<void>;
   captureTerminal(
     id: string,
@@ -463,7 +468,11 @@ export function createTerminalManager(
 
     async killTerminalAndWait(
       id: string,
-      options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+      options?: {
+        gracefulTimeoutMs?: number;
+        forceTimeoutMs?: number;
+        preserveSession?: boolean;
+      },
     ): Promise<void> {
       const session = terminalsById.get(id);
       if (!session) {
@@ -472,7 +481,9 @@ export function createTerminalManager(
       try {
         await session.killAndWait(options);
       } finally {
-        removeSessionById(id, { kill: false });
+        if (!options?.preserveSession) {
+          removeSessionById(id, { kill: false });
+        }
       }
     },
 

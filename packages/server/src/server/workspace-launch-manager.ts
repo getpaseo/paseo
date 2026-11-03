@@ -392,7 +392,8 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
         Array.from(runtimes.values(), async (runtime) => {
           if (runtime.lifecycle === "running") {
             await this.stopRuntime(runtime);
-          } else if (runtime.terminalId) {
+          }
+          if (runtime.terminalId) {
             this.deps.terminalManager?.killTerminal(runtime.terminalId);
           }
         }),
@@ -460,7 +461,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     const terminalId = runtime.terminalId;
     const terminal = terminalId ? this.deps.terminalManager?.getTerminal(terminalId) : null;
     if (terminalId && terminal && this.deps.terminalManager) {
-      await this.deps.terminalManager.killTerminalAndWait(terminalId);
+      await this.deps.terminalManager.killTerminalAndWait(terminalId, { preserveSession: true });
     }
     if (runtime.lifecycle === "running") {
       this.markStopped(runtime, null);
@@ -685,7 +686,8 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     context: WorkspaceLaunchContext,
     projectConfig: PaseoConfig | null,
   ): Promise<Set<number>> {
-    const ports = getExplicitWorkspaceServicePorts(projectConfig);
+    const projectLaunchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
+    const ports = getExplicitWorkspaceServicePorts(projectConfig, projectLaunchNames);
     if (this.getConfigDirectory(context) === context.workspaceDirectory) {
       return ports;
     }
@@ -694,7 +696,14 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (!workspaceConfig.ok) {
       return ports;
     }
-    for (const port of getExplicitWorkspaceServicePorts(workspaceConfig.config)) {
+    const workspaceLaunchNames = new Set([
+      ...projectLaunchNames,
+      ...getWorkspaceLaunchConfigs(workspaceConfig.config).keys(),
+    ]);
+    for (const port of getExplicitWorkspaceServicePorts(
+      workspaceConfig.config,
+      workspaceLaunchNames,
+    )) {
       ports.add(port);
     }
     return ports;

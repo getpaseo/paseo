@@ -1630,6 +1630,111 @@ it("removes a running retained worker terminal when explicitly killed", async ()
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
 });
 
+it("keeps a terminal available to retry when kill-and-wait fails", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 50, worker });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-retry",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-retry");
+  if (!session) throw new Error("Expected terminal");
+
+  const failedStop = manager.killTerminalAndWait(session.id);
+  const failedRequest = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!failedRequest || failedRequest.type !== "killTerminalAndWait") {
+    throw new Error("Expected kill-and-wait request");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: failedRequest.requestId,
+    ok: false,
+    error: "worker did not confirm process exit",
+  });
+  await expect(failedStop).rejects.toThrow("worker did not confirm process exit");
+  expect(manager.getTerminal(session.id)).toBe(session);
+
+  const retry = manager.killTerminalAndWait(session.id);
+  const retryRequest = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!retryRequest || retryRequest.type !== "killTerminalAndWait") {
+    throw new Error("Expected retry kill-and-wait request");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: retryRequest.requestId,
+    ok: true,
+  });
+  await expect(retry).resolves.toBeUndefined();
+  expect(manager.getTerminal(session.id)).toBeUndefined();
+});
+
+it("preserves retained terminal output when stopping its foreground process", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preserve-stop-"));
+  temporaryDirs.push(cwd);
+  manager = await startRealWorkerManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      ...nodeTerminalCommand("console.log('launch-stop-output'); setInterval(() => {}, 1000);"),
+      retainOnExit: true,
+    }),
+  );
+
+  await manager.killTerminalAndWait(session.id, {
+    gracefulTimeoutMs: 1000,
+    forceTimeoutMs: 500,
+    preserveSession: true,
+  });
+
+  expect(manager.getTerminal(session.id)).toBe(session);
+  expect(session.getExitInfo()).not.toBeNull();
+  const replay = await readReplay(manager, session.id);
+  expect(replay && getRenderedTextFromState(replay.state)).toContain("launch-stop-output");
+
+  await manager.killTerminalAndWait(session.id);
+  terminalSessions.splice(terminalSessions.indexOf(session), 1);
+  expect(manager.getTerminal(session.id)).toBeUndefined();
+});
+
+it("uses the protocol-6 stop adapter while draining an older worker", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+    workerProtocolVersion: 6,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-v6",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+
+  const stop = manager.killTerminalAndWait("terminal-v6", { preserveSession: true });
+  const request = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!request || request.type !== "killTerminalAndWait") {
+    throw new Error("Expected kill-and-wait request");
+  }
+  expect(request.options?.preserveSession).toBeUndefined();
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+  await expect(stop).resolves.toBeUndefined();
+  expect(manager.getTerminal("terminal-v6")).toBeUndefined();
+});
+
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({

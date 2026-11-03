@@ -96,6 +96,7 @@ describe("WorkspaceLaunchManager", () => {
 
     const full = await manager.start(context, "full");
     expect(terminalManager.killed).toEqual([dev.terminalId, restoredDev?.terminalId]);
+    expect(terminalManager.manager.getTerminal(restoredDev!.terminalId!)).toBeDefined();
     expect(full).toMatchObject({
       launchName: "full",
       lifecycle: "running",
@@ -116,6 +117,8 @@ describe("WorkspaceLaunchManager", () => {
     ]);
 
     await manager.stop(context, "full");
+    expect(terminalManager.manager.getTerminal(full.terminalId!)).toBeDefined();
+    expect(terminalManager.manager.getTerminal(full.terminalId!)?.getExitInfo()).not.toBeNull();
     expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
@@ -809,6 +812,57 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("does not exclude a superseded service port from its launch block", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-launch-superseded-project-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "paseo-launch-superseded-worktree-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+        scripts: { dev: { type: "service", command: "./bin/legacy-dev", port: 43000 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({
+        scripts: { dev: { type: "service", command: "./bin/worktree-dev", port: 43000 } },
+      }),
+    );
+    const context = {
+      workspaceId: "workspace-launch-superseded-port",
+      workspaceDirectory,
+      projectConfigDirectory: projectDirectory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      }),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+      logger: pino({ level: "silent" }),
+    });
+
+    try {
+      await expect(manager.start(context, "dev")).resolves.toMatchObject({
+        portBase: 43000,
+        portEnd: 43003,
+        portCount: 4,
+      });
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("waits for an in-flight service plan before leasing a launch port block", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-service-race-"));
     tempDirs.push(directory);
@@ -1357,11 +1411,11 @@ function createTerminalManager(managerOptions: { unavailableError?: Error } = {}
     killTerminal: (id: string) => {
       sessions.delete(id);
     },
-    killTerminalAndWait: async (id: string) => {
+    killTerminalAndWait: async (id: string, options?: { preserveSession?: boolean }) => {
       killed.push(id);
       const terminal = sessions.get(id) as (TerminalSession & { __exit?: () => void }) | undefined;
       terminal?.__exit?.();
-      sessions.delete(id);
+      if (!options?.preserveSession) sessions.delete(id);
     },
   } as unknown as TerminalManager;
   return {

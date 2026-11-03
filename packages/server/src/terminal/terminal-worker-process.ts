@@ -575,18 +575,34 @@ function runWorker(argv: string[]): void {
   async function handleKillTerminalAndWaitRequest(
     message: Extract<TerminalWorkerRequest, { type: "killTerminalAndWait" }>,
   ): Promise<void> {
-    const exitInfo = sessionsById.get(message.terminalId)?.getExitInfo() ?? null;
-    retainedTerminalIds.delete(message.terminalId);
-    await manager.killTerminalAndWait(message.terminalId, message.options);
-    clearTerminalSubscriptions(message.terminalId);
-    sessionsById.delete(message.terminalId);
-    await removeTerminalProgramRecord(message.terminalId);
-    if (exitInfo) {
-      sendToController({
-        type: "terminalExit",
-        terminalId: message.terminalId,
-        info: exitInfo,
-      });
+    const preserveSession =
+      message.options?.preserveSession === true && retainedTerminalIds.has(message.terminalId);
+    if (preserveSession) {
+      const session = sessionsById.get(message.terminalId);
+      if (session) {
+        await session.killAndWait({
+          ...(message.options?.gracefulTimeoutMs === undefined
+            ? {}
+            : { gracefulTimeoutMs: message.options.gracefulTimeoutMs }),
+          ...(message.options?.forceTimeoutMs === undefined
+            ? {}
+            : { forceTimeoutMs: message.options.forceTimeoutMs }),
+        });
+      }
+    } else {
+      const exitInfo = sessionsById.get(message.terminalId)?.getExitInfo() ?? null;
+      retainedTerminalIds.delete(message.terminalId);
+      await manager.killTerminalAndWait(message.terminalId, message.options);
+      clearTerminalSubscriptions(message.terminalId);
+      sessionsById.delete(message.terminalId);
+      await removeTerminalProgramRecord(message.terminalId);
+      if (exitInfo) {
+        sendToController({
+          type: "terminalExit",
+          terminalId: message.terminalId,
+          info: exitInfo,
+        });
+      }
     }
     exitIfIdle();
     sendToController({ type: "response", requestId: message.requestId, ok: true });

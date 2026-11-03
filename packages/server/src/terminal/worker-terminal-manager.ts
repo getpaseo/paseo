@@ -51,6 +51,7 @@ import type {
 } from "./terminal-manager.js";
 import {
   classifyTerminalWorkerProtocol,
+  TERMINAL_WORKER_PROTOCOL_VERSION,
   type TerminalWorkerProtocolFit,
 } from "./terminal-worker-protocol.js";
 import type {
@@ -113,6 +114,7 @@ export interface TerminalCreateEnvironment {
 
 interface WorkerTerminalManagerOptions {
   worker: TerminalWorkerConnection;
+  workerProtocolVersion?: number;
   /** Reconnects a surviving worker; null means it is confirmed gone or the owner stopped. */
   reconnect?: () => Promise<TerminalWorkerConnection | null>;
   requestTimeoutMs?: number;
@@ -958,20 +960,42 @@ export function createWorkerTerminalManager(
 
     async killTerminalAndWait(
       id: string,
-      options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+      options?: {
+        gracefulTimeoutMs?: number;
+        forceTimeoutMs?: number;
+        preserveSession?: boolean;
+      },
     ): Promise<void> {
-      const record = removeRecordAndEmit(id);
-      if (record && !record.exitInfo) {
-        closingRecordsById.set(id, record);
-      }
-      try {
-        await sendRequest({
-          type: "killTerminalAndWait",
-          terminalId: id,
-          ...(options ? { options } : {}),
-        });
-      } finally {
-        closingRecordsById.delete(id);
+      const record = recordsById.get(id);
+      // COMPAT(workspaceLaunchRetainedStop): added in v0.15.0-beta.1, remove after 2027-05-03 once protocol 6 workers drain.
+      const preserveSession =
+        options?.preserveSession === true &&
+        record?.info.retainOnExit === true &&
+        (managerOptions.workerProtocolVersion ?? TERMINAL_WORKER_PROTOCOL_VERSION) ===
+          TERMINAL_WORKER_PROTOCOL_VERSION;
+      const killOptions = {
+        ...(options?.gracefulTimeoutMs === undefined
+          ? {}
+          : { gracefulTimeoutMs: options.gracefulTimeoutMs }),
+        ...(options?.forceTimeoutMs === undefined
+          ? {}
+          : { forceTimeoutMs: options.forceTimeoutMs }),
+      };
+      await sendRequest({
+        type: "killTerminalAndWait",
+        terminalId: id,
+        ...(Object.keys(killOptions).length > 0 || preserveSession
+          ? {
+              options: {
+                ...killOptions,
+                ...(preserveSession ? { preserveSession: true } : {}),
+              },
+            }
+          : {}),
+      });
+      // Remove only after the worker confirms the kill. A timeout or IPC error must leave a live
+      // terminal visible so callers can retry Stop instead of reporting a false success.
+      if (!preserveSession) {
         removeRecordAndEmit(id);
       }
     },
@@ -1229,6 +1253,9 @@ export async function startWorkerTerminalManager(
     };
     const manager = createWorkerTerminalManager({
       worker: connection,
+      ...(typeof record.protocolVersion === "number"
+        ? { workerProtocolVersion: record.protocolVersion }
+        : {}),
       reconnect,
       ...(options.requestTimeoutMs === undefined
         ? {}

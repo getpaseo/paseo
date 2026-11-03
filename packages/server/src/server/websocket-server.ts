@@ -262,6 +262,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       mainRepoRoot: null,
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
+    peekSnapshot: () => null,
     resolveForge: async () => null,
     getCheckoutDiff: async () => ({ diff: "" }),
     validateBranchRef: async () => ({ kind: "not-found" }),
