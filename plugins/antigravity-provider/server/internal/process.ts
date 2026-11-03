@@ -1,224 +1,256 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { spawnProcess } from "@getpaseo/plugin/server";
-import { signalProcess } from "./signals.js";
 import { createInterface } from "node:readline";
-import type { ProviderLaunch, ProviderSessionConfig } from "@getpaseo/plugin/server/provider";
-import {
-  AntigravityError,
-  decodeFrame,
-  diagnostic,
-  encodePrompt,
-  type Frame,
-  type Init,
-} from "./wire.js";
+import type { z } from "zod";
+import { execCommand, spawnProcess } from "@getpaseo/plugin/server";
+import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
+import { signalProcess } from "./signals.js";
+import { AntigravityError, classifyFailure, jsonRpcErrorObjectSchema } from "./wire.js";
 
-interface DriverOptions {
-  launch: ProviderLaunch;
-  config: ProviderSessionConfig;
-  conversationId: string | null;
-  onFrame(frame: Frame): void;
-  onExit(error: AntigravityError): void;
+const PROBE_TIMEOUT_MS = 15_000;
+const INIT_TIMEOUT_MS = 30_000;
+const EXIT_WAIT_MS = 800;
+const MAX_STDERR_CHARS = 8_192;
+
+interface PendingRpc {
+  method: string;
+  schema: z.ZodType<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: AntigravityError) => void;
+  timer?: NodeJS.Timeout;
 }
 
-export interface Driver {
-  ready: Promise<Init>;
-  selection: string;
-  prompt(text: string): Promise<void>;
-  stop(reason: "interrupt" | "close"): Promise<void>;
+export interface DriverProcessHandlers {
+  onNotification: (method: string, params: unknown) => void;
+  onRequest: (id: string | number, method: string, params: unknown) => void;
+  onExit: (error: AntigravityError) => void;
 }
 
-export function selection(config: ProviderSessionConfig): string {
-  return JSON.stringify([config.model, config.mode]);
-}
+export class DriverProcess {
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly exitedPromise: Promise<void>;
+  private readonly pending = new Map<string | number, PendingRpc>();
+  private nextRpcId = 1;
+  private stderr = "";
+  private closing = false;
+  private hasExited = false;
 
-function driverArgs(options: DriverOptions): string[] {
-  const { config, conversationId } = options;
-  const args = [
-    ...options.launch.args,
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--add-dir",
-    config.cwd,
-    "--disable-slash-commands",
-    "--dangerously-skip-permissions",
-  ];
-  if (config.model) args.push("--model", config.model);
-  if (conversationId) args.push("--conversation", conversationId);
-  return args;
-}
-
-export function startDriver(options: DriverOptions): Driver {
-  const child = spawnProcess(options.launch.command, driverArgs(options), {
-    cwd: options.config.cwd,
-    env: { ...options.launch.env, ...options.config.env },
-    detached: process.platform !== "win32",
-    stdio: "pipe",
-  });
-  const lines = createInterface({ input: child.stdout });
-  let cleanup = Promise.resolve();
-  let stderr = "";
-  let state: "starting" | "ready" | "stopping" | "exited" = "starting";
-  let resolveReady: (init: Init) => void;
-  let rejectReady: (error: Error) => void;
-  const ready = new Promise<Init>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-  let resolveExit: () => void;
-  const exited = new Promise<void>((resolve) => {
-    resolveExit = resolve;
-  });
-  const startupDeadline = setTimeout(
-    () =>
-      fail(
-        new AntigravityError("Antigravity did not initialize within 30 seconds", "STARTUP_TIMEOUT"),
-      ),
-    30_000,
-  );
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString()).slice(-8192);
-  });
-  child.stdin.on("error", (error: Error) =>
-    fail(new AntigravityError(error.message, "STDIN_ERROR")),
-  );
-  child.on("error", (error: Error) => fail(new AntigravityError(error.message, "SPAWN_ERROR")));
-  child.on("close", (code, signal) => {
-    clearTimeout(startupDeadline);
-    lines.close();
-    const error = new AntigravityError(
-      diagnostic(stderr.trim() || `Antigravity exited (${signal || code})`),
-      "PROCESS_EXIT",
-    );
-    if (state === "starting") rejectReady(error);
-    if (state === "ready") options.onExit(error);
-    state = "exited";
-    resolveExit();
-  });
-  lines.on("line", (line) => {
-    if (!line.trim() || state === "exited" || state === "stopping") return;
-    let decoded: Frame;
-    try {
-      decoded = decodeFrame(line);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      fail(new AntigravityError(`Invalid Antigravity output: ${message}`, "INVALID_FRAME"));
-      return;
+  constructor(
+    options: {
+      launch: ProviderLaunch;
+      cwd: string;
+      additionalDirectories?: readonly string[];
+    },
+    private readonly handlers: DriverProcessHandlers,
+  ) {
+    const args = [...options.launch.args, "acp", "--stdio", "--add-dir", options.cwd];
+    for (const directory of options.additionalDirectories ?? []) {
+      if (directory !== options.cwd) args.push("--add-dir", directory);
     }
-    if (state === "starting") {
-      if (decoded.event === "init") {
-        clearTimeout(startupDeadline);
-        state = "ready";
-        resolveReady(decoded);
-      } else if (decoded.event === "result") {
-        fail(new AntigravityError(diagnostic(decoded.result.error), "STARTUP_ERROR"));
-      }
-      return;
-    }
-    options.onFrame(decoded);
-  });
+    this.child = spawnProcess(options.launch.command, args, {
+      cwd: options.cwd,
+      env: childEnv(options.launch.env),
+      detached: process.platform !== "win32",
+      stdio: "pipe",
+    });
+    this.child.stdin.on("error", () => {});
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", (chunk: string) => {
+      this.stderr = (this.stderr + chunk).slice(-MAX_STDERR_CHARS);
+    });
 
-  function fail(failure: AntigravityError): void {
-    clearTimeout(startupDeadline);
-    if (state === "starting") rejectReady(failure);
-    if (state === "ready") options.onExit(failure);
-    if (state === "exited" || state === "stopping") return;
-    state = "stopping";
-    cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
-    // The stop operation awaits cleanup and owns reporting its failure.
-    void cleanup.catch(() => undefined);
+    const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    lines.on("line", (line) => this.handleLine(line));
+
+    this.exitedPromise = new Promise((resolve) => {
+      this.child.once("error", (error) => {
+        this.hasExited = true;
+        lines.close();
+        this.failAllPending(classifyFailure(this.stderr, error.message));
+        resolve();
+      });
+      this.child.once("close", (code, signal) => {
+        this.hasExited = true;
+        lines.close();
+        const detail = `Antigravity ACP exited (${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`})`;
+        const failure = classifyFailure(this.stderr, detail);
+        this.failAllPending(failure);
+        if (!this.closing) this.handlers.onExit(failure);
+        resolve();
+      });
+    });
   }
 
-  return {
-    ready,
-    selection: selection(options.config),
-    prompt(text) {
-      if (state !== "ready")
-        return Promise.reject(new AntigravityError("Antigravity is not ready"));
-      return new Promise<void>((resolve, reject) => {
-        child.stdin.write(encodePrompt(text), (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
+  get isAlive(): boolean {
+    return !this.hasExited && !this.closing;
+  }
+
+  request<T>(
+    method: string,
+    params: unknown,
+    schema: z.ZodType<T>,
+    timeoutMs?: number,
+  ): Promise<T> {
+    if (!this.isAlive) {
+      return Promise.reject(classifyFailure(this.stderr, "Antigravity ACP process is not running"));
+    }
+    const id = this.nextRpcId++;
+    return new Promise<T>((resolve, reject) => {
+      const timer =
+        timeoutMs !== undefined
+          ? setTimeout(() => {
+              this.pending.delete(id);
+              reject(
+                classifyFailure(
+                  this.stderr,
+                  `Timed out waiting for Antigravity ACP response to ${method}`,
+                ),
+              );
+            }, timeoutMs)
+          : undefined;
+      this.pending.set(id, {
+        method,
+        schema,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timer,
       });
-    },
-    async stop(reason) {
-      if (process.platform === "win32") await cleanup;
-      if (state === "exited") return;
-      if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
-      clearTimeout(startupDeadline);
-      state = "stopping";
-      if (process.platform === "win32") {
-        // Node signal emulation kills only the leader; taskkill must see the live tree.
-        cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
-        await cleanup;
-        await exited;
+      this.writeMessage({ jsonrpc: "2.0", id, method, params });
+    });
+  }
+
+  requestInit<T>(method: string, params: unknown, schema: z.ZodType<T>): Promise<T> {
+    return this.request(method, params, schema, INIT_TIMEOUT_MS);
+  }
+
+  notify(method: string, params: unknown): void {
+    if (!this.isAlive) return;
+    this.writeMessage({ jsonrpc: "2.0", method, params });
+  }
+
+  respond(id: string | number, result: unknown): void {
+    if (!this.isAlive) return;
+    this.writeMessage({ jsonrpc: "2.0", id, result });
+  }
+
+  respondError(id: string | number, code: number, message: string): void {
+    if (!this.isAlive) return;
+    this.writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
+  }
+
+  async interrupt(): Promise<void> {
+    await this.signal("SIGINT");
+  }
+
+  async stop(): Promise<void> {
+    this.closing = true;
+    if (this.hasExited) return;
+    await this.signal("SIGTERM");
+    const timer = setTimeout(() => {
+      void this.signal("SIGKILL");
+    }, EXIT_WAIT_MS);
+    await this.exitedPromise;
+    clearTimeout(timer);
+  }
+
+  private writeMessage(payload: Record<string, unknown>): void {
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+  }
+
+  private handleLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+    const message = parsed as Record<string, unknown>;
+
+    const id =
+      typeof message.id === "number" || typeof message.id === "string" ? message.id : undefined;
+    const method = typeof message.method === "string" ? message.method : undefined;
+
+    if (id !== undefined && method === undefined) {
+      const entry = this.pending.get(id);
+      if (!entry) return;
+      this.pending.delete(id);
+      if (entry.timer) clearTimeout(entry.timer);
+
+      if ("error" in message && message.error !== undefined) {
+        const rpcError = jsonRpcErrorObjectSchema.safeParse(message.error);
+        const detail = rpcError.success
+          ? rpcError.data.message
+          : "Antigravity ACP returned an error";
+        entry.reject(classifyFailure(this.stderr, detail));
         return;
       }
-      if (reason === "close") child.stdin.end();
-      else signalGroup(child, "SIGINT");
-      const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 1000);
-      const kill = setTimeout(() => signalGroup(child, "SIGKILL"), 2000);
-      await exited;
-      clearTimeout(terminate);
-      clearTimeout(kill);
-      // A tool can keep running after its CLI leader exits.
-      signalGroup(child, "SIGKILL");
-    },
-  };
+
+      const validated = entry.schema.safeParse(message.result);
+      if (!validated.success) {
+        entry.reject(
+          new AntigravityError(
+            `Invalid Antigravity ACP response for ${entry.method}: ${validated.error.message}`,
+            "WIRE_PARSE_ERROR",
+            trimmed,
+          ),
+        );
+        return;
+      }
+      entry.resolve(validated.data);
+      return;
+    }
+
+    if (id !== undefined && method !== undefined) {
+      this.handlers.onRequest(id, method, message.params);
+      return;
+    }
+
+    if (method !== undefined) {
+      this.handlers.onNotification(method, message.params);
+    }
+  }
+
+  private failAllPending(error: AntigravityError): void {
+    for (const [id, entry] of this.pending) {
+      this.pending.delete(id);
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+  }
+
+  private async signal(signal: NodeJS.Signals): Promise<void> {
+    if (!this.child.pid || this.hasExited) return;
+    await signalProcess({ platform: process.platform, pid: this.child.pid, signal });
+  }
 }
 
-function signalGroup(
-  child: ChildProcessWithoutNullStreams,
-  signal: NodeJS.Signals,
-): void | Promise<void> {
-  if (!child.pid) return;
-  return signalProcess({ platform: process.platform, pid: child.pid, signal });
-}
-
-interface ProbeOptions {
+export async function probe(options: {
   launch: ProviderLaunch;
   args: string[];
   cwd?: string;
+}): Promise<string> {
+  try {
+    const result = await execCommand(
+      options.launch.command,
+      [...options.launch.args, ...options.args],
+      {
+        cwd: options.cwd,
+        env: childEnv(options.launch.env),
+        shell: false,
+        timeout: PROBE_TIMEOUT_MS,
+      },
+    );
+    return result.stdout;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const stderr =
+      typeof error === "object" && error && "stderr" in error ? String(error.stderr) : "";
+    throw classifyFailure(stderr, detail);
+  }
 }
-export function probe(options: ProbeOptions): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawnProcess(options.launch.command, [...options.launch.args, ...options.args], {
-      env: options.launch.env,
-      cwd: options.cwd,
-      stdio: "pipe",
-      detached: process.platform !== "win32",
-    });
-    let stdout = "";
-    let stderr = "";
-    const deadline = setTimeout(() => {
-      const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
-      void termination.then(() => {
-        reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
-        return undefined;
-      }, reject);
-    }, 10_000);
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString()).slice(-8192);
-    });
-    child.on("error", (error: Error) => {
-      clearTimeout(deadline);
-      reject(new AntigravityError(error.message, "SPAWN_ERROR"));
-    });
-    child.on("close", (code) => {
-      clearTimeout(deadline);
-      if (code === 0) resolve(stdout);
-      else
-        reject(
-          new AntigravityError(
-            diagnostic(stderr.trim() || `agy exited with code ${code}`),
-            "PROBE_ERROR",
-          ),
-        );
-    });
-  });
+
+function childEnv(overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+  return { ...process.env, ...overrides, NO_COLOR: "1" };
 }
