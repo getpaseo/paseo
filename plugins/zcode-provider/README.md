@@ -79,16 +79,22 @@ node scripts/zcode-setup.js probe
 ```
 
 A key passed with `--api-key` ends up in your shell history and in the
-process listing. `--api-key-env VAR` reads it from an environment variable
-instead, so it stays out of both:
+process listing. Read it into an environment variable without echoing it
+first, then hand the variable to `--api-key-env VAR`:
 
 ```bash
-export ZCODE_SETUP_API_KEY=...
+printf 'BigModel team API key: '
+IFS= read -rs ZCODE_SETUP_API_KEY
+printf '\n'
 node scripts/zcode-setup.js add-provider \
   --name "BigModel Team CodingPlan" \
   --api-key-env ZCODE_SETUP_API_KEY \
   --kind team
+unset ZCODE_SETUP_API_KEY
 ```
+
+`read -s` keeps the key out of the command line, the shell history and the
+terminal, and `unset` keeps it out of the environment of later commands.
 
 Notes:
 
