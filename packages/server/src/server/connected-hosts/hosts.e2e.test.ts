@@ -8,6 +8,7 @@ import { createPaseoApi } from "@getpaseo/client";
 import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
+import { startAgentRun } from "../agent/agent-prompt.js";
 
 const cleanup: (() => Promise<unknown>)[] = [];
 
@@ -2048,6 +2049,249 @@ test(
     await expect.poll(() => records(restarted.paseoHome), { timeout: 5000 }).toEqual([]);
   },
 );
+
+test("MCP pending permission queries select their host without consuming requests", async () => {
+  const a = await daemon({ mcpEnabled: true });
+  const b = await daemon();
+  const origin = await api(a);
+  const destination = await api(b);
+  const saved = await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+  const directory = await online(origin.paseo);
+  const serverId = directory.hosts[0]!.serverId!;
+  const agentId = crypto.randomUUID();
+  for (const [instance, client, prompt] of [
+    [a, origin.client, "Run rm -f mcp-smoke.txt"],
+    [b, destination.client, "Run rm -f permission.txt"],
+  ] as const) {
+    const workspace = await client.createWorkspace({
+      source: { kind: "directory", path: instance.staticDir },
+    });
+    expect(workspace.error).toBeNull();
+    await client.createAgent({
+      agentId,
+      provider: "claude",
+      model: "claude-test",
+      cwd: instance.staticDir,
+      workspaceId: workspace.workspace!.id,
+      modeId: "default",
+      initialPrompt: prompt,
+    });
+    await client.waitForAgentUpsert(
+      agentId,
+      (snapshot) => snapshot.pendingPermissions.length === 1,
+    );
+  }
+  const local = (await origin.client.fetchAgent(agentId))!.agent;
+  const remote = (await destination.client.fetchAgent(agentId))!.agent;
+  const mcp = new Client({ name: "permission-query", version: "1" });
+  cleanup.push(() => mcp.close());
+  await mcp.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${a.port}/mcp/agents`)),
+  );
+  const remotePermission = {
+    agentId,
+    status: remote.status,
+    request: {
+      id: remote.pendingPermissions[0]!.id,
+      provider: "claude",
+      name: "Bash",
+      kind: "tool",
+      title: "Permission required",
+      description: "Test permission request",
+      input: { command: "rm -f permission.txt" },
+    },
+  };
+  const queried = await mcp.callTool({ name: "list_pending_permissions", arguments: { serverId } });
+  expect(queried.isError, JSON.stringify(queried)).not.toBe(true);
+  expect(queried.structuredContent).toEqual({ serverId, permissions: [remotePermission] });
+  const repeated = await mcp.callTool({
+    name: "list_pending_permissions",
+    arguments: { serverId },
+  });
+  expect(repeated.structuredContent).toEqual(queried.structuredContent);
+  const physicalClientId = `host-link-${directory.self.serverId}-${saved.registrationId}`;
+  const reader = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: physicalClientId,
+    sessionPermissions: ["daemon.read", "workspace.read"],
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => reader.close());
+  await reader.connect();
+  expect(reader.getLastServerInfoMessage()!.permissions).not.toContain("workspace.write");
+  const readOnly = await mcp.callTool({
+    name: "list_pending_permissions",
+    arguments: { serverId },
+  });
+  expect(readOnly.isError, JSON.stringify(readOnly)).not.toBe(true);
+  expect(readOnly.structuredContent).toEqual(queried.structuredContent);
+  const restricted = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: physicalClientId,
+    sessionPermissions: ["daemon.read"],
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => restricted.close());
+  await restricted.connect();
+  const failure = async (target: string, code: string) => {
+    const response = await mcp.callTool({
+      name: "list_pending_permissions",
+      arguments: { serverId: target },
+    });
+    expect(response.isError, JSON.stringify(response)).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      serverId: target,
+      code,
+      error: expect.any(String),
+    });
+    expect(response.structuredContent).not.toHaveProperty("permissions");
+    expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+      local.pendingPermissions,
+    );
+    expect((await destination.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+      remote.pendingPermissions,
+    );
+  };
+  await failure(serverId, "access_denied");
+  await failure("srv_unknown", "host_unknown");
+  await origin.paseo.hosts.update(saved.registrationId, { enabled: false });
+  await failure(serverId, "host_disabled");
+  await origin.paseo.hosts.update(saved.registrationId, { enabled: true });
+  await online(origin.paseo);
+  for (const selector of [{}, { serverId: directory.self.serverId }]) {
+    const response = await mcp.callTool({ name: "list_pending_permissions", arguments: selector });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual({
+      serverId: directory.self.serverId,
+      permissions: [{ agentId, status: local.status, request: local.pendingPermissions[0] }],
+    });
+  }
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    local.pendingPermissions,
+  );
+  expect((await destination.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    remote.pendingPermissions,
+  );
+  await destination.client.respondToPermissionAndWait(agentId, remote.pendingPermissions[0]!.id, {
+    behavior: "deny",
+  });
+  const empty = await mcp.callTool({ name: "list_pending_permissions", arguments: { serverId } });
+  expect(empty.isError, JSON.stringify(empty)).not.toBe(true);
+  expect(empty.structuredContent).toEqual({ serverId, permissions: [] });
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    local.pendingPermissions,
+  );
+  await b.close();
+  await expect
+    .poll(async () => (await origin.paseo.hosts.list()).hosts[0]!.status)
+    .not.toBe("online");
+  const offline = await mcp.callTool({ name: "list_pending_permissions", arguments: { serverId } });
+  expect(offline.isError).toBe(true);
+  expect(offline.structuredContent).toMatchObject({ serverId, code: "host_offline" });
+  expect(offline.structuredContent).not.toHaveProperty("permissions");
+  expect((await origin.client.fetchAgent(agentId))!.agent.pendingPermissions).toEqual(
+    local.pendingPermissions,
+  );
+});
+
+test("MCP pending permission queries include background and loaded archived agents beyond the first page", async () => {
+  const a = await daemon({ mcpEnabled: true });
+  const b = await daemon({ mcpEnabled: true });
+  const origin = await api(a);
+  const destination = await api(b);
+  await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+  const serverId = (await online(origin.paseo)).hosts[0]!.serverId!;
+  const workspace = await destination.client.createWorkspace({
+    source: { kind: "directory", path: b.staticDir },
+    background: true,
+  });
+  expect(workspace.error).toBeNull();
+  const child = await destination.client.createAgent({
+    provider: "claude",
+    model: "claude-test",
+    cwd: b.staticDir,
+    workspaceId: workspace.workspace!.id,
+    modeId: "default",
+    initialPrompt: "Run rm -f permission.txt",
+  });
+  const pending = await destination.client.waitForAgentUpsert(
+    child.id,
+    (snapshot) => snapshot.pendingPermissions.length === 1,
+  );
+  const stored = (await b.daemon.agentStorage.get(child.id))!;
+  for (let index = 0; index < 200; index++) {
+    await b.daemon.agentStorage.upsert({
+      ...stored,
+      id: crypto.randomUUID(),
+      title: `Earlier stored agent ${index}`,
+      createdAt: "2000-01-01T00:00:00.000Z",
+      updatedAt: "2000-01-01T00:00:00.000Z",
+      lastStatus: "closed",
+      persistence: null,
+      runtimeInfo: undefined,
+    });
+  }
+  // A loaded history session can retain an archived durable record; local MCP includes it.
+  await b.daemon.agentStorage.upsert({ ...stored, archivedAt: "2001-01-01T00:00:00.000Z" });
+  const internal = await b.daemon.agentManager.createAgent(
+    {
+      provider: "claude",
+      model: "claude-test",
+      cwd: b.staticDir,
+      internal: true,
+      modeId: "default",
+    },
+    undefined,
+    { workspaceId: workspace.workspace!.id },
+  );
+  await startAgentRun(
+    b.daemon.agentManager,
+    internal.id,
+    "Run rm -f mcp-smoke.txt",
+    pino({ level: "silent" }),
+  );
+  await expect.poll(() => internal.session.getPendingPermissions()).toHaveLength(1);
+  const firstPage = await destination.client.fetchAgents({
+    includeBackground: true,
+    filter: { includeArchived: true },
+    sort: [{ key: "created_at", direction: "asc" }],
+    page: { limit: 200 },
+  });
+  expect(firstPage.entries).toHaveLength(200);
+  expect(firstPage.pageInfo.hasMore).toBe(true);
+  expect(firstPage.entries.flatMap(({ agent }) => agent.pendingPermissions)).toEqual([]);
+  const mcp = new Client({ name: "permission-query-pages", version: "1" });
+  const localMcp = new Client({ name: "permission-query-local-parity", version: "1" });
+  cleanup.push(
+    () => mcp.close(),
+    () => localMcp.close(),
+  );
+  await mcp.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${a.port}/mcp/agents`)),
+  );
+  await localMcp.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${b.port}/mcp/agents`)),
+  );
+  const expected = {
+    serverId,
+    permissions: [
+      { agentId: child.id, status: pending.status, request: pending.pendingPermissions[0] },
+    ],
+  };
+  const response = await mcp.callTool({
+    name: "list_pending_permissions",
+    arguments: { serverId },
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(response.structuredContent).toEqual(expected);
+  const localResponse = await localMcp.callTool({
+    name: "list_pending_permissions",
+    arguments: {},
+  });
+  expect(localResponse.structuredContent).toEqual(expected);
+  expect((await destination.client.fetchAgent(child.id))!.agent.pendingPermissions).toEqual(
+    pending.pendingPermissions,
+  );
+  expect(internal.session.getPendingPermissions()).toHaveLength(1);
+});
 
 test(
   "remote finish observation survives a permission checkpoint until resumed completion",

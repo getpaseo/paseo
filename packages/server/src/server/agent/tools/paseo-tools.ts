@@ -714,6 +714,7 @@ function createToolCatalog(
     ["get_agent_status", "getStatus"],
     ["get_agent_activity", "getActivity"],
     ["list_agents", "listAgents"],
+    ["list_pending_permissions", "listPendingPermissions"],
   ] as const satisfies ReadonlyArray<readonly [string, keyof HostOperations]>);
   const hostResolver = createHostResolver({
     serverId: options.serverId ?? "self",
@@ -732,6 +733,8 @@ function createToolCatalog(
       getStatus: (args, context) => localHostOperations.get("get_agent_status")!(args, context),
       getActivity: (args, context) => localHostOperations.get("get_agent_activity")!(args, context),
       listAgents: (args, context) => localHostOperations.get("list_agents")!(args, context),
+      listPendingPermissions: (args, context) =>
+        localHostOperations.get("list_pending_permissions")!(args, context),
     },
   });
   const registerTool = (
