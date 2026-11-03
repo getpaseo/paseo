@@ -226,6 +226,23 @@ describe("git-actions-policy", () => {
     expect(isCurrentBranchLocalMergeTarget("release", "refs/remotes/upstream/release")).toBe(false);
   });
 
+  it("offers local merge when the selected local base starts with origin slash", () => {
+    const actions = buildGitActions(
+      createInput({
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: isCurrentBranchBase("release", "refs/heads/origin/release"),
+        isOnLocalMergeTarget: isCurrentBranchLocalMergeTarget(
+          "release",
+          "refs/heads/origin/release",
+        ),
+        baseRefLabel: "origin/release",
+        aheadCount: 1,
+        shipDefault: "merge",
+      }),
+    );
+    expect(actions.primary?.id).toBe("merge-branch");
+  });
+
   it("does not offer merging into the current local branch when the remote base shares its name", () => {
     const actions = buildGitActions(
       createInput({

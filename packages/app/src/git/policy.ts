@@ -66,10 +66,7 @@ export function isCurrentBranchLocalMergeTarget(
   baseRef: string | null | undefined,
 ): boolean {
   if (!currentBranch || !baseRef) return false;
-  const localTarget = baseRef
-    .replace(/^refs\/heads\//, "")
-    .replace(/^refs\/remotes\/origin\//, "")
-    .replace(/^origin\//, "");
+  const localTarget = baseRef.replace(/^(?:refs\/heads\/|refs\/remotes\/origin\/|origin\/)/, "");
   return currentBranch === localTarget;
 }
 
