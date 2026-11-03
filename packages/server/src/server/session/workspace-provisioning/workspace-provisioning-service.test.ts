@@ -175,7 +175,7 @@ test("background workspace creation preserves hooks, inheritance and durable vis
   expect(child.background).toBe(true);
   expect(visible.background).toBe(false);
   expect(human.background).toBe(false);
-  expect(events).toEqual(Array(4).fill("workspace.created"));
+  expect(events).toEqual(Array(4).fill("workspace.create.after"));
   const reloaded = new FileBackedWorkspaceRegistry(
     path.join(tmpDir, "projects", "workspaces.json"),
     logger,

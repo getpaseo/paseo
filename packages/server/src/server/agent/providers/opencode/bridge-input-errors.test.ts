@@ -56,6 +56,7 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     getDaemonTcpHost: null,
     serviceProxyPublicBaseUrl: null,
     resolveScriptHealth: null,
+    getGlobalServicePorts: async () => undefined,
     logger,
     emit: () => {},
     publishStatusUpdate: () => {},

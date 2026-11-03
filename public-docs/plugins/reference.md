@@ -2,7 +2,7 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 48
+order: 49
 category: Plugins
 ---
 
@@ -628,340 +628,11 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
+Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Reload, disable, and removal dispose the affected installation. Stopping a server plugin also closes its daemon session and stops its subprocess. Client installations follow [Hosts and lifecycle](#hosts-and-lifecycle), including retention during a temporary disconnect.
 
 ## Lifecycle hooks
 
-In `index.server.ts`:
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.turn_ended", (event) => {
-    console.log(event.agent.id, event.outcome);
-  });
-
-  return () => {};
-}
-```
-
-| Register                        | Callback receives                  | Return                                                       |
-| ------------------------------- | ---------------------------------- | ------------------------------------------------------------ |
-| `server.on(name, callback)`     | `(event, { paseo, signal })`       | `void` or `Promise<void>`                                    |
-| `server.before(name, callback)` | `({ request }, { paseo, signal })` | Modified request, or `undefined` to keep it; async supported |
-
-Hooks run on the daemon while the plugin is enabled, even with no app connected.
-
-### Change configuration and inject an MCP server
-
-Add this callback inside `contribute(server)`. Replace the placeholder URL with your MCP endpoint.
-
-```ts
-server.before("agent.create", ({ request }) => {
-  if (request.config.provider !== "codex") {
-    return request;
-  }
-
-  return {
-    ...request,
-    config: {
-      ...request.config,
-      providerOptions: {
-        ...request.config.providerOptions,
-        sandbox_mode: "workspace-write",
-        approval_policy: "on-request",
-      },
-      mcpServers: {
-        ...request.config.mcpServers,
-        company: {
-          type: "http",
-          url: "https://tools.example.com/mcp",
-        },
-      },
-    },
-  };
-});
-```
-
-| Input                                       | Result                        |
-| ------------------------------------------- | ----------------------------- |
-| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"`           |
-| `providerOptions.web_search: "disabled"`    | Preserved by the spread       |
-| Existing `mcpServers.search`                | Preserved by the spread       |
-| Existing `mcpServers.company`               | Replaced with the entry above |
-
-The selected provider validates `providerOptions` and must support the configured MCP servers.
-Explicit Codex sandbox and approval options override its mode presets.
-
-### Inject environment variables on every session opening
-
-```ts
-server.before("agent.session_open", ({ request }) => {
-  return {
-    ...request,
-    env: {
-      ...request.env,
-      COMPANY_ENV: "development",
-    },
-  };
-});
-```
-
-This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
-`agent.create` callback instead.
-
-### Choose workspace isolation
-
-```ts
-server.before("workspace.create", ({ request }) => {
-  if (request.source.kind !== "directory") {
-    return request;
-  }
-
-  return {
-    ...request,
-    source: {
-      kind: "worktree",
-      cwd: request.source.path,
-      action: "branch-off",
-    },
-  };
-});
-```
-
-**Result:** an explicit directory creation request becomes a worktree request. Existing workspaces
-and directory lookup/import operations are unaffected.
-
-### Send a follow-up when a turn ends
-
-Copy [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)
-into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`; add
-`@getpaseo/protocol` at the same version as your plugin SDK to your development dependencies
-and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { latestOutputText } from "./server/inspect";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.turn_ended", async (event, context) => {
-    if (event.outcome.kind === "canceled") {
-      return;
-    }
-
-    const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
-    if (/out of credits/i.test(text)) {
-      await agent.send("Try again.");
-    }
-  });
-
-  return () => {};
-}
-```
-
-```text
-Turn ends: "out of credits"
-  → plugin sends "Try again."
-  → a new turn starts
-```
-
-The handler fetches only the last 20 timeline items. Output before that page is not inspected.
-Use `cursor` and `direction` to page further when your plugin needs more history.
-
-This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
-add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
-
-### Answer a permission request
-
-Using `shellCommand` from the same [helper file](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts):
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { shellCommand } from "./server/inspect";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.permission_requested", async (event, context) => {
-    const command = shellCommand(event.request);
-    if (command === null) {
-      return;
-    }
-
-    const agent = context.paseo.agents.ref(event.agent.id);
-    if (/\brm\s+-rf\b/.test(command)) {
-      await agent.respondToPermission({
-        requestId: event.request.id,
-        response: { behavior: "deny", message: "Recursive deletion is blocked." },
-      });
-      return;
-    }
-
-    if (command.trim() === "git status") {
-      await agent.respondToPermission({
-        requestId: event.request.id,
-        response: { behavior: "allow" },
-      });
-    }
-  });
-
-  return () => {};
-}
-```
-
-| Request                  | Result                    |
-| ------------------------ | ------------------------- |
-| `rm -rf build`           | Declined                  |
-| `git status`             | Approved                  |
-| Other command or request | Left pending for the user |
-| Already-resolved request | SDK response fails        |
-
-The regex is an example policy, not a shell parser. Permission requests can also be questions,
-plans, and mode changes; requesting permission does not end the turn.
-
-### Events
-
-| Name                         | Event fields                                            | Trigger                                            |
-| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                                 | Ordinary creation finishes; excludes import/resume |
-| `agent.closed`               | `agent`                                                 | A live agent runtime closes                        |
-| `agent.turn_started`         | `agent`, `turnId`                                       | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, deprecated `timeline: []` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                                      | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                      | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                                   | Archive state is saved                             |
-| `workspace.created`          | `workspace`                                             | Record created; directory available                |
-| `workspace.archived`         | `workspace`                                             | Archive state is saved                             |
-
-Agent events exclude the daemon's private disposable helpers. Public background workspaces and
-their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
-runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
-
-`agent.turn_ended.timeline` is deprecated and always empty. Fetch history on demand with
-`context.paseo.agents.ref(event.agent.id).timeline.refetch({ direction: "tail", limit: 20 })`.
-The hook payload size does not grow with conversation history.
-
-**Shared payload shapes** (`@getpaseo/plugin/server`):
-
-```ts
-interface PluginHookAgent {
-  id: string;
-  workspaceId: string | null;
-  parentAgentId: string | null;
-  provider: string;
-  cwd: string;
-  title: string | null;
-}
-
-interface PluginHookWorkspace {
-  id: string;
-  projectId: string;
-  cwd: string;
-  name: string | null;
-  archivedAt: string | null;
-}
-
-type PluginTurnOutcome =
-  | { kind: "completed" }
-  | { kind: "failed"; error: { message: string; code?: string } }
-  | { kind: "canceled"; reason: string };
-```
-
-| Field        | Shape / meaning                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------------------- |
-| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens                              |
-| `timeline`   | `readonly AgentTimelineItem[]`; complete snapshot including earlier conversation; text may span items |
-| `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other`                |
-| `resolution` | SDK `AgentPermissionResponse`                                                                         |
-| `archivedAt` | Timestamp string                                                                                      |
-
-### Before hooks
-
-| Name                 | Request fields                                                          | Editable                                |
-| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
-| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
-
-**`agent.create.config`** uses `AgentSessionConfig`:
-
-| Fields                                        | Constraint                                                                 |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
-| `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Opaque provider-specific options                                           |
-| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                                         | Cannot change                                                              |
-
-**`agent.session_open` request example:**
-
-```json
-{
-  "agentId": "agent-123",
-  "workspaceId": "workspace-456",
-  "provider": "codex",
-  "cwd": "/projects/shop",
-  "reason": "resume",
-  "purpose": "interactive",
-  "env": { "COMPANY_ENV": "development" }
-}
-```
-
-| Field         | Values                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | String or `null`                                                                                                        |
-| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
-| `purpose`     | `interactive`, `history`                                                                                                |
-| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
-
-### Ordering and returned values
-
-```text
-Creation request
-  → agent.create hooks (plugin-ID order; registration order within each plugin)
-  → resolve defaults and validate provider configuration
-  → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env only)
-  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
-  → open provider session and save agent configuration
-```
-
-| Callback returns                                        | Next callback receives                              |
-| ------------------------------------------------------- | --------------------------------------------------- |
-| `{ ...request, env: { ...request.env, REGION: "eu" } }` | Prior request with `REGION` added/replaced          |
-| `{ ...request, env: { REGION: "eu" } }`                 | Prior request with the entire override map replaced |
-| `undefined`                                             | Unchanged request                                   |
-| Throws or returns invalid data                          | Operation fails; later callbacks do not run         |
-
-No automatic deep merge. Later callbacks can overwrite earlier values. Agent configuration is
-saved; environment overrides are not persisted with it.
-
-### Context and cleanup
-
-| Contract                           | Behavior                                                                                                  |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `context.paseo`                    | Existing SDK connected to this daemon                                                                     |
-| `context.signal`                   | Aborted on invocation timeout or plugin stop; pass to external requests                                   |
-| Input data                         | Detached snapshot; change state through returned requests or SDK commands                                 |
-| Registration result                | Idempotent remover, e.g. `const remove = server.on(...); remove();`                                       |
-| Reload, disable, removal, shutdown | Remaining registrations removed                                                                           |
-| Unknown hook name                  | Registration fails                                                                                        |
-| Hook timeout                       | 30 seconds; aborts the signal. A before hook fails the pending operation; an event handler logs an error. |
-| Event-handler error                | Logged against plugin; original operation continues                                                       |
-| Event delivery                     | Live, best effort; no replay, persistence, or automatic retry                                             |
-| Event concurrency                  | Different events may overlap; callback completion order is not guaranteed                                 |
-
-### Complete examples
-
-| Plugin                                                                                                 | Includes                                                                     |
-| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
-
-Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
+Register async handlers with `server.addHook(name, handler)`. See [Hooks](/docs/plugins/hooks) for names, payloads, ordering, errors, and complete examples.
 
 ## Screens and sidebar items
 
@@ -2346,7 +2017,7 @@ Hiding preserves the registration, so showing it again restores its position. It
 an action already in progress.
 
 `remove()` is idempotent. Updates after removal do nothing. Paseo removes outstanding buttons when
-the plugin installation or host connection is torn down. Return cleanup from the client entry for
+the plugin installation is disposed (see [Hosts and lifecycle](#hosts-and-lifecycle)). Return cleanup from the client entry for
 your subscriptions, timers, and other resources.
 
 ## Use the Paseo SDK
@@ -2551,9 +2222,167 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
+Inputs are parsed once in the plugin process; outputs are parsed once on the client. Send schema inputs from the client and return output-schema inputs from the handler; schema transforms run at the receiving side. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](/docs/sdk/events) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+
+## Stream events from the daemon {#subscriptions}
+
+A subscription runs a daemon handler for as long as one client listens and sends that client typed
+events. Use it for watchers, tails, and live media; use plugin RPC for a single answer.
+
+Define the contract in `shared/`:
+
+```ts
+// shared/diff.ts
+import { defineSubscription } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const diffWatch = defineSubscription({
+  name: "diff.watch",
+  input: z.object({ cwd: z.string(), from: z.string() }),
+  event: z.object({ type: z.literal("changes"), files: z.array(z.string()) }),
+});
+```
+
+Handle it in `index.server.ts`. The handler receives `push` and an abort `signal` next to `paseo`:
+
+```ts
+server.handle(diffWatch, ({ cwd, from }, { push, signal }) => {
+  const watcher = watchChanges(cwd, from, (files) => void push({ type: "changes", files }));
+  signal.addEventListener("abort", () => watcher.close(), { once: true });
+});
+```
+
+Subscribe from a surface with `useSubscription(contract, input, onEvent)`:
+
+```tsx
+const [files, setFiles] = useState<string[]>([]);
+const subscription = useSubscription(diffWatch, { cwd, from: "HEAD" }, (event) => {
+  setFiles(event.files);
+});
+if (subscription.status === "error") return <Text>{subscription.error.message}</Text>;
+```
+
+Outside React, `client.subscribe` takes the same arguments plus options and returns a remover:
+
+```ts
+const stop = client.subscribe(diffWatch, { cwd, from: "HEAD" }, onChanges, { signal });
+await stop.ready; // the daemon accepted the subscription
+stop(); // or await stop.release()
+```
+
+RPCs and subscriptions share one name space; registering the same name for both fails the plugin
+load.
+
+### Handler lifetime
+
+| The handler...                                | Result                                                       |
+| --------------------------------------------- | ------------------------------------------------------------ |
+| Throws synchronously, or the input is invalid | The subscribe call fails with the error. No events are sent. |
+| Returns nothing                               | The subscription stays open until the client releases it.    |
+| Returns a promise that resolves               | The subscription closes.                                     |
+| Returns a promise that rejects                | The subscription closes with the error.                      |
+
+`signal` aborts when the client releases the subscription, unmounts the hook, changes its input,
+disconnects, or the plugin stops. Pushes after the abort are dropped. `push` validates the event
+against the contract and resolves once the event has left the plugin process; await it in a loop
+to pace a producer.
+
+Each subscriber runs its own handler. Paseo does not share one handler between clients and does
+not replay missed events: after a reconnect or a plugin reload, mounted surfaces subscribe again and
+the handler starts from the beginning. Share an
+expensive watcher inside your plugin when several subscribers need it.
+
+`useSubscription` returns a union on `status`:
+
+| Status       | Meaning                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `connecting` | Sent; the daemon has not accepted it yet.                                                      |
+| `live`       | The handler is running. Events arrive through `onEvent`.                                       |
+| `closed`     | The handler finished.                                                                          |
+| `error`      | The subscribe failed, the handler failed, an event failed the contract, or the plugin stopped. |
+
+The hook subscribes again when `input` changes by shallow equality. `onEvent` is always the latest
+render's callback, so an inline function does not resubscribe. `client.subscribe` takes
+`{ signal, onClosed }`; `onClosed` receives `{ error? }`.
+
+### Bytes
+
+A top-level `Uint8Array` crosses the wire as binary, without JSON or base64. Everything else is
+JSON. The rule applies to subscription events, RPC outputs, and RPC inputs. A Node `Buffer` is a
+`Uint8Array`.
+
+```ts
+export const thumbnail = defineRpc({
+  name: "thumbnail.render",
+  input: z.object({ path: z.string(), width: z.number() }),
+  output: z.instanceof(Uint8Array),
+});
+
+// index.server.ts
+server.handle(thumbnail, ({ path, width }) => renderPng(path, width));
+
+// client
+const renderThumbnail = useRpc(thumbnail);
+const png = await renderThumbnail({ path, width }); // Uint8Array
+```
+
+Declare bytes with `z.instanceof(Uint8Array)`. An event can be bytes or JSON per push: declare a
+union and branch with `event instanceof Uint8Array`. A `Uint8Array` nested in an object fails
+validation on the sending side with an error that names the rule; send the bytes as their own
+event or RPC value and the metadata as a separate JSON event.
+
+One event or RPC value carries at most 100 MiB less 65 KiB of framing. Push large payloads in
+chunks of a few hundred KiB; each `push` waits for the previous one to leave the plugin process.
+Uploads from a phone have a lower limit: Android closes the connection when one send exceeds
+16 MiB, so split a larger upload into several RPCs.
+
+### Several streams on one subscription
+
+Put a header byte in front of each payload to multiplex streams. Keep the layout in `shared/`, so
+the handler and the surface call named functions:
+
+```ts
+// shared/media-frames.ts
+export const MediaOpcode = { Video: 0x01, Audio: 0x02 } as const;
+
+export function encodeMediaFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(1 + payload.byteLength);
+  bytes[0] = opcode;
+  bytes.set(payload, 1);
+  return bytes;
+}
+
+export function decodeMediaFrame(bytes: Uint8Array) {
+  return { opcode: bytes[0], payload: bytes.subarray(1) }; // a view, not a copy
+}
+
+export const mediaStream = defineSubscription({
+  name: "media.stream",
+  input: z.object({ source: z.string() }),
+  event: z.instanceof(Uint8Array),
+});
+```
+
+```ts
+useSubscription(mediaStream, { source }, (bytes) => {
+  const frame = decodeMediaFrame(bytes);
+  if (frame.opcode === MediaOpcode.Audio) audio.enqueue(frame.payload);
+  else video.draw(frame.payload);
+});
+```
+
+Events from one subscription arrive in push order, JSON and binary alike.
+`plugin-examples/media-stream` streams video and audio this way and uploads a frame back through
+an RPC with a `Uint8Array` input; `plugin-examples/diff-watch` watches a working tree.
+
+### Older hosts
+
+Subscriptions and binary RPC values need a host that advertises them. Against an older host,
+`useSubscription` reports `error` asking to update the host, `client.subscribe` rejects `ready`
+with the same message, and an RPC with a `Uint8Array` input or output fails. Raise your plugin's
+`requirements.paseo` to the release that ships subscriptions.
 
 ## Debug backend output
 
@@ -2674,9 +2503,11 @@ Plugins are installed per daemon. When the same contribution exists on several c
 
 Attachment sources remain scoped to each composer's host.
 
-Workspace panels and Command Center items stay scoped to the active host and exact cached context.
-Reload replaces their registrations. Disable, removal, host disconnect, and evaluation failure
-remove Command Center items and clear the installation's query state. An already-restored panel tab
+A dropped connection keeps client plugin registrations, mounted surfaces, local state, and query caches. Reconnecting through the existing `DaemonClient` object keeps unchanged installations and refreshes their settings. Consume SDK observation snapshots to refresh other daemon state; setup does not run again for an unchanged installation. Daemon calls still depend on connectivity.
+
+Switching connections (for example, from direct to relay) currently replaces the `DaemonClient` object and reinstalls client plugins. Reload, changed bundles or requirements, disable, plugin removal, and host removal also dispose affected installations and clear their query state. A replacement that fails evaluation leaves its contributions unavailable.
+
+Workspace panels and Command Center items stay scoped to the active host and exact cached context. An already-restored panel tab
 remains as unavailable until its matching contribution returns or the user closes it. Panel render
 failures stay inside the plugin error boundary.
 

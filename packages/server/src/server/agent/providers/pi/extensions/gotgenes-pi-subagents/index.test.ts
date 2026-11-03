@@ -130,6 +130,18 @@ describe("@gotgenes/pi-subagents adapter", () => {
         .filter((event) => event.event.type === "upsert")
         .map((event) => (event.event.type === "upsert" ? event.event.status : null)),
     ).toEqual(["running", "completed"]);
+    expect(
+      events.flatMap((event) => (event.event.type === "timeline" ? [event.event] : [])),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "call_502323",
+        item: {
+          type: "assistant_message",
+          text: "Agent completed in 4.7s (1 tool uses, 9.0k token).\nAgent ID: 848583f5-6749-4a1\n\nThe workspace is empty.",
+        },
+      },
+    ]);
   });
   test("correlates a background notification and result collection", async () => {
     const source = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url));

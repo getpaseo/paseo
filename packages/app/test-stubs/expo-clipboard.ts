@@ -1,13 +1,10 @@
-/**
- * Browser-test stub for expo-clipboard: the real web entry contains JSX files that break
- * Vite's dependency optimization, and tests fake the clipboard anyway.
- */
+// The package ships JSX in .js files, which the dependency optimizer cannot parse.
 export async function setStringAsync(): Promise<boolean> {
   return true;
 }
-
 export async function getStringAsync(): Promise<string> {
   return "";
 }
-
-export default { setStringAsync, getStringAsync };
+export async function hasStringAsync(): Promise<boolean> {
+  return false;
+}

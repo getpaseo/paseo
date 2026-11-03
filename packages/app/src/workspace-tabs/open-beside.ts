@@ -6,6 +6,7 @@ import {
   DEFAULT_PANE_ID,
   findPaneById,
   findPaneContainingTab,
+  selectSheetTab,
   useWorkspaceLayoutStore,
   type WorkspaceTabPlacement,
 } from "@/stores/workspace-layout-store";
@@ -144,7 +145,7 @@ export function openPreferredWorkspacePreview(
   // The sheet is already a single replaceable slot, so it needs no preview tab.
   if (
     existing ||
-    store.opensInSheet({ workspaceKey: input.workspaceKey, target: input.target, intent: "reveal" })
+    selectSheetTab(store, { workspaceKey: input.workspaceKey, target: input.target }) !== null
   ) {
     return openPreferredWorkspaceTarget(input);
   }

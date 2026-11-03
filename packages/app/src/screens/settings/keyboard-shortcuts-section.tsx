@@ -298,12 +298,12 @@ function ShortcutRow({
         {isCapturing ? (
           <>
             {showDone && (
-              <Button variant="ghost" size="sm" disabled={!captureComplete} onPress={onDone}>
+              <Button variant="ghost" disabled={!captureComplete} onPress={onDone}>
                 {t("settings.shortcuts.actions.done")}
               </Button>
             )}
             {isBindable && (
-              <Button variant="ghost" size="sm" onPress={onCancel}>
+              <Button variant="ghost" onPress={onCancel}>
                 {t("settings.shortcuts.actions.cancel")}
               </Button>
             )}
@@ -447,7 +447,7 @@ export function KeyboardShortcutsSection() {
   }
 
   const resetAllButton = hasOverrides ? (
-    <Button variant="ghost" size="sm" onPress={handleResetAll}>
+    <Button variant="ghost" onPress={handleResetAll}>
       {t("settings.shortcuts.actions.resetAll")}
     </Button>
   ) : undefined;

@@ -69,8 +69,8 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart: 2,
     });
 
-    expect(model.turnTiming.byAssistantId.has("hidden-a")).toBe(false);
-    expect(model.turnTiming.byAssistantId.get("visible-a")).toEqual({
+    expect(model.turnTiming.byItemId.has("hidden-a")).toBe(false);
+    expect(model.turnTiming.byItemId.get("visible-a")).toEqual({
       completedAt: tail[3]?.timestamp,
       durationMs: 1000,
     });
@@ -184,7 +184,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.turnTiming.runningStartedAt).toBe(tail[0]?.timestamp);
-    expect(model.turnTiming.byAssistantId.has("live-a")).toBe(false);
+    expect(model.turnTiming.byItemId.has("live-a")).toBe(false);
   });
 
   it("maps completed turn timing to assistant ids across committed history and live head", () => {
@@ -201,7 +201,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.turnTiming.runningStartedAt).toBe(null);
-    expect(model.turnTiming.byAssistantId.get("live-a")).toEqual({
+    expect(model.turnTiming.byItemId.get("live-a")).toEqual({
       completedAt: head[0]?.timestamp,
       durationMs: 3000,
     });
@@ -220,7 +220,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
-    expect(model.turnTiming.byAssistantId.get("a1")).toEqual({
+    expect(model.turnTiming.byItemId.get("a1")).toEqual({
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,
     });
@@ -238,7 +238,7 @@ describe("buildAgentStreamRenderModel", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(model.turnTiming.byAssistantId.size).toBe(0);
+    expect(model.turnTiming.byItemId.size).toBe(0);
   });
 
   it.each(["web", "native"] as const)(
@@ -274,10 +274,10 @@ describe("buildAgentStreamRenderModel", () => {
 
       expect(second.history).toBe(first.history);
       expect(second.segments.historyMounted).toBe(first.segments.historyMounted);
-      expect(second.turnTiming.byAssistantId).toBe(first.turnTiming.byAssistantId);
+      expect(second.turnTiming.byItemId).toBe(first.turnTiming.byItemId);
       expect(first.history).toHaveLength(20);
-      expect(first.turnTiming.byAssistantId.has("a29")).toBe(false);
-      expect(first.turnTiming.byAssistantId.get("a38")).toEqual({
+      expect(first.turnTiming.byItemId.has("a29")).toBe(false);
+      expect(first.turnTiming.byItemId.get("a38")).toEqual({
         completedAt: tail[77]?.timestamp,
         durationMs: 1000,
       });

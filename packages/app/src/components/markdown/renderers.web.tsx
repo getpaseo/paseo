@@ -6,12 +6,10 @@ import type {
   MarkdownRenderers,
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  useAssistantFileLinkEnvironment,
-  useFileLink,
-} from "@/assistant-file-links";
+import { useAssistantFileLinkEnvironment, useFileLink } from "@/assistant-file-links";
 import { AssistantFileLinkContextMenuContent } from "@/assistant-file-links/file-context-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { isWeb } from "@/constants/platform";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -41,9 +39,15 @@ const LINK_CONTEXT_TRIGGER_STYLE: ViewStyle = {
 const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
 
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
-  const source = markdownLinkSource(link.url, link.sourceType);
+  const forgeShorthand = useForgeShorthand();
+  // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
+  const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
+  const source = forgeUrl
+    ? markdownLinkSource(forgeUrl)
+    : markdownLinkSource(link.url, link.sourceType);
   const { target, open, tooltipPath, onHoverIn } = useFileLink(source);
   const { workspaceRoot, serverId } = useAssistantFileLinkEnvironment();
+  const tooltip = forgeUrl ?? tooltipPath;
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
@@ -58,6 +62,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const anchor = (
     <a
       {...anchorProps}
+      href={forgeUrl ?? anchorProps.href}
       style={anchorStyle}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -88,10 +93,10 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
         <InlineLinkTrigger>{anchorWithContextMenu}</InlineLinkTrigger>
       </TooltipTrigger>
-      {tooltipPath ? (
+      {tooltip ? (
         <TooltipContent side="top" align="start" maxWidth={520}>
           <Text selectable={false} style={styles.tooltipPath}>
-            {tooltipPath}
+            {tooltip}
           </Text>
         </TooltipContent>
       ) : null}
