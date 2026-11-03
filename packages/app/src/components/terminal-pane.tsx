@@ -279,7 +279,7 @@ export function TerminalPane({
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
-  const { requestDirectoryListing } = useFileExplorerActions({
+  const { revealDirectory } = useFileExplorerActions({
     serverId,
     workspaceId,
     workspaceRoot: cwd,
@@ -1066,7 +1066,9 @@ export function TerminalPane({
       };
 
       const openFilesExplorerAt = (directoryPath: string) => {
-        void requestDirectoryListing(directoryPath);
+        // Reveal (load ancestors, expand the chain, select the folder) instead of a bare
+        // listing request, which leaves the tree unchanged and the folder hidden.
+        void revealDirectory(directoryPath);
         openExplorerSidebarView({
           isCompact: isMobile,
           workspaceKey: buildWorkspaceTabPersistenceKey({
@@ -1112,7 +1114,7 @@ export function TerminalPane({
       fileManagerTarget,
       isMobile,
       onOpenWorkspaceFile,
-      requestDirectoryListing,
+      revealDirectory,
       serverId,
       t,
       toast,

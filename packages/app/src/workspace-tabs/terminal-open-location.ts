@@ -3,6 +3,7 @@ import type { TerminalTabDestination } from "@/screens/workspace/terminals/use-w
 import {
   collectAllTabs,
   findPaneById,
+  findPaneContainingTab,
   useWorkspaceLayoutStore,
   type WorkspaceTabPlacement,
 } from "@/stores/workspace-layout-store";
@@ -71,7 +72,12 @@ export function placeTerminalTabInPane(input: {
   const existing = collectAllTabs(layout.root).find(
     (tab) => tab.target.kind === "terminal" && tab.target.terminalId === input.terminalId,
   );
-  if (!existing || !placeholder || existing.tabId === placeholder.tabId) {
+  const existingPane = existing ? findPaneContainingTab(layout.root, existing.tabId) : null;
+  if (
+    !existing ||
+    existingPane?.id === input.placement.paneId ||
+    (placeholder && existing.tabId === placeholder.tabId)
+  ) {
     store.openTab({
       workspaceKey: input.workspaceKey,
       target: { kind: "terminal", terminalId: input.terminalId },
@@ -81,10 +87,25 @@ export function placeTerminalTabInPane(input: {
     return;
   }
 
+  if (placeholder) {
+    store.replaceTab(input.workspaceKey, existing.tabId, { kind: "new_tab" });
+    store.replaceTab(input.workspaceKey, placeholder.tabId, {
+      kind: "terminal",
+      terminalId: input.terminalId,
+    });
+    store.focusTab(input.workspaceKey, placeholder.tabId);
+    return;
+  }
+
+  // The reconcile race landed the terminal in the focused pane and the destination holds no
+  // New tab placeholder to swap with. "prefer" would only focus the terminal where it is,
+  // so move it instead: leave a fresh placeholder behind and open the terminal at the
+  // destination the preference names.
   store.replaceTab(input.workspaceKey, existing.tabId, { kind: "new_tab" });
-  store.replaceTab(input.workspaceKey, placeholder.tabId, {
-    kind: "terminal",
-    terminalId: input.terminalId,
+  store.openTab({
+    workspaceKey: input.workspaceKey,
+    target: { kind: "terminal", terminalId: input.terminalId },
+    intent: "reveal",
+    placement: input.placement,
   });
-  store.focusTab(input.workspaceKey, placeholder.tabId);
 }
