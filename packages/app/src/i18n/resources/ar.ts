@@ -2630,6 +2630,7 @@ export const ar: TranslationResources = {
     shortcuts: {
       dialogTitle: "الاختصارات",
       searchPlaceholder: "البحث في الاختصارات",
+      clearSearch: "مسح بحث الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
       capturePrompt: "اضغط على الاختصار...",
       captureIndexPrompt: "اختم برقم من 1 إلى 9.",

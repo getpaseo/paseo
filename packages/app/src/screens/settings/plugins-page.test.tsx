@@ -183,6 +183,70 @@ describe("HostPluginsPage", () => {
     expect(await screen.findByText("No plugins configured")).toBeDefined();
   });
 
+  it("narrows the plugin list to the filter match", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([
+      { ...plugin(), id: "annotations", description: "Comment on any part of an answer" },
+      { ...plugin(false), id: "beautiful-chat", description: "Every agent on one board" },
+    ]);
+    renderPage(client);
+
+    await screen.findByText("beautiful-chat");
+    fireEvent.change(screen.getByTestId("plugin-filter-input"), {
+      target: { value: "ANNOT" },
+    });
+
+    expect(screen.getByText("annotations")).toBeDefined();
+    expect(screen.queryByText("beautiful-chat")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear plugin filter" }));
+
+    expect(await screen.findByText("beautiful-chat")).toBeDefined();
+  });
+
+  it("matches the plugin description and installation source", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([
+      { ...plugin(), id: "annotations", description: "Comment on any part of an answer" },
+      {
+        ...plugin(false),
+        id: "beautiful-chat",
+        description: "Every agent on one board",
+        installation: {
+          identity: {
+            kind: "npm",
+            packageName: "@aborakati/beautiful-chat",
+            pluginPath: ".",
+            registry: { url: "https://plugins.paseo.sh", id: "aborakati/beautiful-chat" },
+          },
+        },
+      },
+    ]);
+    renderPage(client);
+
+    await screen.findByText("beautiful-chat");
+    fireEvent.change(screen.getByTestId("plugin-filter-input"), {
+      target: { value: "aborakati" },
+    });
+
+    expect(screen.getByText("beautiful-chat")).toBeDefined();
+    expect(screen.queryByText("annotations")).toBeNull();
+  });
+
+  it("says so when no plugin matches the filter", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    renderPage(client);
+
+    await screen.findByText("example");
+    fireEvent.change(screen.getByTestId("plugin-filter-input"), {
+      target: { value: "nothing-matches-this" },
+    });
+
+    expect(await screen.findByText("No plugins match the filter")).toBeDefined();
+    expect(screen.queryByText("example")).toBeNull();
+  });
+
   it.each([
     ["reloadPlugin", "Reload"],
     ["removePlugin", "Remove"],
