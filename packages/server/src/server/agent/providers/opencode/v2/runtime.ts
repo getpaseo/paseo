@@ -16,7 +16,13 @@ import type { ManagedProcessRegistry } from "../../../../managed-processes/manag
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
-import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
+import {
+  SERVER_SCOPE_ENV,
+  resolveExternalOpenCodeServer,
+  resolveOpenCodeServerScope,
+  type ExternalOpenCodeServer,
+  type OpenCodeServerScope,
+} from "./external-server.js";
 import { selectOpenCodeService, type OpenCodeServiceSelection } from "./service-selection.js";
 import { bridgeBindings, connectSharedService } from "./shared-service.js";
 import {
@@ -59,6 +65,8 @@ export interface V2RuntimeAcquireOptions {
   fresh?: boolean;
   dedicated?: boolean;
   env?: Record<string, string>;
+  /** The agent's workspace, which selects its helper when the scope is `workspace`. */
+  workspaceId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -68,20 +76,23 @@ export class V2Runtime {
   private generations = new Set<Generation>();
   private starts = new Set<Promise<Generation>>();
   private closed = false;
+  // Helpers started for one workspace each, while the scope is `workspace`.
+  private workspaces = new Map<string, Promise<Generation>>();
   private readonly selection: Promise<OpenCodeServiceSelection>;
+  private readonly scope: OpenCodeServerScope;
 
   constructor(private readonly options: V2RuntimeOptions) {
+    const env = { ...globalThis.process.env, ...options.settings?.env };
+    this.scope = resolveOpenCodeServerScope(env);
     this.selection = options.selection
       ? Promise.resolve(options.selection)
       : selectOpenCodeService({
-          explicit:
-            options.externalServer ??
-            resolveExternalOpenCodeServer({
-              ...globalThis.process.env,
-              ...options.settings?.env,
-            }),
+          explicit: options.externalServer ?? resolveExternalOpenCodeServer(env),
           env: options.settings?.env,
+          scope: this.scope,
         });
+    // A configuration error surfaces from acquire(); this keeps it from being unhandled until then.
+    this.selection.catch(() => undefined);
   }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
@@ -89,17 +100,7 @@ export class V2Runtime {
     input.signal?.throwIfAborted();
     this.assertBridgePort();
     const selection = await raceProviderRefreshAbort(input.signal, this.selection);
-    let pending: Promise<Generation>;
-    if (selection.kind !== "owned") {
-      this.assertSharedConfiguration(input, selection);
-      this.current ??= this.startTracked();
-      pending = this.current;
-    } else if (input.env || input.dedicated) {
-      pending = this.startTracked(input.env);
-    } else {
-      if (!this.current) this.current = this.startTracked();
-      pending = this.current;
-    }
+    const pending = this.pendingGeneration(input, selection);
     let generation: Generation;
     try {
       generation = await raceProviderRefreshAbort(input.signal, pending);
@@ -135,6 +136,23 @@ export class V2Runtime {
     return connection;
   }
 
+  private pendingGeneration(
+    input: V2RuntimeAcquireOptions,
+    selection: OpenCodeServiceSelection,
+  ): Promise<Generation> {
+    if (selection.kind !== "owned") {
+      this.assertSharedConfiguration(input, selection);
+      this.current ??= this.startTracked();
+      return this.current;
+    }
+    if (input.env || input.dedicated)
+      return this.startTracked(this.withWorkspace(input.env, input.workspaceId));
+    if (this.scope === "workspace" && input.workspaceId)
+      return this.workspaceHelper(input.workspaceId);
+    this.current ??= this.startTracked();
+    return this.current;
+  }
+
   private assertBridgePort(): void {
     const port = this.options.settings?.env?.PASEO_OPENCODE_BRIDGE_PORT;
     if (!port || !this.options.bridge) return;
@@ -152,6 +170,7 @@ export class V2Runtime {
       "PASEO_OPENCODE_SERVER_PASSWORD",
       "PASEO_OPENCODE_BRIDGE_URL",
       "PASEO_OPENCODE_BRIDGE_PORT",
+      SERVER_SCOPE_ENV,
     ]);
     if (selection.kind === "discovered") {
       connectionEnv.add("XDG_CONFIG_HOME");
@@ -179,6 +198,7 @@ export class V2Runtime {
       generation.users -= 1;
       if (generation.users !== 0) return;
       if (this.current === pending) return;
+      this.forgetWorkspaceHelper(pending);
       this.generations.delete(generation);
       await generation.stop();
     };
@@ -198,7 +218,33 @@ export class V2Runtime {
     await Promise.allSettled(this.starts);
     await Promise.all([...this.generations].map((generation) => generation.stop()));
     this.generations.clear();
+    this.workspaces.clear();
     this.current = null;
+  }
+
+  // Paseo's own helpers outside the shared scope learn their workspace, so a launch command
+  // such as a sandbox wrapper can find it without per-agent environment.
+  private withWorkspace(
+    env: Record<string, string> | undefined,
+    workspaceId: string | null | undefined,
+  ): Record<string, string> | undefined {
+    if (this.scope === "shared" || !workspaceId) return env;
+    return { ...env, PASEO_WORKSPACE_ID: workspaceId };
+  }
+
+  private workspaceHelper(workspaceId: string): Promise<Generation> {
+    const existing = this.workspaces.get(workspaceId);
+    if (existing) return existing;
+    const pending = this.startTracked({ PASEO_WORKSPACE_ID: workspaceId });
+    this.workspaces.set(workspaceId, pending);
+    const forget = () => this.forgetWorkspaceHelper(pending);
+    void pending.then((generation) => generation.exited.then(forget), forget);
+    return pending;
+  }
+
+  private forgetWorkspaceHelper(pending: Promise<Generation>): void {
+    for (const [workspaceId, helper] of this.workspaces)
+      if (helper === pending) this.workspaces.delete(workspaceId);
   }
 
   private startTracked(env?: Record<string, string>): Promise<Generation> {

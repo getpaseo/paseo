@@ -19,7 +19,12 @@ import {
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
-import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
+import {
+  SERVER_SCOPE_ENV,
+  resolveExternalOpenCodeServer,
+  resolveOpenCodeServerScope,
+  type OpenCodeServerScope,
+} from "./v2/external-server.js";
 import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 import { selectOpenCodeService } from "./v2/service-selection.js";
 
@@ -69,14 +74,29 @@ export class OpenCodeRuntimeClient implements AgentClient {
     this.resolveCreateConfig = this.legacy.resolveCreateConfig;
     this.isCreateConfigUnattended = this.legacy.isCreateConfigUnattended;
   }
-  private selectService() {
+  private connectionEnv() {
+    return { ...globalThis.process.env, ...this.settings?.env };
+  }
+  private async selectService() {
     return selectOpenCodeService({
-      explicit: resolveExternalOpenCodeServer({ ...globalThis.process.env, ...this.settings?.env }),
+      explicit: resolveExternalOpenCodeServer(this.connectionEnv()),
       env: this.settings?.env,
+      scope: resolveOpenCodeServerScope(this.connectionEnv()),
     });
+  }
+  // The legacy adapter shares one helper manager across providers and ignores the scope, so a
+  // scoped provider fails rather than running its agents in another provider's helper.
+  private legacyFallback(scope: OpenCodeServerScope): OpenCodeAgentClient {
+    if (scope !== "shared")
+      throw new Error(
+        `${SERVER_SCOPE_ENV}=${scope} requires OpenCode 2.0.10 or newer, and this provider's command did not report it`,
+      );
+    this.legacySelected = true;
+    return this.legacy;
   }
   private client(): Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> {
     this.selected ??= (async () => {
+      const scope = resolveOpenCodeServerScope(this.connectionEnv());
       const selection = await this.selectService();
       if (selection.kind !== "owned") {
         const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
@@ -102,14 +122,10 @@ export class OpenCodeRuntimeClient implements AgentClient {
       } catch {
         // Version discovery is additive: legacy wrappers need not support --version.
         this.selected = null;
-        this.legacySelected = true;
-        return this.legacy;
+        return this.legacyFallback(scope);
       }
       if (!VERSION_PATTERN.test(output.trim())) this.selected = null;
-      if (openCodeMajorVersion(output) === 1) {
-        this.legacySelected = true;
-        return this.legacy;
-      }
+      if (openCodeMajorVersion(output) === 1) return this.legacyFallback(scope);
       const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
       return new OpenCodeV2AgentClient({
         logger: this.logger,
