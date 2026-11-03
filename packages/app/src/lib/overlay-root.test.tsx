@@ -3,6 +3,7 @@ import { useOverlayRegistration } from "@/keyboard";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchTopOverlayKeyDown } from "@/keyboard";
+import { useGlobalOverlayLayer } from "./overlay-root";
 
 describe("useOverlayRegistration", () => {
   let opener: HTMLButtonElement;
@@ -103,5 +104,34 @@ describe("useOverlayRegistration", () => {
     const event = new KeyboardEvent("keydown", { key: "Process", bubbles: true });
     expect(dispatchTopOverlayKeyDown(event)).toBe(false);
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe("useGlobalOverlayLayer", () => {
+  it("keeps its opening layer when a higher overlay registers before a rerender", () => {
+    const original = renderHook(({ active }) => useGlobalOverlayLayer("modal", active), {
+      initialProps: { active: false },
+    });
+    original.rerender({ active: true });
+    expect(original.result.current).toBe(20);
+    const higher = renderHook(() =>
+      useOverlayRegistration({
+        active: true,
+        layer: 200,
+        keys: ["Escape"],
+        manageFocus: false,
+        onKeyDown: () => false,
+      }),
+    );
+    try {
+      original.rerender({ active: true });
+      expect(original.result.current).toBe(20);
+      original.rerender({ active: false });
+      original.rerender({ active: true });
+      expect(original.result.current).toBe(220);
+    } finally {
+      higher.unmount();
+      original.unmount();
+    }
   });
 });

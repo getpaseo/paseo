@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useMemo, type ReactNode } from "react";
+import { createContext, createElement, useContext, useState, type ReactNode } from "react";
 import { getTopOverlayLayer } from "@/keyboard";
 
 /**
@@ -56,11 +56,25 @@ export function useOverlayLayer(kind: OverlayKind): number {
  */
 export function useGlobalOverlayLayer(kind: OverlayKind, active: boolean): number {
   const contextualLayer = useOverlayLayer(kind);
-  return useMemo(() => {
-    if (!active) return contextualLayer;
-    const topLayer = getTopOverlayLayer();
-    return Math.max(contextualLayer, topLayer + OVERLAY_Z[kind]);
-  }, [active, contextualLayer, kind]);
+  const captureOpening = () => ({
+    active,
+    contextualLayer,
+    kind,
+    layer: active
+      ? Math.max(contextualLayer, getTopOverlayLayer() + OVERLAY_Z[kind])
+      : contextualLayer,
+  });
+  const [opening, setOpening] = useState(captureOpening);
+  if (
+    opening.active !== active ||
+    opening.contextualLayer !== contextualLayer ||
+    opening.kind !== kind
+  ) {
+    const next = captureOpening();
+    setOpening(next);
+    return next.layer;
+  }
+  return opening.layer;
 }
 
 export function useCurrentOverlayLayer(): number {

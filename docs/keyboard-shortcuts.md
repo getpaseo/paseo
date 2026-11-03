@@ -53,6 +53,10 @@ Pass the surface's open state, layer, handled keys and `onKeyDown`. The highest
 layer gets first refusal; the latest registration wins a tie. Native registration
 does not need a DOM ref. Web adds focus trapping and restoration through its adapter.
 
+Capture a global overlay’s layer in state for its opening lifetime. Memo caches can
+be discarded or removed by React Compiler; recomputing against the registry lets an
+open modal rise above its own children and creates competing focus traps.
+
 Declare Enter and arrow keys only while the surface owns them. Native sources
 use the top overlay's declarations to take those keys before text controls edit.
 Backspace stays with the focused input. Composition confirmation must not select
