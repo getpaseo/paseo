@@ -2,54 +2,392 @@ import type {
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
-import type { Step } from "./wire.js";
+import type { AcpToolCallPayload, JsonValue } from "./wire.js";
 
-export function toolItem(
-  step: Step,
-  id: string,
-): Extract<ProviderTimelineItem, { type: "tool_call" }> {
-  const detail = toolDetail(step);
-  const name = step.tool_name || "Antigravity tool";
-  const metadata = step.subagent_info ? { subagents: step.subagent_info.subagents } : undefined;
-  const base = { type: "tool_call" as const, id, callId: id, name, detail, metadata };
-  if (step.state === "ERROR") {
-    const error =
-      step.tool_info && step.tool_info.error
-        ? step.tool_info.error.message
-        : "Antigravity tool failed";
-    return { ...base, status: "failed", error };
-  }
-  const status = step.state === "ACTIVE" ? "running" : "completed";
-  return { ...base, status, error: null };
+export function mergeAcpToolCall(
+  previous: AcpToolCallPayload | undefined,
+  incoming: AcpToolCallPayload,
+): AcpToolCallPayload {
+  if (!previous) return incoming;
+  return {
+    toolCallId: incoming.toolCallId,
+    title: incoming.title ?? previous.title,
+    kind: incoming.kind ?? previous.kind,
+    status: incoming.status ?? previous.status,
+    rawInput: incoming.rawInput !== undefined ? incoming.rawInput : previous.rawInput,
+    rawOutput: incoming.rawOutput !== undefined ? incoming.rawOutput : previous.rawOutput,
+    locations: incoming.locations ?? previous.locations,
+    content: incoming.content ?? previous.content,
+  };
 }
 
-function toolDetail(step: Step): ProviderToolCallDetail {
-  if (step.subagent_info) {
-    const child = step.subagent_info.subagents[0];
-    if (child)
-      return {
-        type: "sub_agent",
-        subAgentType: child.type_name,
-        description: child.initial_prompt,
-        childSessionId: child.conversation_id === null ? undefined : child.conversation_id,
-        log: child.log_uri,
-      };
+const INPUT_FIELD_TOOL_NAMES: ReadonlyArray<[string, string]> = [
+  ["CommandLine", "run_command"],
+  ["CommandId", "send_command_input"],
+  ["Terminate", "send_command_input"],
+  ["TypeName", "invoke_subagent"],
+  ["ConversationIds", "invoke_subagent"],
+  ["ReplacementChunks", "multi_replace_file_content"],
+  ["TargetContent", "replace_file_content"],
+  ["ReplacementContent", "replace_file_content"],
+  ["CodeContent", "write_to_file"],
+  ["AbsolutePath", "view_file"],
+  ["Query", "grep_search"],
+  ["Pattern", "find_by_name"],
+  ["DirectoryPath", "list_dir"],
+];
+
+export function inferToolName(tool: AcpToolCallPayload): string {
+  const input = asRecord(tool.rawInput);
+  if (input) {
+    const inferred = inferToolNameFromInput(input);
+    if (inferred) return inferred;
   }
-  const info = step.tool_info;
-  if (!info) return { type: "plain_text", label: step.tool_name, text: "" };
-  const path = info.parameters.AbsolutePath || info.parameters.TargetFile;
-  if (info.name === "run_command" && typeof info.parameters.CommandLine === "string") {
-    return { type: "shell", command: info.parameters.CommandLine, output: info.output };
+  const title = tool.title?.trim();
+  if (title) return title;
+  return tool.kind?.trim() || "tool";
+}
+
+function inferToolNameFromInput(input: Record<string, unknown>): string | undefined {
+  const explicit = stringField(input, "toolName") ?? stringField(input, "_toolName");
+  if (explicit) return explicit;
+  for (const [field, toolName] of INPUT_FIELD_TOOL_NAMES) {
+    if (field in input) return toolName;
   }
-  if (info.name === "view_file" && typeof path === "string")
-    return { type: "read", filePath: path, content: info.output };
-  if (info.name === "write_to_file" && typeof path === "string")
-    return { type: "write", filePath: path };
+  if ("Replacement" in input && "Target" in input) return "edit_file";
+  if ("Content" in input && ("TargetFile" in input || "Path" in input)) return "write_to_file";
+  if ("Path" in input && !("Content" in input)) return "view_file";
+  return undefined;
+}
+
+export function mapAcpToolCall(
+  tool: AcpToolCallPayload,
+): Extract<ProviderTimelineItem, { type: "tool_call" }> {
+  const name = inferToolName(tool);
+  const input = jsonRecord(tool.rawInput);
+  const output = extractToolOutputText(tool);
+  const detail = mapAcpToolDetail(tool, name, input, output);
+  if (tool.status === "failed") {
+    return {
+      type: "tool_call",
+      id: tool.toolCallId,
+      callId: tool.toolCallId,
+      name,
+      status: "failed",
+      error: output ?? "Tool call failed",
+      detail,
+    };
+  }
+  const status = tool.status === "completed" ? "completed" : "running";
+  return {
+    type: "tool_call",
+    id: tool.toolCallId,
+    callId: tool.toolCallId,
+    name,
+    status,
+    error: null,
+    detail,
+  };
+}
+
+export function mapAcpToolDetail(
+  tool: AcpToolCallPayload,
+  name = inferToolName(tool),
+  input = jsonRecord(tool.rawInput),
+  output = extractToolOutputText(tool),
+): ProviderToolCallDetail {
+  const rawInput = input ?? {};
+  const rawOutput = asRecord(tool.rawOutput);
+
+  return (
+    trySubAgentDetail(name, rawInput, rawOutput, output) ??
+    tryShellDetail(tool, name, rawInput, rawOutput, output) ??
+    tryFileDetail(tool, name, rawInput, output) ??
+    trySearchDetail(tool, name, rawInput) ?? {
+      type: "unknown",
+      input: (tool.rawInput as JsonValue | undefined) ?? null,
+      output: (tool.rawOutput as JsonValue | undefined) ?? output ?? null,
+    }
+  );
+}
+
+function trySubAgentDetail(
+  name: string,
+  rawInput: Record<string, unknown>,
+  rawOutput: Record<string, unknown> | undefined,
+  output: string | undefined,
+): ProviderToolCallDetail | undefined {
   if (
-    (info.name === "replace_file_content" || info.name === "multi_replace_file_content") &&
-    typeof path === "string"
-  )
-    return { type: "edit", filePath: path };
-  // Native frames summarize writes; they do not carry the file contents or diff.
-  return { type: "unknown", input: info.parameters, output: info.error || info.output };
+    name !== "invoke_subagent" &&
+    name !== "manage_subagents" &&
+    !("TypeName" in rawInput) &&
+    !("ConversationIds" in rawInput)
+  ) {
+    return undefined;
+  }
+  const childSessionId =
+    firstString(rawOutput?.conversationIds) ??
+    stringField(rawOutput, "conversationId") ??
+    firstString(rawInput.ConversationIds) ??
+    extractSubagentId(output);
+  const agentType = stringField(rawInput, "TypeName");
+  const description = stringField(rawInput, "Role");
+  const prompt = stringField(rawInput, "Prompt");
+  return {
+    type: "sub_agent",
+    ...(childSessionId ? { childSessionId } : {}),
+    ...(agentType ? { subAgentType: agentType } : {}),
+    ...(description ? { description } : {}),
+    log: output ?? prompt ?? "",
+  };
+}
+
+function tryShellDetail(
+  tool: AcpToolCallPayload,
+  name: string,
+  rawInput: Record<string, unknown>,
+  rawOutput: Record<string, unknown> | undefined,
+  output: string | undefined,
+): ProviderToolCallDetail | undefined {
+  const command =
+    stringField(rawInput, "CommandLine") ??
+    stringField(rawInput, "command") ??
+    (tool.kind === "execute" ? tool.title?.trim() : undefined);
+  if (!command && name !== "run_command" && tool.kind !== "execute") {
+    return undefined;
+  }
+  const cwd = stringField(rawInput, "Cwd") ?? stringField(rawInput, "cwd");
+  const exitCode = typeof rawOutput?.exitCode === "number" ? rawOutput.exitCode : undefined;
+  return {
+    type: "shell",
+    command: command || name,
+    ...(cwd ? { cwd } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+  };
+}
+
+function tryFileDetail(
+  tool: AcpToolCallPayload,
+  name: string,
+  rawInput: Record<string, unknown>,
+  output: string | undefined,
+): ProviderToolCallDetail | undefined {
+  const diffItem = tool.content?.find((item) => item.type === "diff");
+  const filePath = resolveToolFilePath(tool, rawInput, diffItem?.path);
+  if (diffItem) {
+    return {
+      type: "edit",
+      filePath: diffItem.path,
+      ...(diffItem.oldText ? { oldString: diffItem.oldText } : {}),
+      newString: diffItem.newText,
+    };
+  }
+  if (!filePath) return undefined;
+
+  if (isEditToolName(tool.kind, name)) {
+    const oldString =
+      stringField(rawInput, "TargetContent") ??
+      stringField(rawInput, "Target") ??
+      joinChunkField(rawInput.ReplacementChunks, "TargetContent");
+    const newString =
+      stringField(rawInput, "ReplacementContent") ??
+      stringField(rawInput, "Replacement") ??
+      joinChunkField(rawInput.ReplacementChunks, "ReplacementContent");
+    return {
+      type: "edit",
+      filePath,
+      ...(oldString !== undefined ? { oldString } : {}),
+      ...(newString !== undefined ? { newString } : {}),
+    };
+  }
+
+  const writeContent = stringField(rawInput, "CodeContent") ?? stringField(rawInput, "Content");
+  if (writeContent !== undefined || isWriteToolName(tool.kind, name)) {
+    return {
+      type: "write",
+      filePath,
+      ...(writeContent !== undefined ? { content: writeContent } : {}),
+    };
+  }
+
+  if (isReadToolName(tool.kind, name) || "AbsolutePath" in rawInput) {
+    return buildReadDetail(tool, rawInput, filePath, output);
+  }
+  return undefined;
+}
+
+function resolveToolFilePath(
+  tool: AcpToolCallPayload,
+  rawInput: Record<string, unknown>,
+  diffPath: string | undefined,
+): string | undefined {
+  return (
+    diffPath ??
+    stringField(rawInput, "TargetFile") ??
+    stringField(rawInput, "AbsolutePath") ??
+    stringField(rawInput, "Path") ??
+    stringField(rawInput, "filePath") ??
+    tool.locations?.[0]?.path
+  );
+}
+
+function isEditToolName(kind: string | null | undefined, name: string): boolean {
+  return (
+    kind === "edit" ||
+    name === "replace_file_content" ||
+    name === "multi_replace_file_content" ||
+    name === "edit_file"
+  );
+}
+
+function isWriteToolName(kind: string | null | undefined, name: string): boolean {
+  return kind === "write" || name === "write_to_file" || name === "write_file";
+}
+
+function isReadToolName(kind: string | null | undefined, name: string): boolean {
+  return kind === "read" || name === "view_file" || name === "read_file";
+}
+
+function buildReadDetail(
+  tool: AcpToolCallPayload,
+  rawInput: Record<string, unknown>,
+  filePath: string,
+  output: string | undefined,
+): ProviderToolCallDetail {
+  const startLine = numberField(rawInput, "StartLine") ?? tool.locations?.[0]?.line ?? undefined;
+  const endLine = numberField(rawInput, "EndLine");
+  const limit =
+    startLine !== undefined && endLine !== undefined && endLine >= startLine
+      ? endLine - startLine + 1
+      : undefined;
+  return {
+    type: "read",
+    filePath,
+    ...(output !== undefined ? { content: output } : {}),
+    ...(startLine !== undefined ? { offset: startLine } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  };
+}
+
+function trySearchDetail(
+  tool: AcpToolCallPayload,
+  name: string,
+  rawInput: Record<string, unknown>,
+): ProviderToolCallDetail | undefined {
+  const query =
+    stringField(rawInput, "Query") ??
+    stringField(rawInput, "Pattern") ??
+    stringField(rawInput, "SearchPath") ??
+    stringField(rawInput, "DirectoryPath") ??
+    stringField(rawInput, "query");
+  if (!query && tool.kind !== "search") return undefined;
+  return {
+    type: "search",
+    query: query || tool.title?.trim() || name,
+  };
+}
+
+export function isEditOrReadTool(
+  tool: AcpToolCallPayload,
+  detail: ProviderToolCallDetail,
+): boolean {
+  if (
+    detail.type === "edit" ||
+    detail.type === "write" ||
+    detail.type === "read" ||
+    detail.type === "search"
+  ) {
+    return true;
+  }
+  return (
+    tool.kind === "edit" || tool.kind === "write" || tool.kind === "read" || tool.kind === "search"
+  );
+}
+
+export function extractTargetPaths(
+  tool: AcpToolCallPayload,
+  detail: ProviderToolCallDetail,
+): string[] {
+  const paths = new Set<string>();
+  if (detail.type === "read" || detail.type === "write" || detail.type === "edit") {
+    paths.add(detail.filePath);
+  }
+  for (const loc of tool.locations ?? []) {
+    if (loc.path) paths.add(loc.path);
+  }
+  const input = asRecord(tool.rawInput);
+  if (input) {
+    for (const key of ["AbsolutePath", "Path", "TargetFile", "SearchPath", "DirectoryPath"]) {
+      const value = stringField(input, key);
+      if (value) paths.add(value);
+    }
+  }
+  return [...paths];
+}
+
+function extractToolOutputText(tool: AcpToolCallPayload): string | undefined {
+  const parts: string[] = [];
+  for (const item of tool.content ?? []) {
+    if (item.type === "content" && item.content.type === "text" && item.content.text) {
+      parts.push(item.content.text);
+    }
+  }
+  if (parts.length > 0) return parts.join("\n");
+
+  if (typeof tool.rawOutput === "string") return tool.rawOutput;
+  const record = asRecord(tool.rawOutput);
+  if (record) {
+    if (typeof record.output === "string") return record.output;
+    if (typeof record.content === "string") return record.content;
+    if (typeof record.result === "string") return record.result;
+    if (typeof record.error === "string") return record.error;
+  }
+  return undefined;
+}
+
+function extractSubagentId(output: string | undefined): string | undefined {
+  if (!output) return undefined;
+  return (
+    /conversation:\/\/([0-9a-f-]{36})/i.exec(output)?.[1] ??
+    /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(output)?.[1]
+  );
+}
+
+function joinChunkField(chunks: unknown, key: string): string | undefined {
+  if (!Array.isArray(chunks)) return undefined;
+  const parts = chunks
+    .map((chunk) =>
+      typeof chunk === "object" && chunk !== null && !Array.isArray(chunk)
+        ? stringField(chunk as Record<string, unknown>, key)
+        : undefined,
+    )
+    .filter((value): value is string => value !== undefined);
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function jsonRecord(value: unknown): Record<string, JsonValue> | undefined {
+  return asRecord(value) as Record<string, JsonValue> | undefined;
+}
+
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function firstString(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const first = value[0];
+  return typeof first === "string" && first.length > 0 ? first : undefined;
 }

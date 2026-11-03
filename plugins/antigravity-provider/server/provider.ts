@@ -15,9 +15,11 @@ import { AntigravityError } from "./internal/wire.js";
 
 const capabilities = [
   "prompt.message",
+  "prompt.command",
   "prompt.image",
   "session.configure",
   "session.persistence",
+  "permission",
 ] as const;
 
 export function createAntigravityProvider(): ProviderRegistration {
@@ -44,9 +46,15 @@ export function createAntigravityProvider(): ProviderRegistration {
     },
     async connect(request) {
       if (!request.versions.includes(1))
-        throw new AntigravityError("Provider protocol version 1 is required");
+        throw new AntigravityError(
+          "Provider protocol version 1 is required",
+          "UNSUPPORTED_VERSION",
+        );
       if (!request.launch)
-        throw new AntigravityError("The daemon must supply the Antigravity launch");
+        throw new AntigravityError(
+          "The daemon must supply the Antigravity launch",
+          "MISSING_LAUNCH",
+        );
       const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
       return createConnection(request.launch, negotiated);
     },
@@ -69,12 +77,12 @@ function createConnection(
   }
   function catalog(): ProviderCatalog {
     if (discovered === null)
-      throw new AntigravityError("Antigravity catalog has not been discovered");
+      throw new AntigravityError("Antigravity catalog has not been discovered", "MISSING_CATALOG");
     return discovered;
   }
   function session(id: string): Session {
     const found = sessions.get(id);
-    if (!found) throw new AntigravityError(`Unknown Antigravity session: ${id}`);
+    if (!found) throw new AntigravityError(`Unknown Antigravity session: ${id}`, "UNKNOWN_SESSION");
     return found;
   }
   async function dispatch(input: ProviderInput): Promise<void> {
@@ -89,7 +97,10 @@ function createConnection(
         return;
       case "session.open": {
         if (sessions.has(input.sessionId))
-          throw new AntigravityError(`Session already exists: ${input.sessionId}`);
+          throw new AntigravityError(
+            `Session already exists: ${input.sessionId}`,
+            "DUPLICATE_SESSION",
+          );
         if (discovered === null) discovered = await getCatalog(launch, input.config.cwd);
         const opened = new Session({
           id: input.sessionId,
@@ -112,8 +123,11 @@ function createConnection(
       case "session.prompt":
         await session(input.sessionId).prompt(input.prompt);
         return;
+      case "session.permission":
+        session(input.sessionId).respondToPermission(input.permissionId, input.response);
+        return;
       case "session.configure":
-        session(input.sessionId).configure(input.changes);
+        await session(input.sessionId).configure(input.changes);
         break;
       case "session.interrupt":
         await session(input.sessionId).interrupt();
@@ -125,7 +139,10 @@ function createConnection(
         break;
       }
       default:
-        throw new AntigravityError(`Unsupported Antigravity operation: ${input.type}`);
+        throw new AntigravityError(
+          `Unsupported Antigravity operation: ${input.type}`,
+          "UNSUPPORTED_OPERATION",
+        );
     }
     emit({ type: "request.completed", requestId: input.requestId });
   }
@@ -146,7 +163,7 @@ function createConnection(
     version: 1,
     capabilities: negotiated,
     async send(input) {
-      if (closed) throw new AntigravityError("Antigravity connection is closed");
+      if (closed) throw new AntigravityError("Antigravity connection is closed", "CLOSED");
       requireProviderCapabilities(negotiated, input);
       pending = pending
         .then(async () => {
