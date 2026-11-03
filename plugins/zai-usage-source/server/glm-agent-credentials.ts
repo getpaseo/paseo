@@ -19,6 +19,20 @@ export interface AgentCreateEnvRequest {
 }
 
 /**
+ * The provider's own configured environment.
+ *
+ * The key a user configured for the provider lives in
+ * `agents.providers.<id>.env`, which the daemon holds as the provider's
+ * runtime settings. The hook that injects the ZCode key runs before those
+ * settings are merged into the child process, so the injected key would
+ * replace the configured one.
+ */
+export interface ProviderSettingsReader {
+  /** The environment the user configured for the provider, if any. */
+  providerEnv(providerId: string): Promise<Record<string, string> | undefined>;
+}
+
+/**
  * Adds the Coding Plan key to the environment of a GLM ACP agent.
  *
  * The key is only added when the agent would otherwise start without one, and
@@ -27,6 +41,7 @@ export interface AgentCreateEnvRequest {
 export async function injectGlmApiKey(
   request: AgentCreateEnvRequest,
   env: NodeJS.ProcessEnv = process.env,
+  providerSettings?: ProviderSettingsReader,
 ): Promise<AgentCreateEnvRequest> {
   if (request.config.provider !== GLM_ACP_PROVIDER_ID) {
     return request;
@@ -37,6 +52,13 @@ export async function injectGlmApiKey(
     return request;
   }
   if (env[Z_AI_API_KEY_ENV]?.trim()) {
+    return request;
+  }
+
+  // The key the user configured for the provider wins over the ZCode account:
+  // it is the account they picked, and its quota is the one they track.
+  const configured = await providerSettings?.providerEnv(GLM_ACP_PROVIDER_ID);
+  if (configured?.[Z_AI_API_KEY_ENV]?.trim()) {
     return request;
   }
 

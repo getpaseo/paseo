@@ -80,6 +80,20 @@ describe("GLM ACP agent credentials", () => {
     expect(request.env?.[Z_AI_API_KEY_ENV]).toBe("user_supplied_key");
   });
 
+  it("keeps the key the user configured for the provider", async () => {
+    // The provider's own configured environment is not in the request env, and
+    // the daemon merges it into the child process after the hook runs. The
+    // injected ZCode key would replace it, so the configured key has to win.
+    writeZCodeCredentials("zai_signing_in_key");
+
+    const request = await injectGlmApiKey({ config: agentConfig("glm-acp-agent") }, process.env, {
+      providerEnv: async (providerId) =>
+        providerId === "glm-acp-agent" ? { [Z_AI_API_KEY_ENV]: "configured_key" } : undefined,
+    });
+
+    expect(request.env?.[Z_AI_API_KEY_ENV]).toBeUndefined();
+  });
+
   it("leaves other providers alone", async () => {
     writeZCodeCredentials("zai_signing_in_key");
 
