@@ -1312,6 +1312,7 @@ export const ar: TranslationResources = {
         rename: "إعادة تسمية مساحة العمل",
         pin: "تثبيت في الأعلى",
         unpin: "إلغاء التثبيت",
+        revealInSidebar: "إظهار في الشريط الجانبي",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
@@ -2630,6 +2631,7 @@ export const ar: TranslationResources = {
     shortcuts: {
       dialogTitle: "الاختصارات",
       searchPlaceholder: "البحث في الاختصارات",
+      clearSearch: "مسح بحث الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
       capturePrompt: "اضغط على الاختصار...",
       captureIndexPrompt: "اختم برقم من 1 إلى 9.",
@@ -2656,6 +2658,7 @@ export const ar: TranslationResources = {
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",
         archiveWorkspace: "أرشفة مساحة العمل",
+        renameWorkspace: "إعادة تسمية مساحة العمل",
         newTab: "علامة تبويب جديدة",
         closeCurrentTab: "إغلاق علامة التبويب الحالية",
         jumpToWorkspace: "انتقل إلى مساحة العمل",

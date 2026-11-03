@@ -1302,6 +1302,7 @@ export const zhCN: TranslationResources = {
         rename: "重命名 workspace",
         pin: "置顶",
         unpin: "取消置顶",
+        revealInSidebar: "在侧边栏中显示",
         archive: "归档",
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",
@@ -2564,6 +2565,7 @@ export const zhCN: TranslationResources = {
     shortcuts: {
       dialogTitle: "快捷键",
       searchPlaceholder: "搜索快捷键",
+      clearSearch: "清除快捷键搜索",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
       capturePrompt: "按下快捷键...",
       captureIndexPrompt: "请以 1 到 9 的数字结尾。",
@@ -2590,6 +2592,7 @@ export const zhCN: TranslationResources = {
         newWorkspace: "新建 workspace",
         newWorktree: "新建 worktree",
         archiveWorkspace: "归档工作区",
+        renameWorkspace: "重命名 workspace",
         newTab: "新建标签",
         closeCurrentTab: "关闭当前标签",
         jumpToWorkspace: "跳转到 workspace",

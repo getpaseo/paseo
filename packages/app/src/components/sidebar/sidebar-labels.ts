@@ -26,9 +26,9 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
  * beside it; the only thing that makes it special is what the key asks of a workspace.
  * Selecting several labels includes workspaces carrying any of them.
  */
-export function filterWorkspacesByLabels(
-  input: { workspaces: readonly SidebarWorkspaceEntry[] } & SidebarLabelFilter,
-): SidebarWorkspaceEntry[] {
+export function filterWorkspacesByLabels<T extends Pick<SidebarWorkspaceEntry, "labels">>(
+  input: { workspaces: readonly T[] } & SidebarLabelFilter,
+): T[] {
   const { workspaces, labels } = input;
   if (labels.length === 0) return [...workspaces];
   return workspaces.filter((workspace) => {

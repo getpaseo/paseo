@@ -31,6 +31,8 @@ export const pluginSettings = {
     docs: "الوثائق",
     install: "تثبيت الإضافة",
     installing: "جارٍ التثبيت…",
+    filterPlaceholder: "تصفية الإضافات",
+    filterClear: "مسح تصفية الإضافات",
     status: { running: "قيد التشغيل", disabled: "معطّلة", failed: "فشلت" },
     actions: {
       menu: "إجراءات {{id}}",
@@ -64,6 +66,7 @@ export const pluginSettings = {
       errorTitle: "تعذّر تحميل الإضافات",
       retry: "إعادة المحاولة",
       empty: "لا توجد إضافات مضبوطة",
+      noMatches: "لا توجد إضافات مطابقة للتصفية",
     },
   },
   es: {
@@ -86,6 +89,8 @@ export const pluginSettings = {
     docs: "Documentación",
     install: "Instalar plugin",
     installing: "Instalando…",
+    filterPlaceholder: "Filtrar plugins",
+    filterClear: "Borrar el filtro de plugins",
     status: { running: "en ejecución", disabled: "desactivado", failed: "fallido" },
     actions: {
       menu: "Acciones para {{id}}",
@@ -119,6 +124,7 @@ export const pluginSettings = {
       errorTitle: "No se pudieron cargar los plugins",
       retry: "Reintentar",
       empty: "No hay plugins configurados",
+      noMatches: "Ningún plugin coincide con el filtro",
     },
   },
   fr: {
@@ -141,6 +147,8 @@ export const pluginSettings = {
     docs: "Documentation",
     install: "Installer le plugin",
     installing: "Installation…",
+    filterPlaceholder: "Filtrer les plugins",
+    filterClear: "Effacer le filtre des plugins",
     status: { running: "actif", disabled: "désactivé", failed: "échec" },
     actions: {
       menu: "Actions pour {{id}}",
@@ -174,6 +182,7 @@ export const pluginSettings = {
       errorTitle: "Impossible de charger les plugins",
       retry: "Réessayer",
       empty: "Aucun plugin configuré",
+      noMatches: "Aucun plugin ne correspond au filtre",
     },
   },
   ja: {
@@ -196,6 +205,8 @@ export const pluginSettings = {
     docs: "ドキュメント",
     install: "プラグインをインストール",
     installing: "インストール中…",
+    filterPlaceholder: "プラグインを絞り込む",
+    filterClear: "プラグインの絞り込みをクリア",
     status: { running: "実行中", disabled: "無効", failed: "失敗" },
     actions: {
       menu: "{{id}} のアクション",
@@ -229,6 +240,7 @@ export const pluginSettings = {
       errorTitle: "プラグインを読み込めません",
       retry: "再試行",
       empty: "設定済みプラグインはありません",
+      noMatches: "フィルターに一致するプラグインはありません",
     },
   },
   ko: {
@@ -250,6 +262,8 @@ export const pluginSettings = {
     docs: "문서",
     install: "플러그인 설치",
     installing: "설치 중…",
+    filterPlaceholder: "플러그인 필터",
+    filterClear: "플러그인 필터 지우기",
     status: { running: "실행 중", disabled: "비활성화", failed: "실패" },
     actions: {
       menu: "{{id}} 작업",
@@ -283,6 +297,7 @@ export const pluginSettings = {
       errorTitle: "플러그인을 로드할 수 없습니다",
       retry: "다시 시도",
       empty: "설정된 플러그인이 없습니다",
+      noMatches: "필터와 일치하는 플러그인이 없습니다",
     },
   },
   "pt-BR": {
@@ -305,6 +320,8 @@ export const pluginSettings = {
     docs: "Documentação",
     install: "Instalar plugin",
     installing: "Instalando…",
+    filterPlaceholder: "Filtrar plugins",
+    filterClear: "Limpar filtro de plugins",
     status: { running: "em execução", disabled: "desativado", failed: "falhou" },
     actions: {
       menu: "Ações para {{id}}",
@@ -338,6 +355,7 @@ export const pluginSettings = {
       errorTitle: "Não foi possível carregar os plugins",
       retry: "Tentar novamente",
       empty: "Nenhum plugin configurado",
+      noMatches: "Nenhum plugin corresponde ao filtro",
     },
   },
   ru: {
@@ -360,6 +378,8 @@ export const pluginSettings = {
     docs: "Документация",
     install: "Установить плагин",
     installing: "Установка…",
+    filterPlaceholder: "Фильтр плагинов",
+    filterClear: "Очистить фильтр плагинов",
     status: { running: "работает", disabled: "отключён", failed: "ошибка" },
     actions: {
       menu: "Действия для {{id}}",
@@ -393,6 +413,7 @@ export const pluginSettings = {
       errorTitle: "Не удалось загрузить плагины",
       retry: "Повторить",
       empty: "Нет настроенных плагинов",
+      noMatches: "Нет плагинов, соответствующих фильтру",
     },
   },
   "zh-CN": {
@@ -414,6 +435,8 @@ export const pluginSettings = {
     docs: "文档",
     install: "安装插件",
     installing: "正在安装…",
+    filterPlaceholder: "过滤插件",
+    filterClear: "清除插件过滤",
     status: { running: "运行中", disabled: "已禁用", failed: "失败" },
     actions: {
       menu: "{{id}} 的操作",
@@ -447,6 +470,7 @@ export const pluginSettings = {
       errorTitle: "无法加载插件",
       retry: "重试",
       empty: "没有已配置的插件",
+      noMatches: "没有匹配过滤条件的插件",
     },
   },
 } as const;

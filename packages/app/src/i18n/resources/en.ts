@@ -1320,6 +1320,7 @@ export const en = {
         rename: "Rename workspace",
         pin: "Pin to top",
         unpin: "Unpin",
+        revealInSidebar: "Reveal in sidebar",
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",
@@ -2382,6 +2383,8 @@ export const en = {
       docs: "Docs",
       install: "Install plugin",
       installing: "Installing…",
+      filterPlaceholder: "Filter plugins",
+      filterClear: "Clear plugin filter",
       logs: {
         action: "Logs",
         title: "Logs: {{id}}",
@@ -2424,6 +2427,7 @@ export const en = {
         errorTitle: "Unable to load plugins",
         retry: "Retry",
         empty: "No plugins configured",
+        noMatches: "No plugins match the filter",
       },
     },
     metadataGeneration: {
@@ -2719,6 +2723,7 @@ export const en = {
     shortcuts: {
       dialogTitle: "Shortcuts",
       searchPlaceholder: "Search shortcuts",
+      clearSearch: "Clear shortcut search",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
       captureIndexPrompt: "End with a number from 1 to 9.",
@@ -2745,6 +2750,7 @@ export const en = {
         newWorkspace: "New workspace",
         newWorktree: "New worktree",
         archiveWorkspace: "Archive workspace",
+        renameWorkspace: "Rename workspace",
         newTab: "New tab",
         closeCurrentTab: "Close current tab",
         jumpToWorkspace: "Jump to workspace",

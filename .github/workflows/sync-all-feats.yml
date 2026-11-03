@@ -1,0 +1,112 @@
+name: Sync all-feats
+
+# Manual: merge the newest upstream STABLE release tag (vX.Y.Z, no prerelease
+# suffix) into local/all-feats, push to fork, trigger build.
+# Upstream beta/main-tip commits are intentionally ignored — builds must
+# contain exactly one clean release plus fork features.
+# On conflict: open an issue once and fail loudly instead of force-merging.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sync-all-feats
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  # gh workflow run needs actions:write to dispatch the build workflow.
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: local/all-feats
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Find newest upstream stable tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release view --repo getpaseo/paseo --json tagName --jq .tagName)
+          if [[ ! "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Upstream latest release is not a stable version: $latest"
+            exit 1
+          fi
+          base=$(node -p "require('./package.json').version")
+          if [[ ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Moy releases require a stable upstream base, not $base."
+            exit 1
+          fi
+          git fetch --no-tags https://github.com/getpaseo/paseo.git \
+            "+refs/heads/main:refs/remotes/upstream/main" \
+            "refs/tags/v${base}:refs/paseo/upstream/stable/v${base}" \
+            "refs/tags/${latest}:refs/paseo/upstream/latest"
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+          echo "Newest upstream stable tag: $latest"
+
+      - name: Verify current stable baseline
+        run: node scripts/check-fork-release.mjs
+
+      - name: Skip if tag already merged
+        id: check
+        run: |
+          if git merge-base --is-ancestor refs/paseo/upstream/latest HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.tag.outputs.tag }} is already merged."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge stable tag
+        id: merge
+        if: steps.check.outputs.changed == 'true'
+        run: git merge refs/paseo/upstream/latest --no-edit
+
+      - name: Open issue on conflict
+        if: failure() && steps.merge.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git merge --abort || true
+          open_issues=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --search "Sync conflict in:title" \
+            --json number --jq length)
+          if [[ "$open_issues" == "0" ]]; then
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "Sync conflict: upstream stable tag no longer merges cleanly" \
+              --body "Manual sync of getpaseo/paseo stable tag \`${{ steps.tag.outputs.tag }}\` into \`local/all-feats\` hit merge conflicts. Resolve locally, push, and the next run builds. Failing run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+          exit 1
+
+      - name: Push
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          base=$(node -p "require('./package.json').version")
+          git fetch --no-tags https://github.com/getpaseo/paseo.git \
+            "refs/tags/v${base}:refs/paseo/upstream/stable/v${base}"
+          node scripts/check-fork-release.mjs
+          git push origin HEAD:refs/heads/local/all-feats
+
+      - name: Trigger build
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # gh prefers the `upstream` remote over `origin` when resolving the
+          # repo from git remotes, which would dispatch to getpaseo/paseo (404).
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run build-all-feats.yml --ref local/all-feats

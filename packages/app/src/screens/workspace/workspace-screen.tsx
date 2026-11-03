@@ -41,8 +41,16 @@ import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { LocateFixed } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { requestSidebarWorkspaceReveal } from "@/components/sidebar/sidebar-reveal-store";
 import { SidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { MenuHeader } from "@/components/headers/menu-header";
@@ -214,6 +222,7 @@ import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
+  WorkspaceHeaderRevealButton,
 } from "@/screens/workspace/workspace-header-menu";
 import { PluginHeaderButtons } from "@/plugins";
 import {
@@ -270,8 +279,11 @@ function buildWorkspaceFileLocation(
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedLocateFixed = withUnistyles(LocateFixed);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+const MENU_REVEAL_IN_SIDEBAR_ICON = <ThemedLocateFixed size={16} uniProps={mutedColorMapping} />;
 
 interface WorkspaceScreenProps {
   serverId: string;
@@ -485,6 +497,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onRevealInSidebar: () => void;
 }
 
 function WorkspaceHeaderTitleBar({
@@ -501,7 +514,9 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onRevealInSidebar,
 }: WorkspaceHeaderTitleBarProps) {
+  const { t } = useTranslation();
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -509,14 +524,31 @@ function WorkspaceHeaderTitleBar({
           <View style={styles.headerTitleSkeleton} />
         </View>
       ) : (
-        <View style={styles.headerTitleTextGroup}>
-          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-          <WorkspaceHeaderProjectRow
-            subtitle={subtitle}
-            isSubtitleDistinct={isSubtitleDistinct}
-            serverId={normalizedServerId}
-          />
-        </View>
+        <ContextMenu>
+          {/* Right-click (and long-press on touch) the workspace identity to find it in the
+            sidebar list — the inverse of the sidebar's own reveal actions. */}
+          <ContextMenuTrigger contextOnly style={styles.headerTitleTextGroup}>
+            <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
+            <WorkspaceHeaderProjectRow
+              subtitle={subtitle}
+              isSubtitleDistinct={isSubtitleDistinct}
+              serverId={normalizedServerId}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent
+            align="start"
+            width={220}
+            testID="workspace-header-title-context-menu"
+          >
+            <ContextMenuItem
+              testID="workspace-header-reveal-in-sidebar"
+              leading={MENU_REVEAL_IN_SIDEBAR_ICON}
+              onSelect={onRevealInSidebar}
+            >
+              {t("sidebar.workspace.actions.revealInSidebar")}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
       <View style={styles.compactHeaderMenuCluster}>
         <WorkspaceHeaderMenuDesktop
@@ -528,6 +560,10 @@ function WorkspaceHeaderTitleBar({
           onCopyWorkspacePath={onCopyWorkspacePath}
           onCopyBranchName={onCopyBranchName}
           onOpenSetupTab={onOpenSetupTab}
+        />
+        <WorkspaceHeaderRevealButton
+          onPress={onRevealInSidebar}
+          label={t("sidebar.workspace.actions.revealInSidebar")}
         />
       </View>
     </View>
@@ -2215,6 +2251,16 @@ function WorkspaceScreenContent({
     }
   }, [currentBranchName, toast, t]);
 
+  const handleRevealInSidebar = useCallback(() => {
+    if (!normalizedServerId || !normalizedWorkspaceId) {
+      return;
+    }
+    requestSidebarWorkspaceReveal({
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+    });
+  }, [normalizedServerId, normalizedWorkspaceId]);
+
   const handleOpenSetupTab = useCallback(() => {
     if (!persistenceKey) {
       return;
@@ -3317,6 +3363,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onRevealInSidebar={handleRevealInSidebar}
               />
             </>
           }
@@ -3329,6 +3376,7 @@ function WorkspaceScreenContent({
       handleCopyBranchName,
       handleCopyWorkspacePath,
       handleOpenSetupTab,
+      handleRevealInSidebar,
       headerRight,
       isWorkspaceHeaderLoading,
       normalizedServerId,

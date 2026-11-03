@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { relative as relativePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
@@ -82,7 +83,7 @@ function filesUnder(relativeDirectory, predicate) {
   return readdirSync(directory, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) =>
-      [relativeDirectory, relativePath(directory.pathname, entry.parentPath), entry.name]
+      [relativeDirectory, relativePath(fileURLToPath(directory), entry.parentPath), entry.name]
         .filter(Boolean)
         .join("/")
         .replaceAll("\\", "/"),
@@ -109,6 +110,44 @@ test("gated checks are statically named jobs with real job-level gating", () => 
       assert.match(job, new RegExp(`needs\\.changes\\.outputs\\.${contract} != 'false'`));
     }
   }
+});
+
+test("Moy browser checks pin the supported Ubuntu image", () => {
+  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  for (const jobName of [
+    "typecheck",
+    "app-tests",
+    "playwright-1",
+    "playwright-2",
+    "playwright-3",
+    "playwright-4",
+  ]) {
+    assert.match(jobs.get(jobName).join("\n"), /runs-on: ubuntu-24\.04/, jobName);
+  }
+});
+
+test("Moy sync is manual and Nix jobs are upstream-only", () => {
+  const sync = readFileSync(new URL(".github/workflows/sync-all-feats.yml", repoRoot), "utf8");
+  assert.match(sync, /^  workflow_dispatch:/m);
+  assert.doesNotMatch(sync.split("concurrency:")[0], /schedule:|cron:/);
+  for (const filename of ["nix.yml", "nix-update-hash.yml"]) {
+    const jobs = jobBlocks(
+      readFileSync(new URL(`.github/workflows/${filename}`, repoRoot), "utf8"),
+    );
+    for (const name of filename === "nix.yml"
+      ? ["build", "build-desktop-darwin"]
+      : ["update-hash"]) {
+      assert.match(
+        jobs.get(name).join("\n"),
+        /if: \$\{\{ github\.repository == 'getpaseo\/paseo' \}\}/,
+      );
+    }
+  }
+});
+
+test("relay E2E runs locally without the deployment cutover origin", () => {
+  const source = readFileSync(new URL("packages/relay/src/e2e.test.ts", repoRoot), "utf8");
+  assert.match(source, /"--var",\s*"PASEO_RELAY_UPSTREAM:"/);
 });
 
 test("pull-request checks run for every base branch, including stacked PRs", () => {

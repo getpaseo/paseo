@@ -34,6 +34,7 @@ const testTheme = {
       green: { 500: "#22c55e" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
+      zinc: { 500: "#71717a", 600: "#52525b", 700: "#3f3f46" },
     },
   },
   borderWidth: { 1: 1 },
@@ -149,4 +150,5 @@ export const useUnistyles = () => ({
 export const UnistylesRuntime = {
   setTheme: () => undefined,
   themeName: "light",
+  breakpoint: undefined as string | undefined,
 };

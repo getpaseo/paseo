@@ -1319,6 +1319,7 @@ export const ko: TranslationResources = {
         rename: "워크스페이스 이름 변경",
         pin: "상단에 고정",
         unpin: "고정 해제",
+        revealInSidebar: "사이드바에서 표시",
         archive: "보관",
         archiveWorkspace: "워크스페이스 보관",
         hideFromSidebar: "사이드바에서 숨기기",
@@ -2607,6 +2608,7 @@ export const ko: TranslationResources = {
     shortcuts: {
       dialogTitle: "단축키",
       searchPlaceholder: "검색 단축키",
+      clearSearch: "단축키 검색 지우기",
       unavailableOnMobile: "키보드 단축키는 데스크톱에서만 사용할 수 있습니다",
       capturePrompt: "단축키를 누르세요...",
       captureIndexPrompt: "마지막에 1부터 9까지의 숫자를 입력하세요.",
@@ -2633,6 +2635,7 @@ export const ko: TranslationResources = {
         newWorkspace: "새 워크스페이스",
         newWorktree: "새 워크트리",
         archiveWorkspace: "워크스페이스 보관",
+        renameWorkspace: "워크스페이스 이름 변경",
         newTab: "새 탭",
         closeCurrentTab: "현재 탭 닫기",
         jumpToWorkspace: "워크스페이스로 이동",

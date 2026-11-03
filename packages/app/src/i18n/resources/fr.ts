@@ -1342,6 +1342,7 @@ export const fr: TranslationResources = {
         rename: "Renommer l’espace de travail",
         pin: "Épingler en haut",
         unpin: "Désépingler",
+        revealInSidebar: "Afficher dans la barre latérale",
         archive: "Archiver",
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
@@ -2654,6 +2655,7 @@ export const fr: TranslationResources = {
     shortcuts: {
       dialogTitle: "Raccourcis",
       searchPlaceholder: "Rechercher des raccourcis",
+      clearSearch: "Effacer la recherche de raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur l’app de bureau",
       capturePrompt: "Appuyez sur le raccourci…",
       captureIndexPrompt: "Terminez par un chiffre de 1 à 9.",
@@ -2680,6 +2682,7 @@ export const fr: TranslationResources = {
         newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouveau worktree",
         archiveWorkspace: "Archiver l’espace de travail",
+        renameWorkspace: "Renommer l’espace de travail",
         newTab: "Nouvel onglet",
         closeCurrentTab: "Fermer l’onglet actuel",
         jumpToWorkspace: "Aller à l’espace de travail",

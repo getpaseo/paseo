@@ -2,10 +2,10 @@ import {
   memo,
   useCallback,
   useMemo,
+  useRef,
   useState,
   type MutableRefObject,
   type ReactNode,
-  type Ref,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -80,6 +80,14 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { useSidebarRowDoublePress } from "@/components/sidebar/use-sidebar-row-double-press";
+import {
+  SidebarRevealContentAnchor,
+  SidebarRevealFlashOverlay,
+  useSidebarRevealScroller,
+} from "@/components/sidebar/sidebar-reveal";
+import { useRevealRowRef } from "@/components/sidebar/sidebar-reveal-store";
+import type { ScrollView as GestureHandlerScrollView } from "react-native-gesture-handler";
 
 // Themed icon wrappers
 const mutedGroupIconProps = densityIconProps("sm", (theme) => ({
@@ -155,6 +163,9 @@ export function SidebarStatusWorkspaceList({
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
   );
+  const scrollRef = useRef<GestureHandlerScrollView | null>(null);
+  const contentRef = useRef<View | null>(null);
+  useSidebarRevealScroller({ scrollRef, contentRef });
   const {
     leadingItem: leadingPinnedWorkspace,
     visibleItems: visiblePinnedWorkspaces,
@@ -277,21 +288,23 @@ export function SidebarStatusWorkspaceList({
     <View style={styles.container}>
       {platformIsNative ? (
         <NestableScrollContainer
+          ref={scrollRef}
           style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           testID="sidebar-status-list-scroll"
         >
-          {content}
+          <SidebarRevealContentAnchor contentRef={contentRef}>{content}</SidebarRevealContentAnchor>
         </NestableScrollContainer>
       ) : (
         <ScrollView
+          ref={scrollRef}
           style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           testID="sidebar-status-list-scroll"
         >
-          {content}
+          <SidebarRevealContentAnchor contentRef={contentRef}>{content}</SidebarRevealContentAnchor>
         </ScrollView>
       )}
     </View>
@@ -846,13 +859,19 @@ function StatusWorkspaceRowInnerContent({
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
   const endDragPress = dragInteraction?.handlePressOut;
-  const handlePress = useCallback(() => {
-    if (didLongPressRef?.current) {
-      didLongPressRef.current = false;
-      return;
-    }
-    onPress();
-  }, [didLongPressRef, onPress]);
+  const handlePress = useSidebarRowDoublePress({
+    onPress,
+    onRename,
+    didLongPressRef,
+  });
+  const revealRef = useRevealRowRef(workspace.workspaceKey);
+  const setRowContainerRef = useCallback(
+    (node: View | null) => {
+      revealRef.current = node;
+      dragHandleProps?.setActivatorNodeRef?.(node);
+    },
+    [dragHandleProps, revealRef],
+  );
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);
@@ -895,7 +914,7 @@ function StatusWorkspaceRowInnerContent({
           <View
             {...dragAttributes}
             {...dragHandleProps?.listeners}
-            ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+            ref={setRowContainerRef}
             style={styles.workspaceRowContainer}
             {...hoverHandlers}
           >
@@ -969,6 +988,7 @@ function StatusWorkspaceRowInnerContent({
                 ) : null}
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
+            <SidebarRevealFlashOverlay workspaceKey={workspace.workspaceKey} />
           </View>
         );
       }}

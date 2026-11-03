@@ -56,6 +56,7 @@ export interface WorkspaceCommandCenterLabels {
   pin: string;
   unpin: string;
   showSetup: string;
+  revealInSidebar: string;
   labelsGroup: string;
 }
 
@@ -84,6 +85,7 @@ export interface WorkspaceCommandCenterIcons {
   pin?: CommandCenterIcon;
   unpin?: CommandCenterIcon;
   showSetup?: CommandCenterIcon;
+  revealInSidebar?: CommandCenterIcon;
   toggleFocusMode?: CommandCenterIcon;
   label?: CommandCenterIcon;
   git?(action: GitAction): CommandCenterIcon | undefined;
@@ -102,6 +104,7 @@ export interface WorkspaceCommandCenterShortcuts {
   toggleFocusMode?: ShortcutKey[][];
   toggleExplorerSidebar?: ShortcutKey[][];
   pinWorkspace?: ShortcutKey[][];
+  renameWorkspace?: ShortcutKey[][];
 }
 
 export interface WorkspaceCommandCenterSource {
@@ -133,6 +136,8 @@ export interface WorkspaceCommandCenterSource {
   runGitAction(action: GitAction): void;
   copyPath(): void;
   copyBranchName(): void;
+  /** Null while the workspace identity is unresolved — the entry is omitted rather than failing. */
+  revealInSidebar: (() => void) | null;
   toggleLabel(name: string, assigned: boolean): void | Promise<void>;
 }
 
@@ -609,6 +614,7 @@ export function buildWorkspaceCommandCenterContributions(
       title: source.labels.rename,
       keywords: ["rename", "title", "name", "label"],
       icon: source.icons.rename,
+      shortcutKeys: source.shortcuts.renameWorkspace,
       action: { id: "workspace.rename", scope: "workspace" },
       visibility: "query",
     }),
@@ -650,6 +656,21 @@ export function buildWorkspaceCommandCenterContributions(
         keywords: ["setup", "provision", "install", "bootstrap"],
         icon: source.icons.showSetup,
         action: { id: "workspace.setup.show", scope: "workspace" },
+        visibility: "query",
+      }),
+    );
+  }
+
+  if (source.revealInSidebar) {
+    contributions.push(
+      buildWorkspaceCallback({
+        source,
+        id: "workspace:reveal-in-sidebar",
+        rank: 27,
+        title: source.labels.revealInSidebar,
+        keywords: ["reveal", "sidebar", "locate", "scroll", "show", "list"],
+        icon: source.icons.revealInSidebar,
+        run: source.revealInSidebar,
         visibility: "query",
       }),
     );

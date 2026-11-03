@@ -24,6 +24,8 @@ import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
 } from "@/workspace-labels";
+import { useSidebarRevealStore } from "@/components/sidebar/sidebar-reveal-store";
+import { repairRevealVisibility } from "@/components/sidebar/sidebar-reveal-visibility";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -103,6 +105,46 @@ export function SidebarModelProvider({
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
   );
+  // "Reveal in sidebar" can only scroll to a row the sidebar actually shows, so a request first
+  // clears the gates that hide its workspace — filters, collapsed sections, hidden background —
+  // each one only when it is the one hiding the target.
+  const revealRequest = useSidebarRevealStore((state) => state.request);
+  useEffect(() => {
+    if (!revealRequest) return;
+    // The host gate runs on the requested identity before the entry lookup: an excluded host's
+    // entries are never hydrated, so the lookup cannot see the workspace until this clears.
+    const separatorIndex = revealRequest.workspaceKey.indexOf(":");
+    const requestServerId = revealRequest.workspaceKey.slice(0, separatorIndex);
+    const view = useSidebarViewStore.getState();
+    if (view.hostFilters.length > 0 && !view.hostFilters.includes(requestServerId)) {
+      view.clearHostFilters();
+    }
+    const entry = workspaceEntriesByKey.get(revealRequest.workspaceKey);
+    if (!entry) return;
+    const sections = useSidebarCollapsedSectionsStore.getState();
+    repairRevealVisibility({
+      entry,
+      filters: {
+        resolvedProjectFilters,
+        labelFilter: view.labelFilter,
+        showBackground: view.showBackground,
+      },
+      collapsed: {
+        projectKeys: sections.collapsedProjectKeys,
+        workspaceGroupKeys: sections.collapsedWorkspaceGroupKeys,
+        pinned: sections.collapsedPinned,
+      },
+      groupMode,
+      actions: {
+        clearProjectFilters: view.clearProjectFilters,
+        clearLabelFilter: view.clearLabelFilter,
+        showBackground: view.toggleBackground,
+        expandProject: (projectViewKey) => sections.setProjectCollapsed(projectViewKey, false),
+        expandWorkspaceGroup: (groupKey) => sections.toggleWorkspaceGroupCollapsed(groupKey),
+        expandPinned: () => sections.togglePinnedCollapsed(),
+      },
+    });
+  }, [groupMode, revealRequest, resolvedProjectFilters, workspaceEntriesByKey]);
   const filteredWorkspaceEntriesByKey = useMemo(() => {
     const byProject = filterWorkspacesByProjects({
       workspaces: [...workspaceEntriesByKey.values()],

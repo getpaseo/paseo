@@ -1338,6 +1338,7 @@ export const ptBR: TranslationResources = {
         rename: "Renomear workspace",
         pin: "Fixar no topo",
         unpin: "Desafixar",
+        revealInSidebar: "Mostrar na barra lateral",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
@@ -2632,6 +2633,7 @@ export const ptBR: TranslationResources = {
     shortcuts: {
       dialogTitle: "Atalhos",
       searchPlaceholder: "Pesquisar atalhos",
+      clearSearch: "Limpar pesquisa de atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
       captureIndexPrompt: "Termine com um número de 1 a 9.",
@@ -2658,6 +2660,7 @@ export const ptBR: TranslationResources = {
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",
         archiveWorkspace: "Arquivar workspace",
+        renameWorkspace: "Renomear workspace",
         newTab: "Nova aba",
         closeCurrentTab: "Fechar aba atual",
         jumpToWorkspace: "Ir para workspace",

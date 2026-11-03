@@ -1,4 +1,4 @@
-import { useUnistyles } from "react-native-unistyles";
+import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
@@ -46,6 +46,14 @@ export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
   return isCompactBreakpoint(rt.breakpoint);
+}
+
+/**
+ * One-shot read for imperative code (store actions) that cannot use the reactive hook. Layout
+ * decisions that render still go through `useIsCompactFormFactor`.
+ */
+export function isCompactFormFactorSnapshot(): boolean {
+  return isCompactBreakpoint(UnistylesRuntime.breakpoint);
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.
