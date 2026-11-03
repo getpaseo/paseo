@@ -296,6 +296,28 @@ function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRe
     return null;
   }
 
+  if (/with\s+wrapped\s+text/i.test(text)) {
+    // An agent that hard-wraps its question text hands the form one token per
+    // line. The app-wide markdown flags render a soft break as a hard break,
+    // so a card that does not fold them back stacks every word on its own row.
+    return {
+      questions: [
+        {
+          question:
+            "确认：`zcode\n-credentials\n.ts` 只在\nPR\n#8343\n（feat\n/zai\n-coding\n-plan\n-quota\n）里",
+          header: "wrapped",
+          options: [
+            {
+              label: "确认\n先合并\nPR",
+              description: "先合并\nPR #8343\n再重跑",
+            },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+  }
+
   if (/with\s+links/i.test(text)) {
     return {
       questions: [
