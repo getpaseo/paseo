@@ -257,6 +257,41 @@ describe("ACP early child exit", () => {
     }
   });
 
+  test("a session launches the path the provider's own PATH resolves to", async () => {
+    // The session has to launch the path the lookup verified. A provider that
+    // carries its own PATH resolves to an install the daemon's PATH does not
+    // hold, and the session has to start that one.
+    const providerBinDir = makeTempDir("acp-launch-session-provider-path-");
+    const daemonBinDir = makeTempDir("acp-launch-session-daemon-path-");
+    const providerLauncher = createLauncherStub(providerBinDir, "acp-session-path-agent");
+    const originalPath = process.env.PATH;
+    process.env.PATH = daemonBinDir;
+
+    try {
+      const child = createChildStub();
+      const spawnProcess = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const client = new TestACPClient({
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-session-path-agent", "acp"],
+        runtimeSettings: { env: { PATH: providerBinDir } },
+      });
+
+      const sessionPromise = client.createSession({ provider: "acp", cwd: process.cwd() });
+      await vi.waitFor(() => {
+        expect(spawnProcess).toHaveBeenCalled();
+      });
+
+      const [command] = spawnProcess.mock.calls[0] ?? [];
+      expectSamePath(String(command), providerLauncher);
+
+      child.emit("close", 1, null);
+      await sessionPromise.catch(() => undefined);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   test("rejects with the child's stderr instead of waiting for the initialize timeout", async () => {
     const child = createChildStub();
     vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
