@@ -121,8 +121,10 @@ describe("zai usage source", () => {
       status: "available",
       planLabel: "GLM Coding Pro",
       windows: expect.arrayContaining([
-        expect.objectContaining({ label: "5-hour limit", usedPct: 93, remainingPct: 7 }),
-        expect.objectContaining({ label: "Weekly limit", usedPct: 59, remainingPct: 41 }),
+        // 900 of 12000 is 7.5% used, and the API's `percentage` of 7 agrees.
+        expect.objectContaining({ label: "5-hour limit", usedPct: 7.5, remainingPct: 92.5 }),
+        // 24600 of 60000 is 41% used, and the API's `percentage` agrees.
+        expect.objectContaining({ label: "Weekly limit", usedPct: 41, remainingPct: 59 }),
       ]),
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
     });
