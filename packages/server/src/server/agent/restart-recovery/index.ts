@@ -3,24 +3,42 @@ interface Dependencies {
   storage: AgentStorage;
   settings(): { enabled: boolean; prompt: string };
   eligible(record: StoredAgentRecord): Promise<boolean>;
+  policy?(record: StoredAgentRecord): "prompt" | "observe";
+  observe?(agentId: string): Promise<unknown>;
   dispatch(agentId: string, prompt: string): Promise<unknown>;
   report(agentId: string, error: unknown): void;
 }
 export function createRestartRecovery(deps: Dependencies) {
   // Candidates are chosen at startup; each settles once its resume was sent or abandoned.
   const resuming = new Map<string, { promise: Promise<void>; resolve(): void }>();
+  let preparedEnabled = false;
+  let started = false;
+  function reserve(agentId: string) {
+    if (resuming.has(agentId)) return;
+    let resolve!: () => void;
+    const promise = new Promise<void>((settle) => {
+      resolve = settle;
+    });
+    resuming.set(agentId, { promise, resolve });
+  }
   const eligible = async (record: StoredAgentRecord) =>
     !record.archivedAt && !record.internal && !record.owner && (await deps.eligible(record));
   async function resume(agentId: string) {
     const record = await deps.storage.get(agentId);
-    if (!record?.resumeOnStartup) return;
+    if (!record) return;
+    const policy = deps.policy?.(record) ?? "prompt";
+    if (!record.resumeOnStartup && policy !== "observe") return;
     await deps.storage.upsert({ ...record, resumeOnStartup: false });
     if (!deps.settings().enabled || !(await eligible(record))) return;
-    await deps.dispatch(agentId, deps.settings().prompt);
+    if (policy === "observe") {
+      if (!deps.observe) throw new Error("Provider startup observation is not configured");
+      await deps.observe(agentId);
+    } else await deps.dispatch(agentId, deps.settings().prompt);
   }
   return {
     /** Choose candidates before anything else reads or repairs persisted running status. */
     async prepareStartup() {
+      preparedEnabled = deps.settings().enabled;
       for (const record of await deps.storage.list()) {
         const pending =
           deps.settings().enabled &&
@@ -34,13 +52,7 @@ export function createRestartRecovery(deps: Dependencies) {
               ? "closed"
               : record.lastStatus,
         });
-        if (pending) {
-          let resolve!: () => void;
-          const promise = new Promise<void>((settle) => {
-            resolve = settle;
-          });
-          resuming.set(record.id, { promise, resolve });
-        }
+        if (pending) reserve(record.id);
       }
     },
     async captureRunningAgents() {
@@ -51,7 +63,16 @@ export function createRestartRecovery(deps: Dependencies) {
       }
     },
     /** Resume every candidate in the background; a slow provider holds back only its agent. */
-    resumePending() {
+    async resumePending() {
+      if (started) return;
+      started = true;
+      // Plugin registrations arrive after prepareStartup. Resolve their policy
+      // now, including idle externally owned sessions that still need observation.
+      if (preparedEnabled && deps.settings().enabled) {
+        for (const record of await deps.storage.list()) {
+          if (deps.policy?.(record) === "observe" && (await eligible(record))) reserve(record.id);
+        }
+      }
       for (const [agentId, settled] of resuming) {
         void resume(agentId)
           .catch((error) => deps.report(agentId, error))

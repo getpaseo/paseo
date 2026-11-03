@@ -10,6 +10,7 @@ export const PROVIDER_CAPABILITIES = [
   "prompt.output_schema",
   "prompt.steer",
   "session.can_stop_runtime",
+  "session.startup_observation",
   "session.archive",
   "session.configure",
   "session.list",
@@ -20,6 +21,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.subsession",
   "session.unarchive",
   "permission",
+  "permission.resolution",
   "permission.tool_policy",
   "timeline.plugin",
 ] as const;
@@ -27,6 +29,8 @@ export const PROVIDER_CAPABILITIES = [
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
 export interface ProviderRegistration {
+  /** Observe an externally owned runtime after daemon startup instead of submitting a resume prompt. Defaults to prompt. */
+  startupRecovery?: "prompt" | "observe";
   /** Activate only while agents.providers contains this provider ID, independently of enabled. */
   requiresConfiguration?: boolean;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
@@ -599,7 +603,12 @@ export type ProviderEvent =
   | { type: "session.config"; sessionId: string; config: ProviderConfigState }
   | { type: "session.commands"; sessionId: string; commands: ProviderCommand[] }
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
-  | { type: "session.permission_resolved"; sessionId: string; permissionId: string }
+  | {
+      type: "session.permission_resolved";
+      sessionId: string;
+      permissionId: string;
+      resolution?: ProviderPermissionResponse;
+    }
   | { type: "session.notice"; sessionId: string; notice: ProviderNotice }
   | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
 
@@ -1419,6 +1428,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       type: z.literal("session.permission_resolved"),
       sessionId: idSchema,
       permissionId: idSchema,
+      resolution: providerPermissionResponseSchema.optional(),
     })
     .strip(),
   z

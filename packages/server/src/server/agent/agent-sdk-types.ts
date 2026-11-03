@@ -762,6 +762,7 @@ export interface ResolveAgentDefaultModeInput {
 }
 
 export interface AgentClient {
+  readonly startupRecovery?: "prompt" | "observe";
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
   createSession(
