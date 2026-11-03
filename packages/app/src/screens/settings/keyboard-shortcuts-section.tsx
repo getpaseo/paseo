@@ -15,8 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { SearchField } from "@/components/ui/search-field";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
+  buildEffectiveBindings,
   buildKeyboardShortcutHelpSections,
   getBindingIdForAction,
   normalizeCapturedShortcutCombo,
@@ -25,6 +27,7 @@ import {
   resolveShortcutKeysForAction,
   type KeyboardShortcutHelpRow,
 } from "@/keyboard/keyboard-shortcuts";
+import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import {
   comboStringToShortcutKeys,
   heldModifiersFromEvent,
@@ -335,15 +338,23 @@ export function KeyboardShortcutsSection() {
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
   const [capturedCombos, setCapturedCombos] = useState<string[]>([]);
   const [heldModifiers, setHeldModifiers] = useState<string | null>(null);
+  const [filterInput, setFilterInput] = useState("");
   const { overrides, hasOverrides, setOverride, clearOverride, removeOverride, resetAll } =
     useKeyboardShortcutOverrides();
   const setCapturingShortcut = useKeyboardShortcutsStore((s) => s.setCapturingShortcut);
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
-  const isMac = getShortcutOs() === "mac";
+  const shortcutOs = getShortcutOs();
+  const isMac = shortcutOs === "mac";
   const isDesktopApp = getIsElectronRuntime();
-  const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  // The rows display saved keys, so the search has to match them too: build
+  // the sections from the effective bindings, as the shortcuts dialog does.
+  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const sections = useMemo(
+    () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }, bindings),
+    [bindings, isDesktopApp, isMac],
+  );
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -452,9 +463,55 @@ export function KeyboardShortcutsSection() {
     </Button>
   ) : undefined;
 
+  // Same search the shortcuts dialog runs, so both surfaces match on the same
+  // labels, notes, and key spellings.
+  const visibleSections = filterShortcutHelpSections({
+    sections,
+    query: filterInput,
+    translate: t,
+    shortcutOs,
+  });
+  // The filter lives outside the keyed sections: when a query removes the
+  // first visible section, a field nested inside it would unmount and drop
+  // focus mid-typing. One node, one fragment position, on every render path.
+  const filterField = (
+    <View style={styles.filterRow}>
+      {/* While a capture owns the keyboard, the filter has nothing to offer:
+          its row may be filtered away and its keystrokes would be swallowed
+          by the capture listener anyway. */}
+      {capturingBindingId === null ? (
+        <SearchField
+          value={filterInput}
+          onChangeText={setFilterInput}
+          placeholder={t("settings.shortcuts.searchPlaceholder")}
+          clearAccessibilityLabel={t("settings.shortcuts.clearSearch")}
+          testID="shortcuts-filter-input"
+          clearTestID="shortcuts-filter-clear"
+        />
+      ) : null}
+    </View>
+  );
+
+  if (visibleSections.length === 0) {
+    return (
+      <>
+        {filterField}
+        <SettingsSection
+          title={t("settings.sections.shortcuts")}
+          trailing={hasOverrides ? resetAllButton : undefined}
+        >
+          <View style={[settingsStyles.card, styles.mobileCard]}>
+            <Text style={styles.mobileText}>{t("common.empty.noResults")}</Text>
+          </View>
+        </SettingsSection>
+      </>
+    );
+  }
+
   return (
     <>
-      {sections.map(function (section, sectionIndex) {
+      {filterField}
+      {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
             key={section.id}
@@ -504,6 +561,9 @@ export function KeyboardShortcutsSection() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  filterRow: {
+    marginBottom: theme.spacing[3],
+  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",

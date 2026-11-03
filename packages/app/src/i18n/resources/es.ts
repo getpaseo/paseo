@@ -2652,6 +2652,7 @@ export const es: TranslationResources = {
     shortcuts: {
       dialogTitle: "Atajos",
       searchPlaceholder: "Buscar atajos",
+      clearSearch: "Borrar la búsqueda de atajos",
       unavailableOnMobile: "Los atajos de teclado solo están disponibles en el escritorio",
       capturePrompt: "Presione el acceso directo...",
       captureIndexPrompt: "Termina con un número del 1 al 9.",
