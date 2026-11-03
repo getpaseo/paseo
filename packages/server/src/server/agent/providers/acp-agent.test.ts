@@ -104,6 +104,8 @@ interface ACPSessionInternals {
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+  /** The listeners the session holds, so a test can see one left behind. */
+  subscribers: Set<(event: AgentStreamEvent) => void>;
 }
 
 interface ACPModelSelectionInternals {
@@ -3779,6 +3781,24 @@ describe("interrupt", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("an interrupted turn leaves no listener behind for later events", async () => {
+    const { session, resolvePrompt } = await createInterruptHarness();
+
+    const internals = asInternals<ACPSessionInternals>(session);
+    const subscriberCount = () => internals.subscribers.size;
+
+    const before = subscriberCount();
+    const interrupting = session.interrupt();
+    resolvePrompt({ stopReason: "cancelled" });
+    await interrupting;
+
+    // The gate the interrupt installed watched for the turn to end and has
+    // nothing left to watch once it fired. Left subscribed, it would be called
+    // for every event of every later turn, and it would keep the session
+    // alive for as long as the process runs.
+    expect(subscriberCount()).toBe(before);
   });
 });
 
