@@ -53,6 +53,8 @@ An arbitrary Activity launch with data extras does not exercise Expo's FCM path.
 Foreground pushes remain in Notification Center without a banner or sound.
 This preserves notifications sent with stale presence information.
 
+Native clients have no DOM events, so presence comes from `@/hooks/native-user-activity`: touches on the root `GestureHandlerRootView` and edits in the native `EditingTextInput` refresh `lastActivityAt`. Touches inside a native `Modal` open a separate window and do not reach the root.
+
 ## Startup and verification
 
 Wait for the root navigator, host registry, remembered selection, and startup
