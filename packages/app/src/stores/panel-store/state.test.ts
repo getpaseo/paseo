@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { usePanelStore } from "./index";
 import {
   DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
@@ -20,6 +22,35 @@ function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState
 }
 
 describe("panel-store migration", () => {
+  it("restores the saved sidebar split from app storage", async () => {
+    await usePanelStore.persist.rehydrate();
+    usePanelStore.getState().setSidebarNavRows(2);
+
+    const saved = await AsyncStorage.getItem("panel-state");
+    if (saved === null) throw new Error("Panel preferences were not saved");
+    expect(JSON.parse(saved).state.sidebarNavRows).toBe(2);
+
+    // Simulate a fresh app's default state before it reads its saved preferences.
+    usePanelStore.setState({ sidebarNavRows: 100 });
+    await AsyncStorage.setItem("panel-state", saved);
+    await usePanelStore.persist.rehydrate();
+
+    expect(usePanelStore.getState().sidebarNavRows).toBe(2);
+  });
+
+  it("loads existing panel preferences without a saved sidebar split", async () => {
+    await usePanelStore.persist.rehydrate();
+    usePanelStore.setState({ sidebarNavRows: 100 });
+    await AsyncStorage.setItem(
+      "panel-state",
+      JSON.stringify({ state: { sidebarWidth: 400 }, version: 17 }),
+    );
+    await usePanelStore.persist.rehydrate();
+
+    expect(usePanelStore.getState().sidebarNavRows).toBe(100);
+    expect(usePanelStore.getState().sidebarWidth).toBe(400);
+  });
+
   it("defaults hidden-file visibility to showing hidden files", () => {
     const state = migratePanelState({}, 10);
 
