@@ -85,7 +85,6 @@ import {
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { openDesktopTarget, useFileManagerOpenTarget } from "@/workspace/desktop-open-targets";
 import { openInlinePathPlan, planInlinePathOpen } from "@/workspace/inline-path-open";
 import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
@@ -1076,7 +1075,8 @@ export function TerminalPane({
           }),
           view: "files",
         });
-      };      const revealInFileManager = (absolutePath: string) => {
+      };
+      const revealInFileManager = (absolutePath: string) => {
         if (!fileManagerTarget) {
           // Outside the workspace there is no file tab to fall back to for a folder;
           // say so instead of doing nothing.
