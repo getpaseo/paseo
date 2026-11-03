@@ -495,6 +495,10 @@ describe("observed workspace placement", () => {
 
     expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
     expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
+    const archived = await observed.placement("workspace-one");
+    await observed.advanceBy(RESCAN_INTERVAL_MS);
+    expect(await observed.placement("workspace-one")).toEqual(archived);
+    expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
     observed.dispose();
   });
 

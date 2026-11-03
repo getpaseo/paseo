@@ -125,7 +125,8 @@ rendering stack:
 `acme.ts` exports a `ClientForgeLogicModule`:
 
 - `id`
-- optional `urlGrammar` (including `referencePaths` for composer auto-attachment)
+- optional `urlGrammar` (including `referencePaths` for composer auto-attachment
+  and Markdown shorthand references)
 - optional `facts` registration (schema, merge-capability, native-check fallbacks)
 
 `acme.view.tsx` exports a `ClientForgeViewModule`:
@@ -212,6 +213,12 @@ are stale, run `npm run build:server`.
   neutral extractor matches the pasted host and full repository path against
   the current remote before it invokes cwd-routed forge search. Do not add a
   central forge switch or guess a self-hosted Gitea-family brand from URL shape.
+- Shorthand references in rendered Markdown (`#12`, GitLab and Gitea `!12`,
+  cross-repository `owner/repo#12`) come from the `sigil` on each
+  `referencePaths` entry. Leave `sigil` off a kind the forge does not link in
+  prose: GitHub has no `!`, and its `#` targets `/issues/`, which GitHub
+  redirects to the pull request. `packages/app/src/git/forge-shorthand` builds
+  the recognition pattern from the workspace descriptor's forge and remote.
 - GitLab pipeline status constants belong to the GitLab adapter/client module,
   not protocol.
 - GitLab `manual` jobs need `allow_failure` to distinguish optional gray jobs

@@ -14,14 +14,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { DensityIcon } from "@/components/ui/density-icon";
+import { SidebarFooterIconHighlight } from "./sidebar-footer-icon-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore } from "@/stores/session-store";
+import { density } from "@/styles/density";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -32,12 +33,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const DISCORD_URL = "https://discord.gg/jz8T2uahpH";
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const ThemedActivity = withUnistyles(Activity);
-const ThemedCircleHelp = withUnistyles(CircleHelp);
 const ThemedGift = withUnistyles(Gift);
 const ThemedKeyboard = withUnistyles(Keyboard);
 const ThemedDiscordIcon = withUnistyles(DiscordIcon);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -79,7 +78,6 @@ function HostVersionHint({ host }: { host: HostProfile }) {
 }
 
 export function SidebarHelpMenu() {
-  const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAppDiagnostic = useAppDiagnosticStore((state) => state.open);
@@ -106,16 +104,20 @@ export function SidebarHelpMenu() {
         <TooltipTrigger asChild>
           <View>
             <DropdownMenuTrigger
-              style={styles.trigger(isCompact)}
+              style={styles.trigger}
               testID="sidebar-help"
               accessibilityRole="button"
               accessibilityLabel={t("sidebar.help.trigger")}
             >
-              {({ hovered }) => (
-                <ThemedCircleHelp
-                  size={isCompact ? ICON_SIZE.lg : ICON_SIZE.md}
-                  uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-                />
+              {({ hovered, pressed, open: menuOpen }) => (
+                <>
+                  <SidebarFooterIconHighlight visible={pressed || menuOpen} />
+                  <DensityIcon
+                    icon={CircleHelp}
+                    size="md"
+                    color={hovered ? "foreground" : "foregroundMuted"}
+                  />
+                </>
               )}
             </DropdownMenuTrigger>
           </View>
@@ -184,14 +186,14 @@ export function SidebarHelpMenu() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  trigger: (isCompact: boolean) => ({
-    width: isCompact ? buttonControlHeight.md : buttonControlHeight.xs,
-    height: isCompact ? buttonControlHeight.md : buttonControlHeight.xs,
+  trigger: {
+    width: density.iconButton,
+    height: density.iconButton,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
-  }),
+  },
   tooltipText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,

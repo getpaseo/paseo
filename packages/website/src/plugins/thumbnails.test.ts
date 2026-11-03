@@ -1,8 +1,15 @@
-import { createElement } from "react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { LocaleProvider } from "~/i18n";
 import { handlePluginThumbnailRequest, pluginCardScreenshot } from "./thumbnails";
-import { NewPluginCard, PluginCard } from "./plugin-card";
+import { PluginCard } from "./plugin-card";
 import type { Plugin } from "./registry";
 
 const source = "https://cdn.jsdelivr.net/npm/paseo-example@1.2.3/preview.png";
@@ -29,38 +36,53 @@ const plugin: Plugin = {
   installs: 42,
 };
 
+const avatar = 'src="https://github.com/acme.png?size=80"';
+
+/** Renders a card on an English page, inside the router and language provider every page has. */
+async function renderOnPage(card: ReactElement): Promise<string> {
+  const router = createRouter({
+    routeTree: createRootRoute({ component: () => createElement(LocaleProvider, null, card) }),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  await router.load();
+  return renderToStaticMarkup(createElement(RouterProvider, { router }));
+}
+
 describe("plugin card thumbnails", () => {
-  it("uses the first image in the plugin's media, skipping a leading video", () => {
-    const html = renderToStaticMarkup(
+  it("uses the first image in the plugin's media, skipping a leading video", async () => {
+    const html = await renderOnPage(
       createElement(PluginCard, { plugin: { ...plugin, media: [video, source] } }),
     );
     expect(html).toContain(`/plugins/thumb/592/${encodeURIComponent(source)}?`);
     expect(html).not.toContain(encodeURIComponent(video));
   });
 
-  it("shows the plugin tile when the media has no image", () => {
-    const html = renderToStaticMarkup(
+  it("shows the plugin tile when the media has no image", async () => {
+    const html = await renderOnPage(
       createElement(PluginCard, { plugin: { ...plugin, media: [video] } }),
     );
-    expect(html).not.toContain("<img");
+    expect(html.match(/<img [^>]*>/g)).toEqual([expect.stringContaining(avatar)]);
     expect(html).not.toContain("<video");
     expect(html).toContain(">E</div>");
   });
 
-  it("keeps a screenshot on an unsupported host visible at its original URL", () => {
+  it("keeps a screenshot on an unsupported host visible at its original URL", async () => {
     const screenshot = "https://example.com/preview.png";
-    const html = renderToStaticMarkup(
+    const html = await renderOnPage(
       createElement(PluginCard, { plugin: { ...plugin, media: [screenshot] } }),
     );
     expect(html).toContain(`src="${screenshot}"`);
     expect(html).not.toContain("/plugins/thumb/");
   });
 
-  it.each([
-    ["PluginCard", () => createElement(PluginCard, { plugin }, "today")],
-    ["NewPluginCard", () => createElement(NewPluginCard, { plugin }, "today")],
-  ])("renders a thumbnail instead of downloading the original screenshot (%s)", (_name, card) => {
-    const html = renderToStaticMarkup(card());
+  it("shows the author's avatar and name beside the card detail", async () => {
+    const html = await renderOnPage(createElement(PluginCard, { plugin }, "today"));
+    expect(html).toContain(avatar);
+    expect(html).toMatch(/>acme<\/span><span aria-hidden="true">·<\/span><span[^>]*>today<\/span>/);
+  });
+
+  it("renders a thumbnail instead of downloading the original screenshot", async () => {
+    const html = await renderOnPage(createElement(PluginCard, { plugin }, "today"));
     expect(html).toContain(
       `src="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample"`,
     );

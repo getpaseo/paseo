@@ -2,9 +2,7 @@ import { test, expect } from "../support/fixtures";
 import type { Locator } from "@playwright/test";
 import {
   gotoWorkspace,
-  assertNewChatTileVisible,
   assertNewTabMenuTriggerVisible,
-  assertSingleNewTabButton,
   openNewTabMenuWithShortcut,
   clickNewChat,
   clickNewTerminal,
@@ -126,6 +124,7 @@ test.describe("Tab creation", () => {
     page,
   }) => {
     await gotoWorkspace(page, workspace.workspaceId);
+    await assertNewTabMenuTriggerVisible(page);
     await pressNewTabShortcut(page);
     const newTabs = page
       .locator('[data-testid^="workspace-tab-tab_"]')
@@ -190,11 +189,18 @@ test.describe("Tab creation", () => {
     await expect(agent).toBeFocused();
   });
 
-  test("clicking new agent tab creates a draft tab", async ({ page }) => {
+  test("the Agent menu creates a draft and shows its composer within the visual budget", async ({
+    page,
+  }) => {
     await gotoWorkspace(page, workspace.workspaceId);
 
-    await clickNewChat(page);
-
+    const elapsed = await measureTileTransition(
+      page,
+      () => clickNewChat(page),
+      composerLocator(page),
+      10_000,
+    );
+    expect(elapsed).toBeLessThan(3_000);
     await expectComposerVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
@@ -202,12 +208,17 @@ test.describe("Tab creation", () => {
     expect(draftCountAfter).toBeGreaterThanOrEqual(1);
   });
 
-  test("clicking terminal button creates a standalone terminal", async ({ page }) => {
+  test("the Terminal menu creates a terminal within the visual budget", async ({ page }) => {
     test.setTimeout(45_000);
     await gotoWorkspace(page, workspace.workspaceId);
 
-    await clickNewTerminal(page);
-
+    const elapsed = await measureTileTransition(
+      page,
+      () => clickNewTerminal(page),
+      terminalSurfaceLocator(page),
+      20_000,
+    );
+    expect(elapsed).toBeLessThan(5_000);
     await expectTerminalSurfaceVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
@@ -295,13 +306,6 @@ test.describe("Tab creation", () => {
       await profileSeed.restore();
     }
   });
-
-  test("tab bar shows action buttons per pane", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-    await assertSingleNewTabButton(page);
-    await assertNewChatTileVisible(page);
-    await assertNewTabMenuTriggerVisible(page);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -338,38 +342,5 @@ test.describe("Tab transitions (no flash)", () => {
     expect(counts.every((count) => count === initialCount)).toBe(true);
     expect(new Set(snapshots.map(tabIdentityKey)).size).toBeLessThanOrEqual(2);
     await expectTabTitleFits(page, "New Agent", { min: 64, max: 160 });
-  });
-
-  test("Terminal transition completes within visual budget", async ({ page }) => {
-    test.setTimeout(30_000);
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    const elapsed = await measureTileTransition(
-      page,
-      () => clickNewTerminal(page),
-      terminalSurfaceLocator(page),
-      20_000,
-    );
-
-    // Terminal surface should appear within a reasonable budget.
-    // Note: terminal creation involves a server round-trip, so we allow more time
-    // than a pure in-memory transition, but it should still be well under 5 seconds.
-    expect(elapsed).toBeLessThan(5_000);
-  });
-
-  test("New agent tab click shows composer without flash", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    const elapsed = await measureTileTransition(
-      page,
-      () => clickNewChat(page),
-      composerLocator(page),
-      10_000,
-    );
-
-    // Draft creation is fully in-memory — should be fast
-    // We use a generous budget here because CI can be slow, but the key assertion
-    // is that no blank/flash frame appears (tested above).
-    expect(elapsed).toBeLessThan(3_000);
   });
 });

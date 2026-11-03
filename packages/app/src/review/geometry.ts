@@ -19,6 +19,7 @@ export interface InlineReviewActions {
   onStartComment: (target: ReviewableDiffTarget) => void;
   onEditComment: (target: ReviewableDiffTarget, comment: ReviewDraftComment) => void;
   onCancelEditor: () => void;
+  onChangeEditorBody: (body: string) => void;
   onSaveEditor: (body: string) => void;
   onDeleteComment: (id: string) => void;
 }

@@ -157,15 +157,19 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
       chunkSize: 5,
     });
 
+    const uploadId = result.file?.id ?? "";
+    expect(uploadId).toMatch(
+      /^upload_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
     expect(result).toEqual({
       requestId: "req-upload-e2e",
       file: {
         type: "uploaded_file",
-        id: "upload_req-upload-e2e",
+        id: uploadId,
         fileName: "notes.txt",
         mimeType: "text/plain",
         size: 11,
-        path: path.join(daemon.paseoHome, "uploads", "upload_req-upload-e2e", "notes.txt"),
+        path: path.join(daemon.paseoHome, "uploads", uploadId, "notes.txt"),
       },
       error: null,
     });
@@ -1314,9 +1318,9 @@ test("emits disabled voice capability reasons on fresh daemon startup", async ()
     expect(voice).toBeTruthy();
 
     expect(voice?.dictation.enabled).toBe(false);
-    expect(voice?.dictation.reason).toBe("Dictation is disabled in daemon config.");
+    expect(voice?.dictation.reason).toBe("Dictation is off. Turn it on in Settings > Voice.");
     expect(voice?.voice.enabled).toBe(false);
-    expect(voice?.voice.reason).toBe("Realtime voice is disabled in daemon config.");
+    expect(voice?.voice.reason).toBe("Voice mode is off. Turn it on in Settings > Voice.");
   } finally {
     await client.close().catch(() => undefined);
     await isolatedCtx.cleanup();

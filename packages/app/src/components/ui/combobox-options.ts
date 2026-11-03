@@ -10,18 +10,22 @@ export interface ComboboxOptionModel {
   id: string;
   label: string;
   description?: string;
+  /** Additional text to match without displaying it in the option row. */
+  searchText?: string;
   kind?: ComboboxOptionKind;
 }
 
-const DESCRIPTION_FALLBACK_TIER = 99;
+const SECONDARY_TEXT_FALLBACK_TIER = 99;
 
 function scoreOption(opt: ComboboxOptionModel, search: string): MatchScore | null {
   const best = scoreTextFields(search, [opt.label, opt.id]);
   if (best) return best;
-  if (!opt.description) return null;
-  const descriptionScore = scoreTextFields(search, [opt.description]);
-  if (!descriptionScore) return null;
-  return { ...descriptionScore, tier: descriptionScore.tier + DESCRIPTION_FALLBACK_TIER };
+  const secondaryFields = opt.searchText
+    ? [opt.label, opt.id, opt.description ?? "", opt.searchText]
+    : [opt.description ?? ""];
+  const secondaryScore = scoreTextFields(search, secondaryFields);
+  if (!secondaryScore) return null;
+  return { ...secondaryScore, tier: secondaryScore.tier + SECONDARY_TEXT_FALLBACK_TIER };
 }
 
 export interface BuildVisibleComboboxOptionsInput {

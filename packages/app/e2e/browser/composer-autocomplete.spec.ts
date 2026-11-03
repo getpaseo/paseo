@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "../support/fixtures";
-import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
+import {
+  attachFileFromMenu,
+  composerLocator,
+  expectComposerVisible,
+} from "../support/helpers/composer";
 import {
   openAgentRoute,
   seedMockAgentWorkspace,
@@ -9,7 +13,12 @@ import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/arch
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
-import { expectMobileAgentSidebarVisible } from "../support/helpers/sidebar";
+import {
+  closeMobileAgentSidebar,
+  expectMobileAgentSidebarHidden,
+  expectMobileAgentSidebarVisible,
+  openMobileAgentSidebar,
+} from "../support/helpers/sidebar";
 import { expectNewWorkspaceProjectSelected } from "../support/helpers/new-workspace";
 
 const TEST_COMMANDS = [
@@ -94,16 +103,6 @@ interface PopoverFrame {
 interface PopoverFrameRecorderWindow extends Window {
   __composerAutocompleteFrames?: PopoverFrame[];
   __stopComposerAutocompleteFrameRecorder?: () => void;
-}
-
-async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
-  return page.evaluate(
-    ([pointX, pointY]) => {
-      const element = document.elementFromPoint(pointX, pointY);
-      return element?.closest("[data-testid]")?.getAttribute("data-testid") ?? null;
-    },
-    [x, y],
-  );
 }
 
 async function installListCommandsStub(page: Page): Promise<void> {
@@ -370,6 +369,56 @@ function expectPopoverDoesNotDisappearAfterFirstVisible(frames: PopoverFrame[]):
 }
 
 test.describe("Composer autocomplete", () => {
+  test("inserts suggested commands from assistant messages without sending", async ({ page }) => {
+    const requests = recordCommandRequestsByAgentId(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "suggested-command-",
+      title: "Suggested commands",
+      initialPrompt: "Suggest `/mock` without running it",
+      featureValues: { mockAssistantResponse: "Try `/mock` or [Run mock](/mock)." },
+    });
+    try {
+      await openAgentRoute(page, session);
+      const message = page.getByTestId("assistant-message").filter({ hasText: "Run mock" });
+      await expect(message).toBeVisible();
+      await expect(page.getByTestId("user-message").getByRole("link")).toHaveCount(0);
+      await expect.poll(() => requests.length).toBe(1);
+      await attachFileFromMenu(page, {
+        name: "note.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("attachment"),
+      });
+      await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
+      await message.getByRole("link", { name: "/mock", exact: true }).click();
+      await expect(composerLocator(page)).toHaveValue("/mock ");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(composerLocator(page)).toBeFocused();
+      await message.getByRole("link", { name: "Run mock" }).click();
+      await expect(composerLocator(page)).toHaveValue("/mock /mock ");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(composerLocator(page)).toBeFocused();
+      await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
+      await composerLocator(page).fill("draft");
+      await composerLocator(page).evaluate((element: HTMLTextAreaElement) =>
+        element.setSelectionRange(0, 0),
+      );
+      await message.getByRole("link", { name: "/mock", exact: true }).click();
+      await composerLocator(page).pressSequentially("argument");
+      await expect(composerLocator(page)).toHaveValue("draft /mock argument");
+      await composerLocator(page).fill("/");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toContainText("/mock");
+      expect(requests).toHaveLength(1);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("keeps New workspace off the running-agent command list before a project is chosen", async ({
     page,
   }) => {
@@ -701,19 +750,15 @@ test.describe("Composer autocomplete", () => {
           timeout: 30_000,
         });
 
-        await page.getByRole("button", { name: "Open menu" }).click();
+        // The sidebar covers the composer, so the composer gives up its popover while the
+        // sidebar is open and brings it back once the sidebar closes.
+        await openMobileAgentSidebar(page);
         await expectMobileAgentSidebarVisible(page);
+        await expect(popover).toHaveCount(0);
 
-        const popoverBox = await popover.boundingBox();
-        expect(popoverBox).not.toBeNull();
-
-        const topTestId = await getTopTestIdAtPoint(
-          page,
-          popoverBox!.x + popoverBox!.width / 2,
-          popoverBox!.y + popoverBox!.height / 2,
-        );
-
-        expect(topTestId).not.toBe("composer-autocomplete-popover");
+        await closeMobileAgentSidebar(page);
+        await expectMobileAgentSidebarHidden(page);
+        await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
       } finally {
         await agent.cleanup();
       }

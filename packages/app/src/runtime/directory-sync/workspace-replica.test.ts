@@ -10,6 +10,7 @@ import {
   clearWorkspaceArchivePending,
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
 
 function workspace(id: string, projectId = "project"): WorkspaceDescriptorPayload {
@@ -227,6 +228,153 @@ it("does not restore a targeted cached workspace while its archive is pending", 
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
   } finally {
     clearWorkspaceArchivePending({ serverId, workspaceId });
+    store.clearSession(serverId);
+  }
+});
+
+it("setup metadata from directory snapshots and transitions resets failure surfacing without details", () => {
+  const serverId = "setup-metadata";
+  useSessionStore.getState().initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const identity = { serverId, workspaceId: "setup" };
+  const store = useWorkspaceSetupStore.getState();
+  replica.commitSnapshot(
+    {
+      workspaces: new Map([
+        ["setup", normalizeWorkspaceDescriptor({ ...workspace("setup"), setupStatus: "blocked" })],
+      ]),
+      projects: new Map(),
+    },
+    [],
+  );
+  expect(useSessionStore.getState().sessions[serverId].workspaces.get("setup")?.setupStatus).toBe(
+    "blocked",
+  );
+  expect(store.claimFailedSetupSurface({ ...identity, status: "blocked" })).toBe(true);
+  replica.applyDelta({
+    kind: "upsert",
+    workspace: { ...workspace("setup"), setupStatus: "running" },
+  });
+  replica.applyDelta({
+    kind: "upsert",
+    workspace: { ...workspace("setup"), setupStatus: "failed" },
+  });
+  expect(useSessionStore.getState().sessions[serverId].workspaces.get("setup")?.setupStatus).toBe(
+    "failed",
+  );
+  expect(store.claimFailedSetupSurface({ ...identity, status: "failed" })).toBe(true);
+  expect(store.claimFailedSetupSurface({ ...identity, status: "failed" })).toBe(false);
+  expect(useWorkspaceSetupStore.getState().snapshots).toEqual({});
+});
+
+it("keeps a live workspace update when an older creation snapshot arrives", () => {
+  const serverId = "workspace-create-after-pin";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const initial = workspace("new");
+  const pinned = {
+    ...initial,
+    pinnedAt: "2026-09-26T00:00:00.000Z",
+    title: "Updated title",
+  };
+
+  try {
+    replica.applyDelta({ kind: "upsert", workspace: pinned });
+    const accepted = useSessionStore.getState().sessions[serverId]?.workspaces.get(initial.id);
+
+    expect(replica.acceptWorkspaces([normalizeWorkspaceDescriptor(initial)])).toEqual([]);
+    expect(replica.snapshot().workspaces.get(initial.id)).toEqual(
+      normalizeWorkspaceDescriptor(pinned),
+    );
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(initial.id)).toBe(
+      accepted,
+    );
+  } finally {
+    store.clearSession(serverId);
+  }
+});
+
+it("seeds missing workspaces before live updates and in a mixed creation batch", () => {
+  const serverId = "workspace-create-before-pin";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const initial = normalizeWorkspaceDescriptor(workspace("new"));
+  const second = normalizeWorkspaceDescriptor(workspace("second"));
+  const pinned = { ...workspace(initial.id), pinnedAt: "2026-09-26T00:00:00.000Z" };
+
+  try {
+    expect(replica.acceptWorkspaces([initial])).toEqual([
+      { kind: "workspace", type: "upsert", id: initial.id, value: initial },
+    ]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(initial.id)).toEqual(
+      initial,
+    );
+
+    replica.applyDelta({ kind: "upsert", workspace: pinned });
+    expect(replica.acceptWorkspaces([initial, second])).toEqual([
+      { kind: "workspace", type: "upsert", id: second.id, value: second },
+    ]);
+    expect([...useSessionStore.getState().sessions[serverId]!.workspaces.values()]).toEqual([
+      normalizeWorkspaceDescriptor(pinned),
+      second,
+    ]);
+  } finally {
+    store.clearSession(serverId);
+  }
+});
+
+it("keeps a manual unpin when a stale pinned snapshot arrives", () => {
+  const serverId = "workspace-manual-unpin";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const pinned = { ...workspace("new"), pinnedAt: "2026-09-26T00:00:00.000Z" };
+  const unpinned = { ...pinned, pinnedAt: null };
+
+  try {
+    replica.acceptWorkspaces([normalizeWorkspaceDescriptor(pinned)]);
+    replica.applyDelta({ kind: "upsert", workspace: unpinned });
+    expect(replica.acceptWorkspaces([normalizeWorkspaceDescriptor(pinned)])).toEqual([]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(pinned.id)).toEqual(
+      normalizeWorkspaceDescriptor(unpinned),
+    );
+  } finally {
+    store.clearSession(serverId);
+  }
+});
+
+it("restores a missing workspace after an archive failure without replacing a live row", () => {
+  const serverId = "workspace-archive-rollback";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const initial = normalizeWorkspaceDescriptor(workspace("new"));
+
+  try {
+    replica.acceptWorkspaces([initial]);
+    markWorkspaceArchivePending({ serverId, workspaceId: initial.id });
+    replica.removeWorkspaceSnapshot(initial.id);
+    expect(replica.acceptWorkspaces([initial])).toEqual([]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(initial.id)).toBe(false);
+
+    clearWorkspaceArchivePending({ serverId, workspaceId: initial.id });
+    expect(replica.acceptWorkspaces([initial])).toEqual([
+      { kind: "workspace", type: "upsert", id: initial.id, value: initial },
+    ]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(initial.id)).toEqual(
+      initial,
+    );
+
+    const updated = { ...workspace(initial.id), title: "Updated during archive" };
+    replica.applyDelta({ kind: "upsert", workspace: updated });
+    expect(replica.acceptWorkspaces([initial])).toEqual([]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(initial.id)).toEqual(
+      normalizeWorkspaceDescriptor(updated),
+    );
+  } finally {
+    clearWorkspaceArchivePending({ serverId, workspaceId: initial.id });
     store.clearSession(serverId);
   }
 });

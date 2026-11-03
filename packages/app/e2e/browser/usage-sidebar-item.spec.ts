@@ -30,7 +30,7 @@ import {
   openUsageFromIcon,
   openUsageFromItem,
   pinRow,
-  scrollUsage,
+  scrollUsageToWindow,
   setSummaryInSidebar,
   openUsageOptions,
   showUsageAs,
@@ -146,7 +146,9 @@ test.describe("Usage item", () => {
     compact: { viewport: COMPACT, showSidebar: openCompactSidebar },
   };
   for (const [size, { viewport, showSidebar }] of Object.entries(layouts)) {
-    test(`long usage reports scroll to the final window on ${size}`, async ({ page }) => {
+    test(`long usage reports scroll between their first and last windows on ${size}`, async ({
+      page,
+    }) => {
       test.setTimeout(120_000);
       const source = await installTallUsageSource();
       try {
@@ -161,10 +163,10 @@ test.describe("Usage item", () => {
         await waitForSettledPosition(content);
         await expect(content.getByText("Window 20", { exact: true })).not.toBeInViewport();
         await qaScreenshot(page, `${size}-usage-scroll-top`);
-        await scrollUsage(page, 5_000);
+        await scrollUsageToWindow(page, "Window 20");
         await expect(content.getByText("Window 20", { exact: true })).toBeInViewport();
         await qaScreenshot(page, `${size}-usage-scroll-bottom`);
-        await scrollUsage(page, -5_000);
+        await scrollUsageToWindow(page, "Window 1");
         await expect(content.getByText("Window 20", { exact: true })).not.toBeInViewport();
       } finally {
         await source.cleanup();
@@ -438,4 +440,32 @@ test("released hosts supply source logos through the client conversion", async (
     screen.getByTestId("usage-report-codex").locator("svg path").first(),
   ).toHaveAttribute("d", codexPath);
   await qaScreenshot(page, "released-host-usage-modal");
+});
+
+test("hidden usage sends no requests until opened", async ({ page }) => {
+  test.setTimeout(180_000);
+  const usage = await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+  await expectNoUsageItem(page);
+  await expect(page.getByRole("button", { name: "Usage", exact: true })).toBeVisible({
+    timeout: 90_000,
+  });
+  await openSidebarNavSettings(page);
+  await expectFooterItemSetting(page, "usage", false);
+  await leaveSettings(page);
+  expect(usage.listRequests()).toHaveLength(0);
+  await openUsageFromIcon(page);
+  await usage.waitForListRequests(1);
+  expect(usage.listRequests()).toHaveLength(1);
+});
+
+test("visible usage summary requests reports on load", async ({ page }) => {
+  test.setTimeout(180_000);
+  const usage = await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+  expect(usage.listRequests()).toHaveLength(1);
 });

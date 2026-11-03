@@ -160,6 +160,7 @@ export type PiAssistantMessageEvent =
   | { type: "start" | "text_start" | "text_end" | "thinking_start" | "thinking_end" | "done" };
 
 export type PiAgentSessionEvent =
+  | { type: "thinking_level_changed"; level: PiThinkingLevel }
   | { type: "agent_start" }
   | { type: "turn_start" }
   | { type: "message_start"; message: PiAgentMessage }

@@ -1,7 +1,8 @@
 import { describe, test, expect } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { loadConfig } from "../config.js";
 import { findExecutable } from "../../executable-resolution/executable-resolution.js";
 import { BuiltinPluginLoader } from "../plugins/builtin/index.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -124,15 +125,12 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
   try {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
-    await expect
-      .poll(
-        async () => {
-          const snapshot = await client.getProvidersSnapshot({ cwd });
-          return snapshot.entries.find((entry) => entry.provider === "antigravity")?.status;
-        },
-        { timeout: 30000 },
-      )
-      .toBe("ready");
+    // Snapshot reads start discovery again; await one refresh before checking readiness.
+    await client.refreshProvidersSnapshot({ cwd, providers: ["antigravity"] });
+    const snapshot = await client.getProvidersSnapshot({ cwd });
+    expect(snapshot.entries.find((entry) => entry.provider === "antigravity")?.status).toBe(
+      "ready",
+    );
     const agent = await client.createAgent({
       provider: "antigravity",
       cwd,
@@ -165,3 +163,133 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
     await rm(cwd, { recursive: true, force: true });
   }
 }, 120000);
+
+test("bundled Hoplite requires a config entry and removal survives restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-hoplite-optin-"));
+  const record = path.join(root, "launches.txt");
+  await writeFile(record, "");
+  const options = {
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, [
+      "hoplite-provider",
+      "antigravity-provider",
+    ]),
+  };
+  let daemon = await createTestPaseoDaemon(options);
+  const connect = async () => {
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.2",
+    });
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    return client;
+  };
+  let client = await connect();
+  try {
+    const before = await client.getProvidersSnapshot();
+    expect(before.entries.some((entry) => entry.provider === "hoplite")).toBe(false);
+    expect(before.entries.some((entry) => entry.provider === "antigravity")).toBe(true);
+    expect(await readFile(record, "utf8")).toBe("");
+
+    await client.patchDaemonConfig({
+      providers: {
+        hoplite: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "hoplite-fixture.cjs")],
+          env: { HOPLITE_TEST_RECORD: record, HOPLITE_TEST_CWD: root },
+        },
+      },
+    });
+    const globalModels = await client.listProviderModels("hoplite");
+    expect(globalModels.error).toBeNull();
+    expect(globalModels.models).toEqual([]);
+    await expect
+      .poll(
+        async () =>
+          (await client.getProvidersSnapshot()).entries.find(
+            (entry) => entry.provider === "hoplite",
+          )?.status,
+      )
+      .toBe("ready");
+    const workspaceModels = await client.listProviderModels("hoplite", { cwd: root });
+    expect(workspaceModels.error).toBeNull();
+    expect(workspaceModels.models.map((model) => model.id)).toEqual(["fixture-model"]);
+    await client.refreshProvidersSnapshot({ providers: ["hoplite"] });
+    expect((await client.listProviderModels("hoplite")).models).toEqual([]);
+    expect(
+      (await client.listProviderModels("hoplite", { cwd: root })).models.map((model) => model.id),
+    ).toEqual(["fixture-model"]);
+    const agent = await client.createAgent({
+      provider: "hoplite",
+      cwd: root,
+      model: "fixture-model",
+    });
+    await client.sendMessage(agent.id, "Exercise the contributor transformer");
+    await client.waitForFinish(agent.id, 10000);
+    const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(timeline.entries.map((entry) => entry.item)).toContainEqual(
+      expect.objectContaining({
+        type: "tool_call",
+        name: "Hoplite workspace",
+        status: "completed",
+      }),
+    );
+    await client.archiveAgent(agent.id);
+    expect(await readFile(record, "utf8")).toContain("launch");
+
+    await client.patchDaemonConfig({ providers: { hoplite: { enabled: false } } });
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+    await client.close();
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      ...options,
+      staticDir: daemon.staticDir,
+      providerOverrides: loadConfig(daemon.paseoHome, { env: {} }).providerOverrides,
+    });
+    client = await connect();
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+    await client.patchDaemonConfig({ removeProviders: ["hoplite"] });
+    expect(
+      (await client.getProvidersSnapshot()).entries.some((entry) => entry.provider === "hoplite"),
+    ).toBe(false);
+    expect((await client.getDaemonConfig()).config.providers?.hoplite).toBeUndefined();
+    const persisted = JSON.parse(
+      await readFile(path.join(daemon.paseoHome, "config.json"), "utf8"),
+    );
+    expect(persisted.agents?.providers?.hoplite).toBeUndefined();
+    const launchesAfterRemoval = await readFile(record, "utf8");
+    await client.close();
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      ...options,
+      staticDir: daemon.staticDir,
+      providerOverrides: loadConfig(daemon.paseoHome, { env: {} }).providerOverrides,
+    });
+    client = await connect();
+    const restarted = await client.getProvidersSnapshot();
+    expect(restarted.entries.some((entry) => entry.provider === "hoplite")).toBe(false);
+    expect(restarted.entries.map((entry) => entry.provider)).toEqual(
+      before.entries.map((entry) => entry.provider),
+    );
+    expect(await readFile(record, "utf8")).toBe(launchesAfterRemoval);
+    await client.patchDaemonConfig({ providers: { hoplite: { enabled: false } } });
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+    await rm(daemon.staticDir, { recursive: true, force: true });
+  }
+}, 60000);

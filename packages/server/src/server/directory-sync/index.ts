@@ -69,27 +69,29 @@ export class DirectorySyncService {
   synchronizeWorkspaces(
     snapshot: Iterable<WorkspaceDescriptorPayload>,
     cursor: DirectorySyncCursor,
+    includeBackground = false,
   ): Pick<FetchWorkspacesResponse, "entries" | "emptyProjects" | "pageInfo" | "sync"> {
     this.workspaces.replaceAll(snapshot);
-    const read = this.read(this.workspaces, cursor);
+    const read = this.read(this.workspaces, cursor, includeBackground);
     return {
       entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
       emptyProjects: [],
       pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-      sync: this.metadata(read),
+      sync: this.metadata(read, includeBackground),
     };
   }
 
   synchronizeAgents(
     snapshot: Iterable<AgentDirectoryEntry>,
     cursor: DirectorySyncCursor,
+    includeBackground = false,
   ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     this.agents.replaceAll(snapshot);
-    const read = this.read(this.agents, cursor);
+    const read = this.read(this.agents, cursor, includeBackground);
     return {
       entries: read.values.map(({ seq, value }) => ({ ...value, syncSeq: seq })),
       pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-      sync: this.metadata(read),
+      sync: this.metadata(read, includeBackground),
     };
   }
 
@@ -111,13 +113,19 @@ export class DirectorySyncService {
     value: WorkspaceDescriptorPayload | null,
     id: string,
     includeSequence: boolean,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
     if (value) {
       this.workspaces.replace(value);
     } else {
       this.workspaces.remove(id);
     }
-    return this.withVersion(payload, includeSequence, this.version(this.workspaces, id));
+    return this.withVersion(
+      payload,
+      includeSequence,
+      this.version(this.workspaces, id),
+      includeBackground,
+    );
   }
 
   sequenceAgentUpdate<T extends object>(
@@ -125,18 +133,24 @@ export class DirectorySyncService {
     value: AgentDirectoryEntry | null,
     id: string,
     includeSequence: boolean,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
     if (value) {
       this.agents.replace(value);
     } else {
       this.agents.remove(id);
     }
-    return this.withVersion(payload, includeSequence, this.version(this.agents, id));
+    return this.withVersion(
+      payload,
+      includeSequence,
+      this.version(this.agents, id),
+      includeBackground,
+    );
   }
 
-  private metadata(read: CollectionRead<unknown>) {
+  private metadata(read: CollectionRead<unknown>, includeBackground = false) {
     return {
-      generation: this.generation,
+      generation: this.generationFor(includeBackground),
       headSeq: read.headSeq,
       mode: read.mode,
       ...(read.reason ? { reason: read.reason } : {}),
@@ -148,15 +162,19 @@ export class DirectorySyncService {
     payload: T,
     includeSequence: boolean,
     version: DirectoryVersion | null,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
-    return version && includeSequence ? { ...payload, ...version } : payload;
+    return version && includeSequence
+      ? { ...payload, ...version, generation: this.generationFor(includeBackground) }
+      : payload;
   }
 
   private read<T>(
     collection: VersionedCollection<T>,
     cursor: DirectorySyncCursor,
+    includeBackground = false,
   ): CollectionRead<T> {
-    if (cursor.generation !== this.generation) {
+    if (cursor.generation !== this.generationFor(includeBackground)) {
       return collection.readSnapshot(
         cursor.generation === undefined ? "no_cursor" : "generation_changed",
       );
@@ -165,6 +183,10 @@ export class DirectorySyncService {
       return collection.readSnapshot("no_cursor");
     }
     return collection.readAfter(cursor.afterSeq);
+  }
+
+  private generationFor(includeBackground: boolean): string {
+    return includeBackground ? `${this.generation}:background` : this.generation;
   }
 
   private version<T>(collection: VersionedCollection<T>, id: string): DirectoryVersion | null {

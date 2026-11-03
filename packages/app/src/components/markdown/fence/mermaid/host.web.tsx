@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, View, type TextStyle, type ViewStyle } from "react-native";
+import { Pressable, View, type ViewStyle } from "react-native";
 import { Code, Maximize2, Workflow } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
 import type { Theme } from "@/styles/theme";
-import type { MarkdownFenceRendererProps } from "../types";
+import type { MarkdownFenceRendererProps } from "./types";
 import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
 import { MermaidIframeRuntime, type MermaidRenderedMessage } from "./iframe-runtime.web";
 import { useMermaidRenderModel } from "./use-render-model";
@@ -68,15 +68,6 @@ function MermaidFenceHostImpl({
     ],
     [openFullscreen, showSourcePress, t],
   );
-  const sourceView = useMemo(() => {
-    const { marginTop, marginBottom, marginVertical, ...sourceTextStyle } = textStyle;
-    const margins: ViewStyle = {
-      marginTop: marginTop ?? marginVertical,
-      marginBottom: marginBottom ?? marginVertical,
-    };
-    const text: TextStyle = sourceTextStyle;
-    return { container: [margins, sourceContainerStyle], text };
-  }, [textStyle]);
   const diagramStyle = useMemo(
     () => [
       getDiagramBoxStyle(textStyle),
@@ -90,19 +81,17 @@ function MermaidFenceHostImpl({
     [visible],
   );
   const sourceVisible = !diagramVisible;
-  const sourceContainer = showSource ? sourceView.container : sourceContainerStyle;
-  const sourceTextStyle = showSource ? sourceView.text : textStyle;
   const viewportStyle = diagramVisible ? diagramStyle : measuringStyle;
 
   return (
     <>
       {sourceVisible ? (
-        <View style={sourceContainer}>
+        <View style={sourceContainerStyle}>
           <HighlightedCodeBlock
             code={code}
             language="mermaid"
             inheritedStyles={inheritedStyles}
-            textStyle={sourceTextStyle}
+            textStyle={textStyle}
           />
           {showSource && canShowDiagram ? (
             <Pressable

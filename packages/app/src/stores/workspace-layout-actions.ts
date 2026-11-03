@@ -271,6 +271,7 @@ export interface WorkspaceTabSnapshot {
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
   autoOpenAgentIds: Iterable<string>;
+  foreignAgentIds?: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingTerminalCreate?: boolean;
@@ -1192,7 +1193,10 @@ export function restoreWorkspaceLayout(
   const normalized = normalizeLayout(layout);
   let root = asInternalNode(normalized.root);
   let focusedPaneId = normalized.focusedPaneId;
-  if (!collectAllPanes(root).some((pane) => pane.id !== explorerSidebarPaneId)) {
+  const visibleOrdinaryPane = collectAllPanes(root).find(
+    (pane) => pane.id !== explorerSidebarPaneId,
+  );
+  if (!visibleOrdinaryPane) {
     const ordinaryPane = findOrdinaryPane(root, explorerSidebarPaneId);
     if (ordinaryPane) {
       root = updatePaneInTree(root, {
@@ -1214,6 +1218,9 @@ export function restoreWorkspaceLayout(
         sizes: [0.78, 0.22],
       });
     }
+  } else if (focusedPaneId === null) {
+    // Parked focus has an in-memory restoration record that cannot survive reload.
+    focusedPaneId = visibleOrdinaryPane.id;
   }
   return {
     ...normalized,
@@ -2437,13 +2444,16 @@ export function reconcileWorkspaceTabs(
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
-  // An explicit open owns the tab until the agent joins the active directory.
-  // From then on it follows the normal server archive lifecycle. Detail/cache
-  // hydration never decides whether the user's target is allowed to stay open.
+  const foreignAgentIds = normalizeStringSet(snapshot.foreignAgentIds ?? []);
+  // Explicit opens survive absent directory entries, but not known foreign ownership.
+  // Once an agent joins this workspace's active directory, normal archive rules apply.
   const pinnedAgentIds = new Set(
-    [...(state.pinnedAgentIds ?? [])].filter(
-      (agentId) => !snapshot.agentsHydrated || !activeAgentIds.has(agentId),
-    ),
+    [...(state.pinnedAgentIds ?? [])].filter((agentId) => {
+      if (!snapshot.agentsHydrated) {
+        return true;
+      }
+      return !activeAgentIds.has(agentId) && !foreignAgentIds.has(agentId);
+    }),
   );
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
   const knownTerminalIds = snapshot.knownTerminalIds

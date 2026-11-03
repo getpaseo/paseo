@@ -31,6 +31,7 @@ export const ja: TranslationResources = {
     back: "戻る",
     loading: "読み込み中...",
     actions: {
+      save: "保存",
       back: "戻る",
       cancel: "キャンセル",
       close: "閉じる",
@@ -67,6 +68,7 @@ export const ja: TranslationResources = {
       daemonClientUnavailable: "デーモンクライアントが利用できません",
       daemonClientDisconnected: "デーモンクライアントが切断されています",
       noFileFound: "{{token}}のファイルが見つかりません",
+      folderOutsideWorkspace: "{{path}} はこのワークスペースの外にあります",
       unexpectedDictationError: "音声入力処理中に予期しないエラーが発生しました。",
     },
     connectionStatus: {
@@ -124,6 +126,8 @@ export const ja: TranslationResources = {
     input: {
       accessibilityLabel: "エージェントにメッセージ...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "全画面表示",
+      exitFullscreen: "全画面表示を終了",
       focusHint: "{{shortcut}}でフォーカス",
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
@@ -131,6 +135,8 @@ export const ja: TranslationResources = {
       sendAndInterrupt: "送信して中断",
       sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
+      longPressToQueue: "長押しでキューに追加",
+      longPressToSendNow: "長押しで今すぐ送信",
       queue: "キュー",
       send: "送信",
     },
@@ -362,6 +368,7 @@ export const ja: TranslationResources = {
       details: "詳細",
     },
     dictation: {
+      paused: "マイクが中断されました。再開を待っています…",
       start: "音声入力を開始",
       cancel: "音声入力をキャンセル",
       retry: "音声入力を再試行",
@@ -371,6 +378,7 @@ export const ja: TranslationResources = {
       failedRetry: "音声入力に失敗しました。再試行をタップしてください。",
     },
     question: {
+      responseFailed: "回答を送信できませんでした。もう一度お試しください。",
       submit: "送信",
       next: "次へ",
       answerPlaceholder: "回答を入力...",
@@ -541,6 +549,7 @@ export const ja: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "ワークスペースのセットアップ詳細を表示するにはホストを更新してください",
       descriptor: {
         label: "セットアップ",
         completed: "セットアップ完了",
@@ -616,7 +625,14 @@ export const ja: TranslationResources = {
     terminal: {
       hostDisconnected: "ホストが接続されていません",
       updateHost: "ネイティブターミナルを使用するにはホストを更新してください。",
+      restoreRequiresUpdate: "ターミナルを表示するにはホストを更新してください。",
       unableToSubscribe: "ターミナルに接続できません",
+      fileUploaded: "ファイルをアップロードしました",
+      pasteFileFailed: "ファイルを貼り付けられませんでした: {{reason}}",
+      uploadingFile: "ファイルをアップロード中…",
+    },
+    sheet: {
+      openAsTab: "タブで開く",
     },
     tabs: {
       loading: "読み込み中...",
@@ -633,7 +649,7 @@ export const ja: TranslationResources = {
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
-        title: "タブを切り替え",
+        title: "ワークスペースのタブ",
         searchPlaceholder: "タブを検索",
       },
       menu: {
@@ -729,6 +745,7 @@ export const ja: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "ワークスペースアクション",
+        workspaceActionsUnhealthy: "ワークスペースアクション、異常なサービスがあります",
         newAgent: "新しいエージェント",
         newTerminal: "新しいターミナル",
         newBrowser: "新しいブラウザタブ",
@@ -776,6 +793,8 @@ export const ja: TranslationResources = {
         exitCode: "終了コード: {{code}}",
         startFailed: "{{scriptName}}の起動に失敗しました",
         stopFailed: "{{scriptName}}の停止に失敗しました",
+        running: "実行中",
+        runningCount: "{{count}} 件実行中",
       },
     },
     tree: {
@@ -959,6 +978,7 @@ export const ja: TranslationResources = {
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
         diffMode: "差分モード",
+        all: "すべての変更",
         uncommitted: "未コミット",
         committed: "コミット済み",
         branchUnknown: "不明",
@@ -1162,8 +1182,16 @@ export const ja: TranslationResources = {
       done: "完了",
     },
     display: {
+      showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
+      sort: {
+        label: "並び順",
+        created: "作成日時",
+        manual: "手動",
+        lastPrompt: "最後のプロンプト",
+        updateHost: "ワークスペースを並べ替えるにはホストを更新してください",
+      },
       grouping: {
         label: "グループ化",
         project: "プロジェクト",
@@ -1338,8 +1366,9 @@ export const ja: TranslationResources = {
     },
     fields: {
       project: "プロジェクト",
-      base: "ベース",
+      branch: "ブランチ",
       baseNotApplicable: "該当なし",
+      host: "ホスト",
     },
     titlePlaceholder: "タイトル（任意）",
     errors: {
@@ -1530,6 +1559,9 @@ export const ja: TranslationResources = {
       cli: {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
+        uninstallFailed: "Paseo CLI をアンインストールできません。",
+        keptForeign:
+          "Paseoがインストールしていないpaseoコマンドは残しました。アンインストールするには手動で削除してください。",
       },
     },
   },
@@ -1631,6 +1663,61 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "ステップ {{current}}/{{total}}",
+      skip: "セットアップをスキップ",
+      continue: "続ける",
+      finish: "完了",
+      steps: {
+        appearance: {
+          label: "外観",
+          title: "Paseo へようこそ",
+          description: "まずは外観を選びましょう",
+        },
+        providers: {
+          label: "プロバイダー",
+          title: "エージェント",
+          description: "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います",
+        },
+        projects: {
+          label: "プロジェクト",
+          title: "プロジェクトを追加",
+          description: "エージェントにどこで作業させますか",
+          addProject: "プロジェクトを追加",
+          added: "追加済み",
+          suggestions: {
+            loading: "作業したフォルダーを探しています",
+            empty: "最近のプロジェクトは見つかりませんでした",
+            lastUsed: "最終使用 {{time}}",
+            addSelected_one: "{{count}} 件のプロジェクトを追加",
+            addSelected_other: "{{count}} 件のプロジェクトを追加",
+            adding: "追加しています…",
+            addFailed: "このフォルダーを追加できませんでした",
+          },
+        },
+        orchestration: {
+          label: "オーケストレーション",
+          title: "エージェントに Paseo を使わせる",
+          description:
+            "エージェントがワークスペースを作成し、ほかのエージェントとやり取りできるようにします",
+        },
+        phone: {
+          label: "モバイル",
+          title: "エージェントを持ち歩く",
+          description:
+            "フル機能のネイティブモバイルアプリで、スマートフォンからどの Paseo コンピューターでも操作できます",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "接続方法を選択",
+          connectDocs: "ドキュメント",
+          openConnectDocs: "接続のドキュメントを開く",
+          recommended: "おすすめ",
+          relay: { title: "リレー", hint: "エンドツーエンド暗号化、QR コードをスキャン" },
+          tailscale: { title: "Tailscale", hint: "少し設定が必要です" },
+        },
+      },
+    },
     title: "Paseoへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
@@ -1669,13 +1756,18 @@ export const ja: TranslationResources = {
     title: "プロバイダーを追加",
     search: "プロバイダーを検索",
     noProviders: "プロバイダーが見つかりません",
+    clearSearch: "検索をクリア",
     actions: {
       add: "追加",
+      addProvider: "{{provider}} を追加",
       adding: "追加中",
       installed: "インストール済み",
       cancel: "キャンセル",
       installInstructions: "インストール手順",
       installInstructionsFor: "{{provider}}のインストール手順",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "プロバイダーをインストールできません",
@@ -1846,6 +1938,8 @@ export const ja: TranslationResources = {
       notNow: "今はしない",
       directConnectionHint:
         "リレーを使わない場合は、TCP、Tailscale、または別の VPN で直接接続してください。QR コードは作成されません。",
+      tailscaleDocs: "Tailscale を設定",
+      tailscaleDocsAccessibility: "Tailscale で接続する方法を読む",
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
@@ -1899,6 +1993,12 @@ export const ja: TranslationResources = {
     backdrop: "メニューの背景",
   },
   subagents: {
+    parent: {
+      backToParent: "親に戻る",
+      backTo: "{{label}} に戻る",
+      parentAgent: "親エージェント",
+      openParent: "親を開く",
+    },
     title: "サブエージェント",
     pillLabelOne: "サブエージェント 1 件",
     pillLabelMany: "サブエージェント {{count}} 件",
@@ -1920,14 +2020,35 @@ export const ja: TranslationResources = {
       creatingAgent: "エージェントを作成中",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: ".{{extension}} ファイルを開くアプリ",
+        pickerTitleFilename: "{{filename}} を開くアプリ",
+        dontAskAgain: "今後は確認しない",
+        use: "使用",
+        openWith: "このアプリで開く…",
+        alwaysUseExtension: ".{{extension}} に常に使用",
+        alwaysUseFilename: "{{filename}} に常に使用",
+        option: "{{title}} — {{owner}}",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "画像",
+          source: "ソース",
+        },
+      },
       directoryMissing: "ワークスペースディレクトリが見つかりません。",
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
+      documentUnsupported: "{{type}} ファイルはこのデバイスでは表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
+      notFound: "ファイルが見つかりません",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
+        preview: "プレビュー",
+        source: "ソース",
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",
         editorStatus: "エディターの状態 {{status}}",
@@ -1937,10 +2058,7 @@ export const ja: TranslationResources = {
         changedOnDisk: "ディスク上で変更されました",
         vimMode: "Vim モード {{mode}}",
         cursor: "{{line}} 行、{{column}} 列",
-        preview: "プレビュー",
-        source: "ソース",
         deletedTitle: "ファイルはディスク上から削除されました",
-        checkFailedTitle: "ディスク上のファイルを確認できませんでした",
         preservedDescription: "開いているコピーは保持されています。",
         conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
         overwrite: "上書き",
@@ -1978,11 +2096,17 @@ export const ja: TranslationResources = {
   toolCallDetails: {
     error: "エラー",
     empty: "追加の詳細はありません",
-    subAgentActivity: "サブエージェントアクティビティ",
     input: "入力",
     output: "出力",
   },
+  turnSummary: {
+    details: "ターンの詳細を表示",
+    sentBy: "{{name}} から送信",
+    showMore: "もっと見る",
+    showLess: "折りたたむ",
+  },
   toolCallGroup: {
+    thought: "思考",
     editedFiles: {
       one: "{{count}}個のファイルを編集",
       other: "{{count}}個のファイルを編集",
@@ -2026,6 +2150,18 @@ export const ja: TranslationResources = {
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
   },
   review: {
+    feedback: {
+      send: "フィードバックを送信 ({{count}})",
+      sending: "フィードバックを送信中 ({{count}})",
+      chooseAgent: "エージェントを選択",
+      sent: "{{recipient}} にフィードバックを送信しました",
+      "no-agents":
+        "フィードバックを送信するには、このワークスペースでエージェントタブを開いてください。",
+      disconnected: "フィードバックを送信するにはホストに接続してください。",
+      "no-context": "保存したコメントはこの差分と一致しなくなりました。",
+      failed: "フィードバックを送信できませんでした。もう一度お試しください。",
+      prompt: "このコードレビューに対応してください。",
+    },
     comment: {
       add: "レビューコメントを追加",
       edit: "レビューコメントを編集",
@@ -2036,6 +2172,78 @@ export const ja: TranslationResources = {
       cancelAccessibility: "レビューコメントをキャンセル",
       save: "コメント",
       saveAccessibility: "レビューコメントを保存",
+    },
+  },
+  providerUsage: {
+    checkUsage: "使用状況を確認",
+    checkUsageHint: "すべてのデバイスで {{host}} に適用",
+    off: "{{host}} の使用状況確認はオフです。",
+    turnOn: "オンにする",
+
+    options: "設定",
+    refreshFailed: "使用状況を更新できません",
+    noHosts: "接続中のホストがありません",
+    agentError: "使用状況を読み込めません: {{reason}}",
+    pin: "ピン留め",
+    unpin: "ピン留めを解除",
+    displayAs: "割合",
+    displayUsed: "使用済み",
+    displayRemaining: "残り",
+    showInSidebar: "サイドバーに概要を表示",
+    showInSidebarHint: "ピン留めした期間をサイドバーの下部に表示します",
+    runToRefresh: "{{command}} を実行して更新してください。",
+    signInAgain: "再度サインインしてください。",
+    loginRejected: "ログインが拒否されました (HTTP {{status}})。{{remedy}}",
+    loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
+    title: "プラン使用量",
+    refresh: "更新",
+    refreshAll: "すべて更新",
+    refreshing: "更新中...",
+    loading: "使用状況を読み込み中...",
+    empty: "使用状況データがありません",
+    errorTitle: "使用状況を読み込めません",
+    hostUnavailable: "{{host}} に接続してプロバイダーの使用状況を確認してください",
+    hostUpgradeRequired: "{{host}} を更新してプロバイダーの使用状況を確認してください",
+    clientUnavailable: "ホスト接続の準備ができていません",
+    retry: "再試行",
+    tooltipLoading: "プラン使用状況を読み込み中...",
+    status: {
+      error: "エラー",
+      unavailable: "利用不可",
+    },
+    values: {
+      used: "{{percentage}} 使用済み",
+      remaining: "残り {{amount}}",
+    },
+    labels: {
+      session: "セッション",
+      weekly: "週間",
+      monthly: "月間",
+      codeReview: "コードレビュー",
+      credits: "クレジット",
+      monthlyCredits: "月間クレジット",
+    },
+    duration: {
+      days: "{{value}}日",
+      hours: "{{value}}時間",
+      minutes: "{{value}}分",
+      pair: "{{first}}{{second}}",
+    },
+    timing: {
+      lastUpdated: "最終更新: {{relativeTime}}",
+      noSuccessfulUpdate: "正常な更新はまだありません",
+      resetTimePassed: "リセット時刻を過ぎています",
+      resettingNow: "まもなくリセット",
+      resetsIn: "{{duration}}後にリセット",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
+      runsOutNow: "まもなく上限に到達",
+      runsOutIn: "{{duration}}後に上限に到達",
+      justNow: "たった今",
+      daysAgo: "{{value}}日前",
+      hoursAgo: "{{value}}時間前",
+      minutesAgo: "{{value}}分前",
+      updated: "更新: {{relativeTime}}",
     },
   },
   settings: {
@@ -2066,6 +2274,7 @@ export const ja: TranslationResources = {
       terminal: "ターミナル",
       browser: "ブラウザ",
       editor: "エディター",
+      files: "ファイル",
       shortcuts: "ショートカット",
       integrations: "連携",
       notifications: "通知",
@@ -2078,6 +2287,14 @@ export const ja: TranslationResources = {
       title: "エディター",
       vimKeybindings: "Vim キーバインド",
       vimHint: "Web とデスクトップのソースファイルに適用されます。",
+    },
+    files: {
+      title: "ファイル",
+      askEveryTime: "毎回確認する",
+      askAgain: "もう一度確認する",
+      askAgainFor: "{{label}} をもう一度確認する",
+      unavailable: "接続中のホストにありません",
+      empty: "プラグインがファイルパネルを追加すると、ここに表示されます",
     },
     notifications: {
       title: "通知",
@@ -2099,6 +2316,7 @@ export const ja: TranslationResources = {
       connections: "接続",
       agents: "エージェント",
       metadata: "メタデータ",
+      voice: "音声",
       workspaces: "ワークスペース",
       providers: "プロバイダー",
       usage: "使用状況",
@@ -2117,13 +2335,82 @@ export const ja: TranslationResources = {
       automaticHint: "Paseo が利用可能な高速モデルを選択します",
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
-      fallbackHint: "利用できない場合、Paseo は別の利用可能なモデルを使用します",
+      modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+    },
+    voice: {
+      offline: "音声を設定するには、このホストに接続してください。",
+      updateHost: "音声を設定するには、ホストを更新してください。",
+      saveError: "音声設定を更新できませんでした",
+      provider: "プロバイダー",
+      providers: {
+        local: "ローカル",
+        openai: "OpenAI",
+      },
+      voice: "ボイス",
+      save: "保存",
+      retry: "再試行",
+      cancel: "キャンセル",
+      model: "モデル",
+      language: "言語",
+      languagePlaceholder: "自動検出",
+      setBy: "{{name}} で設定",
+      unknownProvider: "{{provider}} を設定するにはアプリを更新してください",
+      sites: {
+        dictationStt: "音声入力",
+        voiceModeStt: "聞き取り",
+        voiceModeTts: "読み上げ",
+      },
+      dictation: {
+        title: "音声入力",
+        enabled: "音声入力",
+        enabledHint: "入力する代わりにメッセージ欄に話しかけます",
+      },
+      voiceMode: {
+        title: "ボイスモード",
+        info: "ボイスモードは話した内容を文字起こしし、エージェントの返答を読み上げます。",
+        enabled: "ボイスモード",
+        enabledHint: "ハンズフリーでエージェントと会話します",
+      },
+      openai: {
+        apiKey: "API キー",
+        apiKeyHint: "ホストに保存され、再表示されません。",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "保存済み",
+        missingKey: "API キーがありません",
+        baseUrl: "ベース URL",
+        baseUrlHint: "OpenAI 互換サーバー用です。OpenAI を使う場合は空欄のままにします。",
+      },
+      models: {
+        loading: "モデルを読み込み中...",
+        loadError: "ローカルモデルを読み込めませんでした",
+        none: "利用できるモデルがありません",
+        downloaded: "ダウンロード済み",
+        inUse: "使用中",
+        recommended: "おすすめ",
+        download: "ダウンロード",
+        downloadAction: "{{label}} をダウンロード",
+        downloading: "ダウンロード中...",
+        downloadingPercent: "ダウンロード中 {{percent}}%",
+        extracting: "展開中...",
+        delete: "削除",
+        deleteAction: "{{label}} を削除",
+        deleteTitle: "{{label}} を削除しますか？",
+        deleteMessage: "{{size}} が解放されます。後で再ダウンロードできます。",
+        languages: "{{label}} の対応言語",
+        moreLanguages: "{{languages}} ほか {{count}} 言語",
+      },
     },
     general: {
       title: "一般",
       sending: "送信",
+      setup: {
+        label: "初回セットアップ",
+        description:
+          "外観、プロバイダー、プロジェクト、スマートフォンのペアリングをもう一度設定します",
+        action: "セットアップを再表示",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
@@ -2143,10 +2430,23 @@ export const ja: TranslationResources = {
             "エージェント実行中、Enterで現在のターンに指示を送ります。Command/Ctrl+Enterでキューに追加。",
           queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
         },
+        commandEnterDescriptions: {
+          interrupt: "エージェント実行中、{{modifier}}+Enterで中断します。Enterで改行します。",
+          steer:
+            "エージェント実行中、{{modifier}}+Enterで現在のターンに指示を送ります。Enterで改行します。",
+          queue: "エージェント実行中、{{modifier}}+Enterでキューに追加します。Enterで改行します。",
+        },
         options: {
           interrupt: "中断",
           steer: "指示",
           queue: "キュー",
+        },
+      },
+      sendShortcut: {
+        label: "送信ショートカット",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2165,12 +2465,13 @@ export const ja: TranslationResources = {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
       },
-      toolCallDetail: {
-        label: "ツール呼び出しの表示",
-        description: "タイムラインでのツール呼び出しの表示方法",
+      chatDisplay: {
+        label: "チャットの表示",
+        description: "チャットに表示するエージェントの作業量",
         options: {
-          overview: "要約",
-          detailed: "すべての詳細",
+          full: "すべて",
+          collapseToolCalls: "ツール呼び出しを折りたたむ",
+          collapseTurns: "ターンを折りたたむ",
         },
       },
       language: {
@@ -2192,11 +2493,6 @@ export const ja: TranslationResources = {
     },
     diagnostics: {
       title: "診断",
-      legacyTerminalRenderer: {
-        label: "以前のターミナルレンダラーを使用",
-        description: "ターミナルを開き直した後、以前の WebView ターミナルを使用します",
-        accessibilityLabel: "以前のターミナルレンダラーを使用",
-      },
       testAudio: "音声をテスト",
       playTest: "テスト再生",
       playing: "再生中...",
@@ -2326,6 +2622,7 @@ export const ja: TranslationResources = {
       searchPlaceholder: "ショートカットを検索",
       unavailableOnMobile: "キーボードショートカットはデスクトップでのみ利用できます",
       capturePrompt: "ショートカットを押してください...",
+      captureIndexPrompt: "最後に1〜9の数字を入力してください。",
       unassigned: "未設定",
       actions: {
         menu: "{{name}} のアクション",
@@ -2402,11 +2699,7 @@ export const ja: TranslationResources = {
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
-      },
-      actions: {
-        install: "インストール",
-        installing: "インストール中...",
-        installed: "インストール済み",
+        accessibilityLabel: "Paseo CLI をインストール",
       },
     },
     permissions: {
@@ -2485,10 +2778,9 @@ export const ja: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "オーケストレーションスキル",
         title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        description: "エージェントに Paseo ツールの使い方を教えます",
         updateAvailable: "更新が利用可能",
         updateTitle: "Paseoスキルを更新しますか？",
-        updateFallback: "バンドルされたスキルをマシンに同期します。",
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
           "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
@@ -2507,9 +2799,6 @@ export const ja: TranslationResources = {
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
         saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
         actions: {
-          install: "インストール",
-          installing: "インストール中...",
-          installed: "インストール済み",
           update: "更新",
           working: "処理中...",
           remove: "削除",
@@ -2531,6 +2820,7 @@ export const ja: TranslationResources = {
           title: "Paseoツールを有効にする",
           hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
           accessibilityLabel: "Paseoツールを有効にする",
+          updateFailed: "Paseoツールを更新できませんでした。",
         },
         systemPrompt: {
           title: "システムプロンプト",
@@ -2546,6 +2836,19 @@ export const ja: TranslationResources = {
       },
       agents: {
         unavailable: "エージェントを管理するにはこのホストに接続してください",
+        resumeOnStartup: {
+          title: "再起動後にエージェントを再開",
+          info: "ホストの停止時に作業中だったエージェントを開き直し、再開メッセージを送信します。通常の再起動とクラッシュの両方に適用されます。",
+          hint: "中断された作業を自動的に続行します。",
+          prompt: "再開メッセージ",
+          edit: "編集",
+          editAccessibilityLabel: "メッセージを編集",
+        },
+        idleRuntimeCleanup: {
+          title: "アイドル状態のエージェントを解放",
+          hint: "1 時間のアイドル状態の後にメモリを解放します。",
+          info: "会話を保持したままエージェントのプロセスを停止します。メッセージを送信すると再開します。\n\n実行中の作業、保留中の通知、プロバイダーの安全性チェックがある場合は解放しません。",
+        },
       },
       workspaces: {
         unavailable: "ワークスペースを管理するにはこのホストに接続してください",
@@ -2639,6 +2942,10 @@ export const ja: TranslationResources = {
           requestFailedTitle: "エラー",
           requestFailedMessage:
             "再起動リクエストの送信に失敗しました。Paseoは自動的に再接続します。ホストがオンラインになったら再試行してください。",
+          closeTerminals: "再起動してターミナルを閉じる",
+          closeTerminalsHint: "再起動し、このホストのすべてのターミナルも閉じます。",
+          closeTerminalsConfirmMessage:
+            "デーモンを再起動し、すべてのターミナルを閉じます。ターミナルで実行中のプログラムは終了します。アプリは自動的に再接続します。",
           dialogFailedMessage: "再起動確認ダイアログを開けませんでした。",
         },
         update: {

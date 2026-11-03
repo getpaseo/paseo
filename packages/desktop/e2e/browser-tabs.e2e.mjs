@@ -12,7 +12,11 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
+import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
+import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -195,6 +199,20 @@ async function waitForDesktopStatus(page) {
   );
 }
 
+async function settleDesktopStartup(page) {
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
+  // The dev launcher supplies its package directory as an open-project request.
+  // Before the local host connects, that request opens the connection prompt.
+  // Finish startup before exercising the unrelated Settings/browser workflows.
+  const connectionPrompt = page.getByTestId("add-host-method-modal");
+  if (await connectionPrompt.isVisible()) {
+    await connectionPrompt.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(connectionPrompt).toBeHidden();
+  }
+}
+
 async function startTargetPage() {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -287,7 +305,6 @@ async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
         provider: "mock/ten-second-stream",
         settings: { modeId: "load-test" },
         initialPrompt: "Remain available while the browser bridge regression runs.",
-        background: true,
       },
     });
     const result = response.structuredContent;
@@ -455,17 +472,17 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
-async function setWindowHidden(inspectorPort, hidden) {
+async function evaluateDesktopWindow(inspectorPort, expression) {
   const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   try {
-    await new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       socket.addEventListener("error", reject, { once: true });
       socket.addEventListener("message", ({ data }) => {
         const response = JSON.parse(data);
         if (response.id !== 1) return;
         if (response.error || response.result?.exceptionDetails) reject(new Error(data));
-        else resolve();
+        else resolve(response.result.result.value);
       });
       socket.addEventListener(
         "open",
@@ -475,7 +492,8 @@ async function setWindowHidden(inspectorPort, hidden) {
               id: 1,
               method: "Runtime.evaluate",
               params: {
-                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
+                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${expression} })()`,
+                returnByValue: true,
               },
             }),
           ),
@@ -485,6 +503,20 @@ async function setWindowHidden(inspectorPort, hidden) {
   } finally {
     socket.close();
   }
+}
+
+async function setWindowHidden(inspectorPort, hidden) {
+  await evaluateDesktopWindow(
+    inspectorPort,
+    `win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change');`,
+  );
+}
+
+async function resizeDesktopWindow(inspectorPort, { width, height }) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
+  );
 }
 
 async function verifyHiddenBrowserScreenshots({
@@ -1174,6 +1206,7 @@ async function main() {
         cwd: rootDir,
         env: {
           ...commonEnv,
+          EXPO_UNSTABLE_HEADLESS: "1",
           EXPO_PORT: String(expoPort),
           EXPO_DEV_URL: `http://localhost:${expoPort}`,
           PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
@@ -1188,7 +1221,9 @@ async function main() {
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const page = await waitForAppPage(browser, expoPort);
+    await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
+    await settleDesktopStartup(page);
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({
@@ -1206,6 +1241,14 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
+    const settingsScroll = await runSettingsScrollRegression(page, (size) =>
+      resizeDesktopWindow(inspectorPort, size),
+    );
+    if (process.env.PASEO_DESKTOP_SETTINGS_SCROLL_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsScroll });
+      console.log("Desktop Settings scroll regression passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1215,6 +1258,7 @@ async function main() {
       return;
     }
 
+    const adaptiveTheme = await runAdaptiveThemeRegression(artifactDir);
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
@@ -1239,7 +1283,12 @@ async function main() {
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
+    writeJson(path.join(artifactDir, "result.json"), {
+      ...report,
+      settingsMemory,
+      pluginLinks,
+      adaptiveTheme,
+    });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );

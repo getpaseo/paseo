@@ -19,7 +19,12 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent } from "../rpc-types.js";
+import type {
+  OmpAgentMessage,
+  OmpRpcSlashCommand,
+  OmpRuntimeEvent,
+  OmpSessionStats,
+} from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -167,6 +172,18 @@ export class OmpHarness {
     for await (const event of session.streamHistory()) events.push(event);
     await session.close();
     return events;
+  }
+
+  async compact(statsAfter: OmpSessionStats, error?: Error): Promise<AgentStreamEvent[]> {
+    const handler = this.requireSession().tryHandleOutOfBand("/compact");
+    if (!handler) throw new Error("OMP session did not handle /compact out-of-band");
+    const runtime = this.omp.latestSession();
+    const sessionEventCount = this.events.length;
+    const emitted: AgentStreamEvent[] = [];
+    runtime.stats = statsAfter;
+    runtime.compactError = error ?? null;
+    await handler.run({ emit: (event) => emitted.push(event) });
+    return [...emitted, ...this.events.slice(sessionEventCount)];
   }
 
   async runPrompt(

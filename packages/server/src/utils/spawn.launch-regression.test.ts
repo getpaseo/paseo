@@ -126,10 +126,15 @@ async function runFixture(params: {
   command: string;
   args: string[];
   shell?: boolean;
+  env?: NodeJS.ProcessEnv;
 }): Promise<SpawnResult> {
   const child = spawnProcess(params.command, params.args, {
     env: {
       ...process.env,
+      ...params.env,
+      // Terminal color settings must not add Node warnings to the argv fixture's stderr.
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
       PASEO_EXPECTED_ARGV_JSON: JSON.stringify(["--config", JSON_ARG]),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -216,6 +221,8 @@ async function findAndLaunch(fixture: LaunchFixture): Promise<{
     const child = spawnProcess(found, fixture.args, {
       env: {
         ...process.env,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
         PASEO_EXPECTED_ARGV_JSON: fixture.expectedArgvJson,
         PASEO_ARGV_SLICE_FROM: String(fixture.sliceFrom),
       },
@@ -331,18 +338,25 @@ describe.runIf(isPlatform("win32"))("Windows spawn launch regression", () => {
 });
 
 describe.skipIf(isPlatform("win32"))("spawn launch regression smoke", () => {
-  test("direct launch with a space-containing executable works on this platform", async () => {
-    const fixture = makeFixture();
+  test.each([
+    { colors: "inherited", env: {} },
+    { colors: "conflicting", env: { NO_COLOR: "1", FORCE_COLOR: "1" } },
+  ])(
+    "direct launch with a space-containing executable works with $colors colors",
+    async ({ env }) => {
+      const fixture = makeFixture();
 
-    const result = await runFixture({
-      command: fixture.fakeDaemonNode,
-      args: [fixture.assertScript, ...fixture.expectedArgs],
-      shell: false,
-    });
+      const result = await runFixture({
+        command: fixture.fakeDaemonNode,
+        args: [fixture.assertScript, ...fixture.expectedArgs],
+        shell: false,
+        env,
+      });
 
-    expect(result.error).toBeNull();
-    expect(result.code).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("ARGV_OK");
-  });
+      expect(result.error).toBeNull();
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("ARGV_OK");
+    },
+  );
 });

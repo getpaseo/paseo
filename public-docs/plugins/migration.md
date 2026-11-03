@@ -73,7 +73,9 @@ Use this table as the complete registration checklist.
 | `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                          |
 | `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items) |
 | New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                               |
+| New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                          |
 | `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                     |
+| Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                         |
 | `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                                   |
 | `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                                     |
 | `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                                         |
@@ -94,6 +96,22 @@ working. A `/plugin/<plugin>/sidebar/<id>` link, and the older `/plugin/<plugin>
 Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
 `@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
+
+### Panel props in 0.13
+
+All panel kinds share [params, revision, and persisted tab state](./reference.md#workspace-panels).
+
+| Previous API                                                            | Replacement                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------ |
+| Workspace/agent `context` prop                                          | Select the kind at registration.                 |
+| Agent `agentId` prop                                                    | `params.agentId`                                 |
+| `addWorkspacePanel({ context: "workspace", ... })`                      | `addWorkspacePanel({ ... })`                     |
+| `addWorkspacePanel({ context: "agent", ... })`                          | `addAgentPanel({ ... })`                         |
+| Beta file `location.lineStart`, `location.lineEnd`, `location.revision` | `params.lineStart`, `params.lineEnd`, `revision` |
+| Beta `PluginFileTab`, `PluginFileLocation`                              | `PluginTab`, `PluginFilePanelParams`             |
+
+The 0.12 aliases remain available until removal after 2027-04-23. The beta file API changes
+outright. Declare `requirements.paseo` as `>=0.13.0` when adopting the new API.
 
 ### Composer pills
 
@@ -133,27 +151,38 @@ show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popove
 
 Move hooks (`usePaseo`, `useRpc`, `useSettings`, `useAgent`, `useWorkspace`) and client contribution
 types from `@getpaseo/plugin` to `@getpaseo/plugin/client`. Move `Icon` to
-`@getpaseo/plugin/client/react-native`. Import server contexts and lifecycle contracts from
+`@getpaseo/plugin/client/ui`. Import server contexts and lifecycle contracts from
 `@getpaseo/plugin/server`. Shared helpers (`defineRpc`, `defineSettings`, `defineAttachmentSource`),
 schemas, and plain data types stay on the root. These rules include type imports. See
 [Runtime modules](reference#runtime-modules) for the complete contract.
 
 Move the remaining SDK subpaths under their runtime owner:
 
-| Old entry                       | 0.8 entry                              |
-| ------------------------------- | -------------------------------------- |
-| `@getpaseo/plugin/react-native` | `@getpaseo/plugin/client/react-native` |
-| `@getpaseo/plugin/ui`           | `@getpaseo/plugin/client/ui`           |
-| `@getpaseo/plugin/provider`     | `@getpaseo/plugin/server/provider`     |
-| `@getpaseo/plugin/acp`          | `@getpaseo/plugin/server/acp`          |
+| Old entry                              | Current entry                      |
+| -------------------------------------- | ---------------------------------- |
+| `@getpaseo/plugin/react-native`        | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/client/react-native` | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/ui`                  | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/provider`            | `@getpaseo/plugin/server/provider` |
+| `@getpaseo/plugin/acp`                 | `@getpaseo/plugin/server/acp`      |
 
-The old entries and the pre-0.8 `@paseo/plugin` scope are removed. `/client/host` is private to
+The pre-0.8 entries and the old `@paseo/plugin` scope are removed. `/client/host` is private to
 Paseo's app integration and is never a plugin-author import.
 
 The client entry imports only `client/`, `shared/`, and client-safe packages. The server entry imports
 only `server/`, `shared/`, and server-safe packages. A `node:` import in the client entry or anything
 reachable from it is a compile error. Never import a component into the server entry merely to wire
 its registration; that registration belongs in the client entry.
+
+### UI imports in v0.13
+
+Use `/client/ui` for all Paseo UI components and UI hooks. The deprecated
+`/client/react-native` entry retains `useRevealedText(text, phase): string` for 0.12 plugins
+until removal after 2027-04-20. The hook is deprecated and is not exported from `/client/ui`.
+
+For paced timeline text, replace `useRevealedText(text, phase)` and the surrounding `Text` with
+`<StreamedText text={text} phase={phase} style={style} />` from `/client/ui`.
+Use `SettingsSection` for plugin settings headings; `SettingsGroup` is deprecated.
 
 ## 5. Recognize half-migration errors
 

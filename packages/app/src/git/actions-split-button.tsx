@@ -15,9 +15,9 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-import type { GitAction, GitActions } from "@/git/policy";
+import { actionsWithoutPrimary, type GitAction, type GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -129,14 +129,10 @@ export function GitActionsSplitButton({
     [theme.colors.surface2],
   );
 
-  const menuOnlyActions = useMemo(
-    () => [
-      ...(gitActions.primary ? [gitActions.primary] : []),
-      ...gitActions.secondary,
-      ...gitActions.menu,
-    ],
-    [gitActions.menu, gitActions.primary, gitActions.secondary],
-  );
+  const menuOnlyActions = [
+    ...(gitActions.primary ? [gitActions.primary] : []),
+    ...actionsWithoutPrimary(gitActions),
+  ];
 
   if (menuOnly) {
     if (menuOnlyActions.length === 0) {
@@ -277,7 +273,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButton: {
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     flexDirection: "row",
@@ -301,7 +297,7 @@ const styles = StyleSheet.create((theme) => ({
       md: 42,
     },
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     flexDirection: "row",
@@ -335,7 +331,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButtonCaret: {
     width: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     alignItems: "center",
@@ -345,11 +341,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconButton: {
     width: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     alignItems: "center",

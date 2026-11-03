@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -68,7 +68,59 @@ describe("GenericACPAgentClient archived history", () => {
       ).rejects.toThrow("ENOENT");
     });
   });
+
+  test("releases the provider process once an archived session's history is replayed", async () => {
+    await withFakeACPAgent(async ({ command, removedCwd, pidPath }) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+
+      const session = await client.resumeSession(
+        { provider: "acp", sessionId: "archived-session", metadata: { cwd: removedCwd } },
+        undefined,
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        const pid = Number(await readFile(pidPath, "utf8"));
+        expect(isProcessAlive(pid)).toBe(false);
+        expect(await collectTimelineText(session.streamHistory())).toEqual([
+          "user_message:What is in the README?",
+          "assistant_message:It describes the project.",
+        ]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
+  test("keeps the provider process for an interactive resume", async () => {
+    await withFakeACPAgent(async ({ command, removedCwd, pidPath }) => {
+      await mkdir(removedCwd, { recursive: true });
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+
+      const session = await client.resumeSession(
+        { provider: "acp", sessionId: "archived-session", metadata: { cwd: removedCwd } },
+        undefined,
+        undefined,
+        { purpose: "interactive" },
+      );
+      try {
+        const pid = Number(await readFile(pidPath, "utf8"));
+        expect(isProcessAlive(pid)).toBe(true);
+      } finally {
+        await session.close();
+      }
+    });
+  });
 });
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function collectTimelineText(events: AsyncGenerator<AgentStreamEvent>): Promise<string[]> {
   const text: string[] = [];
@@ -88,17 +140,20 @@ async function withFakeACPAgent(
     command: [string, ...string[]];
     removedCwd: string;
     loadRequestsPath: string;
+    pidPath: string;
   }) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-archived-history-"));
   try {
     const scriptPath = path.join(testDir, "fake-acp-agent.cjs");
     const loadRequestsPath = path.join(testDir, "load-requests.json");
+    const pidPath = path.join(testDir, "agent.pid");
     await writeFile(scriptPath, fakeACPAgentScript, "utf8");
     await run({
-      command: [process.execPath, scriptPath, loadRequestsPath],
+      command: [process.execPath, scriptPath, loadRequestsPath, pidPath],
       removedCwd: path.join(testDir, "removed-worktree"),
       loadRequestsPath,
+      pidPath,
     });
   } finally {
     await rm(testDir, { recursive: true, force: true });
@@ -110,6 +165,10 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 
 const loadRequestsPath = process.argv[2];
+const pidPath = process.argv[3];
+if (pidPath) {
+  fs.writeFileSync(pidPath, String(process.pid));
+}
 const loadRequests = [];
 const rl = readline.createInterface({ input: process.stdin });
 
