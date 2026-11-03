@@ -148,6 +148,7 @@ export interface PaseoToolHostDependencies {
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
+  lifecycle?: ArchiveDependencies["lifecycle"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (
@@ -2512,6 +2513,7 @@ function createToolCatalog(
       const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
 
       const terminal = await terminalManager.createTerminal({
+        origin: { source: "agent" },
         cwd: resolvedCwd,
         workspaceId,
         ...(name?.trim() ? { name: name.trim() } : {}),
@@ -3322,6 +3324,7 @@ function archiveWorktreeDependencies(
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
   return {
+    lifecycle: options.lifecycle ?? null,
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
     github: options.github,

@@ -61,6 +61,36 @@ export type PluginWorktreeCreateRequest = {
     }
 );
 
+/**
+ * A terminal Paseo is about to create in a workspace. `command` is absent for the default shell.
+ * Paseo types `input` into a `script` or `worktree` terminal once its shell starts.
+ */
+export interface PluginTerminalCreateRequest {
+  readonly workspaceId: string;
+  readonly cwd: string;
+  /**
+   * `agent`: an agent's Paseo tool. `script`: a `paseo.json` script or service. `worktree`: a
+   * `paseo.json` worktree terminal. `client`: everything else (the app, CLI, SDK, plugins).
+   */
+  readonly source: "client" | "agent" | "script" | "worktree";
+  readonly name: string | null;
+  readonly input: string | null;
+  command?: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+/** A `paseo.json` worktree setup or teardown command Paseo is about to run. */
+export interface PluginCommandRunRequest {
+  /** Null when a worktree is archived by path and no workspace record remains. */
+  readonly workspaceId: string | null;
+  readonly cwd: string;
+  readonly purpose: "setup" | "teardown";
+  /** A shell command: Paseo runs it with `bash -c`, or PowerShell or `cmd.exe` on Windows. */
+  command: string;
+  env: Record<string, string>;
+}
+
 export interface PluginHookAgent {
   id: string;
   workspaceId: string | null;
@@ -116,9 +146,16 @@ export interface PluginHookEvents {
 
 export interface PluginHookRequests {
   "worktree.create.before": PluginWorktreeCreateRequest;
-  "agent.create.before": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create.before": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    /** The workspace the agent is created in, which `config.cwd` alone does not identify. */
+    readonly workspaceId: string | null;
+  };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
+  "terminal.create.before": PluginTerminalCreateRequest;
+  "command.run.before": PluginCommandRunRequest;
 }
 
 export type PluginHooks = {
@@ -186,6 +223,8 @@ export const pluginHookRegistry = {
   "agent.turn.after": { waits: false },
   "agent.permission.before": { waits: false },
   "agent.permission.after": { waits: false },
+  "terminal.create.before": { waits: true },
+  "command.run.before": { waits: true },
 } as const satisfies Record<keyof PluginHooks, { waits: boolean }>;
 
 // COMPAT(pluginHookNames): added in v0.14, remove after 2027-04-30

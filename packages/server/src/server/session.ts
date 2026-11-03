@@ -1183,6 +1183,7 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
+      lifecycle: this.pluginRuntime ?? null,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
@@ -5407,6 +5408,7 @@ export class Session {
   ): Promise<void> {
     return handleWorktreeArchiveRequest(
       {
+        lifecycle: this.pluginRuntime ?? null,
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
         github: this.github,
@@ -7601,6 +7603,7 @@ export class Session {
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     return createWorktreeWorkflow(
       {
+        lifecycle: this.pluginRuntime ?? null,
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
         createPaseoWorktree: (workflowInput, serviceOptions) =>
@@ -7654,6 +7657,7 @@ export class Session {
   ): Promise<void> {
     return handleWorkspaceSetupRunRequestMessage(
       {
+        lifecycle: this.pluginRuntime ?? null,
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
         clearAutomationBlock: (workspaceId) =>
           clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId),
@@ -7691,6 +7695,7 @@ export class Session {
 
       await archiveByScope(
         {
+          lifecycle: this.pluginRuntime ?? null,
           paseoHome: this.paseoHome,
           paseoWorktreesBaseRoot: this.worktreesRoot,
           github: this.github,

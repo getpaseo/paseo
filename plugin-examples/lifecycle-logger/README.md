@@ -1,7 +1,8 @@
 # Lifecycle logger
 
-Registers agent, workspace, and worktree hooks and logs their data as JSON. It observes agent creation,
-session opening, turns, permissions, archive, and workspace creation/archive. Before hooks return
+Registers agent, workspace, worktree, terminal, and command hooks and logs their data as JSON. It
+observes agent creation, session opening, turns, permissions, archive, workspace creation/archive,
+terminal creation, and worktree setup and teardown commands. Before hooks return
 the request unchanged. Environment values are redacted; prompts and timeline content are logged.
 
 Install it on a daemon where plugins are enabled:

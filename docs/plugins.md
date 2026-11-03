@@ -471,6 +471,8 @@ Workspace records decide ownership, including explicit non-ownership after recov
 ownership checks prefer the marker-verified worktree root over the legacy
 path shape: a plugin can place a worktree several directories below the default worktrees root.
 
+`terminal.create.before` runs in `withTerminalCreateHook`, which wraps the daemon's one terminal manager, so every creation path is covered and adopted terminals are not; callers pass an `origin` to name the source. `command.run.before` runs inside the setup and teardown runners through `commandRunHook`. Setup and archive dependencies take `lifecycle` as a required field so a new caller cannot skip the hook by omission; pass `null` only where no plugins run.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
