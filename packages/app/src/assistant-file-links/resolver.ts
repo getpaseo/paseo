@@ -34,8 +34,8 @@ export interface DirectorySuggestionResult {
 export type GetDirectorySuggestions = (input: {
   query: string;
   cwd: string;
-  includeFiles: true;
-  includeDirectories: false;
+  includeFiles: boolean;
+  includeDirectories: boolean;
   matchMode: "suffix";
   limit: number;
 }) => Promise<DirectorySuggestionResult>;
@@ -96,6 +96,26 @@ export async function fetchDaemonResolution({
     }
   };
 
+  // The stripped retry also accepts folders: a workspace-name-prefixed link like
+  // `project/docs` names a directory, and the caller's open plan probes the hit before
+  // choosing how to open it.
+  const searchSuggestionsWithFolders = async (
+    query: string,
+  ): Promise<DirectorySuggestionResult> => {
+    try {
+      return await getDirectorySuggestions({
+        query,
+        cwd: trimmedRoot,
+        includeFiles: true,
+        includeDirectories: true,
+        matchMode: "suffix",
+        limit: 1,
+      });
+    } catch {
+      throw new UnresolvedFileLinkError(token);
+    }
+  };
+
   let suggestions = await searchSuggestions(ambiguousQuery);
   let match = suggestions.entries.find((entry) => entry.kind === "file");
   if (!match && !suggestions.error) {
@@ -103,8 +123,10 @@ export async function fetchDaemonResolution({
     // The strict suffix search misses those, so retry once without that prefix.
     const strippedQuery = stripWorkspaceFolderNamePrefix(ambiguousQuery, trimmedRoot);
     if (strippedQuery !== ambiguousQuery) {
-      suggestions = await searchSuggestions(strippedQuery);
-      match = suggestions.entries.find((entry) => entry.kind === "file");
+      suggestions = await searchSuggestionsWithFolders(strippedQuery);
+      match = suggestions.entries.find(
+        (entry) => entry.kind === "file" || entry.kind === "directory",
+      );
     }
   }
 

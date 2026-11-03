@@ -477,6 +477,28 @@ describe("fetchDaemonResolution", () => {
     ]);
   });
 
+  it("resolves a workspace-name-prefixed folder link through the stripped retry", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      docs: [{ path: "docs", kind: "directory" }],
+    });
+
+    const result = await fetchDaemonResolution({
+      ambiguousQuery: "project/docs",
+      token: "project/docs",
+      target: {
+        raw: "project/docs",
+        path: "/Users/test/project/project/docs",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches.map((search) => search.query)).toEqual(["project/docs", "docs"]);
+    expect(result.path).toBe("/Users/test/project/docs");
+  });
+
   it("does not retry the stripped query when the strict search already matched", async () => {
     const { getDirectorySuggestions, searches } = suggestionsFromMap({
       "project/docs/report.html": [{ path: "project/docs/report.html", kind: "file" }],
