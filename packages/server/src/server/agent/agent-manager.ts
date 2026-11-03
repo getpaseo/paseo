@@ -172,6 +172,12 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
+interface StopAgentBackgroundWorkOptions {
+  agentId: string;
+  itemId: string;
+  stopToken: string;
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -1325,7 +1331,11 @@ export class AgentManager {
     return this.backgroundWork.list(agentId);
   }
 
-  async stopAgentBackgroundWork(agentId: string, itemId: string, stopToken: string): Promise<void> {
+  async stopAgentBackgroundWork({
+    agentId,
+    itemId,
+    stopToken,
+  }: StopAgentBackgroundWorkOptions): Promise<void> {
     this.requirePublicAgent(agentId);
     // Inventory events share the session queue; drain events already received before
     // authorizing the token, including a reconnect's ownership revocation.

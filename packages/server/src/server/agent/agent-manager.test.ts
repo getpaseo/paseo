@@ -12901,9 +12901,9 @@ test("does not deliver an internal agent's background work to global subscribers
   );
 
   expect(events.some((event) => event.type === "background_work")).toBe(false);
-  await expect(manager.stopAgentBackgroundWork(agent.id, "bash-1", "token")).rejects.toThrow(
-    "Unknown agent",
-  );
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "bash-1", stopToken: "token" }),
+  ).rejects.toThrow("Unknown agent");
 });
 
 test("stops only a currently owned public background item with its current token", async () => {
@@ -12941,9 +12941,21 @@ test("stops only a currently owned public background item with its current token
   });
   await vi.waitFor(() => expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(2));
   const [one] = manager.listAgentBackgroundWork(agent.id);
-  await expect(manager.stopAgentBackgroundWork(agent.id, "one", "stale-token")).rejects.toThrow();
-  await expect(manager.stopAgentBackgroundWork(agent.id, "two", one.stopToken!)).rejects.toThrow();
-  await manager.stopAgentBackgroundWork(agent.id, "one", one.stopToken!);
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "one", stopToken: "stale-token" }),
+  ).rejects.toThrow();
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "two",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
+  await manager.stopAgentBackgroundWork({
+    agentId: agent.id,
+    itemId: "one",
+    stopToken: one.stopToken!,
+  });
   expect(stopped).toEqual(["one"]);
   activeSession?.pushEvent({
     type: "background_work",
@@ -12955,7 +12967,13 @@ test("stops only a currently owned public background item with its current token
     provider: "codex",
     items: [{ id: "one", kind: "shell", description: null, canStop: true }],
   });
-  await expect(manager.stopAgentBackgroundWork(agent.id, "one", one.stopToken!)).rejects.toThrow();
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "one",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
   expect(stopped).toEqual(["one"]);
   await manager.closeAgent(agent.id);
 });

@@ -8280,7 +8280,11 @@ export class Session {
   ): Promise<void> {
     let error: string | null = null;
     try {
-      await this.agentManager.stopAgentBackgroundWork(msg.agentId, msg.itemId, msg.stopToken);
+      await this.agentManager.stopAgentBackgroundWork({
+        agentId: msg.agentId,
+        itemId: msg.itemId,
+        stopToken: msg.stopToken,
+      });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
