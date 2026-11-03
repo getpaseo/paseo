@@ -158,6 +158,75 @@ describe("workspace agent activity index", () => {
     );
   });
 
+  it("keeps the most urgent root agent when a less urgent one is more recent", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "waiting",
+          agent({
+            id: "waiting",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            pendingPermissionCount: 1,
+          }),
+        ],
+        [
+          "busy",
+          agent({
+            id: "busy",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+        [
+          "finished",
+          agent({
+            id: "finished",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            attentionTimestamp: "2026-06-01T10:10:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toEqual({
+      agentId: "waiting",
+      status: "needs_input",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+  });
+
+  it("breaks a tie between equally urgent root agents by the most recent activity", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "newer",
+          agent({
+            id: "newer",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.agentId).toBe("newer");
+  });
+
   it("does not let archived or child agents change root workspace activity", () => {
     const index = buildWorkspaceAgentActivityIndex(
       new Map([
