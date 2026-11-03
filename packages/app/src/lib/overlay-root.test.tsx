@@ -1,9 +1,10 @@
+import { useOverlayRegistration } from "@/keyboard";
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dispatchTopWebOverlayKeyDown, useWebOverlayRegistration } from "./overlay-root";
+import { dispatchTopOverlayKeyDown } from "@/keyboard";
 
-describe("useWebOverlayRegistration", () => {
+describe("useOverlayRegistration", () => {
   let opener: HTMLButtonElement;
   let input: HTMLInputElement;
   let scope: HTMLDivElement;
@@ -32,7 +33,12 @@ describe("useWebOverlayRegistration", () => {
 
   it("does not restore opener focus when an active overlay scope detaches", () => {
     const { result, unmount } = renderHook(() =>
-      useWebOverlayRegistration({ active: true, layer: 20, onKeyDown: () => false }),
+      useOverlayRegistration({
+        keys: ["Escape"],
+        active: true,
+        layer: 20,
+        onKeyDown: () => false,
+      }),
     );
 
     act(() => result.current(scope));
@@ -50,7 +56,12 @@ describe("useWebOverlayRegistration", () => {
   it("restores opener focus when an overlay closes", () => {
     const { result, rerender, unmount } = renderHook(
       ({ active }: { active: boolean }) =>
-        useWebOverlayRegistration({ active, layer: 20, onKeyDown: () => false }),
+        useOverlayRegistration({
+          keys: ["Escape"],
+          active,
+          layer: 20,
+          onKeyDown: () => false,
+        }),
       { initialProps: { active: true } },
     );
 
@@ -67,7 +78,12 @@ describe("useWebOverlayRegistration", () => {
 
   it("restores opener focus when an active overlay unmounts after its scope detaches", () => {
     const { result, unmount } = renderHook(() =>
-      useWebOverlayRegistration({ active: true, layer: 20, onKeyDown: () => false }),
+      useOverlayRegistration({
+        keys: ["Escape"],
+        active: true,
+        layer: 20,
+        onKeyDown: () => false,
+      }),
     );
 
     act(() => result.current(scope));
@@ -85,7 +101,7 @@ describe("useWebOverlayRegistration", () => {
 
   it("leaves IME composition keys with the focused editor", () => {
     const event = new KeyboardEvent("keydown", { key: "Process", bubbles: true });
-    expect(dispatchTopWebOverlayKeyDown(event)).toBe(false);
+    expect(dispatchTopOverlayKeyDown(event)).toBe(false);
     expect(event.defaultPrevented).toBe(false);
   });
 });

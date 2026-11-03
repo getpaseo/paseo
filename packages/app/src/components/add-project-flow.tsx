@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
 import { usePanelStore } from "@/stores/panel-store";
@@ -77,12 +78,7 @@ import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
-import {
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useNativeOverlayKeys,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalWebOverlayLayer } from "@/lib/overlay-root";
 import {
   useHosts,
   useHostRuntimeClient,
@@ -323,8 +319,6 @@ function setPageStatus(
     page.kind === kind ? { ...page, ...input } : page,
   );
 }
-
-const ADD_PROJECT_NATIVE_KEYS = ["ArrowUp", "ArrowDown", "Enter"] as const;
 
 // The product flow is intentionally one cohesive page-stack state machine.
 // eslint-disable-next-line complexity
@@ -819,24 +813,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (!handleKey(event.key)) return false;
       event.preventDefault();
       return true;
     },
     [handleKey],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb,
-    layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
-  });
-  useNativeOverlayKeys({
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
     active: true,
     layer: modalLayer,
-    keys: ADD_PROJECT_NATIVE_KEYS,
-    onKey: handleKey,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   const handleNativeKeyPress = useCallback(
@@ -882,7 +871,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       <View style={styles.overlay} testID="add-project-flow">
         <Pressable style={styles.backdrop} onPress={onClose} testID="add-project-flow-backdrop" />
         <View
-          ref={setWebOverlayScope}
+          ref={setOverlayScope}
           style={styles.panel}
           testID={`add-project-flow-page-${page.kind}`}
           accessibilityLabel={`Add project: ${page.kind}`}

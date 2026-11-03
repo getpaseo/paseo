@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { Modal } from "@/components/ui/modal";
 import equal from "fast-deep-equal";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -52,12 +53,7 @@ import { useProjects } from "@/hooks/use-projects";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useProjectIcons } from "@/projects/icons";
-import {
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useNativeOverlayKeys,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalWebOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import {
   useKeyboardShortcutsStore,
@@ -767,7 +763,6 @@ function SectionRow({ row }: { row: Extract<CommandCenterListRow, { kind: "secti
 // Escape arrives without asking; it is registered for `agent.interrupt` anyway.
 // Backspace stays off deliberately — the palette pops its scope with it on web,
 // but a registered command would stop the search field deleting text.
-const COMMAND_CENTER_NATIVE_KEYS = ["ArrowUp", "ArrowDown", "Enter"] as const;
 
 export function CommandCenter() {
   const { t } = useTranslation();
@@ -885,24 +880,19 @@ export function CommandCenter() {
     [state],
   );
   const submit = useCallback(() => state.key("Enter"), [state]);
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (!state.key(event.key)) return false;
       event.preventDefault();
       return true;
     },
     [state],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && state.open && !showBottomSheet,
-    layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
-  });
-  useNativeOverlayKeys({
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
     active: state.open,
     layer: modalLayer,
-    keys: COMMAND_CENTER_NATIVE_KEYS,
-    onKey: state.key,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   if (showBottomSheet) {
@@ -961,7 +951,7 @@ export function CommandCenter() {
       <Modal visible transparent animationType="fade" onRequestClose={state.close}>
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
-          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
+          <View ref={setOverlayScope} testID="command-center-panel" style={styles.panel}>
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
                 <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />

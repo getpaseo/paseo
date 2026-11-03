@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { Modal } from "@/components/ui/modal";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -13,7 +14,7 @@ import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
-import { useGlobalWebOverlayLayer, useWebOverlayRegistration } from "@/lib/overlay-root";
+import { useGlobalWebOverlayLayer } from "@/lib/overlay-root";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -40,8 +41,8 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     setErrored(false);
   }, [metadata?.id, url]);
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (event.key !== "Escape") return false;
       event.preventDefault();
       event.stopPropagation();
@@ -50,10 +51,11 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && source !== null,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: source !== null,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   const actions = useMemo(
@@ -83,7 +85,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
             image was opened (inside a sheet tab, the bottom one is already spent). */}
         <SafeAreaProvider>
           <WindowChromeRootRegion corners="both">
-            <View ref={setWebOverlayScope} style={styles.root}>
+            <View ref={setOverlayScope} style={styles.root}>
               <Pressable
                 testID="attachment-lightbox-backdrop"
                 accessibilityRole="button"

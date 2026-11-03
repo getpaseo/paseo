@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -10,8 +11,6 @@ import {
   getOverlayRoot,
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
-  useNativeOverlayDismiss,
-  useWebOverlayRegistration,
 } from "../lib/overlay-root";
 import {
   BottomSheetHandle,
@@ -659,8 +658,8 @@ export function AdaptiveModalSheet({
     [isWebClosing, modalLayer],
   );
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (event.key !== "Escape") return false;
       event.preventDefault();
       event.stopPropagation();
@@ -669,12 +668,12 @@ export function AdaptiveModalSheet({
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && !isMobile && visible,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: visible,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
-  useNativeOverlayDismiss({ active: visible, layer: modalLayer, onDismiss: onClose });
 
   useEffect(() => {
     if (!isWeb || isMobile) return;
@@ -758,13 +757,7 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View
-        ref={setWebOverlayScope}
-        style={desktopCardStyle}
-        role="dialog"
-        aria-modal
-        tabIndex={-1}
-      >
+      <View ref={setOverlayScope} style={desktopCardStyle} role="dialog" aria-modal tabIndex={-1}>
         {cardInner}
       </View>
     </View>

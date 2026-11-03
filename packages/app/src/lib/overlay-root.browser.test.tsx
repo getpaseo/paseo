@@ -1,19 +1,21 @@
+import { useOverlayRegistration } from "@/keyboard";
 import React, { type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  hasOpenDomPopover,
-  keyBelongsToDomPopover,
-  useWebOverlayRegistration,
-} from "./overlay-root";
+import { hasOpenDomPopover, keyBelongsToDomPopover } from "@/keyboard/internal/dom-popover";
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function OverlayHarness({ active, showScope }: { active: boolean; showScope: boolean }) {
-  const setScope = useWebOverlayRegistration({ active, layer: 20, onKeyDown: () => false });
+  const setScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active,
+    layer: 20,
+    onKeyDown: () => false,
+  });
   return showScope ? (
     <div data-testid="scope" ref={setScope as RefCallback<HTMLDivElement>} tabIndex={-1}>
       <input data-testid="overlay-input" />
@@ -21,7 +23,7 @@ function OverlayHarness({ active, showScope }: { active: boolean; showScope: boo
   ) : null;
 }
 
-describe("useWebOverlayRegistration in the browser", () => {
+describe("useOverlayRegistration in the browser", () => {
   let root: Root;
   let container: HTMLDivElement;
   let opener: HTMLButtonElement;

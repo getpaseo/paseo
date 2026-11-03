@@ -1,4 +1,5 @@
-import { useOverlayLayer, useWebOverlayRegistration } from "@/lib/overlay-root";
+import { useOverlayRegistration } from "@/keyboard";
+import { useOverlayLayer } from "@/lib/overlay-root";
 
 /**
  * Escape leaves fullscreen before app shortcuts see it. The registration only claims
@@ -9,7 +10,8 @@ export function useComposerFullscreenExit(
   onExit: () => void,
 ): ((node: unknown) => void) | undefined {
   const layer = useOverlayLayer("modal");
-  return useWebOverlayRegistration({
+  return useOverlayRegistration({
+    keys: ["Escape"],
     active,
     layer,
     manageFocus: false,

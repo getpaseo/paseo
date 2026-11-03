@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,12 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { isWeb } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import {
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useNativeOverlayDismiss,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalWebOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 
@@ -187,8 +183,8 @@ export function HostChooserModal() {
     [close, request],
   );
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (
         event.key !== "ArrowDown" &&
         event.key !== "ArrowUp" &&
@@ -228,12 +224,12 @@ export function HostChooserModal() {
     },
     [activeOptionIndex, chooseHost, close, options],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && request != null,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    active: request != null,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
-  useNativeOverlayDismiss({ active: request != null, layer: modalLayer, onDismiss: close });
 
   if (!request) return null;
 
@@ -241,7 +237,7 @@ export function HostChooserModal() {
     <Modal visible transparent animationType="fade" onRequestClose={close} testID="host-chooser">
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={close} />
-        <View ref={setWebOverlayScope} style={styles.panel}>
+        <View ref={setOverlayScope} style={styles.panel}>
           <View style={styles.header}>
             <Text style={styles.title}>{request.title}</Text>
             <TextInput

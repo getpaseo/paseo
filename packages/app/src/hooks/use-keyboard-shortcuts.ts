@@ -50,22 +50,17 @@ import {
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
-import {
-  dispatchTopNativeOverlayKey,
-  getTopNativeOverlayKeys,
-  hasActiveNativeOverlay,
-  hasActiveWebOverlay,
-  subscribeNativeOverlays,
-} from "@/lib/overlay-root";
+import { getTopOverlayKeys, hasActiveOverlay, subscribeOverlays } from "@/keyboard";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { dispatchTopWebOverlayKeyDown, keyBelongsToDomPopover } from "@/lib/overlay-root";
+import { dispatchTopOverlayKeyDown } from "@/keyboard";
+import { keyBelongsToDomPopover } from "@/keyboard/internal/dom-popover";
 
 function getNativeOverlayKeySignature(): string {
-  return getTopNativeOverlayKeys().join(",");
+  return getTopOverlayKeys().join(",");
 }
 
 export function useKeyboardShortcuts({
@@ -111,15 +106,11 @@ export function useKeyboardShortcuts({
     isNativeTerminalKeyboardClaimed,
     isNativeTerminalKeyboardClaimed,
   );
-  const overlayOpen = useSyncExternalStore(
-    subscribeNativeOverlays,
-    hasActiveNativeOverlay,
-    hasActiveNativeOverlay,
-  );
+  const overlayOpen = useSyncExternalStore(subscribeOverlays, hasActiveOverlay, hasActiveOverlay);
   // Joined rather than the array itself: the snapshot has to be referentially
   // stable across reads or `useSyncExternalStore` loops.
   const overlayKeySignature = useSyncExternalStore(
-    subscribeNativeOverlays,
+    subscribeOverlays,
     getNativeOverlayKeySignature,
     getNativeOverlayKeySignature,
   );
@@ -368,7 +359,8 @@ export function useKeyboardShortcuts({
       return;
     }
 
-    if (dispatchTopWebOverlayKeyDown(event)) {
+    if (dispatchTopOverlayKeyDown(event)) {
+      event.stopImmediatePropagation();
       return;
     }
 
@@ -388,12 +380,7 @@ export function useKeyboardShortcuts({
     }
 
     const key = event.key ?? "";
-    if (
-      key === "Escape" &&
-      pathname.startsWith("/settings") &&
-      !isMobile &&
-      hasActiveWebOverlay()
-    ) {
+    if (key === "Escape" && pathname.startsWith("/settings") && !isMobile && hasActiveOverlay()) {
       return;
     }
     if (key === badgeModifierKey && !event.shiftKey) {
@@ -445,19 +432,17 @@ export function useKeyboardShortcuts({
   // registered list's job — UIKit already picked this command over whatever
   // holds focus, so a key the terminal needs is never registered.
   const handleNativeShortcut = useStableEvent(({ combo }: { combo: string }) => {
-    // What `dispatchTopWebOverlayKeyDown` does for web: the topmost overlay
+    // What `dispatchTopOverlayKeyDown` does for web: the topmost overlay
     // gets first refusal before app-wide shortcuts run, and an unhandled key
     // falls through. Runs before the combo is parsed because a key an overlay
     // asked for is not a binding and need not resolve to one. Only a bare key
     // can belong to an overlay — a combo with modifiers is always a binding,
     // and its combo string is not a key name.
-    if (!combo.includes("+") && dispatchTopNativeOverlayKey(combo)) {
-      return;
-    }
     const input = keyboardShortcutInputFromCombo(combo);
     if (!input) {
       return;
     }
+    if (dispatchTopOverlayKeyDown({ ...input, preventDefault() {}, stopPropagation() {} })) return;
     const focusScope = useKeyboardShortcutsStore.getState().commandCenterOpen
       ? "command-center"
       : "other";
