@@ -3,6 +3,7 @@ import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
   CalendarClock,
+  CalendarDays,
   CircleDashed,
   Folder,
   FolderPlus,
@@ -59,6 +60,9 @@ const ThemedFolder = withUnistyles(Folder, (theme) => ({ color: theme.colors.for
 const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
+const ThemedCalendarDays = withUnistyles(CalendarDays, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 const ThemedPanelLeft = withUnistyles(PanelLeft, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
@@ -101,6 +105,10 @@ function FolderIcon({ size }: CommandCenterIconProps) {
 
 function CircleDashedIcon({ size }: CommandCenterIconProps) {
   return <ThemedCircleDashed size={size} strokeWidth={2.2} />;
+}
+
+function CalendarDaysIcon({ size }: CommandCenterIconProps) {
+  return <ThemedCalendarDays size={size} strokeWidth={2.2} />;
 }
 
 function PanelLeftIcon({ size }: CommandCenterIconProps) {
@@ -323,8 +331,9 @@ export function CommandCenterRootActions() {
           section: t("shell.commandCenter.actions"),
           groupByProject: t("shell.commandCenter.groupByProject"),
           groupByStatus: t("shell.commandCenter.groupByStatus"),
+          groupByDay: t("shell.commandCenter.groupByDay"),
         },
-        icons: { project: FolderIcon, status: CircleDashedIcon },
+        icons: { project: FolderIcon, status: CircleDashedIcon, day: CalendarDaysIcon },
         setGroupMode,
       }),
     );

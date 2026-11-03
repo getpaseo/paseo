@@ -38,6 +38,7 @@ function makeWorkspace(
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    lastActivityAt: null,
     labels,
   };
   return { placement, entry };
@@ -65,7 +66,7 @@ function makeProject(
 }
 
 function projectionInput(options?: {
-  groupMode?: "project" | "status";
+  groupMode?: "project" | "status" | "day";
   pinnedCollapsed?: boolean;
 }) {
   const pinned = makeWorkspace("pinned", "running");
@@ -176,3 +177,31 @@ describe("buildSidebarProjection", () => {
     ]);
   });
 });
+
+describe("activity-day projection", () => {
+  it("keeps pins separate, retains collapse, and aligns shortcuts with the visible groups", () => {
+    const input = projectionInput({ groupMode: "day" });
+    const result = buildSidebarProjection(input);
+    expect(result.pinnedGroups.pinnedChats.map((row) => row.workspaceId)).toEqual(["pinned"]);
+    expect(result.workspaceGroups.map((group) => [group.key, workspaceIds(group.rows)])).toEqual([
+      ["older", ["unpinned"]],
+    ]);
+    expect(
+      result.shortcutModel.shortcutTargets.map((row) => `${row.serverId}:${row.workspaceId}`),
+    ).toEqual(["srv:pinned", "srv:unpinned"]);
+    const collapsed = buildSidebarProjection({
+      ...input,
+      collapsedWorkspaceGroupKeys: new Set(["older"]),
+    });
+    expect(
+      collapsed.shortcutModel.shortcutTargets.map((row) => `${row.serverId}:${row.workspaceId}`),
+    ).toEqual(["srv:pinned"]);
+    expect(
+      buildSidebarProjection({ ...input, workspaceEntriesByKey: new Map() }).workspaceGroups,
+    ).toEqual([]);
+  });
+});
+
+function workspaceIds(rows: readonly SidebarWorkspaceEntry[]): string[] {
+  return rows.map((row) => row.workspaceId);
+}

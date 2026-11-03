@@ -102,6 +102,7 @@ export const es: TranslationResources = {
       home: "Hogar",
       groupByProject: "Agrupar por proyecto",
       groupByStatus: "Agrupar por estado",
+      groupByDay: "Agrupar por día de actividad",
       modelGroupLabel: "Modelo",
       modelSearchKeywords: "cambiar modelo modificar modelo establecer modelo seleccionar modelo",
       thinkingGroupLabel: "Razonamiento",
@@ -1202,6 +1203,11 @@ export const es: TranslationResources = {
       working: "En ejecución",
       done: "Terminado",
     },
+    dayBucket: {
+      today: "Hoy",
+      yesterday: "Ayer",
+      older: "Anterior",
+    },
     display: {
       showBackground: "Mostrar espacios en segundo plano",
       trigger: "Preferencias de visualización",
@@ -1217,6 +1223,7 @@ export const es: TranslationResources = {
         label: "Agrupación",
         project: "Proyecto",
         status: "Estado",
+        day: "Día de actividad",
         labels: "Etiquetas",
       },
       titleSource: {
