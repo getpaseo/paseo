@@ -1,10 +1,40 @@
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PaseoAgentBackgroundWorkItem } from "@getpaseo/client";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { createBackgroundWorkModel } from "./model";
 
-export function createHostBackgroundWorkModel(serverId: string, agentId: string) {
+interface BackgroundWorkClient {
+  getLastServerInfoMessage(): { features?: { agentBackgroundWork?: boolean } | null } | null;
+  listAgentBackgroundWork(agentId: string): Promise<PaseoAgentBackgroundWorkItem[]>;
+  observeAgentBackgroundWork(): {
+    subscribe(observer: {
+      snapshot(): void;
+      update(message: SessionOutboundMessage): void;
+      error(error: unknown): void;
+    }): unknown;
+    release(): Promise<void>;
+  };
+}
+
+interface BackgroundWorkHost {
+  getClient(): BackgroundWorkClient | null;
+  subscribe(listener: () => void): () => void;
+}
+
+function hostFor(serverId: string): BackgroundWorkHost {
   const host = getHostRuntimeStore();
-  let client: DaemonClient | null = null;
+  return {
+    getClient: () => host.getSnapshot(serverId)?.client ?? null,
+    subscribe: (listener) => host.subscribe(serverId, listener),
+  };
+}
+
+export function createHostBackgroundWorkModel(
+  serverId: string,
+  agentId: string,
+  host: BackgroundWorkHost = hostFor(serverId),
+) {
+  let client: BackgroundWorkClient | null = null;
   return createBackgroundWorkModel({
     list: () => {
       if (!client) return Promise.reject(new Error("Host disconnected"));
@@ -12,8 +42,11 @@ export function createHostBackgroundWorkModel(serverId: string, agentId: string)
     },
     observe: ({ snapshot, update, disconnected, failed }) => {
       let release: (() => void) | undefined;
+      let currentObservation:
+        | ReturnType<BackgroundWorkClient["observeAgentBackgroundWork"]>
+        | undefined;
       const sync = () => {
-        const next = host.getSnapshot(serverId)?.client ?? null;
+        const next = host.getClient();
         if (next === client) return;
         const previousRelease = release;
         client = next;
@@ -28,20 +61,26 @@ export function createHostBackgroundWorkModel(serverId: string, agentId: string)
         }
         const observedClient = client;
         const observation = client.observeAgentBackgroundWork();
+        currentObservation = observation;
         observation.subscribe({
           snapshot: () => {
-            if (client === observedClient) snapshot();
+            if (client === observedClient && currentObservation === observation) snapshot();
           },
           update: (message) => {
             if (
               client === observedClient &&
+              currentObservation === observation &&
               message.type === "agent.background_work.update" &&
               message.payload.agentId === agentId
             )
               update(message.payload.items);
           },
+          error: () => {
+            if (client === observedClient && currentObservation === observation) failed();
+          },
         });
         release = () => {
+          if (currentObservation === observation) currentObservation = undefined;
           void observation
             .release()
             .catch((error: unknown) =>
@@ -49,7 +88,7 @@ export function createHostBackgroundWorkModel(serverId: string, agentId: string)
             );
         };
       };
-      const unsubscribe = host.subscribe(serverId, sync);
+      const unsubscribe = host.subscribe(sync);
       sync();
       return () => {
         unsubscribe();

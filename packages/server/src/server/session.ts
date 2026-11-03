@@ -2131,12 +2131,13 @@ export class Session {
   private forwardBackgroundWork(
     event: Extract<AgentManagerEvent, { type: "background_work" }>,
   ): void {
+    const agent = this.agentManager.getAgent(event.agentId);
+    if (agent?.internal) return;
     this.emit({
       type: "agent.background_work.update",
       payload: { agentId: event.agentId, items: event.items },
     });
-    const agent = this.agentManager.getAgent(event.agentId);
-    if (agent && !agent.internal) void this.agentUpdates.forwardLiveAgent(agent);
+    if (agent) void this.agentUpdates.forwardLiveAgent(agent);
   }
 
   private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {

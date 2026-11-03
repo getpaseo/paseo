@@ -19,6 +19,7 @@ export function createBackgroundWorkModel(port: Port) {
   let state: BackgroundWorkState = { status: "loading", items: null };
   let sequence = 0;
   let stop: (() => void) | undefined;
+  let observationFailed = false;
   const listeners = new Set<() => void>();
   const publish = (next: BackgroundWorkState) => {
     state = next;
@@ -34,32 +35,42 @@ export function createBackgroundWorkModel(port: Port) {
       if (request === sequence) publish({ status: "error", items: state.items });
     }
   };
+  const start = () => {
+    observationFailed = false;
+    stop = port.observe({
+      snapshot: () => {
+        void refresh();
+      },
+      disconnected: () => {
+        sequence++;
+        publish({ status: state.items === null ? "loading" : "stale", items: state.items });
+      },
+      failed: () => {
+        observationFailed = true;
+        sequence++;
+        publish({ status: "error", items: state.items });
+      },
+      update: (items) => {
+        sequence++;
+        publish({ status: "ready", items });
+      },
+    });
+  };
   return {
     getSnapshot: () => state,
     retry: () => {
-      void refresh();
+      if (observationFailed) {
+        stop?.();
+        stop = undefined;
+        publish({ status: state.items === null ? "loading" : "stale", items: state.items });
+        start();
+      } else {
+        void refresh();
+      }
     },
     subscribe(listener: () => void) {
       listeners.add(listener);
-      if (!stop) {
-        stop = port.observe({
-          snapshot: () => {
-            void refresh();
-          },
-          disconnected: () => {
-            sequence++;
-            publish({ status: state.items === null ? "loading" : "stale", items: state.items });
-          },
-          failed: () => {
-            sequence++;
-            publish({ status: "error", items: state.items });
-          },
-          update: (items) => {
-            sequence++;
-            publish({ status: "ready", items });
-          },
-        });
-      }
+      if (!stop) start();
       return () => {
         listeners.delete(listener);
         if (!listeners.size) {

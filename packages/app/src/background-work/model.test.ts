@@ -130,3 +130,32 @@ test("reports an initial read failure without claiming an empty inventory", asyn
   expect(model.getSnapshot()).toEqual({ status: "error", items: null });
   unsubscribe();
 });
+
+test("recreates a failed observation on retry and resumes live updates", async () => {
+  const item = { id: "1", kind: "shell", description: "sleep", startedAt: "2026-01-01T00:00:00Z" };
+  let observation!: Parameters<Parameters<typeof createBackgroundWorkModel>[0]["observe"]>[0];
+  let starts = 0;
+  let releases = 0;
+  const model = createBackgroundWorkModel({
+    list: async () => [item],
+    observe: (callbacks) => {
+      observation = callbacks;
+      starts++;
+      return () => {
+        releases++;
+      };
+    },
+  });
+  const unsubscribe = model.subscribe(() => {});
+  observation.failed();
+  expect(model.getSnapshot()).toEqual({ status: "error", items: null });
+  model.retry();
+  expect(starts).toBe(2);
+  expect(releases).toBe(1);
+  observation.snapshot();
+  await Promise.resolve();
+  expect(model.getSnapshot()).toEqual({ status: "ready", items: [item] });
+  observation.update([]);
+  expect(model.getSnapshot()).toEqual({ status: "ready", items: [] });
+  unsubscribe();
+});
