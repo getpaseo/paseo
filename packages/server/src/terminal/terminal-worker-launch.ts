@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
 import { buildSelfNodeCommand } from "../server/paseo-env.js";
 import { ensurePrivateDirectory } from "../server/private-files.js";
 import {
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
+  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
@@ -56,13 +58,31 @@ export async function launchTerminalWorker(input: {
         windowsHide: true,
         encoding: "utf8",
       },
-      (error, out, err) => {
+      async (error, out, err) => {
         if (error) {
           const detail = err.trim() || error.message;
+          // Temporary diagnostics: retain the last startup stage before test cleanup removes it.
+          let startup = "";
+          try {
+            startup = (await readFile(terminalWorkerLogPath(input.paseoHome), "utf8"))
+              .split("\n")
+              .filter((line) => line.startsWith('{"phase":'))
+              .slice(-12)
+              .join("\n");
+            const records = (await readdir(terminalWorkerDirectory(input.paseoHome))).filter(
+              (name) => name.endsWith(".json"),
+            ).length;
+            startup += `\nWorker records at failure: ${records}`;
+          } catch {
+            startup += "\nStartup diagnostics unavailable";
+          }
           reject(
-            new TerminalWorkerLaunchError(`Terminal worker failed to start: ${detail}`, {
-              cause: error,
-            }),
+            new TerminalWorkerLaunchError(
+              `Terminal worker failed to start: ${detail}\n${startup}`,
+              {
+                cause: error,
+              },
+            ),
           );
           return;
         }
