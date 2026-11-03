@@ -1,5 +1,5 @@
 import { formatPluginInstallation } from "@getpaseo/protocol/plugin-source-reference";
-import { PluginSettingsMenuItems } from "@/plugins/settings";
+import { PluginSettingsButton } from "@/plugins/settings";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -49,7 +49,6 @@ function pluginRowAction(action: string | undefined): PluginRowAction | undefine
 
 function PluginActionsMenu({
   plugin,
-  serverId,
   pending,
   pendingAction,
   onAction,
@@ -57,7 +56,6 @@ function PluginActionsMenu({
   supportsLogs,
 }: {
   plugin: PluginListItem;
-  serverId: string;
   pending: boolean;
   pendingAction?: PluginRowAction;
   onAction(action: PluginRowAction, plugin: PluginListItem): void;
@@ -83,7 +81,6 @@ function PluginActionsMenu({
         <MoreHorizontal size={18} color={styles.menuIcon.color} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220} sheetTitle={menuLabel}>
-        <PluginSettingsMenuItems serverId={serverId} pluginId={plugin.id} disabled={pending} />
         {supportsLogs ? (
           <DropdownMenuItem onSelect={openLogs} disabled={pending}>
             {t("settings.plugins.logs.action")}
@@ -171,6 +168,7 @@ function PluginRow({
       testID={`plugin-row-${plugin.id}`}
     >
       <View style={styles.pluginControls} accessibilityLabel={`${plugin.id} ${statusLabel}`}>
+        <PluginSettingsButton serverId={serverId} pluginId={plugin.id} />
         <Switch
           value={plugin.enabled}
           onValueChange={toggle}
@@ -179,7 +177,6 @@ function PluginRow({
         />
         <PluginActionsMenu
           plugin={plugin}
-          serverId={serverId}
           pending={pending}
           pendingAction={pendingAction}
           onAction={onAction}

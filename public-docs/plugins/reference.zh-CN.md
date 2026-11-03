@@ -1087,7 +1087,7 @@ export default function contribute(client: PluginClientContext) {
 
 ## 设置界面 {#settings-screens}
 
-在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。它会出现在该主机的 **设置 → 插件 → 你的插件** 下。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
+在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。之后，该主机 **设置 → 插件** 中你的插件行会显示一个设置按钮（齿轮），点击后打开你的第一个界面。注册多个界面时，设置页面会按注册顺序为每个界面显示一个标签页，使用其 `title` 和 `icon`；只有一个界面时不显示标签页。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
 
 调用 `client.openSettings(id)` 或 Command Center 回调中的 `openSettings(id)` 可以打开你自己的某个界面。即使多台主机安装了同一个插件，每次安装也有各自的值和路由。
 

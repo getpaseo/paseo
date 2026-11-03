@@ -2394,6 +2394,7 @@ export const en = {
       status: { running: "running", disabled: "disabled", failed: "failed" },
       actions: {
         menu: "Actions for {{id}}",
+        settings: "Settings for {{id}}",
         reload: "Reload",
         reloading: "Reloading…",
         enable: "Enable",

@@ -34,6 +34,7 @@ export const pluginSettings = {
     status: { running: "قيد التشغيل", disabled: "معطّلة", failed: "فشلت" },
     actions: {
       menu: "إجراءات {{id}}",
+      settings: "إعدادات {{id}}",
       reload: "إعادة تحميل",
       reloading: "جارٍ إعادة التحميل…",
       enable: "تفعيل",
@@ -89,6 +90,7 @@ export const pluginSettings = {
     status: { running: "en ejecución", disabled: "desactivado", failed: "fallido" },
     actions: {
       menu: "Acciones para {{id}}",
+      settings: "Configuración de {{id}}",
       reload: "Recargar",
       reloading: "Recargando…",
       enable: "Activar",
@@ -144,6 +146,7 @@ export const pluginSettings = {
     status: { running: "actif", disabled: "désactivé", failed: "échec" },
     actions: {
       menu: "Actions pour {{id}}",
+      settings: "Paramètres de {{id}}",
       reload: "Recharger",
       reloading: "Rechargement…",
       enable: "Activer",
@@ -199,6 +202,7 @@ export const pluginSettings = {
     status: { running: "実行中", disabled: "無効", failed: "失敗" },
     actions: {
       menu: "{{id}} のアクション",
+      settings: "{{id}} の設定",
       reload: "再読み込み",
       reloading: "再読み込み中…",
       enable: "有効化",
@@ -253,6 +257,7 @@ export const pluginSettings = {
     status: { running: "실행 중", disabled: "비활성화", failed: "실패" },
     actions: {
       menu: "{{id}} 작업",
+      settings: "{{id}} 설정",
       reload: "다시 로드",
       reloading: "다시 로드 중…",
       enable: "활성화",
@@ -308,6 +313,7 @@ export const pluginSettings = {
     status: { running: "em execução", disabled: "desativado", failed: "falhou" },
     actions: {
       menu: "Ações para {{id}}",
+      settings: "Configurações de {{id}}",
       reload: "Recarregar",
       reloading: "Recarregando…",
       enable: "Ativar",
@@ -363,6 +369,7 @@ export const pluginSettings = {
     status: { running: "работает", disabled: "отключён", failed: "ошибка" },
     actions: {
       menu: "Действия для {{id}}",
+      settings: "Настройки {{id}}",
       reload: "Перезагрузить",
       reloading: "Перезагрузка…",
       enable: "Включить",
@@ -417,6 +424,7 @@ export const pluginSettings = {
     status: { running: "运行中", disabled: "已禁用", failed: "失败" },
     actions: {
       menu: "{{id}} 的操作",
+      settings: "{{id}} 的设置",
       reload: "重新加载",
       reloading: "正在重新加载…",
       enable: "启用",

@@ -1273,6 +1273,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       const plugin = installedPlugins.find(
         (candidate) => candidate.serverId === view.serverId && candidate.id === view.pluginId,
       );
+      // Several screens show tabs, which already name the open screen.
+      if (plugin && plugin.settingsScreens.length > 1) return view.pluginId;
       const screen = plugin?.settingsScreens.find((candidate) => candidate.id === view.screenId);
       return `${view.pluginId} · ${plugin && screen ? plugin.i18n.resolve(screen.title, plugin.locale) : t("settings.title")}`;
     }

@@ -1302,8 +1302,10 @@ Themes need a host that supports them. A client released before `addTheme` canno
 ## Settings screens
 
 Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
-`index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
-`id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
+`index.client.tsx`. Your plugin's row in **Settings → Plugins** on that host then shows a settings
+button (cog) that opens your first screen. When you register several screens, the settings page shows
+one tab per screen, labeled with its `title` and `icon`, in registration order. With one screen there
+are no tabs. `id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
 idempotent remover, and plugin teardown removes remaining screens.
 
 Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
