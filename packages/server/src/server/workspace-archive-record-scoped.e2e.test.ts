@@ -329,7 +329,7 @@ test("archiving an unregistered worktree in a bare repo clears the main checkout
     cwd: mainCheckout,
     source: { kind: "branch-off", baseBranch: "main", branchName: "cached-bare-worktree" },
     worktreeSlug: "cached-bare-worktree",
-    runSetup: false,
+
     paseoHome: ctx.daemon.paseoHome,
   });
   expect(await activeWorkspaceIds()).toEqual(new Set());

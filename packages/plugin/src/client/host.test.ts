@@ -1,4 +1,13 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type { ComponentProps } from "react";
+import type {
+  StreamedText,
+  StreamedTextProps,
+  Modal,
+  ModalProps,
+  SettingsSection,
+  SettingsSectionProps,
+} from "./ui.js";
 import { z } from "zod";
 import { defineAttachmentSource, defineRpc, type RpcInput, type RpcOutput } from "../index.js";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
@@ -15,17 +24,23 @@ describe("plugin RPC contracts", () => {
     expectTypeOf<RpcOutput<typeof contract>>().toEqualTypeOf<{ value: number }>();
   });
 
-  it("validates input before invoking the daemon", async () => {
-    let invocations = 0;
-    const invoke = async () => {
-      invocations += 1;
-      return { value: 2 };
+  it("sends input unchanged for the plugin to parse", async () => {
+    let parses = 0;
+    const transformed = defineRpc({
+      name: "transformed",
+      input: z.string().transform((text) => {
+        parses += 1;
+        return Number(text);
+      }),
+      output: z.number(),
+    });
+    const invoke = async (_method: string, input: unknown) => {
+      expect(input).toBe("2");
+      expect(parses).toBe(0);
+      return transformed.input.parseAsync(input);
     };
-
-    await expect(callPluginRpc(contract, invoke, { value: "wrong" })).rejects.toBeInstanceOf(
-      z.ZodError,
-    );
-    expect(invocations).toBe(0);
+    await expect(callPluginRpc(transformed, invoke, "2")).resolves.toBe(2);
+    expect(parses).toBe(1);
   });
 
   it("validates output before resolving", async () => {
@@ -105,5 +120,14 @@ describe("plugin attachment sources", () => {
     await expect(
       searchPluginAttachments(source, async () => ({ items: [{ id: "issue-1" }] }), "issue"),
     ).rejects.toBeInstanceOf(z.ZodError);
+  });
+});
+
+describe("plugin UI contracts", () => {
+  it("exposes presentation capabilities from the UI entry", () => {
+    expectTypeOf<ComponentProps<typeof StreamedText>>().toEqualTypeOf<StreamedTextProps>();
+    expectTypeOf<ComponentProps<typeof Modal>>().toEqualTypeOf<ModalProps>();
+    expectTypeOf<ComponentProps<typeof SettingsSection>>().toEqualTypeOf<SettingsSectionProps>();
+    expectTypeOf<StreamedTextProps["phase"]>().toEqualTypeOf<"streaming" | "complete">();
   });
 });

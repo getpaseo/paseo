@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+
 import type {
   PiRuntime,
   PiRuntimeLaunch,
@@ -75,6 +77,12 @@ export class FakePi implements PiRuntime {
     const session = new FakePiSession(launch, this.removedModels);
     session.commands = this.queuedCommands.shift() ?? [];
     this.queuedSessionSetups.shift()?.(session);
+    const missingSessionCwd = launch.noSession ? null : readMissingSessionCwd(launch.session);
+    if (missingSessionCwd !== null) {
+      session.getStateError = new Error(
+        `Pi RPC process exited with code 1 and signal null\nStored session working directory does not exist: ${missingSessionCwd}\nSession file: ${launch.session}\nCurrent working directory: ${launch.cwd}`,
+      );
+    }
     this.sessions.push(session);
     return session;
   }
@@ -101,6 +109,27 @@ export class FakePi implements PiRuntime {
   }
 }
 
+function readMissingSessionCwd(sessionFile: string | undefined): string | null {
+  if (!sessionFile || !existsSync(sessionFile)) {
+    return null;
+  }
+  const [headerLine = ""] = readFileSync(sessionFile, "utf8").split("\n", 1);
+  let header: unknown;
+  try {
+    header = JSON.parse(headerLine);
+  } catch {
+    return null;
+  }
+  if (typeof header !== "object" || header === null || !("cwd" in header)) {
+    return null;
+  }
+  const { type, cwd } = header as { type?: unknown; cwd?: unknown };
+  if (type !== "session" || typeof cwd !== "string" || !cwd || existsSync(cwd)) {
+    return null;
+  }
+  return cwd;
+}
+
 export class FakePiSession implements PiRuntimeSession {
   readonly environment: Record<string, string>;
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
@@ -108,6 +137,7 @@ export class FakePiSession implements PiRuntimeSession {
   steerError: Error | null = null;
   readonly controlRequests: string[] = [];
   clearQueueError: Error | null = null;
+  clearQueueCompletion: Promise<void> | null = null;
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -120,9 +150,10 @@ export class FakePiSession implements PiRuntimeSession {
   readonly rawFrames: Array<object & { type: string }> = [];
   // Every user entry in the session file, including rewound and compacted ones.
   treeUserEntries: FakePiUserEntry[] = [];
-  // The user entries on the current branch that getMessages() replays.
-  contextUserEntries: FakePiUserEntry[] = [];
+  // Native user entries paired with the complete active-branch history.
+  historyUserEntries: FakePiUserEntry[] = [];
   abortRequested = false;
+  closeCalls = 0;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -131,6 +162,7 @@ export class FakePiSession implements PiRuntimeSession {
   setModelResult: PiModel | null = null;
   models: PiModel[] = [];
   messages: PiAgentMessage[] = [];
+  getHistoryError: Error | null = null;
   stats: PiSessionStats = {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
@@ -140,6 +172,7 @@ export class FakePiSession implements PiRuntimeSession {
   subagentSubscriptionError: Error | null = null;
   setSessionNameError: Error | null = null;
   compactError: Error | null = null;
+  compactCompletion: Promise<void> | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
   getSessionStatsError: Error | null = null;
@@ -233,6 +266,7 @@ export class FakePiSession implements PiRuntimeSession {
 
   async clearQueue(): Promise<void> {
     this.controlRequests.push("clear_queue");
+    await this.clearQueueCompletion;
     if (this.clearQueueError) {
       throw this.clearQueueError;
     }
@@ -241,6 +275,7 @@ export class FakePiSession implements PiRuntimeSession {
   async compact(customInstructions?: string): Promise<void> {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
     this.emit({ type: "compaction_start", reason: "manual" });
+    await this.compactCompletion;
     if (this.emitCompactEnd) {
       this.emit({ type: "compaction_end", reason: "manual" });
     }
@@ -269,8 +304,9 @@ export class FakePiSession implements PiRuntimeSession {
     return this.state;
   }
 
-  async getMessages(): Promise<PiAgentMessage[]> {
-    return this.messages;
+  async getHistory() {
+    if (this.getHistoryError) throw this.getHistoryError;
+    return { messages: this.messages, userEntries: this.historyUserEntries };
   }
 
   async getAvailableModels(_timeoutMs?: number | null): Promise<PiModel[]> {
@@ -389,7 +425,9 @@ export class FakePiSession implements PiRuntimeSession {
     this.respondToExtensionUiRequest(id, { cancelled: true });
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
 
   emit(event: PiRuntimeEvent): void {
     for (const subscriber of this.subscribers) {
@@ -475,7 +513,6 @@ export class FakePiSession implements PiRuntimeSession {
         reason,
         requestId,
         treeEntries: this.treeUserEntries,
-        contextEntries: this.contextUserEntries,
       })}`,
     });
   }

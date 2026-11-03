@@ -1,7 +1,12 @@
 import { page, userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import type { TerminalFile } from "../file-paste";
+import {
+  encodeTerminalOutput,
+  TerminalEmulatorRuntime,
+  type TerminalClipboard,
+} from "./terminal-emulator-runtime";
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
@@ -41,6 +46,36 @@ interface MountedTerminal {
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
   openedUrls: string[];
+  clipboard: FakeClipboard;
+  filePastes: Promise<TerminalFile | null>[];
+}
+
+class FakeClipboard implements TerminalClipboard {
+  text = "";
+  image: { mimeType: string; bytes: number[] } | null = null;
+  imageReads = 0;
+
+  async readText(): Promise<string> {
+    return this.text;
+  }
+
+  async read(): Promise<readonly Pick<ClipboardItem, "types" | "getType">[]> {
+    this.imageReads += 1;
+    const image = this.image;
+    if (!image) {
+      return [];
+    }
+    return [
+      {
+        types: ["text/html", image.mimeType],
+        getType: async (type: string) => new Blob([new Uint8Array(image.bytes)], { type }),
+      },
+    ];
+  }
+
+  async writeText(text: string): Promise<void> {
+    this.text = text;
+  }
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -100,8 +135,11 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
   const openedUrls: string[] = [];
+  const clipboard = new FakeClipboard();
+  const filePastes: Promise<TerminalFile | null>[] = [];
   const runtime = new TerminalEmulatorRuntime(
     input.isMac === undefined ? undefined : { isMac: input.isMac },
+    clipboard,
   );
   runtime.setCallbacks({
     callbacks: {
@@ -120,12 +158,14 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
       onOpenExternalUrl: (url) => {
         openedUrls.push(url);
       },
+      onFilePaste: (file) => {
+        filePastes.push(file);
+      },
     },
   });
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: input.scrollback ?? 10_000,
     theme: {
       background: "#0b0b0b",
@@ -143,6 +183,8 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
     terminalKeys,
     inputModeChanges,
     openedUrls,
+    clipboard,
+    filePastes,
   };
   mountedTerminals.push(mounted);
   return mounted;
@@ -413,6 +455,78 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.inputs).toEqual(["legacy renderer paste"]);
   });
 
+  it("pastes clipboard text on Ctrl+V without reading the clipboard image", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: false });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.clipboard.text = "clipboard text";
+    mounted.clipboard.image = { mimeType: "image/png", bytes: [1, 2, 3] };
+
+    dispatchTerminalKey({ host: mounted.host, key: "v", ctrlKey: true });
+
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toBeNull();
+    expect(mounted.inputs).toEqual(["clipboard text"]);
+    expect(mounted.clipboard.imageReads).toBe(0);
+  });
+
+  it("hands the clipboard image to onFilePaste on Ctrl+V when there is no text", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: false });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.clipboard.image = { mimeType: "image/jpeg", bytes: [1, 2, 3] };
+
+    dispatchTerminalKey({ host: mounted.host, key: "v", ctrlKey: true });
+
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toEqual({
+      fileName: "clipboard.jpg",
+      mimeType: "image/jpeg",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    expect(mounted.inputs).toEqual([]);
+  });
+
+  it("takes file-only paste events at xterm's input before xterm pastes empty text", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", {
+      clipboardData: transfer,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    mounted.host.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toEqual({
+      fileName: "shot.png",
+      mimeType: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    await nextFrame();
+    expect(mounted.inputs).toEqual([]);
+  });
+
+  it("leaves paste events with text to xterm", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", "echo hi");
+    transfer.items.add(new File([new Uint8Array([1])], "shot.png", { type: "image/png" }));
+
+    mounted.host
+      .querySelector(".xterm-helper-textarea")!
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+      );
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+    expect(mounted.inputs).toEqual(["echo hi"]);
+    expect(mounted.filePastes).toEqual([]);
+  });
+
   it("refreshes visible rows on a forced same-size resize", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });
@@ -603,11 +717,13 @@ describe("terminal emulator runtime in a real browser", () => {
     { name: "DA1-zero", bytes: "\x1b[0c" },
     { name: "DA2", bytes: "\x1b[>c" },
     { name: "DA3", bytes: "\x1b[=c" },
+    { name: "XTVERSION", bytes: "\x1b[>q" },
     { name: "DSR-5", bytes: "\x1b[5n" },
     { name: "DSR-6", bytes: "\x1b[6n" },
     { name: "DSR-?6", bytes: "\x1b[?6n" },
     { name: "DECRQM", bytes: "\x1b[1$p" },
     { name: "DECRQM-?", bytes: "\x1b[?1$p" },
+    { name: "DECRQSS", bytes: "\x1bP$qm\x1b\\" },
     { name: "OSC-10-foreground-color", bytes: "\x1b]10;?\x07" },
     { name: "OSC-11-background-color", bytes: "\x1b]11;?\x07" },
     { name: "OSC-12-cursor-color", bytes: "\x1b]12;?\x07" },
@@ -635,30 +751,11 @@ describe("terminal emulator runtime in a real browser", () => {
     const reset = vi.fn(originalReset);
     terminal.reset = reset;
 
-    mounted.runtime.renderSnapshot({
-      state: {
-        rows: terminal.rows,
-        cols: terminal.cols,
-        scrollback: [],
-        grid: [
-          [
-            { char: "p" },
-            { char: "r" },
-            { char: "o" },
-            { char: "m" },
-            { char: "p" },
-            { char: "t" },
-          ],
-        ],
-        cursor: {
-          row: 0,
-          col: 6,
-        },
-      },
-    });
-    await nextFrame();
-
+    mounted.runtime.replay({ type: "begin", rows: terminal.rows, cols: terminal.cols });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("prompt") });
+    mounted.runtime.replay({ type: "end" });
     expect(reset).not.toHaveBeenCalled();
+    await nextFrame();
   });
 
   it("opens OSC 8 hyperlinks the same way as plain-text URLs", async () => {
@@ -679,4 +776,157 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
     expect(confirm).not.toHaveBeenCalled();
   });
+});
+
+describe("incremental replay lifecycle", () => {
+  it.each(["clear", "remount"] as const)(
+    "recovers live input after interrupted replay and %s",
+    async (cleanup) => {
+      const mounted = createTerminalHost({ width: 720, height: 360 });
+      mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+      mounted.root.style.width = "360px";
+      mounted.runtime.resize({ shouldClaim: false });
+      mounted.runtime.replay({ type: "data", data: terminalOutput("interrupted") });
+      if (cleanup === "clear")
+        await new Promise<void>((resolve) => mounted.runtime.clear({ onCommitted: resolve }));
+      else {
+        mounted.runtime.unmount();
+        mounted.runtime.mount({
+          root: mounted.root,
+          host: mounted.host,
+          scrollback: 1000,
+          theme: {},
+        });
+      }
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
+      );
+      getBrowserTerminal().input("user-input", true);
+      expect(mounted.inputs).toContain("user-input");
+      expect(getBrowserTerminal().cols).toBeLessThan(60);
+    },
+  );
+
+  it("suppresses generated replies until queued replay chunks commit after end", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    mounted.runtime.replay({ type: "begin" });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "end" });
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("committed"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toEqual([]);
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("\x1b]4;1;?\x07"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toHaveLength(1);
+    expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
+  });
+
+  it("measures emoji clusters with the daemon's grapheme widths and copies them intact", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const text = "A😀B❤️C👋🏽D👨‍👩‍👧E";
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput(text), onCommitted: resolve }),
+    );
+
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const line = terminal.buffer.active.getLine(terminal.buffer.active.cursorY);
+    const cells = Array.from({ length: 13 }, (_, col) => {
+      const cell = line?.getCell(col);
+      return { chars: cell?.getChars(), width: cell?.getWidth() };
+    });
+
+    expect(cells).toEqual([
+      { chars: "A", width: 1 },
+      { chars: "😀", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "B", width: 1 },
+      { chars: "❤️", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "C", width: 1 },
+      { chars: "👋🏽", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "D", width: 1 },
+      { chars: "👨‍👩‍👧", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "E", width: 1 },
+    ]);
+    expect(terminal.buffer.active.cursorX).toBe(13);
+
+    terminal.select(0, terminal.buffer.active.cursorY, 13);
+    expect(terminal.getSelection()).toBe(text);
+  });
+
+  // A host without grapheme widths answers cursor reports and replays with its
+  // own table. The web client keeps the Unicode 11 table it used before.
+  it("measures with the legacy table for hosts without grapheme widths", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const buffer = terminal.buffer;
+    async function cursorAfter(text: string): Promise<number> {
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput(`\r\n${text}`), onCommitted: resolve }),
+      );
+      return buffer.active.cursorX;
+    }
+
+    mounted.runtime.setCharacterWidths({ widths: "legacy" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 3]);
+
+    mounted.runtime.setCharacterWidths({ widths: "graphemes" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 4]);
+  });
+});
+
+it("restores fitted web geometry after replay before live output", async () => {
+  const mounted = createTerminalHost({ width: 720, height: 360 });
+  await settleMountRefits();
+  const local = latestSize(mounted.sizes);
+  mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+  mounted.runtime.replay({ type: "data", data: terminalOutput("x".repeat(100)) });
+  mounted.runtime.replay({ type: "end" });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({ data: terminalOutput("LIVE"), onCommitted: resolve }),
+  );
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+  expect(getBrowserTerminal().cols).toBeLessThan(120);
+  expect(getBrowserTerminal().rows).toBe(local.rows);
+  mounted.runtime.resize({ forceClaim: true, shouldClaim: true });
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+});
+
+it("defers layout fit until all replay chunks commit", async () => {
+  const mounted = createTerminalHost({ width: 720, height: 360 });
+  await settleMountRefits();
+  mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({
+      data: terminalOutput("first"),
+      suppressInput: true,
+      onCommitted: resolve,
+    }),
+  );
+  expect(getBrowserTerminal().cols).toBe(120);
+  mounted.root.style.width = "360px";
+  mounted.runtime.resize({ shouldClaim: true, forceClaim: true, forceRefresh: true });
+  await nextFrame();
+  expect(getBrowserTerminal().cols).toBe(120);
+  mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b[2;110Hsecond") });
+  mounted.runtime.replay({ type: "end" });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({ data: terminalOutput("LIVE"), onCommitted: resolve }),
+  );
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+  expect(getBrowserTerminal().cols).toBeLessThan(60);
+  expect(latestSize(mounted.sizes)).toMatchObject({ shouldClaim: true, forceClaim: true });
+  mounted.runtime.resize({ shouldClaim: true, forceClaim: true });
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
 });

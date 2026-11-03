@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { pluginOverviewPolicy, pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
+import type { Locale } from "~/i18n";
 
 /** A rejected destination leaves its label as text, without even an empty anchor. */
 export function PluginContentLink({
@@ -38,9 +39,9 @@ const components: Components = {
 };
 
 /** Untrusted overviews do not inherit documentation directives, anchors, or HTML highlighters. */
-export function PluginOverview({ children }: { children: string }) {
+export function PluginOverview({ children, lang }: { children: string; lang: Locale }) {
   return (
-    <div className="docs-prose">
+    <div className="docs-prose" lang={lang}>
       <ReactMarkdown
         skipHtml={!pluginOverviewPolicy.rawHtml}
         allowedElements={allowedElements}

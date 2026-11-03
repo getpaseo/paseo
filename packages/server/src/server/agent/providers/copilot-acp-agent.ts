@@ -209,6 +209,10 @@ export async function writeCopilotProviderMode(
   if (!requestsAllowAll) {
     return { handled: false };
   }
+  await context.connection.setSessionMode({
+    sessionId: context.sessionId,
+    modeId: COPILOT_AGENT_MODE_ID,
+  });
   const response = await context.connection.setSessionConfigOption({
     sessionId: context.sessionId,
     configId: COPILOT_ALLOW_ALL_CONFIG_ID,

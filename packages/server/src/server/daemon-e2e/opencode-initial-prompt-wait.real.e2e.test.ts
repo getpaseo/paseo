@@ -46,7 +46,7 @@ describe("daemon E2E (real opencode) - initial prompt wait", () => {
     }
   });
 
-  test("waitForFinish does not resolve before an initial prompt using opencode/big-pickle actually completes", async () => {
+  test("waitForFinish does not resolve before an OpenCode initial prompt completes", async () => {
     const cwd = tmpCwd();
     const { client, daemon } = await createHarness();
 

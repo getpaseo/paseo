@@ -42,13 +42,18 @@ export interface OmpStartSessionInput {
   extraArgs?: string[];
 }
 
+export interface OmpPromptInput {
+  message: string;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  streamingBehavior?: "steer" | "followUp";
+}
+
 export interface OmpRuntimeSession {
   readonly environment: Record<string, string>;
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
-  prompt(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<OmpPromptAck>;
+  // With streamingBehavior, a busy OMP queues the message instead of rejecting it, and an
+  // idle OMP starts a run with it.
+  prompt(input: OmpPromptInput): Promise<OmpPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
@@ -71,10 +76,6 @@ export interface OmpRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void>;
-  followUp(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void;
   handoff(customInstructions?: string): Promise<void>;
   respondToExtensionUiRequest(
     id: string,

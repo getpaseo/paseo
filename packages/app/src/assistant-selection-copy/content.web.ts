@@ -6,6 +6,7 @@ import {
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
+  MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
@@ -22,9 +23,38 @@ const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
 const MESSAGE_ROW_SELECTOR = "[data-message-id]";
 const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
 const messageRowSelector = (messageId: string) => `[data-message-id="${CSS.escape(messageId)}"]`;
-const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
-const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
-const IMAGE_FRAME_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
+const CODE_BLOCK_SELECTOR = `pre, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
+const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, code, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
+const IMAGE_FRAME_SELECTOR = `img, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
+
+const SEMANTIC_TAGS =
+  "p,blockquote,br,code,pre,h1,h2,h3,h4,h5,h6,hr,img,li,ol,ul,strong,em,s,del,table,thead,tbody,tr,th,td";
+function semanticTag(element: Element): string | null {
+  return (
+    element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) ??
+    (element.matches(SEMANTIC_TAGS) ? element.tagName.toLowerCase() : null)
+  );
+}
+function copySemanticAttributes(original: Element, copy: Element): void {
+  const tag = semanticTag(original);
+  if (!tag || original.hasAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE)) return;
+  copy.setAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE, tag);
+  if (tag === "ol")
+    copy.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, original.getAttribute("start") ?? "1");
+  if (tag === "img") {
+    const url = original.getAttribute("src") ?? "";
+    const encodedSources = original
+      .closest(`[${MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE}]`)
+      ?.getAttribute(MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE);
+    const sources: Record<string, string> = encodedSources ? JSON.parse(encodedSources) : {};
+    copy.setAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE, sources[url] ?? url);
+    copy.setAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE, original.getAttribute("alt") ?? "");
+  }
+  if (tag === "td" || tag === "th") {
+    const align = (original as HTMLElement).style.textAlign;
+    if (align) copy.setAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE, align);
+  }
+}
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -247,6 +277,7 @@ function cloneMarkdownSelection(range: Range, message: Element): Node {
   while (ancestor && ancestor !== message) {
     if (shouldPreserveSemanticElement(range, ancestor)) {
       const wrapper = ancestor.cloneNode(false) as Element;
+      copySemanticAttributes(ancestor, wrapper);
       normalizeOrderedListStart(wrapper, ancestor, range);
       wrapper.append(selected);
       selected = wrapper;
@@ -294,25 +325,26 @@ function nodeAtPath(root: Node, path: number[]): Node {
 }
 
 function removeUnselectedSemantics(range: Range, source: Element, clone: Element): void {
-  const selector = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}], a`;
+  const selector = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}], a, ${SEMANTIC_TAGS}`;
   const originals = Array.from(source.querySelectorAll(selector));
   const copies = Array.from(clone.querySelectorAll(selector));
 
   originals.forEach((original, index) => {
     const copy = copies[index];
+    if (copy) copySemanticAttributes(original, copy);
     if (!copy || shouldPreserveSemanticElement(range, original)) {
       if (copy) {
         normalizeOrderedListStart(copy, original, range);
       }
       return;
     }
-    const tag = original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
+    const tag = semanticTag(original);
     if (tag && isBlockBoundary(tag)) {
       copy.setAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE, "p");
       return;
     }
     copy.removeAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-    if (copy.tagName === "A") {
+    if (copy.matches(SEMANTIC_TAGS) || copy.tagName === "A") {
       copy.setAttribute(MARKDOWN_COPY_UNWRAP_ATTRIBUTE, "true");
     }
   });
@@ -322,7 +354,7 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (!range.intersectsNode(element)) {
     return false;
   }
-  const tag = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
+  const tag = semanticTag(element);
   // An image has no part to select, so touching it selects all of it.
   if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
@@ -340,8 +372,16 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
       (item) => hasSelectedListMarker(range, item) || hasSelectedAllContents(range, item, true),
     );
   }
-  if (tag === "li" && hasSelectedListMarker(range, element)) {
-    return true;
+  if (tag === "li") {
+    if (hasSelectedListMarker(range, element)) return true;
+    // CSS list markers are outside text nodes. Starting inside a semantic item
+    // excludes its marker even when all of the label's characters are selected.
+    if (
+      element.tagName === "LI" &&
+      range.startContainer !== element &&
+      element.contains(range.startContainer)
+    )
+      return false;
   }
   return hasSelectedAllContents(range, element, tag === "li");
 }
@@ -358,7 +398,7 @@ function selectionStaysInsideElement(range: Range, element: Element): boolean {
 function selectedListItems(list: Element, range: Range): Element[] {
   return Array.from(list.children).filter(
     (child) =>
-      child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li" &&
+      semanticTag(child) === "li" &&
       (child.contains(range.startContainer) ||
         child.contains(range.endContainer) ||
         hasSelectedAllContents(range, child, true)),
@@ -368,7 +408,7 @@ function selectedListItems(list: Element, range: Range): Element[] {
 function hasSelectedListMarker(range: Range, item: Element): boolean {
   const marker = item.querySelector(`:scope > [${MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE}]`);
   if (!marker) {
-    return false;
+    return item.tagName === "LI" && range.startContainer === item && range.startOffset === 0;
   }
 
   const markerContents = document.createRange();
@@ -391,18 +431,20 @@ function hasSelectedListMarker(range: Range, item: Element): boolean {
 }
 
 function normalizeOrderedListStart(copy: Element, original: Element, range: Range): void {
-  if (original.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) !== "ol") {
+  if (semanticTag(original) !== "ol") {
     return;
   }
   const firstSelectedItem = selectedListItems(original, range)[0];
   if (!firstSelectedItem) {
     return;
   }
-  const items = Array.from(original.children).filter(
-    (child) => child.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) === "li",
-  );
+  const items = Array.from(original.children).filter((child) => semanticTag(child) === "li");
   const omittedItems = items.indexOf(firstSelectedItem);
-  const originalStart = Number(original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ?? 1);
+  const originalStart = Number(
+    original.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE) ??
+      original.getAttribute("start") ??
+      1,
+  );
   copy.setAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE, String(originalStart + omittedItems));
 }
 

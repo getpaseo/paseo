@@ -4,6 +4,9 @@ Paseo is a client-server system for monitoring and controlling local AI coding a
 
 Your code never leaves your machine. Paseo is local-first.
 
+Daemon-owned outbound connections and routed API scope ownership are described in
+[Connected hosts](connected-hosts.md).
+
 ## System overview
 
 ```
@@ -63,6 +66,9 @@ WebSocket message schemas. Shared configuration schemas belong in protocol leaf 
 retaining the daemon's runtime and wire-schema allocations. The server export tests guard
 these dependency trees with tree-shaking disabled to match unbundled production imports.
 
+Terminals do not live in the daemon process: their PTYs run in a detached terminal worker that
+survives daemon restarts, crashes and upgrades. See [terminal-worker.md](terminal-worker.md).
+
 Project identity is daemon-global rather than session-owned. After registry bootstrap, the daemon's
 project Git observer keeps one non-recursive watch on each lexically equivalent active project root
 and listens only for the root `.git` entry, with a slow rescan as a missed-event fallback. It runs
@@ -70,6 +76,13 @@ for empty projects and without connected clients, then fans metadata changes thr
 server to capability-aware sessions. It deliberately does not use the broad recursive working-tree
 watcher or the per-session Git observer: those are checkout/status mechanisms and intentionally do
 not retain non-Git directories.
+
+Workspace git and forge runtime data belongs to one daemon-level, directory-keyed store.
+Workspace descriptors, checkout diff subscriptions, and script metadata read the last known
+snapshot from that store, so reconnecting clients receive it before refresh completes.
+Refcounted git watches feed the store through snapshot-updated events; their lifetime controls
+refresh only. Session cleanup and workspace archive retain the data. Removing the final active
+workspace for a directory clears it. The store lives in memory and resets on daemon restart.
 
 **Key modules:**
 
@@ -172,9 +185,9 @@ Communicates with the daemon via the same WebSocket protocol as the app.
 
 Enables remote access when the daemon is behind a firewall.
 
-- Curve25519 establishes the relay-session secret; NaCl `box` protects each payload with XSalsa20-Poly1305
+- Updated peers negotiate a Noise `NK` session with per-record counters; peers on either side that predate it fall back to the legacy NaCl `box` construction. [docs/relay-endpoint-security.md](relay-endpoint-security.md) owns the mapping, negotiation, and the `daemon.relay.requireProtectedSecurity` flag
 - The relay is zero-knowledge — it routes encrypted bytes and cannot read content
-- Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
+- Client and daemon channels with identical API (`openClientSecureChannel`, `openDaemonSecureChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
 - New homes keep relay disabled until pairing consent. `DaemonConfigStore` persists the desired state, while the relay runtime starts or stops the outbound transport live; pairing reads that current state instead of a startup snapshot.
 - Optional E2EE capability negotiation preserves application frame kind: text plaintext uses base64 ciphertext text frames, while binary plaintext uses raw ciphertext binary frames; mixed-version peers remain base64-only
@@ -479,6 +492,16 @@ $PASEO_HOME/
 The supervisor alone publishes its ready worker's endpoint in `paseo.pid`, clears it before respawn, and fails if any worker exits before first readiness. CLI home selection trusts only that live record; config expresses desired state, never an endpoint fallback. POSIX home stop signals the captured supervisor without TCP. Windows graceful stop and ordinary RPCs trust the published endpoint. This metadata is not cryptographic listener ownership: edited endpoints, copied identities, PID reuse, and address takeover races remain outside that guarantee. A stale heartbeat never permits reclaiming a live lock.
 
 Worker restart retains supervisor arguments/environment and rereads the configuration file. Updating a package and observing its new worker version do not refresh the running supervisor code; the launcher owns full-process replacement. See [CLI lifecycle contracts](../public-docs/cli.md#daemon-management).
+
+## Outbound networking
+
+The daemon and its plugin processes honor `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
+(including lowercase forms, which take precedence). Fetch and relay, Hub, and connected-host WebSockets
+share this policy. Loopback (`localhost`, `127.0.0.1`, `::1`) always goes direct.
+A proxy without a scheme uses HTTP. Invalid values and unsupported proxy schemes
+are treated as unset, with one warning naming the variable in `daemon.log`.
+Agent and terminal environments are unchanged. System proxy settings and SOCKS-only
+`ALL_PROXY` configurations are not supported.
 
 ## Deployment models
 

@@ -3,13 +3,216 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getCheckoutDiff, getCommitFileDiff } from "./checkout-git.js";
+import {
+  getCheckoutDiff,
+  getCheckoutShortstat,
+  getCommitFileDiff,
+  listCheckoutCommits,
+} from "./checkout-git.js";
 
 const repos: string[] = [];
+
+const EDITED_TEXT_DIFF = {
+  isNew: false,
+  isDeleted: false,
+  additions: 1,
+  deletions: 1,
+  hunks: [
+    {
+      oldStart: 1,
+      oldCount: 1,
+      newStart: 1,
+      newCount: 1,
+      lines: [
+        { type: "header", content: "@@ -1 +1 @@" },
+        { type: "remove", content: "before" },
+        { type: "add", content: "after" },
+      ],
+    },
+  ],
+};
 
 afterEach(() => {
   vi.unstubAllEnvs();
   for (const repo of repos.splice(0)) rmSync(repo, { recursive: true, force: true });
+});
+
+it.skipIf(process.platform === "win32")(
+  "returns a quoted filename and its uncommitted diff using its actual path",
+  async () => {
+    const cwd = createChangedRepo("core.quotepath=false");
+    const name = 'report "draft".txt';
+    writeFileSync(join(cwd, "file.txt"), "before\n");
+    writeFileSync(join(cwd, name), "before\n");
+    git(cwd, "add", "--", name);
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "add quoted filename");
+    writeFileSync(join(cwd, name), "after\n");
+
+    const result = await getCheckoutDiff(cwd, { mode: "uncommitted", includeStructured: true });
+
+    expect(result.structured).toHaveLength(1);
+    expect(result.structured?.[0]).toMatchObject({
+      path: name,
+      status: "ok",
+      ...EDITED_TEXT_DIFF,
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")("quoted paths from real Git", () => {
+  const names = [
+    "normal.txt",
+    "with spaces.txt",
+    'report "draft".txt',
+    "back\\slash.txt",
+    "tab\tname.txt",
+    "line\nname.txt",
+    " leading and trailing .txt ",
+    'report "old => draft".txt',
+  ];
+
+  function createQuotedPathsRepo(): string {
+    const cwd = createChangedRepo("core.quotepath=false");
+    writeFileSync(join(cwd, "file.txt"), "before\n");
+    for (const name of names) writeFileSync(join(cwd, name), "before\n");
+    git(cwd, "add", "--", ...names);
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "add filenames");
+    git(cwd, "checkout", "-b", "feature");
+    for (const name of names) writeFileSync(join(cwd, name), "after\n");
+    return cwd;
+  }
+
+  it("preserves tracked and untracked paths, diff lines and summary counts", async () => {
+    const cwd = createQuotedPathsRepo();
+    const untrackedNames = names.map((name) => "untracked-" + name);
+    for (const name of untrackedNames) writeFileSync(join(cwd, name), "new file\n");
+
+    const result = await getCheckoutDiff(cwd, { mode: "uncommitted", includeStructured: true });
+
+    expect(result.structured?.map((file) => file.path).sort()).toEqual(
+      [...names, ...untrackedNames].sort(),
+    );
+    for (const name of names) {
+      expect(result.structured?.find((file) => file.path === name)).toMatchObject({
+        path: name,
+        status: "ok",
+        ...EDITED_TEXT_DIFF,
+      });
+    }
+    for (const name of untrackedNames) {
+      expect(result.structured?.find((file) => file.path === name)).toMatchObject({
+        path: name,
+        status: "ok",
+        isNew: true,
+        isDeleted: false,
+        additions: 1,
+        deletions: 0,
+        hunks: [
+          {
+            oldStart: 0,
+            oldCount: 0,
+            newStart: 1,
+            newCount: 1,
+            lines: [
+              { type: "header", content: "@@ -0,0 +1 @@" },
+              { type: "add", content: "new file" },
+            ],
+          },
+        ],
+      });
+    }
+    expect(await getCheckoutShortstat(cwd)).toEqual({
+      additions: names.length + untrackedNames.length,
+      deletions: names.length,
+    });
+  });
+
+  it("opens base and commit diffs using the actual paths from the commit list", async () => {
+    const cwd = createQuotedPathsRepo();
+    git(cwd, "add", "--", ...names);
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "edit filenames");
+    const sha = git(cwd, "rev-parse", "HEAD").trim();
+
+    const base = await getCheckoutDiff(cwd, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+    expect(base.structured?.map((file) => file.path).sort()).toEqual([...names].sort());
+    for (const name of names) {
+      expect(base.structured?.find((file) => file.path === name)).toMatchObject({
+        path: name,
+        status: "ok",
+        ...EDITED_TEXT_DIFF,
+      });
+    }
+
+    const history = await listCheckoutCommits({ cwd });
+    const commit = history.commits[0];
+    expect(commit.sha).toBe(sha);
+    expect(commit.files).toEqual(
+      [...names].sort().map((name) => ({
+        path: name,
+        additions: 1,
+        deletions: 1,
+        status: "modified",
+      })),
+    );
+    for (const file of commit.files) {
+      expect(await getCommitFileDiff({ cwd, sha, path: file.path })).toMatchObject({
+        path: file.path,
+        ...EDITED_TEXT_DIFF,
+      });
+    }
+  });
+
+  it("preserves quoted rename destinations and binary paths in diff and commit lists", async () => {
+    const cwd = createChangedRepo("core.quotepath=false");
+    const oldPath = 'old "draft".txt';
+    const newPath = 'new "draft".txt';
+    const binaryPath = "image\tdata.bin";
+    writeFileSync(join(cwd, "file.txt"), "before\n");
+    writeFileSync(join(cwd, oldPath), "unchanged\n");
+    writeFileSync(join(cwd, binaryPath), Buffer.from([0, 1, 2]));
+    git(cwd, "add", "--", oldPath, binaryPath);
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "add rename and binary files");
+    git(cwd, "checkout", "-b", "feature");
+    git(cwd, "mv", "--", oldPath, newPath);
+    writeFileSync(join(cwd, binaryPath), Buffer.from([0, 3, 4]));
+
+    const result = await getCheckoutDiff(cwd, { mode: "uncommitted", includeStructured: true });
+    expect(
+      result.structured?.map(({ path, oldPath: sourcePath, status }) => ({
+        path,
+        oldPath: sourcePath,
+        status,
+      })),
+    ).toEqual([
+      { path: binaryPath, oldPath: undefined, status: "binary" },
+      {
+        path: newPath,
+        oldPath,
+        status: "ok",
+      },
+    ]);
+    expect(result.structured?.[0]).toEqual({
+      path: binaryPath,
+      isNew: false,
+      isDeleted: false,
+      additions: 0,
+      deletions: 0,
+      hunks: [],
+      status: "binary",
+    });
+
+    git(cwd, "add", "--", binaryPath);
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "rename file and edit binary");
+    const history = await listCheckoutCommits({ cwd });
+    expect(history.commits[0].files).toEqual([
+      { path: binaryPath, additions: 0, deletions: 0, status: "modified" },
+      { path: newPath, additions: 0, deletions: 0, status: "renamed" },
+    ]);
+  });
 });
 
 it.each(["diff.mnemonicPrefix=true", "color.diff=always", "diff.noprefix=true"])(

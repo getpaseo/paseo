@@ -19,6 +19,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { CodexIcon } from "../icons";
 
 const TOOL_ROWS = [
@@ -116,6 +117,7 @@ function Transcript() {
 }
 
 function Composer() {
+  const { t } = useTranslation();
   return (
     <div className="shrink-0 px-[18px] pt-[10px] pb-[30px]">
       <div className="mb-[16px]">
@@ -125,7 +127,9 @@ function Composer() {
         </span>
       </div>
       <div className="rounded-[22px] border border-mock-border-accent bg-mock-surface1 px-[17px] pt-[15px] pb-[13px]">
-        <span className="block text-[16px] text-mock-fg-xmuted">Message, @files, /commands</span>
+        <span className="block text-[16px] text-mock-fg-xmuted">
+          {t("landing.mockup.app.mobileComposerPlaceholder")}
+        </span>
         <div className="flex items-center gap-[13px] pt-[26px]">
           <Plus size={20} className="shrink-0 text-mock-fg-muted" strokeWidth={1.9} />
           <span className="flex shrink-0 items-center gap-[5px]">

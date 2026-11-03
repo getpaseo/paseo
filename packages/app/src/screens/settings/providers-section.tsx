@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-api-context";
 import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
@@ -19,11 +20,13 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
   buildAcpProviderConfigPatch,
+  getAcpProviderCatalog,
   type AcpProviderCatalogItem,
 } from "@/hooks/use-acp-provider-catalog";
 import { ProviderCatalogList } from "@/components/provider-catalog-list";
 import { useProviderIcon } from "@/components/provider-icons";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { SkeletonPulse, useSkeletonPulse } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
@@ -167,6 +170,33 @@ function ProviderActionsMenu({
   );
 }
 
+const SKELETON_ROW_KEYS = [0, 1, 2, 3].map((index) => `provider-skeleton-row-${index}`);
+
+function ProviderRowsSkeleton() {
+  const { t } = useTranslation();
+  const pulse = useSkeletonPulse();
+  return (
+    <View
+      style={settingsStyles.card}
+      accessibilityLabel={t("settings.providers.loading")}
+      testID="providers-skeleton"
+    >
+      {SKELETON_ROW_KEYS.map((key, index) => (
+        <View
+          key={key}
+          style={[settingsStyles.row, index > 0 && settingsStyles.rowBorder, styles.row]}
+        >
+          <View style={styles.rowContent}>
+            <SkeletonPulse pulse={pulse} style={styles.skeletonIcon} />
+            <SkeletonPulse pulse={pulse} style={styles.skeletonTitle} />
+          </View>
+          <SkeletonPulse pulse={pulse} style={styles.skeletonSwitch} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function ProviderRow({
   serverId,
   def,
@@ -244,27 +274,27 @@ function ProviderRow({
               ) : null}
             </View>
           </View>
+          {/* The menu leads the switch, so every switch sits on the row's right edge without
+              rows that have no menu reserving room for one. */}
           <View style={styles.trailingControls}>
+            {canRemove ? (
+              <ProviderActionsMenu
+                providerId={def.id}
+                providerLabel={def.label}
+                isRemoving={isRemoving}
+                iconSize={theme.iconSize.sm}
+                foregroundColor={theme.colors.foreground}
+                foregroundMutedColor={theme.colors.foregroundMuted}
+                dangerColor={theme.colors.statusDanger}
+                onRemove={onRemove}
+              />
+            ) : null}
             <Switch
               value={enabled}
               onValueChange={handleToggleValueChange}
               disabled={isToggling || isRemoving}
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
-            <View style={styles.menuSlot}>
-              {canRemove ? (
-                <ProviderActionsMenu
-                  providerId={def.id}
-                  providerLabel={def.label}
-                  isRemoving={isRemoving}
-                  iconSize={theme.iconSize.sm}
-                  foregroundColor={theme.colors.foreground}
-                  foregroundMutedColor={theme.colors.foregroundMuted}
-                  dangerColor={theme.colors.statusDanger}
-                  onRemove={onRemove}
-                />
-              ) : null}
-            </View>
           </View>
         </>
       )}
@@ -325,7 +355,9 @@ export interface ProvidersSectionProps {
 
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsHopliteProvider = useHostFeature(serverId, "hopliteProvider");
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
@@ -338,9 +370,16 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
 
-  /** Custom providers are deletable only when config.json holds their `extends` definition. */
+  /** Config owns derived providers and opt-in bundled catalog providers. */
   const isConfigOwnedProvider = useCallback(
-    (providerId: string) => Boolean(config?.providers?.[providerId]?.extends),
+    (providerId: string) =>
+      Boolean(
+        config?.providers?.[providerId] &&
+        (config.providers[providerId].extends ||
+          getAcpProviderCatalog().some(
+            (entry) => entry.id === providerId && entry.bundledProvider,
+          )),
+      ),
     [config],
   );
 
@@ -405,18 +444,15 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
       if (installingProviderId) return;
       setInstallingProviderId(entry.id);
       try {
-        await patchConfig(buildAcpProviderConfigPatch(entry));
+        await patchConfig(buildAcpProviderConfigPatch(entry, supportsHopliteProvider));
         await refresh([entry.id]);
       } catch (error) {
-        Alert.alert(
-          t("settings.providers.addErrorTitle"),
-          error instanceof Error ? error.message : String(error),
-        );
+        toast.error(error instanceof Error ? error.message : String(error));
       } finally {
         setInstallingProviderId((current) => (current === entry.id ? null : current));
       }
     },
-    [installingProviderId, patchConfig, refresh, t],
+    [installingProviderId, patchConfig, refresh, supportsHopliteProvider, toast],
   );
 
   return (
@@ -431,11 +467,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
           </View>
         ) : null}
-        {hasServer && isConnected && isLoading ? (
-          <View style={[settingsStyles.card, styles.emptyCard]}>
-            <Text style={styles.emptyText}>{t("settings.providers.loading")}</Text>
-          </View>
-        ) : null}
+        {hasServer && isConnected && isLoading ? <ProviderRowsSkeleton /> : null}
         {hasServer && isConnected && !isLoading && providerDefinitions.length > 0 ? (
           <View style={settingsStyles.card}>
             {providerDefinitions.map((def, index) => {
@@ -505,6 +537,25 @@ const styles = StyleSheet.create((theme) => ({
   rowHovered: {
     backgroundColor: theme.colors.surface2,
   },
+  skeletonIcon: {
+    width: 20,
+    height: 20,
+    marginLeft: theme.spacing[6],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonTitle: {
+    width: 160,
+    height: 12,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  skeletonSwitch: {
+    width: 36,
+    height: 20,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
   rowPressed: {
     backgroundColor: theme.colors.surface3,
   },
@@ -557,10 +608,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     alignItems: "center",
     justifyContent: "center",
-  },
-  menuSlot: {
-    width: 32,
-    height: 32,
   },
   menuButtonHovered: {
     backgroundColor: theme.colors.surface2,

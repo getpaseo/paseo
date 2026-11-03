@@ -2,7 +2,7 @@ import { router, usePathname } from "expo-router";
 import { useCallback } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { rememberPluginContributionHost } from "../contribution-host";
-import { resolvePluginIcon } from "../icons";
+import { pluginIconComponent } from "../icons";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { selectPluginSidebarTarget, type PluginSidebarGroup } from "../sidebar-groups";
 
@@ -33,7 +33,7 @@ export function LegacyPluginSidebarRow({
   }, [group.key, onBeforeNavigate, route, target.plugin.serverId]);
   return (
     <SidebarHeaderRow
-      icon={resolvePluginIcon(group.icon)}
+      icon={pluginIconComponent(group.icon)}
       label={group.title}
       onPress={navigate}
       isActive={isActive}

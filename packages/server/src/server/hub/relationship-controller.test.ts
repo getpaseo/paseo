@@ -773,8 +773,12 @@ describe("Hub relationship", () => {
     const second = await relationship.ownedCreateResult("second-create");
 
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
-    expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
-    expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
+    expect(first).toMatchObject({
+      payload: { success: true, executionId: "first-execution", error: null },
+    });
+    expect(second).toMatchObject({
+      payload: { success: true, executionId: "second-execution", error: null },
+    });
     expect(await relationship.durableOwnedAgentIds()).toHaveLength(2);
   });
 
