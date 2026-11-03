@@ -29,10 +29,19 @@ export const PluginRegistryArtifactSchema = z.discriminatedUnion("kind", [
       .optional(),
   }),
 ]);
+/**
+ * Listing text in other languages, keyed by language tag such as `zh-CN`. A missing field falls back
+ * to the English `name` or `description`, which stay required so older clients keep working.
+ */
+export const PluginListingTranslationsSchema = z.record(
+  z.string(),
+  z.object({ name: z.string().optional(), description: z.string().optional() }),
+);
 export const PublishedPluginSchema = z.object({
   id: PluginRegistryIdSchema,
   name: z.string(),
   description: z.string(),
+  translations: PluginListingTranslationsSchema.optional(),
   license: z.string().optional(),
   categories: z.array(z.string()),
   author: z.object({ github: z.string(), name: z.string().optional(), npm: z.string().optional() }),
@@ -54,7 +63,11 @@ export function pluginMediaKind(url: string): "image" | "video" {
   const extension = new URL(url).pathname.split(".").pop()?.toLowerCase() ?? "";
   return VIDEO_EXTENSIONS.has(extension) ? "video" : "image";
 }
-export const PublishedPluginDetailSchema = PublishedPluginSchema.extend({ readme: z.string() });
+export const PublishedPluginDetailSchema = PublishedPluginSchema.extend({
+  readme: z.string(),
+  /** The overview in other languages, keyed like `translations`. Each one replaces `readme` whole. */
+  overviewTranslations: z.record(z.string(), z.string()).optional(),
+});
 export const PluginRegistryIndexSchema = z.object({
   schemaVersion: z.literal(1),
   registry: z.object({ name: z.string(), url: z.string().url() }),

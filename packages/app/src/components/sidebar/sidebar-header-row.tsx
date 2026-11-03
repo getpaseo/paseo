@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { Shortcut } from "@/components/ui/shortcut";
-import { density, densityFontSize, densityIconBox } from "@/styles/density";
+import { density, densityIconBox } from "@/styles/density";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 type SidebarHeaderRowVariant = "header" | "compact" | "inline";
@@ -54,6 +54,10 @@ export function SidebarHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  // The button and its trailing slot are siblings, so the row owns the pressed fill for both.
+  const [isPressed, setIsPressed] = useState(false);
+  const handlePressIn = useCallback(() => setIsPressed(true), []);
+  const handlePressOut = useCallback(() => setIsPressed(false), []);
   const isHighlighted = isHovered || isActive;
   const iconSize = variant === "header" ? "md" : "sm";
 
@@ -65,12 +69,14 @@ export function SidebarHeaderRow({
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
       <View
-        style={[styles.row, isHighlighted && styles.rowHighlighted]}
+        style={[styles.row, isHighlighted && styles.rowHighlighted, isPressed && styles.rowPressed]}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
         <Pressable
           onPress={onPress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
           testID={testID}
           nativeID={nativeID}
           accessible
@@ -92,7 +98,14 @@ export function SidebarHeaderRow({
           <Text style={[styles.label, isHighlighted && styles.labelHighlighted]}>{label}</Text>
         </Pressable>
         {right === null ? null : (
-          <Pressable onPress={onPress} accessible={false} focusable={false} style={styles.trailing}>
+          <Pressable
+            onPress={onPress}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            accessible={false}
+            focusable={false}
+            style={styles.trailing}
+          >
             {right}
           </Pressable>
         )}
@@ -136,6 +149,10 @@ const styles = StyleSheet.create((theme) => ({
   rowHighlighted: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
+  // The workspace rows' pressed fill.
+  rowPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
   button: {
     flex: 1,
     minWidth: 0,
@@ -152,7 +169,7 @@ const styles = StyleSheet.create((theme) => ({
   iconSpacerCompact: { width: densityIconBox("sm"), height: densityIconBox("sm") },
   label: {
     flexShrink: 1,
-    fontSize: densityFontSize(theme, "base"),
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

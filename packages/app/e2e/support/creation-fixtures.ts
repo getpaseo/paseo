@@ -35,7 +35,8 @@ export const test = base.extend<{
 import { readFile, rm } from "node:fs/promises";
 export default function contribute(server) {
   return server.before("agent.session_open", async ({ request }) => {
-    if (request.reason !== "create") return request;
+    // Metadata helpers have no workspace and must not consume the one-shot failure.
+    if (request.reason !== "create" || !request.workspaceId) return request;
     const gate = ${JSON.stringify(gate)};
     let command = await readFile(gate, "utf8").catch(() => "release");
     while (command === "hold") {

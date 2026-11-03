@@ -76,7 +76,7 @@ jobs:
             # Explicit target names override the per-target arch lists in
             # electron-builder.yml; "--win --x64" alone would still build arm64.
             targets: "--win nsis zip --x64"
-          - os: macos-14
+          - os: macos-latest
             name: macos
             targets: "--mac --arm64"
     env:

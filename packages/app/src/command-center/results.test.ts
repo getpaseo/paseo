@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CommandCenterContribution } from "./contributions";
+import { COMMAND_CENTER_LIST_METRICS } from "./list-metrics";
 import {
   buildContributionSections,
   filterAndRankBuiltInResults,
@@ -101,15 +102,28 @@ function autoModeChoice(): CommandCenterContribution {
   });
 }
 
-function workspace(id: string, title = id, subtitle = "host"): CommandCenterWorkspaceResult {
+function workspace(
+  id: string,
+  title = id,
+  subtitle = "host",
+  activityAt: Date | null = null,
+): CommandCenterWorkspaceResult {
   return {
     kind: "workspace",
+    serverId: "server",
+    workspaceId: "workspace",
     id,
     title,
     subtitle,
+    project: { viewKey: "project", name: "project", iconDataUri: null },
     changeRequestNumber: null,
+    activityAt,
     run: () => undefined,
   };
+}
+
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.UTC(2026, 9, 18, 12, 0) - minutes * 60_000);
 }
 
 function sectionResultIds(sections: ReturnType<typeof buildContributionSections>): string[] {
@@ -119,6 +133,8 @@ function sectionResultIds(sections: ReturnType<typeof buildContributionSections>
   }
   return ids;
 }
+
+const metrics = COMMAND_CENTER_LIST_METRICS.desktop;
 
 describe("Command Center result projection", () => {
   it("query-gates model choices and creates one flat row index", () => {
@@ -130,16 +146,19 @@ describe("Command Center result projection", () => {
     expect(sectionResultIds(emptySections)).toEqual(["settings"]);
 
     const sections = buildContributionSections(contributions, "o");
-    const projection = projectCommandCenterRows([
-      ...sections,
-      {
-        id: "workspaces",
-        band: PINNED_SECTION_BAND,
-        rank: 2,
-        title: "Workspaces",
-        results: [workspace("workspace:1")],
-      },
-    ]);
+    const projection = projectCommandCenterRows(
+      [
+        ...sections,
+        {
+          id: "workspaces",
+          band: PINNED_SECTION_BAND,
+          rank: 2,
+          title: "Workspaces",
+          results: [workspace("workspace:1")],
+        },
+      ],
+      metrics,
+    );
     expect(projection.rows.map((row) => row.key)).toEqual([
       "section:models",
       "opus",
@@ -147,7 +166,12 @@ describe("Command Center result projection", () => {
       "workspace:1",
     ]);
     expect(projection.rowIndexByResultId.get("workspace:1")).toBe(3);
-    expect(projection.offsets).toEqual([0, 32, 68, 117]);
+    expect(projection.offsets).toEqual([
+      0,
+      metrics.sectionTitle,
+      metrics.sectionTitle + metrics.singleLineRow,
+      metrics.sectionTitle + metrics.singleLineRow + metrics.sectionDivider + metrics.sectionTitle,
+    ]);
   });
 
   it("shows query-only actions only when their group matches a search", () => {
@@ -177,15 +201,18 @@ describe("Command Center result projection", () => {
 
   it("keeps keyboard selection aligned with rows beyond the render window", () => {
     const workspaces = Array.from({ length: 200 }, (_, index) => workspace(`workspace:${index}`));
-    const projection = projectCommandCenterRows([
-      {
-        id: "workspaces",
-        band: PINNED_SECTION_BAND,
-        rank: 0,
-        title: "Workspaces",
-        results: workspaces,
-      },
-    ]);
+    const projection = projectCommandCenterRows(
+      [
+        {
+          id: "workspaces",
+          band: PINNED_SECTION_BAND,
+          rank: 0,
+          title: "Workspaces",
+          results: workspaces,
+        },
+      ],
+      metrics,
+    );
 
     let activeId: string | null = workspaces[0].id;
     for (let index = 0; index < 150; index += 1) {
@@ -195,7 +222,7 @@ describe("Command Center result projection", () => {
     const targetId = workspaces[150].id;
     expect(activeId).toBe(targetId);
     expect(projection.rowIndexByResultId.get(targetId)).toBe(151);
-    expect(projection.offsets[151]).toBe(32 + 150 * 56);
+    expect(projection.offsets[151]).toBe(metrics.sectionTitle + 150 * metrics.twoLineRow);
   });
 });
 
@@ -248,7 +275,7 @@ describe("Command Center relevance ordering", () => {
       schedulesAction(),
       action({ id: "new-agent", group: "workspace", groupRank: -1, title: "New agent" }),
     ];
-    const projection = projectCommandCenterRows(buildContributionSections(shuffled, ""));
+    const projection = projectCommandCenterRows(buildContributionSections(shuffled, ""), metrics);
 
     // Query-gated choices stay hidden; the rest fall back to groupRank, unchanged by this feature.
     expect(projection.selectableResults.map((result) => result.id)).toEqual([
@@ -301,16 +328,19 @@ describe("Command Center relevance ordering", () => {
   });
 
   it("keeps Workspaces below contributions even on a perfect match", () => {
-    const projection = projectCommandCenterRows([
-      ...buildContributionSections([schedulesAction()], "auto"),
-      {
-        id: "workspaces",
-        band: PINNED_SECTION_BAND,
-        rank: 2,
-        title: "Workspaces",
-        results: [workspace("auto")],
-      },
-    ]);
+    const projection = projectCommandCenterRows(
+      [
+        ...buildContributionSections([schedulesAction()], "auto"),
+        {
+          id: "workspaces",
+          band: PINNED_SECTION_BAND,
+          rank: 2,
+          title: "Workspaces",
+          results: [workspace("auto")],
+        },
+      ],
+      metrics,
+    );
 
     expect(projection.selectableResults.map((result) => result.id)).toEqual(["schedules", "auto"]);
   });
@@ -324,7 +354,7 @@ describe("Command Center relevance ordering", () => {
       title: "Workspaces",
       results: [workspace("auto")],
     };
-    const projection = projectCommandCenterRows([workspaces, ...sections.toReversed()]);
+    const projection = projectCommandCenterRows([workspaces, ...sections.toReversed()], metrics);
 
     expect(projection.selectableResults.map((result) => result.id)).toEqual([
       "mode:auto",
@@ -461,15 +491,19 @@ describe("filterAndRankBuiltInResults", () => {
     visible: [row.title, row.subtitle],
     hidden: [],
   });
-  const byTitle = (left: CommandCenterWorkspaceResult, right: CommandCenterWorkspaceResult) =>
-    left.title.localeCompare(right.title);
 
-  it("caps an empty query and preserves the caller's order", () => {
-    const rows = Array.from({ length: 8 }, (_, index) => workspace(`w${index}`));
+  it("shows the five most recent rows for an empty query", () => {
+    const rows = Array.from({ length: 8 }, (_, index) =>
+      workspace(`w${index}`, `w${index}`, "host", minutesAgo(8 - index)),
+    );
 
-    expect(
-      filterAndRankBuiltInResults(rows, "", visibleOnly, byTitle).map((row) => row.id),
-    ).toEqual(["w0", "w1", "w2", "w3", "w4"]);
+    expect(filterAndRankBuiltInResults(rows, "", visibleOnly).map((row) => row.id)).toEqual([
+      "w7",
+      "w6",
+      "w5",
+      "w4",
+      "w3",
+    ]);
   });
 
   it("puts the best match first even when it sorts last alphabetically", () => {
@@ -480,9 +514,9 @@ describe("filterAndRankBuiltInResults", () => {
     ];
 
     // Alphabetically this is Alpha, Label, Zebra. "lab des" only matches Label as Design.
-    expect(
-      filterAndRankBuiltInResults(rows, "lab des", visibleOnly, byTitle).map((row) => row.id),
-    ).toEqual(["c"]);
+    expect(filterAndRankBuiltInResults(rows, "lab des", visibleOnly).map((row) => row.id)).toEqual([
+      "c",
+    ]);
   });
 
   it("ranks a title match above a match that only the hidden field reached", () => {
@@ -492,24 +526,41 @@ describe("filterAndRankBuiltInResults", () => {
         ? { visible: [row.title], hidden: ["deploy"] }
         : { visible: [row.title], hidden: [] };
 
-    expect(
-      filterAndRankBuiltInResults(rows, "deploy", fields, byTitle).map((row) => row.id),
-    ).toEqual(["title-hit", "hidden-hit"]);
+    expect(filterAndRankBuiltInResults(rows, "deploy", fields).map((row) => row.id)).toEqual([
+      "title-hit",
+      "hidden-hit",
+    ]);
   });
 
-  it("breaks an equal score with the caller's tiebreak, not with match order", () => {
-    // Both titles are an exact prefix match for "task", so only the tiebreak separates them.
-    const rows = [workspace("second", "Task zebra"), workspace("first", "Task alpha")];
+  it("orders rows in the same match tier by recency, not by where the word sits", () => {
+    // Both are whole-word matches for "usage"; the older one finds it earlier in the title.
+    const rows = [
+      workspace("older", "Deliver sidebar usage", "host", minutesAgo(60)),
+      workspace("newer", "design the cli interface to expose usage data", "host", minutesAgo(5)),
+    ];
 
-    expect(
-      filterAndRankBuiltInResults(rows, "task", visibleOnly, byTitle).map((row) => row.id),
-    ).toEqual(["first", "second"]);
+    expect(filterAndRankBuiltInResults(rows, "usage", visibleOnly).map((row) => row.id)).toEqual([
+      "newer",
+      "older",
+    ]);
+  });
+
+  it("keeps a better match tier above a more recent weaker match", () => {
+    const rows = [
+      workspace("subsequence", "Fix stuck toast", "fix/updating-messages", minutesAgo(1)),
+      workspace("whole-word", "Usage hover card", "host", minutesAgo(600)),
+    ];
+
+    expect(filterAndRankBuiltInResults(rows, "usage", visibleOnly).map((row) => row.id)).toEqual([
+      "whole-word",
+      "subsequence",
+    ]);
   });
 
   it("drops a row when one token matches nothing", () => {
     const rows = [workspace("a", "Label as Design")];
 
-    expect(filterAndRankBuiltInResults(rows, "lab zzz", visibleOnly, byTitle)).toEqual([]);
+    expect(filterAndRankBuiltInResults(rows, "lab zzz", visibleOnly)).toEqual([]);
   });
 });
 

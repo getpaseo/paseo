@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebSocket } from "ws";
 import net from "node:net";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { Buffer } from "node:buffer";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import {
   generateKeyPair,
   exportPublicKey,
@@ -22,11 +21,6 @@ const wranglerCliPath = createRequire(import.meta.url).resolve("wrangler/bin/wra
 const relayPackageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const STARTUP_HOOK_TIMEOUT_MS = 90_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
-const execFileAsync = promisify(execFile);
-
-function hasProcessExited(process: ChildProcess): boolean {
-  return process.exitCode !== null || process.signalCode !== null;
-}
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -62,6 +56,7 @@ function spawnRelayDevServer(port: number): ChildProcess {
       wranglerCliPath,
       "dev",
       "--local",
+      // Local execution still inherits production vars; exercise the local Durable Object.
       "--var",
       "PASEO_RELAY_UPSTREAM:",
       "--ip",
@@ -81,7 +76,7 @@ function spawnRelayDevServer(port: number): ChildProcess {
 }
 
 function assertRelayStillRunning(relayProcess: ChildProcess): void {
-  if (hasProcessExited(relayProcess)) {
+  if (relayProcess.exitCode !== null) {
     throw new Error(
       `relay process exited before startup completed (code: ${relayProcess.exitCode})`,
     );
@@ -167,35 +162,28 @@ async function waitForRelayWebSocketReady(
 }
 
 async function waitForProcessExit(relayProcess: ChildProcess, deadline: number): Promise<void> {
-  if (hasProcessExited(relayProcess)) return;
+  if (relayProcess.exitCode !== null) return;
   if (Date.now() >= deadline) return;
   await sleep(50);
   return waitForProcessExit(relayProcess, deadline);
 }
 
 async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
-  if (hasProcessExited(relayProcess)) {
-    return;
-  }
-
-  if (process.platform === "win32") {
-    await execFileAsync("taskkill", ["/pid", String(relayProcess.pid), "/t", "/f"]);
-    await waitForProcessExit(relayProcess, Date.now() + SHUTDOWN_TIMEOUT_MS);
-    if (!hasProcessExited(relayProcess)) throw new Error("relay process tree did not exit");
+  if (relayProcess.exitCode !== null) {
     return;
   }
 
   relayProcess.kill("SIGTERM");
   await waitForProcessExit(relayProcess, Date.now() + SHUTDOWN_TIMEOUT_MS);
 
-  if (hasProcessExited(relayProcess)) {
+  if (relayProcess.exitCode !== null) {
     return;
   }
 
   relayProcess.kill("SIGKILL");
   await waitForProcessExit(relayProcess, Date.now() + 2000);
 
-  if (!hasProcessExited(relayProcess)) {
+  if (relayProcess.exitCode === null) {
     throw new Error("relay process did not exit after SIGTERM/SIGKILL");
   }
 }
@@ -239,7 +227,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
       await stopRelayProcess(relayProcess);
       relayProcess = null;
     }
-  }, SHUTDOWN_TIMEOUT_MS + 4000);
+  }, SHUTDOWN_TIMEOUT_MS);
 
   it(
     "full flow: daemon and client exchange encrypted messages through relay",

@@ -10,6 +10,8 @@ interface ComposerGeometry {
 export interface ComposerCapacity {
   keyboardReserve: number;
   capacity: number;
+  /** The stationary viewport; a fullscreen composer fills it and lays out the keyboard itself. */
+  viewportHeight: number;
 }
 
 export function resolveComposerCapacity(input: ComposerGeometry): number {
@@ -48,6 +50,7 @@ export function updateComposerCapacity(
   return {
     keyboardReserve,
     capacity: resolveComposerCapacity({ ...input, keyboardShift: keyboardReserve }),
+    viewportHeight: input.height,
   };
 }
 
@@ -59,4 +62,20 @@ export function resolveInlineComposerCapacity(
   "worklet";
   if (capacity === undefined) return undefined;
   return compact ? capacity * 0.6 : capacity;
+}
+
+export interface ComposerSlotLayout {
+  compact: boolean;
+  fullscreen: boolean;
+}
+
+/** The bound on the composer slot: inline capacity, or the whole viewport in fullscreen. */
+export function resolveComposerSlotCapacity(
+  sizing: ComposerCapacity | undefined,
+  layout: ComposerSlotLayout,
+): number | undefined {
+  "worklet";
+  if (sizing === undefined) return undefined;
+  if (layout.fullscreen) return sizing.viewportHeight;
+  return resolveInlineComposerCapacity(sizing.capacity, layout.compact);
 }

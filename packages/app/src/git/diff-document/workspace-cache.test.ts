@@ -95,6 +95,37 @@ describe("diff document workspace cache", () => {
     expect(stats.calls).toBe(0);
   });
 
+  it("materializes a new anchor when the viewport window is unchanged", () => {
+    const cache = createDiffDocumentWorkspaceCache();
+    const source = diffFile();
+    source.hunks[0]!.lines = Array.from({ length: 100 }, () => ({
+      type: "add" as const,
+      content: "x".repeat(200),
+    }));
+    const { measureText } = countingMeasurer();
+    const input = modelInput([source], measureText, {
+      wrapLines: true,
+      materializationWindow: { top: 30, height: 54 },
+    });
+    const first = cache.buildModel(input);
+    const anchored = cache.buildModel({
+      ...input,
+      materializationAnchor: {
+        kind: "text",
+        path: source.path,
+        sourceIdentity: { hunkIndex: 0, lineIndex: 50, side: "new" },
+        cellOffset: 90,
+        viewportDelta: -2,
+      },
+    });
+    const firstRow = first.rows[50]!;
+    const anchoredRow = anchored.rows[50]!;
+    expect(firstRow.kind === "line" && firstRow.cells[0]!.fragments.length).toBe(0);
+    expect(anchoredRow.kind === "line" && anchoredRow.cells[0]!.fragments.length).toBeGreaterThan(
+      0,
+    );
+  });
+
   it("retains text cells for unchanged files when another file changes", () => {
     const cache = createDiffDocumentWorkspaceCache();
     const { measureText } = countingMeasurer();

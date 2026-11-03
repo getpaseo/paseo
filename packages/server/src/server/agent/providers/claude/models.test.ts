@@ -559,6 +559,33 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
   });
+
+  it("keeps version-gated models when the probe command cannot identify Claude Code", async () => {
+    const configDir = await createClaudeConfigDir({});
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-wrapper-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("cux 0.4.1");\n');
+    try {
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: {
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+          env: { CLAUDE_CONFIG_DIR: configDir },
+        },
+        discoverModels: async () => [],
+      });
+
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: configDir,
+        force: false,
+      });
+
+      expect(models.map((model) => model.id)).toContain("claude-opus-5-5");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("normalizeClaudeRuntimeModelId", () => {
