@@ -8,28 +8,63 @@ import {
 
 describe("window chrome", () => {
   it("has no corner obstruction outside Electron or in fullscreen", () => {
-    expect(resolveWindowChromeObstruction({ mode: null, isFullscreen: false })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({ mode: null, isFullscreen: false, zoomFactor: 1 }),
+    ).toEqual({
       topLeft: null,
       topRight: null,
     });
-    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: true })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({
+        mode: "native-mac",
+        isFullscreen: true,
+        zoomFactor: 1,
+      }),
+    ).toEqual({
       topLeft: null,
       topRight: null,
     });
   });
 
   it("places native controls in their physical top corner", () => {
-    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false })).toEqual({
-      topLeft: { width: 78, height: 45 },
+    expect(
+      resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false, zoomFactor: 1 }),
+    ).toEqual({
+      topLeft: { width: 78, height: 45, centerY: 17 },
       topRight: null,
     });
-    expect(resolveWindowChromeObstruction({ mode: "custom-windows", isFullscreen: false })).toEqual(
-      { topLeft: null, topRight: { width: 138, height: 36 } },
-    );
-    expect(resolveWindowChromeObstruction({ mode: "custom-linux", isFullscreen: false })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({
+        mode: "custom-windows",
+        isFullscreen: false,
+        zoomFactor: 1,
+      }),
+    ).toEqual({ topLeft: null, topRight: { width: 138, height: 36 } });
+    expect(
+      resolveWindowChromeObstruction({ mode: "custom-linux", isFullscreen: false, zoomFactor: 1 }),
+    ).toEqual({
       topLeft: null,
       topRight: { width: 108, height: 36 },
     });
+  });
+
+  it("keeps native macOS controls the same size on screen when the page is zoomed out", () => {
+    expect(
+      resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false, zoomFactor: 0.75 }),
+    ).toEqual({
+      topLeft: { width: 104, height: 60, centerY: 17 / 0.75 },
+      topRight: null,
+    });
+  });
+
+  it("scales custom controls with the page because the page draws them", () => {
+    expect(
+      resolveWindowChromeObstruction({
+        mode: "custom-windows",
+        isFullscreen: false,
+        zoomFactor: 0.75,
+      }),
+    ).toEqual({ topLeft: null, topRight: { width: 138, height: 36 } });
   });
 
   it("insets and reserves only claimed corners", () => {

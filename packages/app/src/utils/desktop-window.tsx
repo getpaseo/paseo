@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { View, type ViewProps } from "react-native";
 import {
+  DESKTOP_TRAFFIC_LIGHT_CENTER_Y,
   DESKTOP_TRAFFIC_LIGHT_HEIGHT,
   DESKTOP_TRAFFIC_LIGHT_WIDTH,
   getIsElectronRuntime,
@@ -19,6 +20,7 @@ type WindowChromeSafeAreaPlacement = "inline" | "below";
 interface WindowChromeCornerObstruction {
   width: number;
   height: number;
+  centerY?: number;
 }
 
 interface WindowChromeObstruction {
@@ -69,6 +71,11 @@ export function useHasWindowChromeObstruction(corner: WindowChromeCorner): boole
   return corner === "top-left" ? obstruction.topLeft !== null : obstruction.topRight !== null;
 }
 
+/** Vertical center of the native macOS window buttons in CSS px, or null without them. */
+export function useWindowChromeTopLeftCenterY(): number | null {
+  return useContext(WindowChromeContext).topLeft?.centerY ?? null;
+}
+
 export function intersectWindowChromeCorners(
   inherited: WindowChromeCorners,
   declared: WindowChromeCorners,
@@ -95,11 +102,16 @@ export function removeWindowChromeCorner(
 export function resolveWindowChromeObstruction(input: {
   mode: DesktopWindowChromeMode | null;
   isFullscreen: boolean;
+  zoomFactor: number;
 }): WindowChromeObstruction {
   if (!input.mode || input.isFullscreen) return EMPTY_OBSTRUCTION;
   if (input.mode === "native-mac") {
     return {
-      topLeft: { width: DESKTOP_TRAFFIC_LIGHT_WIDTH, height: DESKTOP_TRAFFIC_LIGHT_HEIGHT },
+      topLeft: {
+        width: DESKTOP_TRAFFIC_LIGHT_WIDTH / input.zoomFactor,
+        height: DESKTOP_TRAFFIC_LIGHT_HEIGHT / input.zoomFactor,
+        centerY: DESKTOP_TRAFFIC_LIGHT_CENTER_Y / input.zoomFactor,
+      },
       topRight: null,
     };
   }
@@ -128,8 +140,26 @@ export function resolveWindowChromeSafeArea(input: {
   return { paddingLeft: topLeft?.width ?? 0, paddingRight: topRight?.width ?? 0 };
 }
 
+// Page zoom scales innerWidth but not outerWidth, which stays in window points.
+function readPageZoomFactor(): number {
+  const ratio = window.outerWidth / window.innerWidth;
+  return Number.isFinite(ratio) && ratio > 0 ? Math.round(ratio * 1000) / 1000 : 1;
+}
+
+function usePageZoomFactor(): number {
+  const [zoomFactor, setZoomFactor] = useState(() => (isNative ? 1 : readPageZoomFactor()));
+  useEffect(() => {
+    if (isNative) return;
+    const sync = () => setZoomFactor(readPageZoomFactor());
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+  return zoomFactor;
+}
+
 export function WindowChromeProvider({ children }: { children: ReactNode }) {
   const [isElectronReady, setIsElectronReady] = useState(getIsElectronRuntime);
+  const zoomFactor = usePageZoomFactor();
   const [windowState, setWindowState] = useState({ isFullscreen: false, isMaximized: false });
 
   useEffect(() => {
@@ -209,8 +239,9 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
       resolveWindowChromeObstruction({
         mode: isElectronReady ? getDesktopWindowChromeMode() : null,
         isFullscreen: windowState.isFullscreen,
+        zoomFactor,
       }),
-    [isElectronReady, windowState.isFullscreen],
+    [isElectronReady, windowState.isFullscreen, zoomFactor],
   );
   const desktopWindowChrome = useMemo(
     () => ({
