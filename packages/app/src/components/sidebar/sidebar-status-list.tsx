@@ -907,42 +907,48 @@ function StatusWorkspaceRowInnerContent({
   const multiSelected = useSidebarSelectionStore((state) =>
     state.selectedKeys.has(workspace.workspaceKey),
   );
-  const handlePress = useCallback(() => {
-    if (didLongPressRef?.current) {
-      didLongPressRef.current = false;
-      return;
-    }
-    // Same rule as project mode: modifier presses were applied at pointerup (suppression says
-    // this synthesized press is one of them); a plain press navigates, clears the selection,
-    // and becomes the next range anchor.
-    if (platformIsWeb) {
-      if (consumeWorkspaceRowPressSuppression()) {
+  const handlePress = useCallback(
+    (event?: GestureResponderEvent) => {
+      if (didLongPressRef?.current) {
+        didLongPressRef.current = false;
         return;
       }
-      useSidebarSelectionStore.getState().handleNavigatePress({
-        serverId: workspace.serverId,
-        workspaceId: workspace.workspaceId,
-        workspaceKey: workspace.workspaceKey,
-      });
-    }
-    onPress();
-  }, [didLongPressRef, onPress, workspace]);
-  const handleRowPointerUp = useCallback(() => {
-    if (!platformIsWeb) {
-      return;
-    }
-    const intent = consumeWorkspaceRowPointerUpIntent();
-    if (intent) {
-      useSidebarSelectionStore.getState().handleSelectPress(
-        {
+      // Same rule as project mode: modifier presses were applied at pointerup (suppression says
+      // this synthesized press is one of them); a plain press navigates, clears the selection,
+      // and becomes the next range anchor.
+      if (platformIsWeb) {
+        if (consumeWorkspaceRowPressSuppression(event)) {
+          return;
+        }
+        useSidebarSelectionStore.getState().handleNavigatePress({
           serverId: workspace.serverId,
           workspaceId: workspace.workspaceId,
           workspaceKey: workspace.workspaceKey,
-        },
-        { range: intent.kind === "range" },
-      );
-    }
-  }, [workspace]);
+        });
+      }
+      onPress();
+    },
+    [didLongPressRef, onPress, workspace],
+  );
+  const handleRowPointerUp = useCallback(
+    (event?: unknown) => {
+      if (!platformIsWeb) {
+        return;
+      }
+      const intent = consumeWorkspaceRowPointerUpIntent(event);
+      if (intent) {
+        useSidebarSelectionStore.getState().handleSelectPress(
+          {
+            serverId: workspace.serverId,
+            workspaceId: workspace.workspaceId,
+            workspaceKey: workspace.workspaceKey,
+          },
+          { range: intent.kind === "range" },
+        );
+      }
+    },
+    [workspace],
+  );
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

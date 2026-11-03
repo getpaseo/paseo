@@ -1121,33 +1121,41 @@ export function WorkspaceRowInner({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const handlePress = useCallback(() => {
-    if (interaction.didLongPressRef.current) {
-      interaction.didLongPressRef.current = false;
-      return;
-    }
-    // Web only: modifier presses were already applied at pointerup (the responder system never
-    // delivers Ctrl clicks as presses), and the suppression flag says this press is one of them.
-    // A plain press navigates, clears the selection, and becomes the next range anchor.
-    if (platformIsWeb) {
-      if (consumeWorkspaceRowPressSuppression()) {
+  const handlePress = useCallback(
+    (event?: GestureResponderEvent) => {
+      if (interaction.didLongPressRef.current) {
+        interaction.didLongPressRef.current = false;
         return;
       }
-      useSidebarSelectionStore.getState().handleNavigatePress(toSidebarSelectionTarget(workspace));
-    }
-    onPress();
-  }, [interaction.didLongPressRef, onPress, workspace]);
-  const handleRowPointerUp = useCallback(() => {
-    if (!platformIsWeb) {
-      return;
-    }
-    const intent = consumeWorkspaceRowPointerUpIntent();
-    if (intent) {
-      useSidebarSelectionStore.getState().handleSelectPress(toSidebarSelectionTarget(workspace), {
-        range: intent.kind === "range",
-      });
-    }
-  }, [workspace]);
+      // Web only: modifier presses were already applied at pointerup (the responder system never
+      // delivers Ctrl clicks as presses), and the suppression flag says this press is one of them.
+      // A plain press navigates, clears the selection, and becomes the next range anchor.
+      if (platformIsWeb) {
+        if (consumeWorkspaceRowPressSuppression(event)) {
+          return;
+        }
+        useSidebarSelectionStore
+          .getState()
+          .handleNavigatePress(toSidebarSelectionTarget(workspace));
+      }
+      onPress();
+    },
+    [interaction.didLongPressRef, onPress, workspace],
+  );
+  const handleRowPointerUp = useCallback(
+    (event?: unknown) => {
+      if (!platformIsWeb) {
+        return;
+      }
+      const intent = consumeWorkspaceRowPointerUpIntent(event);
+      if (intent) {
+        useSidebarSelectionStore.getState().handleSelectPress(toSidebarSelectionTarget(workspace), {
+          range: intent.kind === "range",
+        });
+      }
+    },
+    [workspace],
+  );
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

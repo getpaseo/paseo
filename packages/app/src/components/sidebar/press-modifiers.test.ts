@@ -94,39 +94,57 @@ describe("capture and pointerup", () => {
     return modifiers as unknown as Parameters<typeof captureWorkspaceRowPointerModifiers>[0];
   }
 
+  function clickAt(
+    clientX: number,
+    clientY: number,
+    detail = 1,
+  ): Parameters<typeof consumeWorkspaceRowPressSuppression>[0] {
+    return { nativeEvent: { clientX, clientY, detail, type: "click" } };
+  }
+
   it("hands the captured intent to pointerup exactly once and arms the suppression", () => {
     stubApplePlatform(true);
     captureWorkspaceRowPointerModifiers(pointerEvent({ metaKey: true }));
-    const intent: WorkspaceRowPressIntent | null = consumeWorkspaceRowPointerUpIntent();
+    const intent: WorkspaceRowPressIntent | null = consumeWorkspaceRowPointerUpIntent(
+      clickAt(40, 40),
+    );
     expect(intent).toEqual({ kind: "toggle" });
-    expect(consumeWorkspaceRowPressSuppression()).toBe(true);
-    expect(consumeWorkspaceRowPressSuppression()).toBe(false);
+    // React-native-web invokes onPress from the click that repeats the pointerup's coordinates.
+    expect(consumeWorkspaceRowPressSuppression(clickAt(40, 40))).toBe(true);
+    expect(consumeWorkspaceRowPressSuppression(clickAt(40, 40))).toBe(false);
   });
 
   it("a plain pointerup disarms the suppression, healing an undelivered ctrl press", () => {
     stubApplePlatform(false);
     captureWorkspaceRowPointerModifiers(pointerEvent({ ctrlKey: true }));
-    expect(consumeWorkspaceRowPointerUpIntent()).toEqual({ kind: "toggle" });
+    expect(consumeWorkspaceRowPointerUpIntent(clickAt(12, 34))).toEqual({ kind: "toggle" });
     // A ctrl press never arrives (the responder skips it), so the flag stays armed until the
     // next click's own pointerup clears it — that plain click must navigate normally.
     captureWorkspaceRowPointerModifiers(pointerEvent({}));
-    expect(consumeWorkspaceRowPointerUpIntent()).toBeNull();
-    expect(consumeWorkspaceRowPressSuppression()).toBe(false);
+    expect(consumeWorkspaceRowPointerUpIntent(clickAt(56, 78))).toBeNull();
+    expect(consumeWorkspaceRowPressSuppression(clickAt(56, 78))).toBe(false);
   });
 
-  it("expires an undelivered ctrl press's suppression after the pointer dispatch", async () => {
+  it("a keyboard press bypasses a stale undelivered ctrl-click suppression", () => {
     stubApplePlatform(false);
     captureWorkspaceRowPointerModifiers(pointerEvent({ ctrlKey: true }));
-    expect(consumeWorkspaceRowPointerUpIntent()).toEqual({ kind: "toggle" });
-    // The flag must survive only within this dispatch: a synthesized press would read it here,
-    // but a later keyboard Enter/Space on a row must not be swallowed by the leftover flag.
-    await Promise.resolve();
-    expect(consumeWorkspaceRowPressSuppression()).toBe(false);
+    expect(consumeWorkspaceRowPointerUpIntent(clickAt(12, 34))).toEqual({ kind: "toggle" });
+    // Enter/Space dispatch a click with detail 0 and no pointer coordinates; it must not be
+    // swallowed by the leftover flag.
+    expect(consumeWorkspaceRowPressSuppression(clickAt(0, 0, 0))).toBe(false);
+    expect(consumeWorkspaceRowPressSuppression(clickAt(12, 34, 0))).toBe(false);
+  });
+
+  it("a press at different coordinates is not suppressed", () => {
+    stubApplePlatform(false);
+    captureWorkspaceRowPointerModifiers(pointerEvent({ ctrlKey: true }));
+    expect(consumeWorkspaceRowPointerUpIntent(clickAt(12, 34))).toEqual({ kind: "toggle" });
+    expect(consumeWorkspaceRowPressSuppression(clickAt(56, 78))).toBe(false);
   });
 
   it("captures Shift as a range", () => {
     stubApplePlatform(false);
     captureWorkspaceRowPointerModifiers(pointerEvent({ shiftKey: true }));
-    expect(consumeWorkspaceRowPointerUpIntent()).toEqual({ kind: "range" });
+    expect(consumeWorkspaceRowPointerUpIntent(clickAt(9, 9))).toEqual({ kind: "range" });
   });
 });
