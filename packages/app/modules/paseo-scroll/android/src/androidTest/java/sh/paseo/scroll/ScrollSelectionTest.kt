@@ -11,7 +11,6 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
@@ -31,13 +30,13 @@ class ScrollSelectionTest {
     val before = scroll.scrollY
     withWheel(1f) { event ->
       assertTrue(scroll.dispatchGenericMotionEvent(event))
-      assertTrue("Wheel up must move toward older messages", scroll.scrollY > before)
+      assertTrue("Wheel up must move toward older messages: $before -> ${scroll.scrollY}", scroll.scrollY > before)
       assertEquals("The caller's event must not change", 1f, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
     }
     val afterUp = scroll.scrollY
     withWheel(-1f) { event ->
       assertTrue(scroll.dispatchGenericMotionEvent(event))
-      assertTrue("Wheel down must move toward newer messages", scroll.scrollY < afterUp)
+      assertTrue("Wheel down must move toward newer messages: $afterUp -> ${scroll.scrollY}", scroll.scrollY < afterUp)
     }
   }
 
@@ -107,7 +106,7 @@ class ScrollSelectionTest {
       val appContext = instrumentation.targetContext
       DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(appContext)
       SoLoader.init(appContext, OpenSourceMergedSoMapping)
-      val reactContext = BridgeReactContext(appContext)
+      val reactContext = ScrollTestContext(appContext)
       val context = ThemedReactContext(reactContext, appContext)
       val manager = PaseoScrollPackage().createViewManager(reactContext, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)
