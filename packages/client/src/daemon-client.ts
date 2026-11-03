@@ -2536,9 +2536,18 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    return this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }).catch((error) => {
-      throw toTimeoutError(error, "Latency measurement", timeoutMs);
+    let deadline: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
     });
+    return Promise.race([
+      this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }),
+      timeout,
+    ])
+      .catch((error) => {
+        throw toTimeoutError(error, "Latency measurement", timeoutMs);
+      })
+      .finally(() => clearTimeout(deadline));
   }
 
   private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
@@ -2639,8 +2648,7 @@ export class DaemonClient {
   private tickLivenessHeartbeat(): void {
     this.stopLivenessHeartbeat();
     const transport = this.transport;
-    const tick =
-      this.pingProbe?.promise ?? this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS });
+    const tick = this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS });
     void tick
       .catch(() => {})
       .finally(() => {

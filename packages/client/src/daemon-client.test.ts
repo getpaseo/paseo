@@ -2670,8 +2670,18 @@ test("chunks extend the heartbeat deadline until silence causes two misses", asy
   daemon.openConnection();
   await connection;
   client.ensureConnected({ verify: true });
+  let measurementError: unknown;
+  void client.measureLatency({ timeoutMs: 5_000 }).catch((error: unknown) => {
+    measurementError = error;
+  });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(measurementError).toEqual(
+    expect.objectContaining({
+      message: "Latency measurement timed out (5000ms)",
+    }),
+  );
   for (let index = 0; index < 4; index++) {
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(index === 0 ? 5_000 : 10_000);
     daemon.receiveChunk(index === 0);
     expect(daemon.closesFromClient()).toEqual([]);
   }
@@ -2829,6 +2839,18 @@ test("sends only one ping while a slow pong is still outstanding", async () => {
   await session.advance(20_000);
 
   expect(session.pingTimestamps()).toEqual(["10s"]);
+});
+
+test("a heartbeat sharing a latency measurement still saves the RTT", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("2s");
+  await session.connect();
+  await session.advance(9_000);
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  await session.advance(2_000);
+  await expect(measurement).resolves.toBe(2000);
+  expect(session.lastLivenessRttMs()).toBe(2000);
 });
 
 test("reports the round-trip time of the last successful heartbeat", async () => {
