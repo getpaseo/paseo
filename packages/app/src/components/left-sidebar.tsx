@@ -557,16 +557,6 @@ function MobileSidebar({
     [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
   );
 
-  const navScrollGestureProps = useMemo(
-    () =>
-      ({
-        // Same contract as the workspace list: vertical drags scroll the nav
-        // block, a clear horizontal intent still activates the close pan.
-        simultaneousHandlers: closeGestureRef,
-      }) as object,
-    [closeGestureRef],
-  );
-
   const navRows = (
     <SidebarNavRows
       style={styles.mobileNavRowsGroup}
@@ -585,17 +575,27 @@ function MobileSidebar({
         <WindowChromeSafeArea placement="below" />
         {platformIsNative ? (
           <GHScrollView
-            {...navScrollGestureProps}
+            // Same contract as the workspace list: vertical drags scroll the nav
+            // block, a clear horizontal intent still activates the close pan.
+            simultaneousHandlers={closeGestureRef}
             style={styles.mobileNavScroll}
             showsVerticalScrollIndicator={false}
+            alwaysBounceVertical={false}
+            testID="sidebar-nav-scroll"
           >
             {navRows}
           </GHScrollView>
         ) : (
-          <ScrollView style={styles.mobileNavScroll} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.mobileNavScroll}
+            showsVerticalScrollIndicator={false}
+            alwaysBounceVertical={false}
+            testID="sidebar-nav-scroll"
+          >
             {navRows}
           </ScrollView>
         )}
+        <SidebarSeparator />
 
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
@@ -873,8 +873,6 @@ const styles = StyleSheet.create((theme) => ({
     flexGrow: 0,
     flexShrink: 1,
     maxHeight: "50%",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   mobileNavRowsGroup: {
     paddingTop: theme.spacing[2],
