@@ -324,7 +324,13 @@ describe("OMP xd:// mount notices", () => {
 class DaemonTimelineHarness {
   readonly omp = new FakeOmp();
   readonly manager = new AgentManager({
-    clients: { omp: new OmpAgentClient({ logger: createTestLogger(), runtime: this.omp }) },
+    clients: {
+      omp: new OmpAgentClient({
+        logger: createTestLogger(),
+        runtime: this.omp,
+        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+      }),
+    },
     logger: createTestLogger(),
   });
   readonly live: Array<{
