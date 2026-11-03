@@ -608,12 +608,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setPageStatus(current, "github-name", { isSubmitting: true, error: null }),
       );
       try {
-        const result = await cloneGithubProject(
-          locationPage.repository.cloneUrl,
-          parentPath,
-          locationPage.repository.cloneProtocol,
-          canChooseCloneFolderName ? name : undefined,
-        );
+        const result = await cloneGithubProject({
+          repo: locationPage.repository.cloneUrl,
+          targetDirectory: parentPath,
+          cloneProtocol: locationPage.repository.cloneProtocol,
+          folderName: canChooseCloneFolderName ? name : undefined,
+        });
         if (result.ok) {
           lastCloneParentByHost.set(locationPage.hostId, parentPath);
           openNewWorkspaceForProject(locationPage.hostId, result.project);
@@ -717,7 +717,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }));
     }
     if (page.kind === "github-location") {
-      const repositoryName = getGithubFolderName(state, page.hostId, page.repository);
+      const repositoryName = getGithubFolderName(state, page);
       const lastParent = lastCloneParentByHost.get(page.hostId);
       const parents = buildSuggestedParentDirectories(recommendedPaths);
       const orderedParents = lastParent

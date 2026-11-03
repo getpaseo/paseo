@@ -22,8 +22,8 @@ import { expectOpenedProject } from "../support/helpers/project-picker-ui";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
 for (const viewport of [
-  { width: 1280, height: 900 },
-  { width: 390, height: 844 },
+  { width: 1280, height: 900, repositoryInput: "acme/api.git" },
+  { width: 390, height: 844, repositoryInput: "https://github.invalid/acme/api.git" },
 ]) {
   test(`clone folder name at ${viewport.width}px: defaults, validation, Back, collision, retry`, async ({
     page,
@@ -37,9 +37,11 @@ for (const viewport of [
     const host = await startIsolatedHostDaemon("clone-folder-host", {
       environment: {
         NODE_ENV: "development",
-        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_COUNT: "2",
         GIT_CONFIG_KEY_0: `url.${pathToFileURL(repo.path).href}.insteadOf`,
         GIT_CONFIG_VALUE_0: remote,
+        GIT_CONFIG_KEY_1: `url.${pathToFileURL(repo.path).href}.insteadOf`,
+        GIT_CONFIG_VALUE_1: "https://github.com/acme/api.git",
       },
     });
     const client = await connectDaemonClient<DaemonClient>({
@@ -82,24 +84,25 @@ for (const viewport of [
       await openAddProjectHostSelection(page);
       await addProjectFlowHost(page, host.serverId).click();
       await chooseAddProjectMethod(page, "github");
-      await addProjectFlowInput(page).fill(remote);
+      await addProjectFlowInput(page).fill(viewport.repositoryInput);
       await page.keyboard.press("Enter");
       await expectAddProjectPage(page, "github-location");
       await addProjectFlowInput(page).fill(parent);
       await page.keyboard.press("Enter");
       await expectAddProjectPage(page, "github-name");
-      await expect(addProjectFlowInput(page)).toHaveValue("api");
+      const folderNameInput = page.getByRole("textbox", { name: "Folder name", exact: true });
+      await expect(folderNameInput).toHaveValue("api");
       const preview = page.getByTestId("add-project-flow-path-preview");
       await expect(preview).toHaveText(shortenPath(path.join(parent, "api")));
-      await page.getByTestId("add-project-flow-clone").click();
+      await page.getByRole("button", { name: "Clone", exact: true }).click();
       await expect(page.getByTestId("add-project-flow-error")).toHaveText(
         `Checkout path already exists: ${path.join(parent, "api")}`,
       );
 
-      await addProjectFlowInput(page).fill("../escape");
+      await folderNameInput.fill("../escape");
       await page.keyboard.press("Enter");
       await expect(page.getByTestId("add-project-flow-error")).toContainText("single folder name");
-      await addProjectFlowInput(page).fill("acme-api");
+      await folderNameInput.fill("acme-api");
       await addProjectFlowBack(page).click();
       await expectAddProjectPage(page, "github-location");
       const otherParent = path.join(parent, "other");
@@ -107,7 +110,7 @@ for (const viewport of [
       await addProjectFlowInput(page).fill(otherParent);
       await page.keyboard.press("Enter");
       await expectAddProjectPage(page, "github-name");
-      await expect(addProjectFlowInput(page)).toHaveValue("acme-api");
+      await expect(folderNameInput).toHaveValue("acme-api");
       const checkout = path.join(otherParent, "acme-api");
       await expect(preview).toHaveText(shortenPath(checkout));
       await page.screenshot({ path: testInfo.outputPath("clone-folder.png") });
@@ -115,7 +118,7 @@ for (const viewport of [
         path: testInfo.outputPath("clone-folder.png"),
         contentType: "image/png",
       });
-      await page.getByTestId("add-project-flow-clone").click();
+      await page.getByRole("button", { name: "Clone", exact: true }).click();
       const projectId = await expectOpenedProject(page, "acme-api");
       await expectNewWorkspaceForAddedProject(page, {
         serverId: host.serverId,

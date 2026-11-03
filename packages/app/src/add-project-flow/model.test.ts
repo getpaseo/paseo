@@ -114,6 +114,32 @@ describe("Add Project navigation", () => {
     });
   });
 
+  it("defaults shorthand clones ending in .git to the repository name for both protocols", () => {
+    const choices = buildManualGithubRepositoryChoices("acme/api.git");
+    expect(
+      choices.map(({ nameWithOwner, cloneUrl, cloneProtocol }) => ({
+        nameWithOwner,
+        cloneUrl,
+        cloneProtocol,
+      })),
+    ).toEqual([
+      { nameWithOwner: "acme/api", cloneUrl: "acme/api", cloneProtocol: "https" },
+      { nameWithOwner: "acme/api", cloneUrl: "acme/api", cloneProtocol: "ssh" },
+    ]);
+    for (const repository of choices) {
+      let state = openAddProjectFlow({ hosts: [HOST] });
+      state = openGithubLocationPage(state, HOST.serverId, repository);
+      state = openGithubNamePage(state, "~/code");
+      expect(currentAddProjectPage(state)).toMatchObject({
+        kind: "github-name",
+        name: "api",
+        parentPath: "~/code",
+      });
+      state = setGithubFolderName(state, "custom.git");
+      expect(currentAddProjectPage(state)).toMatchObject({ name: "custom.git" });
+    }
+  });
+
   it("restores the GitHub destination query and active parent when reopening a repository", () => {
     const repository = {
       id: "repo-1",

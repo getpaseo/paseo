@@ -195,12 +195,11 @@ export function openGithubLocationPage(
 
 export function getGithubFolderName(
   state: AddProjectFlowState,
-  hostId: string,
-  repository: GithubRepositoryChoice,
+  page: Extract<AddProjectPage, { kind: "github-location" }>,
 ): string {
   return (
-    state.githubFolderNameDrafts[githubLocationDraftKey(hostId, repository.id)] ??
-    repository.nameWithOwner.split("/").at(-1) ??
+    state.githubFolderNameDrafts[githubLocationDraftKey(page.hostId, page.repository.id)] ??
+    page.repository.nameWithOwner.split("/").at(-1) ??
     ""
   );
 }
@@ -216,7 +215,7 @@ export function openGithubNamePage(
     hostId: page.hostId,
     repository: page.repository,
     parentPath,
-    name: getGithubFolderName(state, page.hostId, page.repository),
+    name: getGithubFolderName(state, page),
     activeIndex: 0,
     error: null,
     isSubmitting: false,
