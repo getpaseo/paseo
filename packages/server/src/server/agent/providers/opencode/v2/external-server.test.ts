@@ -3,7 +3,9 @@ import { describe, expect, test } from "vitest";
 import {
   EXTERNAL_SERVER_PASSWORD_ENV,
   EXTERNAL_SERVER_URL_ENV,
+  SERVER_SCOPE_ENV,
   resolveExternalOpenCodeServer,
+  resolveOpenCodeServerScope,
 } from "./external-server.js";
 
 describe("resolveExternalOpenCodeServer", () => {
@@ -56,5 +58,23 @@ describe("resolveExternalOpenCodeServer", () => {
         [EXTERNAL_SERVER_URL_ENV]: "https://user:password@opencode.example.com",
       }),
     ).toThrow("must not contain credentials");
+  });
+});
+
+describe("resolveOpenCodeServerScope", () => {
+  test("defaults to the shared scope", () => {
+    expect(resolveOpenCodeServerScope(undefined)).toBe("shared");
+    expect(resolveOpenCodeServerScope({ [SERVER_SCOPE_ENV]: " " })).toBe("shared");
+  });
+
+  test("reads each scope", () => {
+    for (const scope of ["shared", "workspace", "agent"])
+      expect(resolveOpenCodeServerScope({ [SERVER_SCOPE_ENV]: ` ${scope} ` })).toBe(scope);
+  });
+
+  test("rejects an unknown scope", () => {
+    expect(() => resolveOpenCodeServerScope({ [SERVER_SCOPE_ENV]: "project" })).toThrow(
+      `${SERVER_SCOPE_ENV} must be one of shared, workspace, agent, received "project"`,
+    );
   });
 });

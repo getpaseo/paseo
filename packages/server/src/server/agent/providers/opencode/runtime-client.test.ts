@@ -113,6 +113,32 @@ test.each([
   }
 });
 
+test.each([
+  ["console.log('opencode 1.14.46')", "a v1 version"],
+  ["process.exit(1)", "a failed command"],
+])("a scoped provider fails instead of using the v1 adapter for %s (%s)", async (source) => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-scoped-probe-"));
+  const script = join(root, "version.cjs");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root, PASEO_OPENCODE_SERVER_SCOPE: "workspace" },
+  });
+  try {
+    await writeFile(script, source);
+    await expect(client.listFeatures({ provider: "opencode", cwd: root })).rejects.toThrow(
+      "PASEO_OPENCODE_SERVER_SCOPE=workspace requires OpenCode 2.0.10 or newer",
+    );
+  } finally {
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("appends a first notice after old history and records a changed major version", async () => {
   const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
   const { V2Harness } = await import("./test-utils/v2-harness.js");

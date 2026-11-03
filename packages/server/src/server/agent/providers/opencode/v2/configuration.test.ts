@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { features, permissionRules, requiresDedicatedV2Server } from "./configuration.js";
+import {
+  features,
+  permissionRules,
+  requiresDedicatedV2Server,
+  sessionServerRequest,
+} from "./configuration.js";
 
 describe("OpenCode v2 permission rules", () => {
   test("maps authored native permissions and exact injected MCP grants", () => {
@@ -46,6 +51,36 @@ describe("OpenCode v2 helper isolation", () => {
         mcpServers: { custom: { type: "stdio", command: "custom", args: [] } },
       }),
     ).toBe(true);
+  });
+});
+
+describe("OpenCode v2 server scope", () => {
+  const config = { provider: "opencode", cwd: "/tmp/project" };
+  const identity = { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" };
+  const launch = { agentId: "agent", workspaceId: "wks_a", env: identity };
+
+  test("shared and workspace scopes route an ordinary session by its workspace", () => {
+    expect(sessionServerRequest({ config, launch, scope: "shared" })).toEqual({
+      workspaceId: "wks_a",
+    });
+    expect(sessionServerRequest({ config, launch, scope: "workspace" })).toEqual({
+      workspaceId: "wks_a",
+    });
+  });
+
+  test("the agent scope gives every session its own helper with the agent's identity", () => {
+    expect(sessionServerRequest({ config, launch, scope: "agent" })).toEqual({
+      env: identity,
+      dedicated: true,
+      workspaceId: "wks_a",
+    });
+  });
+
+  test("a session that needs isolation gets its own helper under the workspace scope", () => {
+    const env = { ...identity, CUSTOM_FLAG: "1" };
+    expect(
+      sessionServerRequest({ config, launch: { ...launch, env }, scope: "workspace" }),
+    ).toEqual({ env, dedicated: true, workspaceId: "wks_a" });
   });
 });
 

@@ -110,7 +110,7 @@ See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai
 
 ## OpenCode with an existing v2 server
 
-Paseo first uses an explicitly configured server, then a healthy locally registered OpenCode v2 service, then starts its own helper. It never stops a reused service. To select a server explicitly, set its URL in the provider environment:
+Paseo first uses an explicitly configured server, then a healthy locally registered OpenCode v2 service, then starts its own helper, unless [`PASEO_OPENCODE_SERVER_SCOPE`](#choose-which-servers-paseo-starts) asks for its own helpers per workspace or per agent. It never stops a reused service. To select a server explicitly, set its URL in the provider environment:
 
 ```json
 {
@@ -134,6 +134,36 @@ A configured URL takes precedence even when unreachable; Paseo reports the conne
 An explicitly configured server needs the bridge installed separately. Connect once and start a session: the setup error gives the local package directory. Copy that directory to the server's OpenCode global `plugins` directory, then retry. For a server on another machine, set `PASEO_OPENCODE_BRIDGE_PORT` in the Paseo OpenCode provider environment before starting Paseo, and set `PASEO_OPENCODE_BRIDGE_URL` to the URL the OpenCode server can use to reach that port. For example, an SSH reverse tunnel can expose the Paseo loopback port on the OpenCode host. The bridge token is exchanged through the OpenCode connection and is not written into the plugin package.
 
 OpenCode's custom MCP registrations are shared by all sessions in a location. Paseo rejects custom MCP servers and per-agent process environment overrides on a reused server rather than applying them to other sessions or ignoring them. Session identity is applied to each session's shell environment. A Paseo-owned helper supports custom process and MCP settings; it is selected when there is no explicit URL or healthy registered service.
+
+### Choose which servers Paseo starts
+
+Set `PASEO_OPENCODE_SERVER_SCOPE` in the provider environment to choose how agents share OpenCode servers:
+
+| Value              | Servers                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `shared` (default) | The order above: configured URL, registered service, then one helper Paseo starts and shares. An agent with custom MCP servers or process environment gets a helper of its own |
+| `workspace`        | Paseo's own helpers only, one per workspace, shared by that workspace's agents                                                                                                 |
+| `agent`            | Paseo's own helpers only, one per agent                                                                                                                                        |
+
+`workspace` and `agent` never use a registered service and can't be combined with `PASEO_OPENCODE_SERVER_URL`. Paseo starts their helpers with the provider's `command` and sets `PASEO_WORKSPACE_ID` in their environment, so a wrapper command, such as one that launches OpenCode in a sandbox, can find the workspace without per-agent environment. Under `agent`, the helper's environment also carries the agent's identity (`PASEO_AGENT_ID`).
+
+Under `workspace`, an agent with custom MCP servers or process environment still gets its own helper, and agents without a workspace use one shared helper. Model lists, commands, and imports use the shared helper Paseo starts. A workspace's helper stops when its last agent closes.
+
+These scopes need OpenCode 2.0.10 or newer. When the provider's command reports an older version or none, Paseo fails rather than use the v1 adapter, whose helpers ignore the scope.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode-sandboxed": {
+        "extends": "opencode",
+        "command": ["sandbox-run", "opencode"],
+        "env": { "PASEO_OPENCODE_SERVER_SCOPE": "workspace" }
+      }
+    }
+  }
+}
+```
 
 ---
 
