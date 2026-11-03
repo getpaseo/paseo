@@ -51,6 +51,10 @@ export const CLIENT_CAPS = {
   pluginBinaryPayloads: "plugin_binary_payloads",
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
+  // COMPAT(backgroundAgents): added in v0.15.0, remove after 2027-05-03 once client floor >= v0.15.0.
+  // Sources without it never receive agent-level background agents in inclusive lists or
+  // update subscriptions, because older apps auto-open a tab for every replicated root agent.
+  backgroundAgents: "background_agents",
   browserHost: "browser_host",
 } as const;
 

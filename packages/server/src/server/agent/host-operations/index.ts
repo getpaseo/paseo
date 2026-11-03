@@ -177,6 +177,7 @@ const remoteCreate = z
     workspaceId: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
     notifyOnFinish: z.boolean().optional(),
+    background: z.boolean().optional(),
     idempotencyKey: z.string().optional(),
     settings: z
       .object({
@@ -235,6 +236,7 @@ export function createHostResolver(input: {
                 featureValues: parsed.settings?.features,
               },
               workspaceId: parsed.workspaceId,
+              ...(parsed.background !== undefined ? { background: parsed.background } : {}),
               labels,
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
