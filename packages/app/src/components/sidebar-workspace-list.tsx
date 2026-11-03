@@ -1690,12 +1690,12 @@ function ProjectBlock({
       collapsed
         ? []
         : [
-            ...(leadingWorkspace ? [toSidebarSelectionTarget(leadingWorkspace)] : []),
-            ...visibleWorkspaces.flatMap((workspace) => {
-              const entry = workspaceEntriesByKey.get(workspace.workspaceKey);
-              return entry ? [toSidebarSelectionTarget(entry)] : [];
-            }),
-          ],
+            ...(leadingWorkspace ? [leadingWorkspace.workspaceKey] : []),
+            ...visibleWorkspaces.map((workspace) => workspace.workspaceKey),
+          ].flatMap((key) => {
+            const entry = workspaceEntriesByKey.get(key);
+            return entry ? [toSidebarSelectionTarget(entry)] : [];
+          }),
     [collapsed, leadingWorkspace, visibleWorkspaces, workspaceEntriesByKey],
   );
   useSidebarSelectionSegment(`project:${project.viewKey}`, selectionPosition, selectionTargets);
@@ -2319,12 +2319,12 @@ function ProjectModeList({
       pinnedCollapsed
         ? []
         : [
-            ...(leadingPinnedChat ? [toSidebarSelectionTarget(leadingPinnedChat)] : []),
-            ...visiblePinnedChats.flatMap((workspace) => {
-              const entry = workspaceEntriesByKey.get(workspace.workspaceKey);
-              return entry ? [toSidebarSelectionTarget(entry)] : [];
-            }),
-          ],
+            ...(leadingPinnedChat ? [leadingPinnedChat.workspaceKey] : []),
+            ...visiblePinnedChats.map((workspace) => workspace.workspaceKey),
+          ].flatMap((key) => {
+            const entry = workspaceEntriesByKey.get(key);
+            return entry ? [toSidebarSelectionTarget(entry)] : [];
+          }),
     [pinnedCollapsed, leadingPinnedChat, visiblePinnedChats, workspaceEntriesByKey],
   );
   useSidebarSelectionSegment("project:pinned", 0, pinnedSelectionTargets);
