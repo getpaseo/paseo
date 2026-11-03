@@ -970,7 +970,14 @@ export class Session {
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.workspaceGitService = workspaceGitService;
     this.workspaceRuntimeStore = workspaceRuntimeStore;
-    this.workspaceBaseBranch = options.workspaceBaseBranch;
+    this.workspaceBaseBranch =
+      options.workspaceBaseBranch ??
+      createWorkspaceBaseBranchService({
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+        workspaceRegistry: this.workspaceRegistry,
+        workspaceGitService: this.workspaceGitService,
+      });
 
     this.gitMutation = createGitMutationService({
       workspaceGitService: this.workspaceGitService,
@@ -978,6 +985,7 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
       workspaceRegistry: this.workspaceRegistry,
@@ -4093,6 +4101,8 @@ export class Session {
   ): Promise<void> {
     try {
       this.workspaceBaseBranch ??= createWorkspaceBaseBranchService({
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         workspaceRegistry: this.workspaceRegistry,
         workspaceGitService: this.workspaceGitService,
       });

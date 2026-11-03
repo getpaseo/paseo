@@ -939,7 +939,7 @@ export const en = {
       },
       diff: {
         baseBranch: {
-          title: "Base branch",
+          title: "Change base",
           hint: "Used for committed changes, commits, Git updates and new pull requests. Shared by workspaces using this checkout.",
           updateHost: "Update the host to change the base branch.",
           saved: "Base branch updated",

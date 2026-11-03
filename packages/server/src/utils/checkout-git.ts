@@ -1326,15 +1326,18 @@ async function getStoredBaseRefForCwd(
   if (context?.facts?.isGit) {
     return context.facts.storedBaseRef;
   }
-  const worktreeRoot = await getWorktreeRoot(cwd, context);
-  return worktreeRoot ? readPaseoWorktreeBaseRef(worktreeRoot) : null;
+  const ownership = await getPaseoWorktreeForCwd(cwd, { context });
+  return ownership.isPaseoOwnedWorktree ? readPaseoWorktreeBaseRef(ownership.worktreeRoot) : null;
 }
 
 export async function setCheckoutBaseBranch(input: {
   cwd: string;
   baseRef: string;
+  context?: CheckoutContext;
 }): Promise<string> {
   await requireGitRepo(input.cwd);
+  const ownership = await getPaseoWorktreeForCwd(input.cwd, { context: input.context });
+  if (!ownership.isPaseoOwnedWorktree) throw new Error("Workspace is not a Paseo worktree");
   const requested = input.baseRef.trim();
   const qualified = requested.startsWith("refs/");
   const candidates = qualified
@@ -1349,7 +1352,7 @@ export async function setCheckoutBaseBranch(input: {
     if (valid.exitCode !== 0 || !(await doesGitRefExist(input.cwd, candidate))) continue;
     const worktreeRoot = await getWorktreeRoot(input.cwd);
     if (!worktreeRoot) throw new NotGitRepoError(input.cwd);
-    setPaseoWorktreeBaseRef({ worktreeRoot, baseRef: candidate });
+    await setPaseoWorktreeBaseRef({ worktreeRoot, baseRef: candidate });
     return candidate;
   }
   throw new Error(`Base branch not found: ${requested}`);

@@ -326,7 +326,7 @@ test("All changes combines committed and pending edits and preserves an unfinish
 test("Changes selects exact local and remote bases and retains the selection after reload", async ({
   page,
 }, testInfo) => {
-  const workspace = await createWorkspaceWithCommittedDiff();
+  const workspace = await createWorktreeWithCommittedDiff();
   execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
   execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "main"], {
     cwd: workspace.repoPath,
@@ -355,8 +355,22 @@ test("Changes selects exact local and remote bases and retains the selection aft
   );
 });
 
+test("Changes lets a compact workspace change its base in a sheet", async ({ page }, testInfo) => {
+  const workspace = await createWorktreeWithCommittedDiff();
+  execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
+  await openCompactChanges(page, workspace);
+  const picker = page.getByRole("button", { name: "Change base" }).filter({ visible: true });
+  await picker.click();
+  await expect(page.getByText("Change base", { exact: true })).toBeVisible();
+  const release = page.getByRole("button", { name: "release", exact: true });
+  await expect(release).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("compact-base-picker.png") });
+  await release.click();
+  await expect(picker).toContainText("release");
+});
+
 test("Changes shows a failed base selection and lets the user retry", async ({ page }) => {
-  const workspace = await createWorkspaceWithCommittedDiff();
+  const workspace = await createWorktreeWithCommittedDiff();
   execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
   await openWorkspaceChangesSurface(page, workspace);
   const picker = page
@@ -404,17 +418,13 @@ test("Changes asks to update a host without the base-branch capability", async (
       browser.send(frame);
     });
   });
-  const workspace = await createWorkspaceWithCommittedDiff();
+  const workspace = await createWorktreeWithCommittedDiff();
   await openWorkspaceChangesSurface(page, workspace);
-  await page.getByTestId("workspace-base-branch-trigger").filter({ visible: true }).first().click();
-  await expect(
-    page.getByText("Update the host to change the base branch.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
   expect(baseRequests).toBe(0);
 });
 
 test("Changes keeps a manual comparison when checkout dirtiness changes", async ({ page }) => {
-
   const workspace = await createWorkspaceWithMountedTabDiff();
   await openWorkspaceChanges(page, workspace);
 
@@ -1746,6 +1756,28 @@ async function expectRenderedAddedLine(page: Page, contents: string): Promise<vo
       .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 1000 })
       .toBe(contents);
   }).toPass({ timeout: 15_000 });
+}
+
+async function createWorktreeWithCommittedDiff(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-base-worktree-", {
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  const created = await client.createWorkspace({
+    source: { kind: "worktree", cwd: repo.path, worktreeSlug: "base-picker", baseBranch: "main" },
+  });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create worktree");
+  const cwd = created.workspace.workspaceDirectory;
+  await writeFile(path.join(cwd, "committed-only.ts"), "export const committed = true;\n");
+  execFileSync("git", ["add", "committed-only.ts"], { cwd });
+  execFileSync("git", ["commit", "-m", "Add committed-only file"], { cwd });
+  return { id: created.workspace.id, repoPath: cwd };
 }
 
 async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {

@@ -249,7 +249,10 @@ export async function writePaseoWorktreeMetadata(
   });
 }
 
-export async function setPaseoWorktreeBaseRef(input: { worktreeRoot: string; baseRef: string }): Promise<void> {
+export async function setPaseoWorktreeBaseRef(input: {
+  worktreeRoot: string;
+  baseRef: string;
+}): Promise<void> {
   return mutateMetadata(input.worktreeRoot, async (root) => {
     const current = await readMetadataFile(root);
     if (!current) throw new Error("Cannot change base: missing worktree metadata");

@@ -471,6 +471,7 @@ interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | 
 }
 
 interface ChangesRepositoryToolbarModel {
+  baseBranchPicker: ReactNode;
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
@@ -480,7 +481,6 @@ interface ChangesRepositoryToolbarModel {
 }
 
 interface ChangesComparisonToolbarModel {
-  baseBranchPicker: ReactNode;
   committedDescription?: string;
   diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
@@ -522,6 +522,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 } {
   return {
     repository: {
+      baseBranchPicker: input.baseBranchPicker,
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
@@ -532,7 +533,6 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       workspaceId: input.workspaceId,
     },
     comparison: {
-      baseBranchPicker: input.baseBranchPicker,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -633,6 +633,10 @@ function ChangesToolbarTrailing({ children }: { children: ReactNode }) {
   return <ToolbarControls style={styles.changesToolbarControls}>{children}</ToolbarControls>;
 }
 
+function isManagedWorktree(status: { isPaseoOwnedWorktree?: boolean } | null | undefined): boolean {
+  return status?.isPaseoOwnedWorktree === true;
+}
+
 function ChangesRepositoryToolbar({
   compact,
   model,
@@ -658,6 +662,8 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
+        <Text style={styles.baseArrow}>→</Text>
+        {model.baseBranchPicker}
       </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         {model.pullRequest ? (
@@ -757,7 +763,6 @@ function ChangesComparisonToolbar({
           onSelectBase={model.onSelectBase}
           onSelectAll={model.onSelectAll}
         />
-        {model.diffMode === "base" ? model.baseBranchPicker : null}
         {model.selectedDiffStat ? (
           <DiffStat
             additions={model.selectedDiffStat.additions}
@@ -1909,14 +1914,15 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
-        baseBranchPicker: workspaceId ? (
+        baseBranchPicker: (
           <WorkspaceBaseBranchPicker
             serverId={serverId}
             workspaceId={workspaceId}
             cwd={cwd}
             baseRef={baseRef ?? null}
+            isWorktree={isManagedWorktree(status)}
           />
-        ) : null,
+        ),
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -1935,6 +1941,7 @@ export function ChangesSurface({
       }),
     [
       baseRef,
+      status,
       committedDiffDescription,
       currentBranchName,
       cwd,
@@ -2005,6 +2012,7 @@ export function ChangesSurface({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  baseArrow: { color: theme.colors.foregroundMuted },
   container: {
     flex: 1,
     minHeight: 0,

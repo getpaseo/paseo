@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
+import { GitBranch } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import { useTranslation } from "react-i18next";
@@ -18,19 +19,27 @@ import { invalidateCheckoutGitQueriesForClient } from "./query-keys";
 
 interface Props {
   serverId: string;
-  workspaceId: string;
+  workspaceId?: string | null;
   cwd: string;
   baseRef: string | null;
+  isWorktree: boolean;
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedGitBranch = withUnistyles(GitBranch);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 function refLabel(ref: string): string {
   return ref.replace(/^refs\/(heads|remotes)\//, "");
 }
 
-export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef }: Props) {
+export function WorkspaceBaseBranchPicker({
+  serverId,
+  workspaceId,
+  cwd,
+  baseRef,
+  isWorktree,
+}: Props) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
@@ -64,7 +73,7 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
   });
   const mutation = useMutation({
     mutationFn: async (ref: string) => {
-      if (!client) throw new Error(t("common.errors.daemonClientUnavailable"));
+      if (!client || !workspaceId) throw new Error(t("common.errors.daemonClientUnavailable"));
       return client.setWorkspaceBaseBranch({ workspaceId, baseRef: ref });
     },
     onSuccess: async () => {
@@ -79,7 +88,7 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
   );
   const error = mutation.error ?? branches.error;
   const title = t("workspace.git.diff.baseBranch.title");
-  const label = baseRef ? refLabel(baseRef) : title;
+  const label = baseRef ? refLabel(baseRef).replace(/^origin\//, "") : title;
   const hint = supported
     ? t("workspace.git.diff.baseBranch.hint")
     : t("workspace.git.diff.baseBranch.updateHost");
@@ -104,23 +113,23 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
   const handleRetry = useCallback(() => {
     void refetch();
   }, [refetch]);
+  const branchIcon = useMemo(() => <ThemedGitBranch size={14} uniProps={mutedColor} />, []);
   const renderOption = useCallback<NonNullable<ComboboxProps["renderOption"]>>(
     ({ option, selected, active, onPress }) => (
       <ComboboxItem
         label={option.label}
-        description={option.id}
+        leadingSlot={branchIcon}
         selected={selected}
         active={active}
         onPress={onPress}
         disabled={isPending}
       />
     ),
-    [isPending],
+    [isPending, branchIcon],
   );
   const footer = useMemo(
     () => (
       <View style={styles.footer}>
-        <Text style={styles.text}>{t("workspace.git.diff.baseBranch.hint")}</Text>
         {isPending ? <ThemedLoadingSpinner size="small" uniProps={mutedColor} /> : null}
         {error ? (
           <Text accessibilityRole="alert" testID="workspace-base-branch-error" style={styles.error}>
@@ -136,6 +145,8 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
     ),
     [t, isPending, error, isError, handleRetry],
   );
+
+  if (!supported || !isWorktree || !workspaceId) return <Text style={styles.text}>{label}</Text>;
 
   return (
     <View ref={anchorRef} collapsable={false} style={styles.anchor}>
@@ -173,7 +184,7 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
         desktopPreventInitialFlash
         desktopMinWidth={300}
         renderOption={renderOption}
-        footer={footer}
+        footer={error || isPending ? footer : undefined}
       />
     </View>
   );
