@@ -134,7 +134,7 @@ test.each([false, true])(
     let client: DaemonClient | undefined;
     let mcp: Client | undefined;
     try {
-      const first = await restartFixture(root);
+      const first = await restartFixture(root, { resumeOnStartup: true });
       processes.push(first.child);
       client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.13.0" });
       await client.connect();
@@ -182,7 +182,7 @@ test.each([false, true])(
       await client.close();
       client = undefined;
       await stopFixture(first.child, abrupt);
-      const second = await restartFixture(root);
+      const second = await restartFixture(root, { resumeOnStartup: true });
       processes.push(second.child);
       await expect.poll(() => readPrompts(root), { timeout: 15000 }).toHaveLength(1);
       const prompts = await readPrompts(root);
@@ -222,7 +222,7 @@ test.each([false, true])(
       await client.close();
       client = undefined;
       await stopFixture(second.child, false);
-      const third = await restartFixture(root);
+      const third = await restartFixture(root, { resumeOnStartup: true });
       processes.push(third.child);
       expect(await readPrompts(root)).toHaveLength(1);
       expect(
@@ -243,7 +243,7 @@ test.each([false, true])(
   60000,
 );
 
-test.each([false, true])(
+test.each([undefined, false, true])(
   "host restart recovery settings (enabled=%s)",
   async (enabled) => {
     const root = await mkdtemp(path.join(tmpdir(), "resume-settings-process-"));
@@ -314,7 +314,7 @@ test("a provider that is slow to reopen does not hold daemon startup", async () 
   const processes: ChildProcess[] = [];
   let client: DaemonClient | undefined;
   try {
-    const first = await restartFixture(root);
+    const first = await restartFixture(root, { resumeOnStartup: true });
     processes.push(first.child);
     client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.13.0" });
     await client.connect();
@@ -338,7 +338,7 @@ test("a provider that is slow to reopen does not hold daemon startup", async () 
     client = undefined;
     await stopFixture(first.child, false);
 
-    const second = await restartFixture(root, {}, { holdResume: true });
+    const second = await restartFixture(root, { resumeOnStartup: true }, { holdResume: true });
     processes.push(second.child);
     client = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws`, appVersion: "0.13.0" });
     await client.connect();

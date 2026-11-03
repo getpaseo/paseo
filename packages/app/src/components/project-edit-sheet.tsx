@@ -9,9 +9,8 @@ import type { ProjectIconSource } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Button } from "@/components/ui/button";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import {
@@ -50,7 +49,7 @@ export function ProjectEditSheet({
   const queryClient = useQueryClient();
   const toast = useToast();
   const { pickFiles } = useFilePicker();
-  const size: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const size: ControlSize = "md";
   const [form] = useState(() => openProjectEditForm(snapshot));
   const state = useSyncExternalStore(form.subscribe, form.getState, form.getState);
 
@@ -96,7 +95,6 @@ export function ProjectEditSheet({
       <View style={styles.footer}>
         <Button
           variant="secondary"
-          size="md"
           style={styles.footerButton}
           onPress={handleClose}
           disabled={isSaving}
@@ -105,7 +103,6 @@ export function ProjectEditSheet({
         </Button>
         <Button
           variant="default"
-          size="md"
           style={styles.footerButton}
           onPress={handleSubmit}
           disabled={!state.canSubmit}

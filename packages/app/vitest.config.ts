@@ -36,11 +36,13 @@ export default defineConfig({
       },
     },
     {
-      name: "compile-usage-components",
+      name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
-        // These labels must react to time and language in the compiled app too.
-        if (!id.includes("/src/usage/") || !id.endsWith(".tsx") || id.includes(".test.")) return;
+        // Exercise compiler-sensitive labels and overlay lifetime in the same form as Expo.
+        const usageComponent = id.includes("/src/usage/") && id.endsWith(".tsx");
+        const overlayLayer = id.endsWith("/src/lib/overlay-root.ts");
+        if ((!usageComponent && !overlayLayer) || id.includes(".test.")) return;
         const result = transformSync(source, {
           filename: id,
           babelrc: false,

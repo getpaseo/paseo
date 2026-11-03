@@ -254,6 +254,7 @@ interface PiRpcAgentSessionOptions {
   currentModeId?: string | null;
   persistedSessionFile?: string;
   cleanup?: () => void;
+  closeAfterHistory?: boolean;
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
@@ -696,8 +697,6 @@ function createPiPaseoExtensionFile({
 	        requestId,
 	        // Rewind targets: rows can still show entries that a rewind or compaction left off the branch.
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
-	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
-	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
 	      }),
 	    "info",
 	  );
@@ -1221,7 +1220,6 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
-  private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly submittedUserMessageIds: Map<string, string>;
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
@@ -1266,6 +1264,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.persistedSessionFile = options.persistedSessionFile;
     this.cleanup = options.cleanup;
+    this.closeAfterHistory = options.closeAfterHistory ?? false;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
     this.extensionHost = createPiExtensionHost(this.logger);
@@ -1297,6 +1296,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly config: AgentSessionConfig;
   private readonly persistedSessionFile?: string;
   private readonly cleanup?: () => void;
+  private readonly closeAfterHistory: boolean;
   private readonly extensionTimeoutMs: number;
 
   get id(): string | null {
@@ -1465,19 +1465,25 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    await this.requestEntryCapture("history");
-    yield* streamPiHistory(
-      this.provider,
-      await this.runtimeSession.getMessages(),
-      this.contextUserEntries.map((entry) => ({
-        ...entry,
-        clientMessageId: this.submittedUserMessageIds.get(entry.id),
-      })),
-      {},
-      // At most eight 2 MiB child files per replay; later cards retain their summaries.
-      createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
-      this.closeController.signal,
-    );
+    try {
+      await this.requestEntryCapture("history");
+      const history = await this.runtimeSession.getHistory();
+      yield* streamPiHistory(
+        this.provider,
+        history.messages,
+        history.userEntries.map((entry) =>
+          Object.assign({}, entry, {
+            clientMessageId: this.submittedUserMessageIds.get(entry.id),
+          }),
+        ),
+        {},
+        // At most eight 2 MiB child files per replay; later cards retain their summaries.
+        createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
+        this.closeController.signal,
+      );
+    } finally {
+      if (this.closeAfterHistory) await this.close();
+    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2027,13 +2033,9 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private recordCapturedUserEntries(input: {
-    treeEntries: PiCapturedEntry[];
-    contextEntries: PiCapturedEntry[];
-  }): void {
-    this.contextUserEntries.splice(0, this.contextUserEntries.length, ...input.contextEntries);
+  private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
     this.treeUserEntriesById.clear();
-    for (const entry of input.treeEntries) {
+    for (const entry of entries) {
       this.treeUserEntriesById.set(entry.id, entry);
     }
   }
@@ -2074,10 +2076,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
-    this.recordCapturedUserEntries({
-      treeEntries: parseCapturedEntries(payload.treeEntries),
-      contextEntries: parseCapturedEntries(payload.contextEntries),
-    });
+    this.recordCapturedUserEntries(parseCapturedEntries(payload.treeEntries));
     if (typeof payload.requestId === "string") {
       this.resolveExtensionResult(payload.requestId, undefined);
     }
@@ -2760,6 +2759,7 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: capabilitiesForSession(mcp !== null),
         persistedSessionFile: sessionCopy ? sessionFile : undefined,
         cleanup: cleanupTempFiles,
+        closeAfterHistory: options?.purpose === "history",
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,

@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
-import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
+import {
+  getCheckoutStatus as readCheckoutStatus,
+  type CheckoutSnapshotFacts,
+  type CheckoutStatusGit,
+} from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -59,6 +63,49 @@ afterEach(async () => {
     await cleanup.pop()?.();
   }
 });
+
+test.each([false, true])(
+  "disposal waits for an admitted Git refresh after observation ends (unsubscribed: %s)",
+  async (unsubscribeBeforeDisposal) => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = realpathSync(mkdtempSync(path.join(artifacts, "git-refresh-shutdown-")));
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const service = new WorkspaceGitServiceImpl({
+      logger: pino({ enabled: false }),
+      paseoHome: path.join(root, "home"),
+      deps: {
+        getCheckoutStatus: async (...args) => {
+          entered.resolve();
+          await release.promise;
+          return readCheckoutStatus(...args);
+        },
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: root }, () => {});
+    try {
+      await entered.promise;
+      if (unsubscribeBeforeDisposal) subscription.unsubscribe();
+      let disposed = false;
+      const closing = service.dispose().then(() => {
+        disposed = true;
+        return undefined;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(disposed).toBe(false);
+      release.resolve();
+      await closing;
+      expect(disposed).toBe(true);
+    } finally {
+      release.resolve();
+      subscription.unsubscribe();
+      await service.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("a fresh checkout read makes a newly initialized repository available to cached readers", async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-checkout-init-")));

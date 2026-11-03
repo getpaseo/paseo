@@ -1371,6 +1371,15 @@ export const ProjectListRequestMessageSchema = z.object({
   sync: DirectorySyncRequestSchema.optional(),
 });
 
+export const ProjectSuggestionsRequestSchema = z.object({
+  type: z.literal("project.suggestions.request"),
+  requestId: z.string(),
+  providers: z.array(z.string()).optional(),
+  // ISO timestamp. Sessions older than this are ignored. Defaults to 30 days ago.
+  since: z.string().optional(),
+  limit: z.number().int().positive().max(100).optional(),
+});
+
 export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
@@ -1601,6 +1610,14 @@ export const PluginRemoveRequestSchema = pluginIdRequest("plugin.remove.request"
 
 export const PluginRpcInvokeRequestSchema = z.object({
   type: z.literal("plugin.rpc.invoke.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+  method: z.string().min(1),
+  input: z.unknown().optional(),
+});
+
+export const PluginRpcSubscribeRequestSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.request"),
   requestId: z.string(),
   pluginId: PluginIdSchema,
   method: z.string().min(1),
@@ -3297,6 +3314,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchRecentProviderSessionsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   ProjectListRequestMessageSchema,
+  ProjectSuggestionsRequestSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
@@ -3340,6 +3358,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  PluginRpcSubscribeRequestSchema,
   AgentTimelineAppendRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
@@ -3740,6 +3759,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
+        // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
+        pluginSubscriptions: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -3816,6 +3837,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectCreateDirectory: z.boolean().optional(),
         // COMPAT(projectList): added in v0.2.4, drop the gate when floor >= v0.2.4.
         projectList: z.boolean().optional(),
+        // COMPAT(projectSuggestions): added in v0.14.1, remove gate after 2027-05-01.
+        projectSuggestions: z.boolean().optional(),
         // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
         commitsList: z.boolean().optional(),
         // COMPAT(commitBaseClassification): added in v0.2.0, remove gate after 2027-01-23.
@@ -4498,6 +4521,24 @@ export const ProjectListResponseMessageSchema = z.object({
     requestId: z.string(),
     projects: z.array(WorkspaceProjectDescriptorPayloadSchema),
     sync: DirectorySyncMetadataSchema.optional(),
+  }),
+});
+
+export const ProjectSuggestionSchema = z.object({
+  // The main repository root for git checkouts and their worktrees; the session cwd otherwise.
+  rootPath: z.string(),
+  displayName: z.string(),
+  sessionCount: z.number().int().nonnegative(),
+  providerIds: z.array(z.string()),
+  lastActivityAt: z.string(),
+});
+
+export const ProjectSuggestionsResponseSchema = z.object({
+  type: z.literal("project.suggestions.response"),
+  payload: z.object({
+    requestId: z.string(),
+    suggestions: z.array(ProjectSuggestionSchema),
+    providerErrors: z.array(z.object({ provider: z.string(), message: z.string() })),
   }),
 });
 
@@ -6959,8 +7000,24 @@ export const PluginRpcInvokeResponseSchema = z.object({
   type: z.literal("plugin.rpc.invoke.response"),
   payload: z.object({
     requestId: z.string(),
-    output: z.unknown(),
+    output: z.unknown().optional(),
   }),
+});
+
+export const PluginRpcSubscribeResponseSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.response"),
+  payload: z.object({ requestId: z.string(), subscriptionId: z.string() }),
+});
+
+/** A JSON subscription event. A `Uint8Array` event rides as binary opcode 0x20 instead. */
+export const PluginRpcEventSchema = z.object({
+  type: z.literal("plugin.rpc.event"),
+  payload: z.object({ subscriptionId: z.string(), event: z.unknown() }),
+});
+
+export const PluginRpcClosedSchema = z.object({
+  type: z.literal("plugin.rpc.closed"),
+  payload: z.object({ subscriptionId: z.string(), error: z.string().optional() }),
 });
 
 export const AgentTimelineAppendResponseSchema = z.object({
@@ -7036,6 +7093,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  PluginRpcSubscribeResponseSchema,
+  PluginRpcEventSchema,
+  PluginRpcClosedSchema,
   AgentTimelineAppendResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
@@ -7067,6 +7127,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelDeleteInspectResponseSchema,
   ProjectUpdateMessageSchema,
   ProjectListResponseMessageSchema,
+  ProjectSuggestionsResponseSchema,
   ScriptStatusUpdateMessageSchema,
   WorkspaceSetupProgressMessageSchema,
   WorkspaceSetupStatusResponseMessageSchema,
@@ -7431,6 +7492,9 @@ export type FetchRecentProviderSessionsRequestMessage = z.infer<
 >;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessageSchema>;
+export type ProjectSuggestionsRequest = z.infer<typeof ProjectSuggestionsRequestSchema>;
+export type ProjectSuggestion = z.infer<typeof ProjectSuggestionSchema>;
+export type ProjectSuggestionsResponse = z.infer<typeof ProjectSuggestionsResponseSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;

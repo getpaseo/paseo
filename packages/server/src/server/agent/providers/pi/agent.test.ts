@@ -149,16 +149,6 @@ function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
   return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
 }
 
-// Pi's context path: the entries from the root to the leaf.
-function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const branch: PiSessionEntry[] = [];
-  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
-    branch.unshift(entry);
-  }
-  return branch;
-}
-
 function parseEntryCapture(notification: string): unknown {
   const prefix = "PASEO_ENTRY_CAPTURE ";
   expect(notification.startsWith(prefix)).toBe(true);
@@ -1022,7 +1012,7 @@ describe("PiRpcAgentSession", () => {
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
     fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
-    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1604,6 +1594,111 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("closes a history-only Pi runtime after replaying its timeline", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+
+    const client: import("../../agent-sdk-types.js").AgentClient = createClient(pi);
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+
+    onTestFinished(() => session.close());
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "timeline",
+          provider: "pi",
+          item: expect.objectContaining({ type: "assistant_message", text: "Old answer" }),
+        }),
+      ]),
+    );
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    await session.close();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay is stopped", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect((await history.next()).done).toBe(false);
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay fails", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.getHistoryError = new Error("History unavailable");
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    await expect(history.next()).rejects.toThrow("History unavailable");
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("keeps an interactive Pi runtime open after replaying history", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: tmpdir() },
+    });
+    onTestFinished(() => session.close());
+    for await (const _event of session.streamHistory()) {
+      // Hydrate the session before its next interactive prompt.
+    }
+    expect(pi.latestSession().closeCalls).toBe(0);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ provider: "pi" });
+  });
+
   test("resumes a session whose model was removed on the model Pi falls back to", async () => {
     const pi = new FakePi();
     pi.removeModel("9router/deepseek-v4-flash");
@@ -1757,7 +1852,7 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
-  test("captures the session's user entries apart from the ones on the current branch", async () => {
+  test("captures all session user entries as rewind targets, including abandoned branches", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
@@ -1775,7 +1870,6 @@ describe("PiRpcAgentSession", () => {
     const context = {
       sessionManager: {
         getEntries: () => entries,
-        buildContextEntries: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
@@ -1788,10 +1882,6 @@ describe("PiRpcAgentSession", () => {
         treeEntries: [
           { id: "one", parentId: null, text: "first" },
           { id: "abandoned", parentId: "one-reply", text: "rewound away" },
-          { id: "two", parentId: "one-reply", text: "second" },
-        ],
-        contextEntries: [
-          { id: "one", parentId: null, text: "first" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
       },
@@ -3268,7 +3358,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
+    pi.latestSession().historyUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -3292,7 +3382,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    fakeSession.contextUserEntries = [
+    fakeSession.historyUserEntries = [
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
 
@@ -3744,14 +3834,17 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     },
   );
 
-  test("a history resume of an agent whose folder is gone removes its session copy on close and leaves the original unchanged", async () => {
+  test("a history resume of an agent whose folder is gone removes its session copy after replay and leaves the original unchanged", async () => {
     const archived = writeArchivedSession(createDeletedFolder());
     const pi = new FakePi();
 
     const session = await resumeArchived(createClient(pi), archived, "history");
     const sessionCopy = pi.recordedLaunches[0]!.session!;
     expect(existsSync(sessionCopy)).toBe(true);
-    await session.close();
+    for await (const _event of session.streamHistory()) {
+      // Completion releases both the runtime and its temporary session copy.
+    }
+    expect(pi.latestSession().closeCalls).toBe(1);
 
     expect(existsSync(path.dirname(sessionCopy))).toBe(false);
     expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
@@ -3961,7 +4054,7 @@ test("captured Pi image history keeps canonical identities across disk reload an
         parentId: entry.parentId,
         text: entry.message.role === "user" ? getUserMessageText(entry.message.content) : "",
       }));
-      session.contextUserEntries = session.treeUserEntries;
+      session.historyUserEntries = session.treeUserEntries;
     };
     resumedPi.queueSessionSetup(setupReplay);
     manager = new AgentManager({
@@ -4015,7 +4108,7 @@ test("old Pi handles replay native identities without inventing client mappings"
           ]
         : [],
     );
-    session.contextUserEntries = session.treeUserEntries;
+    session.historyUserEntries = session.treeUserEntries;
   });
   const session = await createClient(pi).resumeSession({
     provider: "pi",

@@ -155,6 +155,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     repoRoot: string | null;
     mainRepoRoot: string | null;
     currentBranch: string | null;
+    headSha?: string;
     remoteUrl: string | null;
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
@@ -185,6 +186,7 @@ export interface WorkspaceGitRuntimeSnapshot {
       state: string;
       baseRefName: string;
       headRefName: string;
+      headSha?: string;
       isMerged: boolean;
       isDraft?: boolean;
       mergeable?: PullRequestMergeable;
@@ -320,6 +322,7 @@ export type WorkspaceGitSnapshotOptions =
   | {
       force: true;
       includeForge?: boolean;
+      afterInFlight?: boolean;
       reason: string;
     };
 
@@ -614,6 +617,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly disposeController = new AbortController();
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
+  private readonly pendingRefreshes = new Set<Promise<WorkspaceGitRuntimeSnapshot>>();
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -1092,7 +1096,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
     this.snapshotUpdatedListeners.clear();
-    this.disposePromise = this.fileObserver.close();
+    // Unsubscribing can remove a target while its Git command still owns the cwd.
+    // Stop admission first, then drain those refreshes before releasing the service.
+    this.disposePromise = Promise.all([
+      this.fileObserver.close(),
+      Promise.allSettled(this.pendingRefreshes),
+    ]).then(() => undefined);
     return this.disposePromise;
   }
 
@@ -3212,11 +3221,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const promise = this.runWorkspaceRefreshLoop(target, request).finally(() => {
+      this.pendingRefreshes.delete(promise);
       const state = target.refreshState;
       if (state.status === "in-flight" && state.promise === promise) {
         target.refreshState = { status: "idle" };
       }
     });
+    this.pendingRefreshes.add(promise);
     target.refreshState = {
       status: "in-flight",
       promise,
@@ -3242,7 +3253,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       refreshWorktree: true,
       includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
-      queueIfBusy: false,
+      queueIfBusy: force && options?.afterInFlight === true,
       movedRemoteRefs: new Set(),
     };
   }
@@ -3542,6 +3553,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoRoot: checkoutStatus.repoRoot,
       mainRepoRoot: checkoutStatus.mainRepoRoot,
       currentBranch: checkoutStatus.currentBranch,
+      headSha: facts.isGit ? facts.pullRequestLookupTarget?.headSha : undefined,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
       isDirty: refreshWorktree
