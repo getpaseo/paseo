@@ -1729,6 +1729,17 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private publish(event: AgentStreamEvent): void {
+    // Runtime release preserves unfinished work for restart recovery. Cleanup
+    // may still emit timeline updates, but must not settle or restart its turn.
+    if (
+      this.closed &&
+      (event.type === "turn_started" ||
+        event.type === "turn_completed" ||
+        event.type === "turn_canceled" ||
+        event.type === "turn_failed")
+    ) {
+      return;
+    }
     for (const subscriber of this.subscribers) subscriber(event);
   }
 
@@ -2204,16 +2215,12 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
-    // Releasing the runtime is not a failed turn: restart recovery still owns
-    // unfinished work after the session has been intentionally closed.
-    if (!this.closed) {
-      this.emit({
-        type: "turn_failed",
-        provider: this.provider,
-        turnId,
-        error,
-      });
-    }
+    this.emit({
+      type: "turn_failed",
+      provider: this.provider,
+      turnId,
+      error,
+    });
   }
 
   private handleSessionEvent(event: PiAgentSessionEvent): void {
