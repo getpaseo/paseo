@@ -1805,10 +1805,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
-  invertedWrapper: {
-    transform: [{ scaleY: -1 }],
-    width: "100%",
-  },
   emptyStateText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,

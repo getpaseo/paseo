@@ -1,3 +1,27 @@
+# LegendList 3.7.1 for the native chat timeline (docs/agent-stream-disclosure.md).
+# Upstream: https://github.com/LegendApp/legend-list/issues/593 covers every change below.
+# react-native.js and react-native.mjs carry the same hunks; each has a "Paseo patch" comment.
+#
+# 1. getEstimatedItemSize (react-native.d.ts, getItemSize, LegendListInner props): a per-item
+#    estimate for an unmeasured row wins over the running average for its type.
+# 2. MVCP anchor lock on native (canRestoreAnchorLock, resolveAnchorLock, updateAnchorLock,
+#    prepareMVCP): upstream enables it on web only. On native the lock ends when its row leaves
+#    the view or shouldRestorePosition rejects it, instead of after 300 ms.
+# 3. Preserved initial end only with maintainScrollAtEnd (finishScrollTo,
+#    finishBootstrapInitialScrollWithoutScroll): otherwise every data change re-arms the initial
+#    scroll to the end.
+# 4. Silent initial scroll retry in one task (checkFinishedScrollFallback): the nudge and the return
+#    to the target go out together, so Android does not reveal 1 dp short of the end.
+# 5. Layout noise against the floored known size (isNativeLayoutNoise, updateOneItemSize): a
+#    one-pixel snap change is not a resize.
+# 6. Content height from React state on the New Architecture (useContentSize, ContainersLayer):
+#    the Animated height mounts the estimated layout for a frame.
+# 7. Header and footer revealed with the rows (RevealedLayoutView, ListComponent).
+# 8. Top-padding shrink hold on iOS only (setPaddingTop): Android paints the held height as blank
+#    space at the end.
+#
+# Upgrading: drop each hunk whose fix the new version ships, regenerate with
+# `npx patch-package @legendapp/list`, and copy this header back on top.
 diff --git a/node_modules/@legendapp/list/react-native.d.ts b/node_modules/@legendapp/list/react-native.d.ts
 index 983e937..970ba51 100644
 --- a/node_modules/@legendapp/list/react-native.d.ts

@@ -1,8 +1,6 @@
 package sh.paseo.scroll;
 
 import android.content.Context;
-import android.graphics.Matrix;
-import android.graphics.Rect;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,14 +12,13 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with three corrections. Java, because the content-position
+ * React Native's vertical scroll view with two corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
   // The chat timeline's end pin, packages/app/src/agent-stream/native-end-pin.tsx.
   private static final String END_PIN_NATIVE_ID = "paseo-end-pin";
 
-  private final float[] transformValues = new float[9];
   private final ViewTreeObserver.OnPreDrawListener clampBeforeDraw =
       () -> {
         clampToContentEnd();
@@ -33,17 +30,6 @@ final class PaseoScrollView extends ReactScrollView {
 
   PaseoScrollView(Context context) {
     super(context);
-  }
-
-  // Both RN focus handling and Android selection visibility requests use this calculation.
-  // Its coordinates ignore inversion. Keep focus/selection bookkeeping, but leave timeline
-  // movement to user gestures and explicit scroll commands.
-  @Override
-  protected int computeScrollDeltaToGetChildRectOnScreen(Rect rect) {
-    // RN's Android scale: -1 becomes a 180-degree rotation with positive scaleY.
-    getMatrix().getValues(transformValues);
-    if (transformValues[Matrix.MSCALE_Y] < 0) return 0;
-    return super.computeScrollDeltaToGetChildRectOnScreen(rect);
   }
 
   @Override

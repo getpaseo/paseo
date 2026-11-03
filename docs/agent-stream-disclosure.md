@@ -29,8 +29,7 @@ Following output:
 
 The trigger can only stay put when the list has scroll room for the change. When the loaded
 content fits the viewport, or a collapse at the end would need an offset past the end, the list
-ends at its end and the trigger moves by the difference. On iOS the correction first lands past
-the end and the re-stick pulls it back a few frames later.
+ends at its end and the trigger moves by the difference.
 
 ## Web
 
@@ -42,97 +41,112 @@ the row's top after layout, before paint (`strategy-web.tsx`).
 On compact layouts, tool calls and tool-call groups open a sheet instead of expanding, so they do
 not hold. Summary lines and todo cards expand inline.
 
-The ScrollView's `maintainVisibleContentPosition` does the work: it picks an anchor view at the
-start of a mount transaction and scrolls by that view's movement once the transaction lands, in
-the same frame. `useNativeDisclosureHold` (`native-disclosure-hold.tsx`) drives it in three
-commits, each in its own UI frame:
+The timeline is a LegendList in forward order: one `data` array of history rows followed by the
+live head, oldest first (`strategy-native.tsx`). LegendList keeps a row in place across a size
+change in the commit that makes it, so a hold needs no anchor neighbour, native child index or
+render window stretch. The inverted FlatList it replaced needed all three, and three commits per
+toggle; its applied commit took up to 3.5 s of JS on a long turn.
 
-1. **Anchoring.** Point `minIndexForVisible` at the held row's older neighbour.
-2. **Applied.** Run `apply`. The helper corrects the offset in the frame that shows the change.
-3. **Release.** Drop the anchor, report `isAtEnd` to the controller.
+### Who owns the offset
 
-### Why the older neighbour
+One owner keeps the scroll offset at any moment:
 
-The list is inverted, so a row's older neighbour sits directly above it on screen and its native
-top edge is the trigger row's visual top. The trigger's own view changes size; the neighbour only
-moves. A trigger in the live head anchors the newest history row.
+| State                  | Owner                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| Before rows are placed | LegendList's initial scroll to the end. It keeps the rows hidden until they are measured. |
+| Following the end      | The end pin (`native-end-pin.tsx`).                                                       |
+| Disclosure hold        | LegendList's `maintainVisibleContentPosition`, restoring only the held row.               |
+| User scroll            | The finger. The controller detaches at drag start.                                        |
+| Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                   |
 
-### Native child index
+The end pin is a zero-height view at the bottom of the content and the content's first native
+child, with React Native's `maintainVisibleContentPosition` set to `{ minIndexForVisible: 0 }`. The
+native correction runs on the UI thread around each mount, so a row that grows or lands at the end
+scrolls in the frame it lays out. The controller scrolls only for a viewport resize (the keyboard)
+and an explicit jump, both through the native `scrollToEnd`.
 
-`minIndexForVisible` is an index into the ScrollView's native children, not into the data:
-header (the live head), one view per rendered cell, then the footer. VirtualizedList's spacers for
-unrendered rows are height-only Views that Fabric flattens away (verified on RN 0.86: the
-`View` shadow node has no events or transform, so it does not form a native view, and counting
-spacers missed the anchor on device). So the index is 1 + the mounted rows newer than the
-neighbour (`native-disclosure-anchor.ts`). The mounted set comes from a registry each rendered
-cell joins in a layout effect.
+Do not use LegendList's `maintainScrollAtEnd` instead. It scrolls from JS after the mount to the end
+its JS sizes predict: growth paints below the viewport for a frame, and the scroll lands short of
+the native end, which the controller reads as the user scrolling away.
 
-Overcounting is not safe. When the held row is the oldest mounted row its neighbour is the footer,
-the last child; one extra and the index matches no child, and Android keeps its previous anchor.
+### The hold
 
-### Frame spacing
+`holdRow(rowId, apply)` runs in the toggle's event:
 
-`apply` runs two frames after the anchoring commit, and the release two frames after the applied
-commit. Do not shorten this to one commit or one frame. Android merges every Fabric commit
-queued before the next UI frame into one mount transaction, and the helper picks its anchor at the
-start of a transaction: with the config and the change in one transaction, nothing is anchored.
+1. Mark the row held and detach the controller (`holdForDisclosure`). The pin goes away and
+   LegendList's `maintainVisibleContentPosition` takes over, restoring only the held row
+   (`shouldRestorePosition`).
+2. Run `apply`.
+3. Call the row's `useSyncLayout` trigger. The toggle changes the row from its own state, so
+   LegendList's container does not re-render and would learn the new height from `onLayout` a task
+   later, after the change painted. The trigger puts the measurement and the corrected positions
+   in the toggle's own commit.
 
-Frames are counted from each commit's layout effect, not from the state change. React can render
-a large toggle after the next animation frame has already fired; counting from `setState` then
-lands two commits in one transaction again.
+The hold ends two frames after the last item size change, since the list measures the toggled row
+and any rows it inserted over several frames (`native-disclosure-hold.ts`). The controller then
+re-sticks only if the list is within 1 px of its end, the same distance web resumes from.
 
-### FlatList's own prop
+### User scroll
 
-FlatList's `maintainVisibleContentPosition` is `undefined` during the hold, and the anchor goes to
-the ScrollView through `renderScrollComponent`. VirtualizedList reads that prop in data-index space
-and refreshes its anchored item key only when the row count changes, so setting it at hold time
-shifts the render window by the wrong amount.
+The controller detaches at `onScrollBeginDrag`, so lines that stream in during a drag grow below
+the rows under the finger. The detach reaches native a JS round trip after the drag begins, so for
+those frames the pin is still mounted. The scroll view subclasses skip the pin's correction while
+the user drags (see [scroll view corrections](#scroll-view-corrections)). They skip only the pin's:
+in the detached state LegendList uses the same native correction, and a history page that lands
+mid-drag needs it. They key on the drag, not the touch, so a tap or long press while following
+keeps following.
 
-`renderScrollComponent` is passed on every render. Switching between a function and `undefined`
-remounts the ScrollView, which lands the list at its end.
+Following resumes only for a gesture that ends within 1 px of the end, either when the finger lifts
+or when momentum stops. A release past the end counts: iOS bounces back to the end, and lines that
+land during the bounce must keep scrolling in. A release anywhere short of the end stays detached
+with the scroll-to-bottom pill, so the rows the user let go of never move.
 
-The hold config has no `autoscrollToTopThreshold`. With it, Android smooth-scrolls to the end
-instead of anchoring.
+### Draw distance
 
-### Render window
+`drawDistance` is 2000 px on each side of the viewport. A fling over rows that were never measured
+blanks the viewport until LegendList renders and measures them. Twelve flings over a chat with a
+15,000 px turn expanded, Android emulator, dev build:
 
-VirtualizedList keeps its render window by index. Rows inserted or removed newer than the trigger
-shift the held row and its neighbour out of the window, and they would unmount in the applied
-commit, taking the anchor view with them. For that commit only, `initialNumToRender` is raised so
-the initial region covers every row from the newest down to the oldest row mounted at hold time.
-The initial region is always rendered and is recomputed on a count change. VirtualizedList has no
-cheaper lever: its own MVCP window shift is keyed as above, and sticky headers do not apply.
+| List                          | Blank viewport             | Janky frames | p50 / p90 / p99  |
+| ----------------------------- | -------------------------- | ------------ | ---------------- |
+| Inverted FlatList             | 1.3 to 1.7 s over 5 flings | 10.8%        | 27 / 48 / 109 ms |
+| LegendList, drawDistance 500  | 1.0 to 1.5 s per fling     |              |                  |
+| LegendList, drawDistance 2000 | none                       | 1.7%         | 24 / 32 / 48 ms  |
 
-Cost: the applied commit mounts every row between the newest row and the window, including every
-row the expansion inserts. Measured on the Android emulator with a dev build:
+With every turn collapsed, flinging from a cold open into history did not blank at any value from
+500 to 2000, and jank followed host load (19 to 40 on 16 cores) rather than draw distance. Measure
+1000 and 1500 on the expanded chat, on a host under load 10, before lowering it.
 
-| Toggle                                                          | Applied commit (JS) | Slowest UI frame |
-| --------------------------------------------------------------- | ------------------- | ---------------- |
-| Summary line at the bottom, short turn                          | 0.29 s              |                  |
-| Summary line ~14,000 px up (window start > 0), expand           | 0.94–1.42 s         | 0.40–0.95 s      |
-| Same, collapse                                                  | 0.85 s              | 0.67 s           |
-| Summary line mid-screen at the bottom, 15,000 px turn, anchored | 0.7–3.5 s           | 0.29–0.72 s      |
-| Same toggle without the anchor                                  | 0.26 s              | 0.10–0.19 s      |
+### LegendList patch
 
-That is a visible hitch on long turns and deep positions. Rendering a turn's expanded content
-inside one row instead of as separate rows would remove the index shift and the bump with it.
+`patches/@legendapp+list+3.7.1.patch` carries eight changes for the timeline. Its header lists
+them by purpose, and
+[legend-list #593](https://github.com/LegendApp/legend-list/issues/593) reports each upstream.
+Drop a hunk when the installed LegendList ships its fix.
 
-### Content clamp
+### Scroll view corrections
 
-A mount that shrinks the content while `maintainVisibleContentPosition` is set applies the shrink
-twice on both platforms: the scroll view clamps its offset to the new end during the mount, and
-React Native then adds the anchor's movement to the clamped offset
+`modules/paseo-scroll` replaces React Native's scroll view on both platforms with a subclass:
+Android's `PaseoScrollView` and iOS's `PaseoScrollViewComponentView`.
+`VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
+
+**Content clamp.** A mount that shrinks the content while `maintainVisibleContentPosition` is set
+applies the shrink twice on both platforms: the scroll view clamps its offset to the new end during
+the mount, and React Native then adds the anchor's movement to the clamped offset
 ([RN #58578](https://github.com/react/react-native/issues/58578), fix in
 [PR #58695](https://github.com/react/react-native/pull/58695)). A turn that folds while the list
-follows its end lands above the end. Each platform fixes it in its own subclass of React Native's
-scroll view in `modules/paseo-scroll`: Android's `PaseoScrollView` defers the clamp to the pre-draw
-pass, and iOS's `PaseoScrollViewComponentView` restores the pre-mount offset for the adjustment and
-clamps after it. `VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
+follows its end lands above the end. Android defers the clamp to the pre-draw pass, and iOS restores
+the pre-mount offset for the adjustment and clamps after it.
 
-The iOS subclass also keeps the offset when the mount removes its anchor view. Detaching removes the
-end pin in the same mount that opens the tapped disclosure, and React Native 0.86 moves the offset by
-the removed view's frame. Android keeps a removed view's last frame, so it keeps the offset. React
-Native 0.88 skips the adjustment for a removed anchor
+**Removed anchor (iOS).** A hold removes the end pin in the same mount that opens the tapped
+disclosure, and React Native 0.86 on iOS moves the offset by the removed view's frame. The iOS
+subclass keeps the offset. Android keeps a removed view's last frame, so it keeps the offset already.
+React Native 0.88 skips the adjustment for a removed anchor
 ([PR #57294](https://github.com/react/react-native/pull/57294)).
 
-Remove each override once the installed React Native includes its fix.
+**End pin during a drag.** Both subclasses recognize the pin by its native ID, `paseo-end-pin`,
+and skip its correction while the user drags ([user scroll](#user-scroll)). This one has no React
+Native counterpart; it stays while the timeline uses the pin.
+
+Remove the content clamp and removed-anchor overrides once the installed React Native includes
+their fixes.

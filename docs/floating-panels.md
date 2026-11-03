@@ -171,14 +171,14 @@ animation. Keep this platform choice inside the keyboard module's private platfo
 `KeyboardTranslateView`. The panel root clips it at the header edge, so rows
 slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
-band or a paused transition when the inverted list updates its viewport.
+band or a paused transition when the stream list updates its viewport.
 
 Do not animate a layout prop through the keyboard transition. On Android
 Fabric, each animated layout update clones the shadow tree and runs Yoga over
 the dock subtree. This measured about 10 ms per frame on the emulator and the
 mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
-layout. Preserve the translated dock's history scroll range with a far-end
-content inset on the inverted stream list. Update that inset only when keyboard
+layout. Preserve the translated dock's history scroll range with a top
+content inset on the stream list. Update that inset only when keyboard
 motion settles; never drive it per frame.
 
 The translated dock's height is not the composer's available height. Bound the
