@@ -457,13 +457,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   });
 
   const handleBack = useCallback(() => {
-    setState((current) => {
-      const previous = backAddProjectPage(current);
-      if (previous) return previous;
-      onClose();
-      return current;
-    });
-  }, [onClose]);
+    const previous = backAddProjectPage(state);
+    if (previous) setState(previous);
+    else onClose();
+  }, [onClose, state]);
 
   const openNewWorkspaceForProject = useCallback(
     (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
