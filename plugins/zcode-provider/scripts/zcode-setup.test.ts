@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -6,6 +7,26 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "zcode-setup.js");
+
+/**
+ * The shell the documented flow runs in.
+ *
+ * `read -s` is a Bash builtin. `/bin/sh` is dash on Ubuntu, and dash rejects
+ * the option, so the flow needs Bash itself.
+ */
+function findBash(): string | undefined {
+  if (process.platform === "win32") {
+    // Windows has no Bash by default, and the documented flow is the one for
+    // a POSIX shell.
+    return undefined;
+  }
+  for (const candidate of ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+const bashPath = findBash();
 
 function addProvider(configFile: string): void {
   execFileSync(
@@ -72,14 +93,14 @@ describe.skipIf(process.platform === "win32")("zcode setup config permissions", 
  * the variable; a shell variable that is never exported is invisible to the
  * script and the setup fails with a usage error.
  */
-describe("zcode setup documented key flow", () => {
+describe.skipIf(bashPath === undefined)("zcode setup documented key flow", () => {
   test("registers a provider from a key read without echoing it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-setup-"));
     const configFile = join(dir, "provider_config.json");
 
     // The documented flow, with the key piped in instead of typed.
     const run = spawnSync(
-      "/bin/sh",
+      bashPath ?? "/bin/sh",
       [
         "-c",
         [
@@ -88,7 +109,7 @@ describe("zcode setup documented key flow", () => {
           `"${process.execPath}" "${script}" add-provider --name "BigModel Team CodingPlan" --api-key-env ZCODE_SETUP_API_KEY --kind team --config-file "${configFile}"`,
         ].join("\n"),
       ],
-      { encoding: "utf8", input: "test-key\n" },
+      { encoding: "utf8", input: "test-key\n", env: { PATH: process.env.PATH ?? "" } },
     );
 
     expect(run.status).toBe(0);
