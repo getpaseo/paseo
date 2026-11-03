@@ -13,6 +13,7 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
 const TABBED_PLUGIN_ID = "settings-tabs";
+const TABBED_PLUGIN_NAME = "Tabbed settings";
 /** Two settings screens, so the settings page shows a tab per screen. */
 const TABBED_SOURCE = `import React from "react";
 import { Text, View } from "react-native";
@@ -49,7 +50,11 @@ async function writeTabbedPlugin() {
   const directory = await mkdtemp(path.join(tmpdir(), `paseo-${TABBED_PLUGIN_ID}-`));
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({ id: TABBED_PLUGIN_ID, requirements: pluginRequirements }),
+    JSON.stringify({
+      id: TABBED_PLUGIN_ID,
+      name: TABBED_PLUGIN_NAME,
+      requirements: pluginRequirements,
+    }),
   );
   await writeFile(path.join(directory, "index.client.tsx"), TABBED_SOURCE);
   return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) };
@@ -99,8 +104,9 @@ async function openPluginScreen(page: Page) {
 async function openSettingsFromCog(page: Page) {
   await page.getByRole("button", { name: "Settings for settings-example", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
-  // A plugin with one settings screen shows no tabs.
+  // A plugin with one settings screen shows no tabs, and the header names only the plugin.
   await expect(page.getByTestId("plugin-settings-tabs")).toHaveCount(0);
+  await expectSettingsHeader(page, "settings-example");
 }
 export async function openPluginsPage(page: Page) {
   await gotoAppShell(page);
@@ -142,6 +148,8 @@ export async function expectSettingsTab(page: Page, title: "General" | "Advanced
   await expect(settingsTab(page, title)).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText(`${title} settings body`, { exact: true })).toBeVisible();
   await expect(page.getByText(`${other} settings body`, { exact: true })).toHaveCount(0);
+  // The header names the plugin by its manifest name; the tab names the screen.
+  await expectSettingsHeader(page, TABBED_PLUGIN_NAME);
   await expectAppRoute(
     page,
     `${buildSettingsHostSectionRoute(getServerId(), "plugins")}/${TABBED_PLUGIN_ID}/${title.toLowerCase()}`,
@@ -215,6 +223,10 @@ export async function returnToPluginsPage(page: Page) {
   await expect(
     page.getByRole("button", { name: "Actions for settings-example", exact: true }),
   ).toBeVisible();
+}
+async function expectSettingsHeader(page: Page, title: string) {
+  // Settings keeps the Plugins page mounted beneath, so read the visible title only.
+  await expect(page.getByText(title, { exact: true }).filter({ visible: true })).toHaveCount(1);
 }
 export async function expectSettingsUnavailable(page: Page) {
   await expect(

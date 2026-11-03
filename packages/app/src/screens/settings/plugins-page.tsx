@@ -29,10 +29,10 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { resolvePluginPageState } from "@/screens/settings/plugins-page-state";
 import { openPluginInstallForm } from "@/screens/settings/plugin-install-form-model";
 import { pluginRegistry, useInstalledPlugins } from "@/plugins/registry";
+import { usePluginList } from "@/plugins/plugin-list";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
-const pluginQueryKey = (serverId: string) => ["plugins", serverId] as const;
 const PLUGIN_SOURCE_DOCS_URL = "https://paseo.sh/docs/plugins/reference#plugin-sources";
 type PluginRowAction = "reload" | "enable" | "disable" | "remove";
 
@@ -273,7 +273,6 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const { config, patchConfig } = useDaemonConfig(serverId);
   const refreshQueue = useRef(Promise.resolve());
   useInstalledPlugins();
-  const queryKey = useMemo(() => pluginQueryKey(serverId), [serverId]);
   const [installForm] = useState(openPluginInstallForm);
   const installState = useSyncExternalStore(
     installForm.subscribe,
@@ -294,16 +293,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(
     null,
   );
-  const plugins = useFetchQuery({
-    queryKey,
-    queryFn: async () => {
-      if (!client) throw new Error("Plugin host is offline");
-      return client.listPlugins();
-    },
-    enabled: Boolean(client && connected && supported),
-    dataShape: "list",
-    staleTimeMs: 1_000,
-  });
+  const plugins = usePluginList(serverId);
   const refetchPlugins = plugins.refetch;
   const refresh = useCallback(async () => {
     if (!client) return;
