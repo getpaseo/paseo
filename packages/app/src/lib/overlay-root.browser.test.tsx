@@ -1,3 +1,4 @@
+import { useGlobalOverlayLayer } from "./overlay-root";
 import { useOverlayRegistration } from "@/keyboard";
 import React, { type RefCallback } from "react";
 import { flushSync } from "react-dom";
@@ -162,4 +163,37 @@ it("recognizes a hardware keyboard from modified input without a fine pointer", 
   expect(presence.getSnapshot()).toBe(true);
   expect(values).toEqual([true]);
   release();
+});
+
+function LayerHarness({ active, child }: { active: boolean; child: boolean }) {
+  const layer = useGlobalOverlayLayer("modal", active);
+  useOverlayRegistration({
+    active: child,
+    layer: 200,
+    keys: ["Escape"],
+    manageFocus: false,
+    onKeyDown: () => false,
+  });
+  return <span data-testid="layer">{layer}</span>;
+}
+
+it("keeps the opening layer across rerenders and captures a new layer on reopening", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  function render(active: boolean, child: boolean) {
+    flushSync(() => root.render(<LayerHarness active={active} child={child} />));
+    return container.textContent;
+  }
+  try {
+    expect(render(false, false)).toBe("20");
+    expect(render(true, false)).toBe("20");
+    expect(render(true, true)).toBe("20");
+    expect(render(true, true)).toBe("20");
+    render(false, true);
+    expect(render(true, true)).toBe("220");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
 });
