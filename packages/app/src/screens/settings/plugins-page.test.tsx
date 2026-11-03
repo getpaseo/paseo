@@ -247,6 +247,26 @@ describe("HostPluginsPage", () => {
     expect(screen.queryByText("example")).toBeNull();
   });
 
+  it("drops an active filter when the catalog empties", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValueOnce([plugin()]).mockResolvedValue([]);
+    renderPage(client);
+
+    await screen.findByText("example");
+    fireEvent.change(screen.getByTestId("plugin-filter-input"), {
+      target: { value: "example" },
+    });
+    expect(screen.queryByText("No plugins match the filter")).toBeNull();
+
+    await selectPluginAction("Remove");
+    await waitFor(() => expect(client.removePlugin).toHaveBeenCalledTimes(1));
+
+    // The field hides with the drained catalog, so a stuck query could never
+    // be cleared; the filter resets with it.
+    expect(await screen.findByText("No plugins configured")).toBeDefined();
+    expect(screen.queryByTestId("plugin-filter-input")).toBeNull();
+  });
+
   it.each([
     ["reloadPlugin", "Reload"],
     ["removePlugin", "Remove"],

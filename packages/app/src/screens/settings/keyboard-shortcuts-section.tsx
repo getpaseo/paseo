@@ -477,8 +477,11 @@ export function KeyboardShortcutsSection() {
 
   if (visibleSections.length === 0) {
     return (
-      <SettingsSection title={t("settings.sections.shortcuts")}>
-        {filterField}
+      <SettingsSection
+        title={t("settings.sections.shortcuts")}
+        trailing={hasOverrides ? resetAllButton : undefined}
+      >
+        {capturingBindingId === null ? filterField : null}
         <View style={[settingsStyles.card, styles.mobileCard]}>
           <Text style={styles.mobileText}>{t("common.empty.noResults")}</Text>
         </View>
@@ -495,7 +498,10 @@ export function KeyboardShortcutsSection() {
             title={t(section.titleKey)}
             trailing={sectionIndex === 0 ? resetAllButton : undefined}
           >
-            {sectionIndex === 0 ? filterField : null}
+            {/* While a capture owns the keyboard, the filter has nothing to
+                offer: its row may be filtered away and its keystrokes would be
+                swallowed by the capture listener anyway. */}
+            {sectionIndex === 0 && capturingBindingId === null ? filterField : null}
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
                 const platform = { isMac, isDesktop: isDesktopApp };

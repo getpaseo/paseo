@@ -356,6 +356,13 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     staleTimeMs: 1_000,
   });
   const refetchPlugins = plugins.refetch;
+  // A filter over nothing is a trap: the field hides with an empty catalog, so
+  // a lingering query could never be cleared. Reset it when the catalog
+  // empties, and the next install starts from a clean filter.
+  const pluginCount = plugins.data?.length;
+  useEffect(() => {
+    if (pluginCount === 0) setFilterInput("");
+  }, [pluginCount]);
   const refresh = useCallback(async () => {
     if (!client) return;
     const refetch = async () => {
