@@ -18,6 +18,7 @@ import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-config
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
   AgentClient,
+  AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRunResult,
   AgentSession,
@@ -324,6 +325,7 @@ class RecordingMcpResumeClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities;
   readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  readonly resumeLaunchContexts: Array<AgentLaunchContext | undefined> = [];
   private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
 
   constructor() {
@@ -341,8 +343,10 @@ class RecordingMcpResumeClient implements AgentClient {
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.resumeOverrides.push(overrides);
+    this.resumeLaunchContexts.push(launchContext);
     return this.inner.resumeSession(handle, overrides);
   }
 
@@ -1028,6 +1032,38 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
     expect(resumedNewest.persistence?.metadata).not.toHaveProperty("mcpServers");
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerA);
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerB);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent keeps the workspace of the agent it matches", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+
+  try {
+    const opened = await localCtx.client.openProject(cwd);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? "Workspace did not open");
+    }
+    const workspaceId = opened.workspace.id;
+    const created = await localCtx.client.createAgent({
+      config: { provider: "codex", cwd },
+      workspaceId,
+    });
+    if (!created.persistence) {
+      throw new Error("Expected a persistence handle");
+    }
+
+    await localCtx.client.archiveAgent(created.id);
+    const resumed = await localCtx.client.resumeAgent(created.persistence);
+
+    expect(provider.resumeLaunchContexts[0]?.env?.PASEO_WORKSPACE_ID).toBe(workspaceId);
+    expect(resumed.workspaceId).toBe(workspaceId);
   } finally {
     await localCtx.cleanup();
     rmSync(cwd, { recursive: true, force: true });
