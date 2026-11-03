@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { Modal } from "@/components/ui/modal";
 import equal from "fast-deep-equal";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -52,11 +53,7 @@ import { useProjects } from "@/hooks/use-projects";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useProjectIcons } from "@/projects/icons";
-import {
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import {
   useKeyboardShortcutsStore,
@@ -763,6 +760,10 @@ function SectionRow({ row }: { row: Extract<CommandCenterListRow, { kind: "secti
   );
 }
 
+// Escape arrives without asking; it is registered for `agent.interrupt` anyway.
+// Backspace stays off deliberately — the palette pops its scope with it on web,
+// but a registered command would stop the search field deleting text.
+
 export function CommandCenter() {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -780,7 +781,7 @@ export function CommandCenter() {
     interaction,
   );
   const showBottomSheet = isCompact && isNative;
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
+  const modalLayer = useGlobalOverlayLayer("modal", state.open);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
     isEnabled: showBottomSheet,
@@ -874,23 +875,20 @@ export function CommandCenter() {
       : {}),
     scrollEventThrottle: 16,
   };
-  const keyPress = useCallback(
-    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => state.key(key),
-    [state],
-  );
   const submit = useCallback(() => state.key("Enter"), [state]);
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (!state.key(event.key)) return false;
       event.preventDefault();
       return true;
     },
     [state],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && state.open && !showBottomSheet,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    active: state.open,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   if (showBottomSheet) {
@@ -911,45 +909,46 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
-          {state.scope === "files" ? (
-            <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
-          ) : null}
-          <ThemedBottomSheetTextInput
-            testID="command-center-input"
-            ref={bottomSheetInputRef}
-            initialValue={state.query}
-            variant="bottom-sheet"
-            onChangeText={state.setQuery}
-            onKeyPress={keyPress}
-            onSubmitEditing={submit}
-            placeholder={
-              state.scope === "files"
-                ? t("shell.commandCenter.filePlaceholder")
-                : t("shell.commandCenter.placeholder")
-            }
-            style={[styles.input, styles.growingInput]}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-          />
-          <FileSearchLoadingIndicator
-            loading={state.fileSearchLoading}
-            label={t("shell.commandCenter.searchingFiles")}
-          />
-        </View>
-        {fileSearchError}
-        <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
+        <OverlayLayerProvider layer={modalLayer}>
+          <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
+            {state.scope === "files" ? (
+              <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+            ) : null}
+            <ThemedBottomSheetTextInput
+              testID="command-center-input"
+              ref={bottomSheetInputRef}
+              initialValue={state.query}
+              variant="bottom-sheet"
+              onChangeText={state.setQuery}
+              onSubmitEditing={submit}
+              placeholder={
+                state.scope === "files"
+                  ? t("shell.commandCenter.filePlaceholder")
+                  : t("shell.commandCenter.placeholder")
+              }
+              style={[styles.input, styles.growingInput]}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+            />
+            <FileSearchLoadingIndicator
+              loading={state.fileSearchLoading}
+              label={t("shell.commandCenter.searchingFiles")}
+            />
+          </View>
+          {fileSearchError}
+          <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
+        </OverlayLayerProvider>
       </IsolatedBottomSheetModal>
     );
   }
   if (!state.open) return null;
   return (
-    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
+    <OverlayLayerProvider layer={modalLayer}>
       <Modal visible transparent animationType="fade" onRequestClose={state.close}>
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
-          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
+          <View ref={setOverlayScope} testID="command-center-panel" style={styles.panel}>
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
                 <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />

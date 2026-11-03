@@ -647,6 +647,7 @@ export class TerminalEmulatorRuntime {
       terminal.parser.registerCsiHandler({ final: "c" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: ">", final: "c" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: "=", final: "c" }, () => true);
+      terminal.parser.registerCsiHandler({ prefix: ">", final: "q" }, () => true);
       terminal.parser.registerCsiHandler({ final: "n" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, () => true);
       terminal.parser.registerCsiHandler({ final: "R" }, () => true);
@@ -655,6 +656,7 @@ export class TerminalEmulatorRuntime {
         { prefix: "?", intermediates: "$", final: "p" },
         () => true,
       );
+      terminal.parser.registerDcsHandler({ intermediates: "$", final: "q" }, () => true);
       for (const code of [10, 11, 12]) {
         terminal.parser.registerOscHandler(code, (data) => data.trim() === "?");
       }

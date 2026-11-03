@@ -1,0 +1,10 @@
+Daemon restarts now keep terminal programs running. Interrupted agents can resume in their existing conversations when you turn on agent recovery.
+
+Mobile terminals have native rendering and draggable text-selection handles. Reconnecting restores up to 10,000 lines of terminal history.
+
+Worktree setup can copy ignored files and use plugin-defined locations before agents start.
+
+Added
+- Insert known agent commands from replies into the Composer draft
+
+Full notes: https://paseo.sh/changelog

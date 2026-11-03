@@ -28,7 +28,7 @@ import type {
   WorkspaceScriptLinkTarget,
 } from "@/utils/workspace-script-links";
 import type { Theme } from "@/styles/theme";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
 import { scriptToneColorMapping } from "./script-status";
@@ -532,7 +532,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButton: {
     height: {
-      xs: buttonControlHeight.xs,
+      xs: CONTROL_HEIGHTS.sm,
       md: HEADER_CONTROL_HEIGHT,
     },
     flexDirection: "row",

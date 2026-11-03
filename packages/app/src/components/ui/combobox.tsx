@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
@@ -62,12 +63,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -526,7 +522,6 @@ type DesktopKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape";
 
 interface DesktopKeyHandlerInput {
   isOpen: boolean;
-  isMobile: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
@@ -871,11 +866,12 @@ function isDesktopKey(key: string): key is DesktopKey {
 function dispatchDesktopKey(
   input: DesktopKeyHandlerInput,
   key: DesktopKey,
-  event?: KeyboardEvent,
+  event?: KeyboardInputEvent,
 ): boolean {
   if (!input.isOpen) return false;
-  if (!IS_WEB && input.isMobile) return false;
-
+  // A native mobile bail used to live here because native had no key source, so
+  // nothing could call this. It has one now, and the sheet highlights an active
+  // row like the popover does, so a hardware keyboard drives both.
   if (key === "ArrowDown" || key === "ArrowUp") {
     event?.preventDefault();
     handleDesktopArrowKey(input, key);
@@ -912,6 +908,7 @@ function resolveInitialActiveIndex(
 }
 
 interface MobileBodyProps {
+  overlayLayer: number;
   isOpen: boolean;
   snapPoints: string[];
   handleIndicatorStyle: { backgroundColor: string };
@@ -990,45 +987,47 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      <ComboboxSheetFrame footer={props.footer}>
-        {props.header ? (
-          <SheetHeaderView header={props.header} onClose={props.onClose} />
-        ) : (
-          <>
-            <View style={styles.bottomSheetHeader}>
-              <Text key={props.titleColor} style={comboboxTitleStyle}>
-                {props.title}
-              </Text>
-            </View>
-            {props.stickyHeader}
-            {!props.hasChildren && props.searchable ? (
-              <SearchInput
-                placeholder={props.searchPlaceholder}
-                onChangeText={props.setSearchQueryWithCallback}
-                onSubmitEditing={props.handleSubmitSearch}
-                autoFocus={false}
-                useBottomSheetInput
-                resetKey={props.searchResetKey}
-              />
-            ) : null}
-          </>
-        )}
-        {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-          body
-        ) : (
-          <BottomSheetScrollView
-            style={styles.mobileSheetBody}
-            contentContainerStyle={[
-              styles.comboboxScrollContent,
-              props.mobileChildrenContentContainerStyle,
-            ]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {body}
-          </BottomSheetScrollView>
-        )}
-      </ComboboxSheetFrame>
+      <OverlayLayerProvider layer={props.overlayLayer}>
+        <ComboboxSheetFrame footer={props.footer}>
+          {props.header ? (
+            <SheetHeaderView header={props.header} onClose={props.onClose} />
+          ) : (
+            <>
+              <View style={styles.bottomSheetHeader}>
+                <Text key={props.titleColor} style={comboboxTitleStyle}>
+                  {props.title}
+                </Text>
+              </View>
+              {props.stickyHeader}
+              {!props.hasChildren && props.searchable ? (
+                <SearchInput
+                  placeholder={props.searchPlaceholder}
+                  onChangeText={props.setSearchQueryWithCallback}
+                  onSubmitEditing={props.handleSubmitSearch}
+                  autoFocus={false}
+                  useBottomSheetInput
+                  resetKey={props.searchResetKey}
+                />
+              ) : null}
+            </>
+          )}
+          {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+            body
+          ) : (
+            <BottomSheetScrollView
+              style={styles.mobileSheetBody}
+              contentContainerStyle={[
+                styles.comboboxScrollContent,
+                props.mobileChildrenContentContainerStyle,
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {body}
+            </BottomSheetScrollView>
+          )}
+        </ComboboxSheetFrame>
+      </OverlayLayerProvider>
     </IsolatedBottomSheetModal>
   );
 }
@@ -1062,7 +1061,8 @@ interface DesktopBodyProps {
   overlayLayer: number;
   isOpen: boolean;
   handleClose: () => void;
-  handleDesktopKey: (key: DesktopKey, event?: KeyboardEvent) => boolean;
+  setOverlayScope: (node: unknown) => void;
+  handleDesktopKey: (key: DesktopKey, event?: KeyboardInputEvent) => boolean;
   refs: ReturnType<typeof useFloating>["refs"];
   shouldUseDesktopFade: boolean;
   desktopFrameStyle: StyleProp<ViewStyle>;
@@ -1189,25 +1189,13 @@ function DesktopComboboxOptionsBody(props: {
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   const active = useRetainedPanelActive();
-  const handleDesktopKey = props.handleDesktopKey;
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!isDesktopKey(event.key)) return false;
-      return handleDesktopKey(event.key, event);
-    },
-    [handleDesktopKey],
-  );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && props.isOpen,
-    layer: props.overlayLayer,
-    onKeyDown: handleWebOverlayKeyDown,
-  });
+  const setOverlayScope = props.setOverlayScope;
   const setFloatingRef = useCallback(
     (node: View | null) => {
       props.refs.setFloating(node);
-      setWebOverlayScope(node);
+      setOverlayScope(node);
     },
-    [props.refs, setWebOverlayScope],
+    [props.refs, setOverlayScope],
   );
 
   // Remove the portal before a retained chat can freeze its closing update.
@@ -1531,11 +1519,10 @@ export function Combobox({
   );
 
   const handleDesktopKey = useCallback(
-    (key: DesktopKey, event?: KeyboardEvent) => {
+    (key: DesktopKey, event?: KeyboardInputEvent) => {
       return dispatchDesktopKey(
         {
           isOpen,
-          isMobile,
           orderedVisibleOptions,
           activeIndex,
           setActiveIndex,
@@ -1546,7 +1533,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
@@ -1583,12 +1570,20 @@ export function Combobox({
     [],
   );
 
+  const setOverlayScope = useOverlayRegistration({
+    active: isOpen,
+    layer: floatingLayer,
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    onKeyDown: (event) => (isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false),
+  });
+
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
   const hasChildren = Boolean(children);
 
   if (isMobile) {
     return (
       <MobileComboboxBody
+        overlayLayer={floatingLayer}
         isOpen={isOpen}
         snapPoints={snapPoints}
         handleIndicatorStyle={handleIndicatorStyle}
@@ -1628,6 +1623,7 @@ export function Combobox({
       isOpen={isOpen}
       handleClose={handleClose}
       handleDesktopKey={handleDesktopKey}
+      setOverlayScope={setOverlayScope}
       refs={refs}
       shouldUseDesktopFade={shouldUseDesktopFade}
       desktopFrameStyle={desktopFrameStyle}

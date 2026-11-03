@@ -2389,6 +2389,12 @@ class ClaudeAgentSession implements AgentSession {
   private mainTurnInFlight = false;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
+  /**
+   * The reply Claude Code writes when a turn stops on an API error ("You've hit your session
+   * limit", "API Error: 529 ..."), held back until the result says whether the turn failed: a
+   * failed turn shows the same text as its error, so showing both would repeat it.
+   */
+  private withheldErrorReply: AgentTimelineItem[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
@@ -2460,7 +2466,7 @@ class ClaudeAgentSession implements AgentSession {
     const info: AgentRuntimeInfo = {
       provider: "claude",
       sessionId: this.claudeSessionId,
-      model: this.lastOptionsModel,
+      model: this.lastOptionsModel ?? this.config.model ?? null,
       modeId: this.currentMode ?? null,
       ...(this.lastRuntimeModel
         ? {
@@ -2531,6 +2537,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
     this.activeTurnHasAssistantText = false;
+    this.withheldErrorReply = [];
     this.contextUsage.beginTurn();
     this.transitionTurnState("foreground", "foreground turn started");
     this.clearRecentStderr();
@@ -4419,6 +4426,21 @@ class ClaudeAgentSession implements AgentSession {
               }) satisfies AgentStreamEvent,
           );
 
+    if (!readClaudeParentToolUseId(message)) {
+      if (message.type === "assistant" && message.error) {
+        this.withheldErrorReply.push(...assistantTimelineEvents.map((event) => event.item));
+        return messageEvents;
+      }
+      if (
+        message.type === "assistant" ||
+        message.type === "user" ||
+        message.type === "stream_event"
+      ) {
+        const released: AgentStreamEvent[] = [];
+        this.releaseWithheldErrorReply(released);
+        return [...released, ...messageEvents, ...assistantTimelineEvents];
+      }
+    }
     return [...messageEvents, ...assistantTimelineEvents];
   }
 
@@ -4966,6 +4988,23 @@ class ClaudeAgentSession implements AgentSession {
     events: AgentStreamEvent[],
   ): void {
     const usage = this.convertUsage(message);
+    // Claude Code reports a turn that stopped on an API error (a usage limit, an overloaded or
+    // rejected request) as `success` with `is_error`, carrying the error text in `result`.
+    if (message.subtype === "success" && message.is_error) {
+      const withheld = this.withheldErrorReply;
+      this.withheldErrorReply = [];
+      const resultText = typeof message.result === "string" ? message.result.trim() : "";
+      const withheldText = withheld
+        .map((item) => (item.type === "assistant_message" ? item.text : ""))
+        .join("\n")
+        .trim();
+      if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
+      events.push(...this.sidechainTracker.finishAll("failed"));
+      events.push(this.buildTurnFailedEvent(resultText || withheldText || "Claude run failed"));
+      return;
+    }
+    const releasedErrorReply = this.withheldErrorReply.length > 0;
+    this.releaseWithheldErrorReply(events);
     if (message.subtype === "success") {
       events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
@@ -4975,7 +5014,12 @@ class ClaudeAgentSession implements AgentSession {
       // accounting from provider gateways does not duplicate streamed output.
       const resultText = typeof message.result === "string" ? message.result.trim() : "";
       const outputTokens = message.usage?.output_tokens;
-      if (resultText.length > 0 && outputTokens === 0 && !this.activeTurnHasAssistantText) {
+      if (
+        resultText.length > 0 &&
+        outputTokens === 0 &&
+        !this.activeTurnHasAssistantText &&
+        !releasedErrorReply
+      ) {
         events.push({
           type: "timeline",
           provider: "claude",
@@ -4993,8 +5037,17 @@ class ClaudeAgentSession implements AgentSession {
       "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
         ? message.errors.join("\n")
         : "Claude run failed";
+    if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
     events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
+  }
+
+  private releaseWithheldErrorReply(events: AgentStreamEvent[]): void {
+    if (this.withheldErrorReply.length === 0) return;
+    for (const item of this.withheldErrorReply) {
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+    this.withheldErrorReply = [];
   }
 
   private createClaudeSessionChangedNotice(
@@ -6853,40 +6906,79 @@ function normalizeClaudeSessionTitle(title: string | null): string | null {
 }
 
 const CLAUDE_CUSTOM_TITLE_TYPE = "custom-title";
+const CLAUDE_CUSTOM_TITLE_NEEDLE = Buffer.from(`"${CLAUDE_CUSTOM_TITLE_TYPE}"`);
+const CLAUDE_TITLE_SCAN_CHUNK_BYTES = 64 * 1024;
+
+function readClaudeCustomTitleFromRecord(record: Buffer): string | null {
+  // The needle also matches a prompt that quotes it, so a record still has to
+  // parse as a `custom-title` entry carrying a usable name. Records without the
+  // needle are never decoded, so a long one costs a byte search and nothing more.
+  if (!record.includes(CLAUDE_CUSTOM_TITLE_NEEDLE)) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(record.toString("utf8").trim());
+  } catch {
+    return null;
+  }
+  const entry = toObjectRecord(parsed);
+  if (!entry || entry.isSidechain || entry.type !== CLAUDE_CUSTOM_TITLE_TYPE) {
+    return null;
+  }
+  return normalizeClaudeSessionTitle(
+    typeof entry.customTitle === "string" ? entry.customTitle : null,
+  );
+}
 
 /**
  * The `custom-title` record is re-emitted every time the session is saved, so
- * the current name is the last usable one in the file. Searching backwards finds it without
- * walking the transcript, which matters because sessions reach tens of
- * megabytes.
+ * the current name is the last usable one in the file. Reading backwards a chunk
+ * at a time finds it without walking the transcript, which matters because
+ * sessions reach tens of megabytes, and never holds the file as one string, so a
+ * transcript past V8's maximum string length still imports.
  */
-function readLastClaudeCustomTitle(content: string): string | null {
-  const needle = `"${CLAUDE_CUSTOM_TITLE_TYPE}"`;
-  let at = content.lastIndexOf(needle);
-  while (at >= 0) {
-    const lineStart = content.lastIndexOf("\n", at) + 1;
-    const lineEnd = content.indexOf("\n", at);
-    const line = lineEnd === -1 ? content.slice(lineStart) : content.slice(lineStart, lineEnd);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line.trim());
-    } catch {
-      parsed = undefined;
-    }
-    const entry = toObjectRecord(parsed);
-    if (entry && !entry.isSidechain && entry.type === CLAUDE_CUSTOM_TITLE_TYPE) {
-      const title = normalizeClaudeSessionTitle(
-        typeof entry.customTitle === "string" ? entry.customTitle : null,
+async function readLastClaudeCustomTitle(filePath: string): Promise<string | null> {
+  const handle = await fsPromises.open(filePath, "r");
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      // Opening a directory succeeds on Windows even though reading it does not,
+      // so reject the way reading the transcript as a file would.
+      throw Object.assign(
+        new Error(`EISDIR: illegal operation on a directory, read '${filePath}'`),
+        { code: "EISDIR", path: filePath },
       );
-      if (title) {
-        return title;
-      }
     }
-    // The needle also matches a prompt that quotes it, and a record can carry no
-    // usable name, so keep looking backwards for one that does.
-    at = at <= 0 ? -1 : content.lastIndexOf(needle, at - 1);
+    let end = stats.size;
+    // Retain unfinished record pieces in reverse file order. Assemble each
+    // complete record once, so a large tool/image record costs linear work.
+    let pieces: Buffer[] = [];
+    while (end > 0) {
+      const length = Math.min(CLAUDE_TITLE_SCAN_CHUNK_BYTES, end);
+      const chunk = Buffer.alloc(length);
+      await handle.read(chunk, 0, length, end - length);
+      let recordEnd = chunk.length;
+      for (
+        let at = chunk.lastIndexOf(10);
+        at >= 0;
+        at = at === 0 ? -1 : chunk.lastIndexOf(10, at - 1)
+      ) {
+        pieces.push(chunk.subarray(at + 1, recordEnd));
+        const record = Buffer.concat(pieces.toReversed());
+        const title = readClaudeCustomTitleFromRecord(record);
+        if (title) return title;
+        pieces = [];
+        recordEnd = at;
+      }
+      if (recordEnd > 0) pieces.push(chunk.subarray(0, recordEnd));
+      end -= length;
+    }
+    // The first record in the file has no newline in front of it.
+    return readClaudeCustomTitleFromRecord(Buffer.concat(pieces.toReversed()));
+  } finally {
+    await handle.close();
   }
-  return null;
 }
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
@@ -6898,9 +6990,8 @@ async function readClaudeRenamedSessionTitle(input: {
   sessionId: string;
   configDir: string;
 }): Promise<string | null> {
-  let content: string;
   try {
-    content = await fsPromises.readFile(await claudeTranscriptPath(input), "utf8");
+    return await readLastClaudeCustomTitle(await claudeTranscriptPath(input));
   } catch (error) {
     // A session with no transcript on disk has no rename to carry over. Every
     // other read failure is a real fault and stays explicit.
@@ -6909,7 +7000,6 @@ async function readClaudeRenamedSessionTitle(input: {
     }
     throw error;
   }
-  return readLastClaudeCustomTitle(content);
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {
