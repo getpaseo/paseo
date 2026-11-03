@@ -139,7 +139,7 @@ console.log(result.lastMessage);
 await helper.archive();
 ```
 
-在后台 `parent` 下创建的 Agent 默认也是后台 Agent，除非传入 `background: false`。把后台 Agent 放到已有工作区或某个父 Agent 下需要 `features.backgroundAgents`；在较旧的主机上，SDK 会在发送前抛出 "Update the host to use background agents."。
+在后台 `parent` 下创建的 Agent 默认也是后台 Agent，除非传入 `background: false`。位于其他主机的父 Agent 只有以句柄传入时才会传递该设置；只传地址时，请显式传入 `background`。把后台 Agent 放到已有工作区或某个父 Agent 下需要 `features.backgroundAgents`；在较旧的主机上，SDK 会在发送前抛出 "Update the host to use background agents."。
 
 ## 请求结构化输出 {#request-structured-output}
 

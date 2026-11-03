@@ -190,8 +190,9 @@ describe("OpenCodeBridge", () => {
           title: "Background child",
           background: true,
         });
-        expect(agentManager.listAgents().find((agent) => agent.config.title === "Background child"))
-          .toMatchObject({ background: true });
+        expect(
+          agentManager.listAgents().find((agent) => agent.config.title === "Background child"),
+        ).toMatchObject({ background: true });
 
         const v1Module = await import(plugin.pluginUrl);
         const hooks = await v1Module.default({}, plugin);

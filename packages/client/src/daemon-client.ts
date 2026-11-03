@@ -2892,6 +2892,28 @@ export class DaemonClient {
     });
   }
 
+  /** Finds one workspace by id across pages, background ones included when the host has them. */
+  async findWorkspace(
+    workspaceId: string,
+    options?: { requestId?: string },
+  ): Promise<FetchWorkspacesEntry | null> {
+    const filter = this.supportsBackgroundWorkspaces() ? { includeBackground: true } : {};
+    let cursor: string | undefined;
+    let requestId = options?.requestId;
+    do {
+      const result = await this.fetchWorkspaces({
+        requestId,
+        filter,
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      const match = result.entries.find((entry) => entry.id === workspaceId);
+      if (match) return match;
+      cursor = result.pageInfo.nextCursor ?? undefined;
+      requestId = undefined;
+    } while (cursor);
+    return null;
+  }
+
   listWorkspaceLabels(
     options: {
       sync?: { generation: string; afterSeq: number };

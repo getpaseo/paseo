@@ -1733,7 +1733,7 @@ test(
 );
 
 test(
-  "a background caller's children and workspaces on B are background unless it overrides",
+  "a background caller's MCP and SDK children and workspaces on B are background unless it overrides",
   { timeout: 30000 },
   async () => {
     const a = await daemon();
@@ -1793,6 +1793,13 @@ test(
       (await bApi.paseo.agents.ref(String(agentId)).refresh())?.agent;
     expect(await snapshot(helper.agentId)).toMatchObject({ background: true });
     expect((await snapshot(visible.agentId))?.background).toBeUndefined();
+
+    const sdkChild = await bApi.paseo.workspaces.ref(String(hidden.workspaceId)).agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "SDK helper",
+      parent,
+    });
+    expect(sdkChild.current()).toMatchObject({ background: true });
   },
 );
 

@@ -148,6 +148,7 @@ await helper.archive();
 ```
 
 An agent created under a background `parent` is background unless you pass `background: false`.
+A parent on another host passes this on only as a handle; with a bare address, pass `background`.
 Placing a background agent in an existing workspace or under a parent requires
 `features.backgroundAgents`; on an older host the SDK throws "Update the host to use background
 agents." before sending.

@@ -222,9 +222,7 @@ export function createHostResolver(input: {
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
-            const workspace = (
-              await client.fetchWorkspaces({ includeBackground: true })
-            ).entries.find((row) => row.id === parsed.workspaceId);
+            const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
             const labels = {
               ...parsed.labels,
@@ -243,7 +241,10 @@ export function createHostResolver(input: {
                 featureValues: parsed.settings?.features,
               },
               workspaceId: parsed.workspaceId,
-              background: inheritAgentBackground(parsed.background, input.caller()),
+              // Older hosts reject any background with a workspaceId, so a visible create omits it.
+              ...(inheritAgentBackground(parsed.background, input.caller())
+                ? { background: true }
+                : {}),
               labels,
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
