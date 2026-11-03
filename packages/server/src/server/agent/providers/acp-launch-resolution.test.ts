@@ -68,6 +68,17 @@ class TestACPClient extends ACPAgentClient {
   }
 }
 
+/**
+ * The generic client resolves its launcher the same way, and the resolution is
+ * protected there too, so the test reaches it through a subclass rather than
+ * through a cast.
+ */
+class TestGenericACPClient extends GenericACPAgentClient {
+  async resolveLaunch(): Promise<{ command: string; args: string[] }> {
+    return this.resolveLaunchCommand();
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
@@ -104,20 +115,43 @@ describe("ACP launch command resolution", () => {
     process.env.PATH = binDir;
 
     try {
-      const client = new GenericACPAgentClient({
+      const client = new TestGenericACPClient({
         logger: createTestLogger(),
         command: ["acp-generic-agent", "acp"],
       });
 
       await expect(client.isAvailable()).resolves.toBe(true);
 
-      const resolved = await (
-        client as unknown as {
-          resolveLaunchCommand(): Promise<{ command: string; args: string[] }>;
-        }
-      ).resolveLaunchCommand();
+      const resolved = await client.resolveLaunch();
       expectSamePath(resolved.command, launcher);
       expect(resolved.args).toEqual(["acp"]);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  test("launch resolution looks in the provider's own PATH, not the daemon's", async () => {
+    const providerBinDir = makeTempDir("acp-launch-provider-path-");
+    const daemonBinDir = makeTempDir("acp-launch-daemon-path-");
+    const providerLauncher = createLauncherStub(providerBinDir, "acp-provider-agent");
+    // The daemon's PATH holds a different build of the same command. The
+    // provider's own PATH is what the child process will see, so it is what
+    // the lookup has to use.
+    const daemonLauncher = createLauncherStub(daemonBinDir, "acp-provider-agent");
+    const originalPath = process.env.PATH;
+    process.env.PATH = daemonBinDir;
+
+    try {
+      const client = new TestACPClient({
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-provider-agent", "acp"],
+        runtimeSettings: { env: { PATH: providerBinDir } },
+      });
+
+      const resolved = await client.resolveLaunch();
+      expectSamePath(resolved.command, providerLauncher);
+      expect(resolved.command).not.toBe(daemonLauncher);
     } finally {
       process.env.PATH = originalPath;
     }
@@ -142,6 +176,38 @@ describe("ACP launch command resolution", () => {
 });
 
 describe("ACP early child exit", () => {
+  test("a session launches the resolved path, not the bare command", async () => {
+    const binDir = makeTempDir("acp-launch-session-path-");
+    const launcher = createLauncherStub(binDir, "acp-session-agent");
+    const originalPath = process.env.PATH;
+    process.env.PATH = binDir;
+
+    try {
+      const child = createChildStub();
+      const spawnProcess = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const client = new TestACPClient({
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-session-agent", "acp"],
+      });
+
+      // The session starts for real, so the command that reaches the spawn is
+      // the one a user would run.
+      const sessionPromise = client.createSession({ provider: "acp", cwd: process.cwd() });
+      await vi.waitFor(() => {
+        expect(spawnProcess).toHaveBeenCalled();
+      });
+
+      const [command] = spawnProcess.mock.calls[0] ?? [];
+      expectSamePath(String(command), launcher);
+
+      child.emit("close", 1, null);
+      await sessionPromise.catch(() => undefined);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   test("rejects with the child's stderr instead of waiting for the initialize timeout", async () => {
     const child = createChildStub();
     vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);

@@ -202,15 +202,29 @@ export async function readWindowsEnvironmentPath(
         try {
           const value = parseWindowsRegistryPath(await run(regExe, ["query", key, "/v", "Path"]));
           return value ? [expandWindowsEnvironmentVariables(value, env)] : [];
-        } catch {
-          // A missing Path value exits non-zero; that registry hive simply contributes none.
-          return [];
+        } catch (error) {
+          // A key that holds no Path value exits non-zero; the hive simply
+          // contributes none. Anything else — a timeout, a denied key, a
+          // missing reg.exe — is a query that did not run, and hiding it would
+          // leave providers unresolvable with nothing in the logs to say why.
+          const code = (error as { code?: unknown }).code;
+          if (code === 1) {
+            return [];
+          }
+          throw new Error(
+            `Failed to query the Windows registry PATH at ${key}: ${describeError(error)}`,
+            { cause: error },
+          );
         }
       }),
     )
   ).flat();
 
   return registryValues.length > 0 ? mergeWindowsPathValues(...registryValues) : null;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**

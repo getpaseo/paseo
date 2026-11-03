@@ -1671,7 +1671,14 @@ export class ACPAgentClient implements AgentClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    // Look the command up with the environment the child process will get, so
+    // the path that is verified is the path that runs. A provider that carries
+    // its own PATH would otherwise be resolved against the daemon's and could
+    // pick up a different build of the same command.
+    const availability = await checkProviderLaunchAvailable({
+      ...prefix,
+      env: this.runtimeSettings?.env,
+    });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
@@ -2886,12 +2893,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    // Look the command up with the environment the child process will get, so
+    // the path that is verified is the path that runs. A provider that carries
+    // its own PATH would otherwise be resolved against the daemon's and could
+    // pick up a different build of the same command.
+    const availability = await checkProviderLaunchAvailable({
+      ...prefix,
+      env: this.runtimeSettings?.env,
+    });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
 
-    const command = prefix.command;
+    // Use the path the resolver actually verified. A PATH lookup may find an
+    // install outside the daemon's inherited PATH (for example a Winget
+    // package, or a directory added after the daemon started).
+    const command = availability.resolvedPath ?? prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: await this.resolveProcessCwd(),

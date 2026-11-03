@@ -257,7 +257,10 @@ describe("Windows environment PATH refresh", () => {
       if (args[1] === "HKCU\\Environment") {
         return registryOutput("C:\\Users\\paseo\\.kimi-code\\bin;%SystemRoot%\\System32");
       }
-      throw new Error("missing registry value");
+      // A key without a Path value exits non-zero, the way reg.exe reports it.
+      const missing = new Error("missing registry value") as Error & { code: number };
+      missing.code = 1;
+      throw missing;
     };
 
     await expect(refreshWindowsProcessPath({ platform: "win32", env, exec })).resolves.toEqual({
@@ -272,6 +275,25 @@ describe("Windows environment PATH refresh", () => {
       added: [],
     });
     expect(env.PATH).toBe("/usr/bin");
+  });
+
+  test("reports a registry query that failed rather than found nothing", async () => {
+    // A key with no Path value exits non-zero and contributes nothing, which is
+    // the common case. A query that cannot run at all — a timeout, a denied
+    // key, a missing reg.exe — is different: silently treating it as "no
+    // entries" would leave the provider unavailable with nothing in the logs.
+    const env = {
+      SystemRoot: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\paseo",
+      Path: "C:\\Windows\\System32",
+    };
+    const exec = vi.fn(async (_file: string, _args: string[]): Promise<string> => {
+      throw new Error("reg.exe timed out");
+    });
+
+    await expect(refreshWindowsProcessPath({ platform: "win32", env, exec })).rejects.toThrow(
+      /registry/i,
+    );
   });
 });
 

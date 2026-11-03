@@ -199,6 +199,9 @@ function isLegacyProviderEntry(value: unknown): boolean {
   return typeof (command as Record<string, unknown>).mode === "string";
 }
 
+// COMPAT(minimaxCommandRepair): added in v0.14.1, remove once saved provider
+// configs written before the fix are unlikely to still be in use (2027-05-01).
+//
 // The first MiniMax Code catalog entry ran `npx -y @minimax-ai/code@<ver> acp`.
 // npx derives the executable name from the package name (`code`), but the
 // package publishes `mcode`, so npm exits before the ACP handshake. Catalog
