@@ -156,6 +156,52 @@ test("the workspace scope starts one helper per workspace and stops it with its 
   }
 }, 20_000);
 
+test("a workspace session opens while the workspace's last session closes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-scope-race-"));
+  const script = path.join(root, "server.cjs");
+  const bridge = new OpenCodeBridge({ paseoHome: root, logger: createTestLogger() });
+  await bridge.start();
+  await writeFile(
+    script,
+    `
+    const server = require('node:http').createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ version: '2.0.10', pid: process.pid, urls: [], paths: { tmp: '/tmp' } }));
+    });
+    server.listen(0, '127.0.0.1', () => console.log('server listening on http://127.0.0.1:' + server.address().port));
+  `,
+  );
+  const runtime = new V2Runtime({
+    logger: createTestLogger(),
+    bridge,
+    settings: {
+      command: { mode: "replace", argv: [process.execPath, script] },
+      env: {
+        PASEO_OPENCODE_SERVER_SCOPE: "workspace",
+        XDG_CONFIG_HOME: path.join(root, "config"),
+        XDG_STATE_HOME: path.join(root, "state"),
+      },
+    },
+  });
+  try {
+    // The closing session releases its lease after a varying number of microtasks, so one of
+    // these rounds releases it while the opening session waits for the same helper.
+    for (let delay = 0; delay < 12; delay++) {
+      const closing = await runtime.acquire({ workspaceId: "wks_a" });
+      const opening = runtime.acquire({ workspaceId: "wks_a" });
+      for (let tick = 0; tick < delay; tick++) await Promise.resolve();
+      await closing.release();
+      const opened = await opening;
+      expect((await opened.client.server.info()).version).toBe("2.0.10");
+      await opened.release();
+    }
+  } finally {
+    await runtime.shutdown();
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("a scope other than shared rejects a configured server URL", async () => {
   const runtime = new V2Runtime({
     logger: createTestLogger(),

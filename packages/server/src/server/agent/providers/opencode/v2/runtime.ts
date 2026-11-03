@@ -78,6 +78,8 @@ export class V2Runtime {
   private closed = false;
   // Helpers started for one workspace each, while the scope is `workspace`.
   private workspaces = new Map<string, Promise<Generation>>();
+  // Helpers stopped because their last user released them, as opposed to exiting on their own.
+  private readonly released = new WeakSet<Promise<Generation>>();
   private readonly selection: Promise<OpenCodeServiceSelection>;
   private readonly scope: OpenCodeServerScope;
 
@@ -96,6 +98,14 @@ export class V2Runtime {
   }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
+    // A workspace helper whose last user released it while this acquisition waited for it has
+    // stopped; the second attempt starts a new one.
+    const connection = (await this.acquireOnce(input)) ?? (await this.acquireOnce(input));
+    if (!connection) throw new Error("OpenCode helper server exited");
+    return connection;
+  }
+
+  private async acquireOnce(input: V2RuntimeAcquireOptions): Promise<V2Connection | null> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
     this.assertBridgePort();
@@ -125,6 +135,7 @@ export class V2Runtime {
     }
     if (!this.generations.has(generation)) {
       if (this.current === pending) this.current = null;
+      if (this.released.has(pending)) return null;
       throw new Error("OpenCode helper server exited");
     }
     const connection = this.lease(generation, pending);
@@ -199,6 +210,7 @@ export class V2Runtime {
       if (generation.users !== 0) return;
       if (this.current === pending) return;
       this.forgetWorkspaceHelper(pending);
+      this.released.add(pending);
       this.generations.delete(generation);
       await generation.stop();
     };
