@@ -688,8 +688,6 @@ function createPiPaseoExtensionFile({
 	        requestId,
 	        // Rewind targets: rows can still show entries that a rewind or compaction left off the branch.
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
-	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
-	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
 	      }),
 	    "info",
 	  );
@@ -1213,7 +1211,6 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
-  private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private compactionPromise: Promise<void> | null = null;
@@ -1459,10 +1456,11 @@ export class PiRpcAgentSession implements AgentSession {
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     try {
       await this.requestEntryCapture("history");
+      const history = await this.runtimeSession.getHistory();
       yield* streamPiHistory(
         this.provider,
-        await this.runtimeSession.getMessages(),
-        this.contextUserEntries,
+        history.messages,
+        history.userEntries,
         {},
         // At most eight 2 MiB child files per replay; later cards retain their summaries.
         createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
@@ -2017,13 +2015,9 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private recordCapturedUserEntries(input: {
-    treeEntries: PiCapturedEntry[];
-    contextEntries: PiCapturedEntry[];
-  }): void {
-    this.contextUserEntries.splice(0, this.contextUserEntries.length, ...input.contextEntries);
+  private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
     this.treeUserEntriesById.clear();
-    for (const entry of input.treeEntries) {
+    for (const entry of entries) {
       this.treeUserEntriesById.set(entry.id, entry);
     }
   }
@@ -2060,10 +2054,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
-    this.recordCapturedUserEntries({
-      treeEntries: parseCapturedEntries(payload.treeEntries),
-      contextEntries: parseCapturedEntries(payload.contextEntries),
-    });
+    this.recordCapturedUserEntries(parseCapturedEntries(payload.treeEntries));
     if (typeof payload.requestId === "string") {
       this.resolveExtensionResult(payload.requestId, undefined);
     }
