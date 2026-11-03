@@ -82,7 +82,93 @@ describe("Codex prompt hook rejection", () => {
     }
   });
 
-  test("keeps the rejection visible in the manager timeline and permits a corrected submission", async () => {
+  test.each(["before", "after"])(
+    "keeps an accepted input successful when rejected input arrives %s it, even without a reply",
+    async (order) => {
+      const appServer = createFakeCodexAppServer();
+      const { session } = await startPublicSteeringSession(appServer);
+      try {
+        function rejectInput(): void {
+          appServer.completesHook({
+            threadId: "thread-1",
+            turnId: "native-A",
+            eventName: "userPromptSubmit",
+            status: "blocked",
+            entries: [{ kind: "feedback", text: "Rejected follow-up" }],
+          });
+        }
+        if (order === "before") rejectInput();
+        appServer.acceptsUserMessage({
+          threadId: "thread-1",
+          turnId: "native-A",
+          itemId: "accepted-input",
+          text: "Accepted prompt",
+        });
+        if (order === "after") rejectInput();
+        const completion = waitForNextTurnCompletion(session);
+        appServer.completeTurn();
+        await expect(completion).resolves.toMatchObject({ type: "turn_completed" });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test.each([
+    { status: "interrupted", expected: { type: "turn_canceled", reason: "interrupted" } },
+    { status: "failed", expected: { type: "turn_failed", error: "Native failure" } },
+  ] as const)(
+    "preserves native $status outcomes after a rejected prompt",
+    async ({ status, expected }) => {
+      const appServer = createFakeCodexAppServer();
+      const { session } = await startPublicSteeringSession(appServer);
+      try {
+        appServer.completesHook({
+          threadId: "thread-1",
+          turnId: "native-A",
+          eventName: "userPromptSubmit",
+          status: "blocked",
+          entries: [{ kind: "feedback", text: "Rejected prompt" }],
+        });
+        const completion = waitForNextTurnCompletion(session);
+        appServer.completeTurn({ status, error: { message: "Native failure" } });
+        await expect(completion).resolves.toMatchObject(expected);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test.each([
+    { threadId: "thread-1", turnId: "older-turn" },
+    { threadId: "child-thread", turnId: "native-A" },
+  ])("does not count foreign input as accepted work: $threadId $turnId", async (input) => {
+    const appServer = createFakeCodexAppServer();
+    const { session } = await startPublicSteeringSession(appServer);
+    try {
+      appServer.acceptsUserMessage({ ...input, itemId: "foreign-input", text: "Unrelated input" });
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "blocked",
+        entries: [{ kind: "feedback", text: "Rejected prompt" }],
+      });
+      const completion = waitForNextTurnCompletion(session);
+      appServer.completeTurn();
+      await expect(completion).resolves.toMatchObject({
+        type: "turn_failed",
+        error: "Rejected prompt",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fails a fully rejected manager run and permits a corrected submission", async () => {
     const appServer = createFakeCodexAppServer();
     const provider = createProviderWithFakeAppServer(appServer);
     const client: AgentClient = {
@@ -102,6 +188,7 @@ describe("Codex prompt hook rejection", () => {
       const run = manager.runAgent(agent.id, "Disallowed prompt", {
         clientMessageId: "blocked-prompt",
       });
+      const failure = expect(run).rejects.toThrow("Remove the disallowed text and retry.");
       await appServer.waitForTurnStart();
       appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
       appServer.completesHook({
@@ -112,7 +199,7 @@ describe("Codex prompt hook rejection", () => {
         entries: [{ kind: "feedback", text: "Remove the disallowed text and retry." }],
       });
       appServer.completeTurn();
-      await expect(run).resolves.toMatchObject({ finalText: "", canceled: false });
+      await failure;
 
       expect(manager.getTimeline(agent.id)).toEqual([
         {
@@ -122,9 +209,10 @@ describe("Codex prompt hook rejection", () => {
           clientMessageId: "blocked-prompt",
         },
         { type: "notification", level: "error", message: "Remove the disallowed text and retry." },
+        { type: "assistant_message", text: "[System Error] Remove the disallowed text and retry." },
       ]);
       expect(manager.hasInFlightRun(agent.id)).toBe(false);
-      expect(manager.getAgent(agent.id)?.lastError).toBeUndefined();
+      expect(manager.getAgent(agent.id)?.lastError).toBe("Remove the disallowed text and retry.");
 
       const retry = manager.runAgent(agent.id, "Corrected prompt", {
         clientMessageId: "corrected-prompt",
@@ -171,9 +259,9 @@ describe("Codex prompt hook rejection", () => {
           turnId: paseoTurnId,
         },
         {
-          type: "turn_completed",
+          type: "turn_failed",
           provider: "codex",
-          usage: undefined,
+          error: "Remove the disallowed text and retry.",
           turnId: paseoTurnId,
         },
       ]);
@@ -274,9 +362,9 @@ describe("Codex prompt hook rejection", () => {
           turnId: paseoTurnId,
         },
         {
-          type: "turn_completed",
+          type: "turn_failed",
           provider: "codex",
-          usage: undefined,
+          error: "Prompt rejected by a UserPromptSubmit hook.",
           turnId: paseoTurnId,
         },
       ]);

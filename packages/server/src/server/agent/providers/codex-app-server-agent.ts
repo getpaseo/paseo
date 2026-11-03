@@ -3521,6 +3521,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   // in this app-server, so no other app-server can resume it and it is not reported.
   private savedThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  private turnPromptOutcome: "unobserved" | "accepted" | { rejection: string } = "unobserved";
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -5846,9 +5847,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.handlePatchApplyCompletedNotification(parsed);
         return;
       case "item_completed":
+        this.recordAcceptedTurnWork(parsed);
         await this.handleItemCompletedNotification(parsed);
         return;
       case "item_started":
+        this.recordAcceptedTurnWork(parsed);
         await this.handleItemStartedNotification(parsed);
         return;
       case "invalid_payload":
@@ -6451,14 +6454,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       .map((entry) => entry.text.trim())
       .filter((text) => text.length > 0)
       .join("\n\n");
+    const message = feedback || "Prompt rejected by a UserPromptSubmit hook.";
+    if (this.turnPromptOutcome !== "accepted") {
+      this.turnPromptOutcome = { rejection: message };
+    }
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
-      item: {
-        type: "notification",
-        level: "error",
-        message: feedback || "Prompt rejected by a UserPromptSubmit hook.",
-      },
+      item: { type: "notification", level: "error", message },
     });
   }
 
@@ -6492,6 +6495,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else if (parsed.status === "interrupted") {
       this.dismissInterruptedAsyncQuestions();
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } else if (typeof this.turnPromptOutcome === "object") {
+      this.emitEvent({
+        type: "turn_failed",
+        provider: CODEX_PROVIDER,
+        error: this.turnPromptOutcome.rejection,
+      });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
         this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
@@ -6511,7 +6520,22 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resetTurnTrackingState();
   }
 
+  private recordAcceptedTurnWork(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_started" | "item_completed" }>,
+  ): void {
+    // Rejected prompts produce no user-message or work items. Any accepted input or
+    // autonomous work in this native turn keeps a rejected follow-up from failing it.
+    if (
+      this.currentTurnId !== null &&
+      parsed.threadId === this.currentThreadId &&
+      (parsed.turnId === null || parsed.turnId === this.currentTurnId)
+    ) {
+      this.turnPromptOutcome = "accepted";
+    }
+  }
+
   private resetTurnTrackingState(): void {
+    this.turnPromptOutcome = "unobserved";
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();

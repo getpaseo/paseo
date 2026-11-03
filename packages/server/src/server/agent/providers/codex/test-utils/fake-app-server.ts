@@ -81,6 +81,12 @@ export interface FakeCodexAppServer {
   startsTurn(params: { threadId: string; turnId?: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
+  acceptsUserMessage(params: {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    text: string;
+  }): void;
   completesHook(params: FakeHookCompletion): void;
   completeTurn(params?: {
     threadId?: string;
@@ -427,6 +433,15 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    acceptsUserMessage({ threadId, turnId, itemId, text }) {
+      const params = {
+        threadId,
+        turnId,
+        item: { type: "userMessage", id: itemId, content: [{ type: "text", text }] },
+      };
+      writeNotification("item/started", params);
+      writeNotification("item/completed", params);
     },
     completesHook({ threadId, turnId, ...run }) {
       writeNotification("hook/completed", { threadId, turnId, run });
