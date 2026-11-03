@@ -10,6 +10,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   closeCompactSettings,
+  dragSettingsSidebarResizeHandle,
   scrollSettingsSidebarToEnd,
   revealSettingsSidebarSection,
   expectSettingsSidebarScrollSettled,
@@ -149,16 +150,8 @@ test("settings sidebar mouse resizing preserves limits and compact navigation", 
   const handle = page.getByTestId("settings-sidebar-resize-handle");
   await expect(handle).toBeVisible();
   await expect(page.getByTestId("settings-sidebar-resize-handle-grip")).toHaveCount(0);
-  const box = await handle.boundingBox();
-  if (!box) throw new Error("Expected the pointer resize target to be visible.");
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + 30, y);
-  await page.mouse.move(x + 800, y, { steps: 8 });
+  await dragSettingsSidebarResizeHandle(page, 2000);
   await expect(sidebar).toHaveCSS("width", "600px");
-  await page.mouse.up();
   await expect.poll(() => savedSidebarWidth(page)).toBe(600);
   await page.screenshot({ path: testInfo.outputPath("settings-mouse-resized.png") });
   await page.setViewportSize({ width: 720, height: 900 });
@@ -168,14 +161,8 @@ test("settings sidebar mouse resizing preserves limits and compact navigation", 
   await expect(sidebar).toHaveCSS("width", "600px");
   await page.reload();
   await expect(sidebar).toHaveCSS("width", "600px");
-  const resizedBox = await handle.boundingBox();
-  if (!resizedBox) throw new Error("Expected the restored pointer resize target.");
-  await page.mouse.move(resizedBox.x + resizedBox.width / 2, y);
-  await page.mouse.down();
-  await page.mouse.move(resizedBox.x - 30, y);
-  await page.mouse.move(0, y, { steps: 8 });
+  await dragSettingsSidebarResizeHandle(page, 0);
   await expect(sidebar).toHaveCSS("width", "200px");
-  await page.mouse.up();
   await expect.poll(() => savedSidebarWidth(page)).toBe(200);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(handle).toHaveCount(0);
