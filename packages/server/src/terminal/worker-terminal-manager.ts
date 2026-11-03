@@ -967,7 +967,7 @@ export function createWorkerTerminalManager(
       },
     ): Promise<void> {
       const record = recordsById.get(id);
-      // COMPAT(workspaceLaunchRetainedStop): added in v0.15.0-beta.1, remove after 2027-05-03 once protocol 6 workers drain.
+      // COMPAT(workspaceLaunchRetainedStop): added in v0.15.0-beta.1, remove after 2027-05-03 once protocol 5 workers drain.
       const preserveSession =
         options?.preserveSession === true &&
         record?.info.retainOnExit === true &&

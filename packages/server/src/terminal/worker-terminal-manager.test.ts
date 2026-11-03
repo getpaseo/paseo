@@ -1704,17 +1704,17 @@ it("preserves retained terminal output when stopping its foreground process", as
   expect(manager.getTerminal(session.id)).toBeUndefined();
 });
 
-it("uses the protocol-6 stop adapter while draining an older worker", async () => {
+it("uses the previous-protocol stop adapter while draining an older worker", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
     worker,
-    workerProtocolVersion: 6,
+    workerProtocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION - 1,
   });
   worker.emitWorkerMessage({
     type: "terminalCreated",
     terminal: {
-      id: "terminal-v6",
+      id: "terminal-previous",
       name: "Launch",
       cwd: "/workspace",
       workspaceId: "ws-test",
@@ -1724,7 +1724,7 @@ it("uses the protocol-6 stop adapter while draining an older worker", async () =
     state: createTerminalState(),
   });
 
-  const stop = manager.killTerminalAndWait("terminal-v6", { preserveSession: true });
+  const stop = manager.killTerminalAndWait("terminal-previous", { preserveSession: true });
   const request = worker.sentMessages[worker.sentMessages.length - 1];
   if (!request || request.type !== "killTerminalAndWait") {
     throw new Error("Expected kill-and-wait request");
@@ -1732,7 +1732,7 @@ it("uses the protocol-6 stop adapter while draining an older worker", async () =
   expect(request.options?.preserveSession).toBeUndefined();
   worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
   await expect(stop).resolves.toBeUndefined();
-  expect(manager.getTerminal("terminal-v6")).toBeUndefined();
+  expect(manager.getTerminal("terminal-previous")).toBeUndefined();
 });
 
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
