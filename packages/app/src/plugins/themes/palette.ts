@@ -40,10 +40,11 @@ const pluginContributionSchema: z.ZodType<PluginThemeContribution<PluginText>> =
   colors: themeColorsSchema,
 });
 
-// A snapshot keeps the name resolved when it was taken.
+// A snapshot keeps the name resolved when it was taken. A translated name has no length limit and
+// is not trimmed, so the stored text is not checked against the plain name's rules.
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
-  name: themeNameSchema,
+  name: z.string(),
   appearance: z.enum(["light", "dark"]),
   colors: themeColorsSchema,
 });

@@ -814,6 +814,26 @@ describe("saveAppSettings", () => {
     expect(loaded.pluginThemeSnapshot).toEqual(MOCHA_SNAPSHOT);
   });
 
+  // A translated theme name is resolved without the length limit of a plain name, so the snapshot
+  // must keep the resolved text as it was, or a start falls back to the default colors.
+  it("keeps a plugin palette whose resolved name is long and padded", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const snapshot = {
+      ...MOCHA_SNAPSHOT,
+      contribution: { ...MOCHA_SNAPSHOT.contribution, name: ` ${"Catppuccin Mocha ".repeat(5)}` },
+    };
+
+    await saveAppSettings({
+      queryClient,
+      updates: { theme: "plugin", pluginThemeId: snapshot.id, pluginThemeSnapshot: snapshot },
+      deps,
+    });
+
+    const loaded = await loadAppSettingsFromStorage(deps);
+    expect(loaded.pluginThemeSnapshot).toEqual(snapshot);
+  });
+
   it("drops a stored plugin palette that no longer parses and keeps the selection", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
