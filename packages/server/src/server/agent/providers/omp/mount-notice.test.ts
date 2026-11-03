@@ -1,4 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
@@ -162,6 +164,19 @@ describe("parseOmpMountNotice", () => {
 });
 
 describe("OMP xd:// mount notices", () => {
+  test("retaining announced mounts does not retain closed OMP sessions", () => {
+    const fixture = fileURLToPath(new URL("./test-utils/mount-notice-memory.ts", import.meta.url));
+    const output = execFileSync(process.execPath, ["--expose-gc", "--import", "tsx", fixture], {
+      encoding: "utf8",
+      timeout: 20_000,
+    });
+    expect(JSON.parse(output)).toEqual({
+      closedWithoutNoticeRetained: false,
+      closedWithNoticeRetained: false,
+      noticesAfterRelaunch: 1,
+    });
+  });
+
   test("a relaunched OMP process does not repeat a mount set the timeline already shows", async () => {
     const omp = await harness();
     await omp.announce(BROWSER_AND_LINEAR);
@@ -324,7 +339,14 @@ describe("OMP xd:// mount notices", () => {
 class DaemonTimelineHarness {
   readonly omp = new FakeOmp();
   readonly manager = new AgentManager({
-    clients: { omp: new OmpAgentClient({ logger: createTestLogger(), runtime: this.omp }) },
+    clients: {
+      omp: new OmpAgentClient({
+        logger: createTestLogger(),
+        runtime: this.omp,
+        // FakeOmp supplies the runtime; the manager still checks command availability.
+        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+      }),
+    },
     logger: createTestLogger(),
   });
   readonly live: Array<{

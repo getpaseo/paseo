@@ -734,6 +734,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly mountNotices: OmpMountNoticeLedgers;
   private readonly agentId: string | undefined;
   private readonly sessionMountNotices = new OmpMountNoticeLedger();
+  // The client-wide ledger outlives this session; retain identity without its runtime resources.
+  private readonly mountNoticeDeliverer = {};
   private state: OmpSessionState;
   private currentModeId: string | null;
   private runtimeDead = false;
@@ -1019,8 +1021,8 @@ export class OmpAgentSession implements AgentSession {
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     // This history seeds a fresh projection: it keeps the mount notices this session already
     // delivered into it, and none from earlier sessions.
-    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this);
-    else this.sessionMountNotices.retainDeliveredBy(this);
+    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this.mountNoticeDeliverer);
+    else this.sessionMountNotices.retainDeliveredBy(this.mountNoticeDeliverer);
     yield* streamOmpHistory({
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
@@ -1049,7 +1051,7 @@ export class OmpAgentSession implements AgentSession {
     if (!notice || this.subscribers.size === 0) return false;
     const ledger = this.mountNoticeLedger();
     if (!ledger.announces(notice)) return true;
-    ledger.recordDelivered(notice, this);
+    ledger.recordDelivered(notice, this.mountNoticeDeliverer);
     return false;
   }
 
