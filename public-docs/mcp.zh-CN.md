@@ -155,9 +155,9 @@ MCP heartbeat 是临时的：只能创建或删除。要修改一个 heartbeat�
 | --------------- | ----------------------------------------------------------------------------- |
 | `list_profiles` | 返回主机上保存的 Agent 配置，包括它们的说明和启动设置。没有配置时返回空列表。 |
 
-委派之前，请阅读每个配置的 `notes`，选择用户指定的配置或适合该任务的配置。设置方法和说明示例见 [Agent 配置](/docs/agent-profiles)。
+当你指定一个配置或一项专项时，请阅读每个配置的 `notes` 并应用匹配项。设置方法和说明示例见 [Agent 配置](/docs/agent-profiles)。
 
-`create_agent` 没有配置参数，并且需要 `provider/model` 组合。如果配置中没有模型，请先对其 Provider 调用 `list_models`，为任务选择一个可用的模型再启动。把所选配置的值应用到启动请求中：
+`create_agent` 没有配置参数。Agent 作用域的调用可以省略 `provider`；新 Agent 会沿用调用方的 Provider、模型、模式和功能设置。顶层调用需要 `provider/model`。所选配置没有模型时，先对其 Provider 调用 `list_models`，选择一个可用模型再启动。把所选配置的值应用到启动请求中：
 
 | 配置字段                    | `create_agent` 字段                                            |
 | --------------------------- | -------------------------------------------------------------- |
@@ -167,7 +167,7 @@ MCP heartbeat 是临时的：只能创建或删除。要修改一个 heartbeat�
 | `featureValues`             | `settings.features`                                            |
 | `notes`                     | 供编排者选择时参考；任务放在 `initialPrompt` 中                |
 
-省略不存在的可选设置。如果没有合适的配置，请用 Provider 发现来选择可用的设置。
+省略不存在的可选设置。新 Agent 应沿用调用方时，省略 `provider`。应用某个配置，或你指定了不同的 Provider 时，传入 `provider/model`。
 
 ### Provider {#providers}
 

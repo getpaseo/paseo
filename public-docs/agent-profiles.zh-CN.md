@@ -47,6 +47,6 @@ nav: Agent 配置
 
 编排者会读取配置，为每个任务选择设置，并启动执行者。说明用来指导这个选择；执行者的具体任务要写在它的任务提示词中。
 
-内置的 [Paseo 技能](/docs/skills#paseo-paseo-reference)会指示 Agent 在委派前查看配置并阅读其说明。如果没有合适的配置，它会引导 Agent 发现已配置的 Provider 和模型，并告诉你采用了哪个备选方案。
+内置的 [Paseo 技能](/docs/skills#paseo-paseo-reference)会指示 Agent 沿用当前的 Provider 和模型。当你指定一个配置或一项专项时，Agent 会阅读配置说明，然后应用该配置的启动设置。
 
 委派示例见[常用工作流](/docs/orchestration-workflows)，工具接口见 [MCP 参考](/docs/mcp#agent-profiles)。

@@ -26,13 +26,13 @@ Use the same settings card to update or uninstall skills. The host also refreshe
 
 ## `/paseo`, Paseo Reference
 
-The foundational reference used by the other skills. It teaches agents to check your [agent profiles and their notes](/docs/agent-profiles#guide-delegation-with-notes) before delegating, then apply the selected launch settings. If no profile fits, it directs them to discover available providers and models and tell you about the fallback.
+The foundational reference used by the other skills. It teaches agents to continue with the current provider, model, mode, and features. They read [agent profile notes](/docs/agent-profiles#guide-delegation-with-notes) when you name a profile or a specialty such as review or planning, then apply that profile's launch settings.
 
 > /paseo show me how to create an agent in a workspace with worktree isolation
 
 ## `/paseo-handoff`, Task Handoff
 
-Transfer the current task with a briefing: relevant files, progress, decisions, constraints, and acceptance criteria. The skill checks profiles before choosing the receiving agent; you can name the profile you want.
+Transfer the current task with a briefing: relevant files, progress, decisions, constraints, and acceptance criteria. The receiving agent continues with the same provider, model, mode, and features. Name a profile, a provider, or a specialty such as review or planning when the next agent should use different settings.
 
 > /paseo-handoff hand off the auth fix to an implementation agent in its own worktree
 

@@ -16,7 +16,7 @@ Keep planning in your main chat and delegate implementation:
 
 > Use Paseo to check my agent profiles and their notes. Choose one for implementation, create a workspace with worktree isolation, and launch a subagent there to implement the parser change. Have it run the focused tests and report back.
 
-The worker makes the change in its own worktree. If no profile fits, the agent can discover your configured providers and models and tell you what it chose.
+The worker makes the change in its own worktree. If no profile fits, the worker continues with your current provider and model, and the agent tells you.
 
 ## Fan out research
 

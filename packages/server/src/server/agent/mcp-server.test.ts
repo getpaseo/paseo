@@ -3142,6 +3142,135 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("continues with the caller provider and model when create_agent omits provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "cursor",
+      currentModeId: "agent",
+      config: {
+        model: "composer-2.5",
+        thinkingOptionId: "high",
+        featureValues: { fast: true },
+        providerOptions: { sandbox: "workspace" },
+      },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockReturnValue(parentAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      provider: "cursor",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "agent",
+      availableModes: [],
+      config: { title: "Handoff" },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      title: "Handoff",
+      initialPrompt: "Continue the task",
+    });
+    expect(parsed.success).toBe(true);
+
+    await tool.handler({
+      title: "Handoff",
+      initialPrompt: "Continue the task",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "cursor",
+        model: "composer-2.5",
+        modeId: "agent",
+        thinkingOptionId: "high",
+        featureValues: { fast: true },
+        providerOptions: { sandbox: "workspace" },
+      }),
+      undefined,
+      expect.objectContaining({
+        workspaceId: "wks_parent",
+        labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+      }),
+    );
+  });
+
+  it("keeps an explicit provider when the caller uses a different one", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "cursor",
+      currentModeId: "agent",
+      config: { model: "composer-2.5", featureValues: { fast: true } },
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      provider: "claude",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Review" },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    await registeredTool(server, "create_agent").handler({
+      title: "Review",
+      provider: "claude/sonnet",
+      initialPrompt: "Review the diff",
+      settings: { modeId: "default" },
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "claude",
+        model: "sonnet",
+        modeId: "default",
+      }),
+      undefined,
+      expect.any(Object),
+    );
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        featureValues: { fast: true },
+      }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("requires provider for top-level create_agent", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate,
+      logger,
+    });
+    const parsed = await registeredTool(server, "create_agent").inputSchema.safeParseAsync({
+      title: "Handoff",
+      initialPrompt: "Continue the task",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
   it("inherits the parent's workspaceId when an MCP child is created in the parent's working tree", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-workspace-inherit-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);

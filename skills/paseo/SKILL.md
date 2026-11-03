@@ -74,7 +74,9 @@ paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Optional: `workspaceId`, `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
+**`create_agent`** — required: `title`, `initialPrompt`. Optional: `provider`, `workspaceId`, `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
+
+Agent-scoped calls may omit `provider`. The new agent then continues with your provider, model, mode, and features. Pass `provider` as `provider/model` (for example `codex/gpt-5.4`) only when the user or a selected profile names different settings. Top-level calls require `provider`.
 
 Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. Agent profiles are the preferred source for these values. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
@@ -94,7 +96,7 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 ## Agent profiles and provider discovery
 
-**`list_profiles`** — named launch bundles configured by the human. Before choosing how to launch a delegated agent, call this tool and read every profile's `notes`. Pick a named profile the user requested, or the profile whose notes best match the work.
+**`list_profiles`** — named launch bundles configured by the human. When the user names a profile, or asks for a specialty such as review or planning, call this tool and read every profile's `notes`. Pick the named profile, or the profile whose notes match that specialty.
 
 There is no `profile` parameter on `create_agent`. Materialize the selected profile into the call:
 
@@ -105,7 +107,9 @@ There is no `profile` parameter on `create_agent`. Materialize the selected prof
 
 Omit absent values. Do not remember a selected profile or infer drift later; a profile is only launch configuration.
 
-If no profile fits, or no profiles are configured, use the provider discovery tools below rather than guessing. Tell the user when you fall back because no configured profile fits.
+When you are not applying a profile, omit `provider` on an agent-scoped `create_agent`. The new agent continues with your provider, model, mode, and features.
+
+Use `list_providers` and `list_models` when the user asked for a provider or model that no profile supplies, or when a skill tells you to use provider discovery. Choose from those results and tell the user what you chose.
 
 **`list_providers`** — compact provider availability and modes.
 

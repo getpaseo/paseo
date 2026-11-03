@@ -24,13 +24,13 @@ nav: 技能
 
 ## `/paseo`：Paseo 参考 {#paseo-paseo-reference}
 
-其他技能所依赖的基础参考。它教 Agent 在委派之前先查看你的 [Agent 配置及其说明](/docs/agent-profiles#guide-delegation-with-notes)，然后应用选定的启动设置。如果没有合适的配置，它会引导 Agent 发现可用的 Provider 和模型，并告诉你采用了哪个备选方案。
+其他技能所依赖的基础参考。它教 Agent 沿用当前的 Provider、模型、模式和功能设置。当你指定一个配置，或指定审查、规划这类专项时，Agent 会阅读 [Agent 配置说明](/docs/agent-profiles#guide-delegation-with-notes)，然后应用该配置的启动设置。
 
 > /paseo 告诉我如何在工作区中创建一个使用 worktree 隔离的 Agent
 
 ## `/paseo-handoff`：任务移交 {#paseo-handoff-task-handoff}
 
-带着一份简报移交当前任务：相关文件、进展、决策、约束和验收标准。技能会在选择接收方 Agent 之前查看配置；你也可以指定想要的配置。
+带着一份简报移交当前任务：相关文件、进展、决策、约束和验收标准。接收方 Agent 沿用相同的 Provider、模型、模式和功能设置。下一个 Agent 需要不同设置时，请指定配置、Provider，或审查、规划这类专项。
 
 > /paseo-handoff 把认证修复移交给一个实现 Agent，让它在自己的 worktree 中进行
 

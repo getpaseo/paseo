@@ -65,3 +65,46 @@ test("an attended MCP caller can discover and supply a cross-provider child mode
     await rm(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("an MCP caller that omits provider gets a child on its own provider, model, mode, and features", async () => {
+  const artifacts = path.join(process.cwd(), ".artifacts");
+  await mkdir(artifacts, { recursive: true });
+  const root = await mkdtemp(path.join(artifacts, "create-agent-inherit-"));
+  const ctx = await createDaemonTestContext({ paseoHomeRoot: root, mcpEnabled: true });
+  const mcp = new Client({ name: "inherit-contract-test", version: "1" });
+  try {
+    const parent = await ctx.client.createAgent({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      cwd: root,
+      modeId: "full-access",
+      featureValues: { test_feature: true },
+      title: "Codex parent",
+    });
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${ctx.daemon.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+
+    const created = await mcp.callTool({
+      name: "create_agent",
+      arguments: { title: "Handoff child", initialPrompt: "Reply with OK" },
+    });
+    expect(created.isError).not.toBe(true);
+    expect(created.structuredContent).toMatchObject({ type: "codex", currentModeId: "full-access" });
+    const childId = (created.structuredContent as { agentId: string }).agentId;
+    const child = (await ctx.client.fetchAgent(childId))?.agent;
+    expect(child).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      currentModeId: "full-access",
+      features: [expect.objectContaining({ id: "test_feature", value: true })],
+    });
+    expect((await ctx.client.waitForFinish(childId, 5000)).status).toBe("idle");
+  } finally {
+    await mcp.close();
+    await ctx.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
