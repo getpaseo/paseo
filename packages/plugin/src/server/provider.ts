@@ -33,6 +33,12 @@ export interface ProviderRegistration {
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
   command?: readonly [string, ...string[]];
+  /**
+   * Resolve the default executable when the plugin owns binary discovery.
+   * A user override in agents.providers.<id>.command still wins over this.
+   * Return undefined when nothing was found; the plugin's status reports why.
+   */
+  resolveCommand?(): Promise<readonly [string, ...string[]] | undefined>;
   status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
