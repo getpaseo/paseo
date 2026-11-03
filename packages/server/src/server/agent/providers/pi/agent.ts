@@ -1327,11 +1327,12 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
     this.pendingSteerSubmissions.length = 0;
-    this.pendingForegroundSubmission = { text: payload.text, consumed: false };
+    this.pendingForegroundSubmission = null;
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("Pi session is closed");
     if (this.activeTurnId !== turnId) return { turnId };
+    this.pendingForegroundSubmission = { text: payload.text, consumed: false };
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
