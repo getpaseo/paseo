@@ -32,9 +32,15 @@ export interface ZCodeLaunch {
   env: Readonly<Record<string, string>>;
 }
 
-async function isExecutable(path: string): Promise<boolean> {
+async function isExecutable(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  // Windows has no executable bit: a `.exe`/`.cmd` is executable because of
+  // its extension, and `access(X_OK)` only succeeds when one POSIX bit is set.
+  // Requiring an executable bit there would hide every installed executable.
   try {
-    await access(path, constants.X_OK);
+    await access(path, platform === "win32" ? constants.F_OK : constants.X_OK);
     return true;
   } catch {
     return false;
@@ -61,7 +67,7 @@ async function findOnPath(
   for (const entry of pathEntries) {
     for (const candidate of names) {
       const path = join(entry, candidate);
-      if (await isExecutable(path)) return path;
+      if (await isExecutable(path, platform)) return path;
     }
   }
   return undefined;
@@ -102,6 +108,7 @@ interface DesktopBundle {
 
 async function findDesktopBundle(
   desktopRoots: readonly string[],
+  platform: NodeJS.Platform,
 ): Promise<DesktopBundle | undefined> {
   for (const root of desktopRoots) {
     // macOS: ZCode.app/Contents/Resources/glm. Windows and Linux: <app>/resources/glm.
@@ -110,7 +117,7 @@ async function findDesktopBundle(
       join(root, "resources", "glm"),
     ]) {
       const native = join(glmDir, "zcode-agent");
-      if (await isExecutable(native)) return { bundle: native, native: true };
+      if (await isExecutable(native, platform)) return { bundle: native, native: true };
       const script = join(glmDir, "zcode.cjs");
       if (await isFile(script)) return { bundle: script, native: false };
     }
@@ -133,7 +140,10 @@ export async function resolveZCodeLaunch(
     return { command: onPath, args: ["app-server", "--stdio"], env: {} };
   }
 
-  const bundled = await findDesktopBundle(options.desktopRoots);
+  const bundled = await findDesktopBundle(
+    options.desktopRoots,
+    options.platform ?? process.platform,
+  );
   if (bundled) {
     if (bundled.native) {
       return { command: bundled.bundle, args: ["app-server", "--stdio"], env: {} };
@@ -160,7 +170,7 @@ export async function resolveZCodeLaunch(
         env: { ELECTRON_RUN_AS_NODE: "1" },
       };
     }
-    if (await isExecutable(fromEnv)) {
+    if (await isExecutable(fromEnv, options.platform ?? process.platform)) {
       return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
     }
   }
