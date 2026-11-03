@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Alert, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Pencil, Plus, Trash2 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -34,6 +34,8 @@ export function AgentTeamsSection({ serverId }: { serverId: string }): ReactElem
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { teams, isSupported, saveTeams } = useAgentTeamsConfig(serverId);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  // Shown in the section: Alert.alert does nothing on web and Electron.
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const teamEntries = useMemo(() => Object.entries(teams ?? {}), [teams]);
   const teamNames = useMemo(() => teamEntries.map(([name]) => name), [teamEntries]);
   const editingTeam = editTarget?.name !== undefined ? teams?.[editTarget.name] : undefined;
@@ -59,12 +61,12 @@ export function AgentTeamsSection({ serverId }: { serverId: string }): ReactElem
         destructive: true,
       }).then(async (confirmed) => {
         if (!confirmed || !teams) return;
+        setRemoveError(null);
         try {
           await saveTeams(removeTeam(teams, name));
         } catch (error) {
-          Alert.alert(
-            t("common.errors.unableToSave"),
-            error instanceof Error ? error.message : String(error),
+          setRemoveError(
+            `${t("common.errors.unableToSave")}: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
         return;
@@ -114,6 +116,11 @@ export function AgentTeamsSection({ serverId }: { serverId: string }): ReactElem
         trailing={addButton}
         testID="agent-teams-section"
       >
+        {removeError ? (
+          <Text style={styles.errorText} testID="agent-teams-remove-error">
+            {removeError}
+          </Text>
+        ) : null}
         <View style={settingsStyles.card} testID="agent-teams-card">
           {teamEntries.length > 0 ? (
             teamEntries.map(([name, team], index) => (
@@ -246,6 +253,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     alignItems: "center",
     gap: theme.spacing[3],
+  },
+  errorText: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[2],
   },
   emptyText: {
     color: theme.colors.foregroundMuted,

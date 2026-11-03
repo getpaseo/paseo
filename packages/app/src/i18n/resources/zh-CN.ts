@@ -1168,6 +1168,11 @@ export const zhCN: TranslationResources = {
         planAuto: "Lead 阅读项目、规划任务并启动它们。",
         planReview: "Lead 阅读项目，并提出供你批准的计划。",
         worktrees: "每个 Agent 在自己的 worktree 中工作。你的工作区不会被改动。",
+        checkout:
+          "智能体直接在你的检出目录中工作，而不是工作树。只有修改不同文件的任务才会同时运行。",
+        checkoutNoReview: "变更在落地前不会经过审查或批准，每个任务完成时会提交。不会推送。",
+        autoIsolation:
+          "每个智能体在各自的工作树中工作。在由 GitButler 管理的仓库中，它们会改在你的检出目录中工作，变更无需审查或批准即可落地。",
         mergeAsk: "一个全新的 Agent 审查每项变更，然后等待你批准。",
         mergeReviewed: "合并前，一个全新的 Agent 会审查每项变更。",
         branch: "结果会落在它自己的分支上。不会推送任何内容。",

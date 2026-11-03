@@ -336,6 +336,7 @@ function specOf(task: TaskSpec): TaskSpec {
     ...(task.provider === undefined ? {} : { provider: task.provider }),
     ...(task.thinking === undefined ? {} : { thinking: task.thinking }),
     ...(task.runTimeoutMinutes === undefined ? {} : { runTimeoutMinutes: task.runTimeoutMinutes }),
+    ...(task.touches === undefined ? {} : { touches: task.touches }),
   };
 }
 

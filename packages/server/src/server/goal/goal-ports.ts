@@ -349,6 +349,8 @@ export interface GoalPortDeps {
   archiveWorkspace: (workspaceId: string) => Promise<void>;
   /** Resolves when the workspace's setup scripts have finished. */
   waitForWorkspaceSetup: (workspaceId: string) => Promise<void>;
+  /** Stops a workspace's setup scripts; a setup that overran the wait must not keep writing. */
+  stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
   /** Model catalog that per-task thinking ids are checked against. */
   modelCatalog?: GoalModelCatalog;
   /** Mode catalog the `auto` policy looks for an auto mode in. Without it, `auto` acts as `wait`. */
@@ -418,20 +420,24 @@ function splitProviderModel(value: string): { provider: string; model?: string }
 
 /**
  * Worktree setup scripts start in the background just after the worktree exists.
- * Agents and merges must not run against a tree that setup is still writing to.
+ * Agents and merges must not run against a tree that setup is still writing to, so a setup
+ * that outlasts the wait is stopped and the wait fails instead of releasing the tree.
  */
 async function waitForSetup(deps: GoalPortDeps, workspaceId: string): Promise<void> {
   // Setup is registered from a timer the worktree workflow has already queued.
   await sleep(0);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      deps.logger.warn({ workspaceId }, "Worktree setup did not finish in time; continuing");
-      resolve();
-    }, SETUP_WAIT_MS);
+  const timedOut = Symbol("setup-timeout");
+  const timeout = new Promise<typeof timedOut>((resolve) => {
+    timer = setTimeout(() => resolve(timedOut), SETUP_WAIT_MS);
   });
   try {
-    await Promise.race([deps.waitForWorkspaceSetup(workspaceId), timeout]);
+    const outcome = await Promise.race([deps.waitForWorkspaceSetup(workspaceId), timeout]);
+    if (outcome !== timedOut) return;
+    await deps.stopWorkspaceSetup?.(workspaceId);
+    throw new Error(
+      `Worktree setup did not finish within ${SETUP_WAIT_MS / 60_000} minutes and was stopped`,
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -707,7 +713,18 @@ export function createGoalWorkspacePort(deps: GoalPortDeps): ManagerWorkspacePor
           deps.logger.warn({ err: error }, "Could not pin the integration branch name");
         }
       }
-      await waitForSetup(deps, result.workspace.workspaceId);
+      try {
+        await waitForSetup(deps, result.workspace.workspaceId);
+      } catch (error) {
+        // Nothing may use a tree whose setup did not finish; remove it rather than leak it.
+        await deps.archiveWorkspace(result.workspace.workspaceId).catch((archiveError) => {
+          deps.logger.warn(
+            { err: archiveError },
+            "Could not archive a worktree whose setup failed",
+          );
+        });
+        throw error;
+      }
       return { workspaceId: result.workspace.workspaceId, cwd: result.workspace.cwd };
     },
     archive: (workspaceId) => deps.archiveWorkspace(workspaceId),

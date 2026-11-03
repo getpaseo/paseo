@@ -161,6 +161,7 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { WorkspaceSnapshotStore } from "./goal/workspace-snapshot-store.js";
 import { GoalEventLog } from "./goal/event-log.js";
 import { createGitPort } from "./goal/git-ops.js";
 import {
@@ -1545,6 +1546,7 @@ export async function createPaseoDaemon(
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
     waitForWorkspaceSetup: (workspaceId: string) => workspaceSetupRuntime.wait(workspaceId),
+    stopWorkspaceSetup: (workspaceId: string) => workspaceSetupRuntime.stop(workspaceId),
     modelCatalog: goalModelCatalog,
     modeCatalog: goalModeCatalog,
     defaultModeId: async (provider: string, cwd: string) =>
@@ -1559,6 +1561,9 @@ export async function createPaseoDaemon(
     logger,
     // Read at use time, so a config change applies without a restart.
     maxConcurrentRuns: () => daemonConfigStore.get().goals?.maxConcurrentRuns,
+    workspaceSnapshots: new WorkspaceSnapshotStore(
+      path.join(config.paseoHome, "goals", "workspace-snapshots"),
+    ),
   });
   daemonConfigStore.onFieldChange("goals.maxConcurrentRuns", () => goalManager.capacityChanged());
   goalService.attachActivityProbe(goalManager);

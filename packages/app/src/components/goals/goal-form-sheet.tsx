@@ -68,6 +68,8 @@ export function GoalFormSheet({
   const autoPermissionSupported = useHostFeature(serverId, "goalConfigEdit");
   // COMPAT(goalUserWait): added in v0.13.14, remove gate after 2027-10-28.
   const userWaitSupported = useHostFeature(serverId, "goalUserWait");
+  // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02.
+  const isolationSupported = useHostFeature(serverId, "goalIsolation");
   const [snapshot] = useState(() =>
     buildSnapshot({
       serverId,
@@ -75,6 +77,7 @@ export function GoalFormSheet({
       budgetSupported,
       thinkingSupported,
       userWaitSupported,
+      isolationSupported,
       autoPermissionSupported,
     }),
   );
@@ -259,6 +262,7 @@ function buildSnapshot(input: {
   budgetSupported: boolean;
   thinkingSupported: boolean;
   userWaitSupported: boolean;
+  isolationSupported: boolean;
   autoPermissionSupported: boolean;
 }): GoalFormSnapshot {
   // Read once: the form starts from your last goal and never rebuilds when memory changes.
@@ -271,6 +275,7 @@ function buildSnapshot(input: {
     budgetSupported: input.budgetSupported,
     thinkingSupported: input.thinkingSupported,
     userWaitSupported: input.userWaitSupported,
+    isolationSupported: input.isolationSupported,
     autoPermissionSupported: input.autoPermissionSupported,
   };
 }
@@ -499,9 +504,9 @@ function IsolationPicker({
   size: FieldControlSize;
 }): ReactElement | null {
   const { t } = useTranslation();
-  // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02. An older daemon would
-  // drop the setting and cut worktrees, so the choice appears only on a host that has it.
-  const supported = useHostFeature(state.serverId, "goalIsolation");
+  // An older daemon would drop the setting and cut worktrees, so the choice appears only on a
+  // host that has `goalIsolation`; the form model tracks that per host.
+  const supported = state.isolationSupported;
   const options = useMemo<SegmentedControlOption<GoalIsolation>[]>(
     () =>
       ISOLATION_CHOICES.map((choice) => ({

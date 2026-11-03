@@ -66,20 +66,28 @@ describe("buildGoalCreateInput", () => {
   });
 
   it("sends isolation only when it is not auto, so the host keeps choosing for GitButler", () => {
-    expect(buildGoalCreateInput(values(MANAGED))?.config).not.toHaveProperty("isolation");
+    const supported = { isolationSupported: true };
+    expect(buildGoalCreateInput(values(MANAGED), supported)?.config).not.toHaveProperty(
+      "isolation",
+    );
     expect(
-      buildGoalCreateInput(values({ ...MANAGED, isolation: "auto" }))?.config,
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "auto" }), supported)?.config,
     ).not.toHaveProperty("isolation");
     expect(
-      buildGoalCreateInput(values({ ...MANAGED, isolation: "workspace" }))?.config,
-    ).toMatchObject({
-      isolation: "workspace",
-    });
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "workspace" }), supported)?.config,
+    ).toMatchObject({ isolation: "workspace" });
     expect(
-      buildGoalCreateInput(values({ ...MANAGED, isolation: "worktree" }))?.config,
-    ).toMatchObject({
-      isolation: "worktree",
-    });
+      buildGoalCreateInput(values({ ...MANAGED, isolation: "worktree" }), supported)?.config,
+    ).toMatchObject({ isolation: "worktree" });
+  });
+
+  it("never sends isolation to a host that predates it, even a remembered or prefilled one", () => {
+    for (const isolation of ["worktree", "workspace"] as const) {
+      expect(
+        buildGoalCreateInput(values({ ...MANAGED, isolation }), { isolationSupported: false })
+          ?.config,
+      ).not.toHaveProperty("isolation");
+    }
   });
 
   it("builds the required config and omits every optional left at the daemon default", () => {
@@ -215,18 +223,30 @@ describe("validateGoalForm", () => {
 describe("describeGoalOutcome", () => {
   it("explains what happens after Create", () => {
     expect(describeGoalOutcome(values({}))).toEqual(["manual"]);
-    expect(describeGoalOutcome(values({ ...MANAGED, settings: GOAL_PRESETS.turbo }))).toEqual([
-      "planAuto",
-      "worktrees",
-      "mergeReviewed",
-      "branch",
-    ]);
-    expect(describeGoalOutcome(values({ ...MANAGED, settings: GOAL_PRESETS.careful }))).toEqual([
-      "planReview",
-      "worktrees",
-      "mergeAsk",
-      "branch",
-    ]);
+    expect(
+      describeGoalOutcome(
+        values({ ...MANAGED, isolation: "worktree", settings: GOAL_PRESETS.turbo }),
+      ),
+    ).toEqual(["planAuto", "worktrees", "mergeReviewed", "branch"]);
+    expect(
+      describeGoalOutcome(
+        values({ ...MANAGED, isolation: "worktree", settings: GOAL_PRESETS.careful }),
+      ),
+    ).toEqual(["planReview", "worktrees", "mergeAsk", "branch"]);
+  });
+
+  it("does not promise worktrees or review when the goal works in the checkout", () => {
+    expect(
+      describeGoalOutcome(
+        values({ ...MANAGED, isolation: "workspace", settings: GOAL_PRESETS.careful }),
+      ),
+    ).toEqual(["planReview", "checkout", "checkoutNoReview"]);
+  });
+
+  it("leaves the choice to the host for auto", () => {
+    expect(
+      describeGoalOutcome(values({ ...MANAGED, isolation: "auto", settings: GOAL_PRESETS.turbo })),
+    ).toEqual(["planAuto", "autoIsolation", "mergeReviewed", "branch"]);
   });
 });
 
@@ -628,6 +648,7 @@ describe("project and host", () => {
         budgetSupported: false,
         thinkingSupported: false,
         userWaitSupported: false,
+        isolationSupported: false,
         autoPermissionSupported: false,
       },
       {
@@ -636,6 +657,7 @@ describe("project and host", () => {
         budgetSupported: true,
         thinkingSupported: true,
         userWaitSupported: true,
+        isolationSupported: true,
         autoPermissionSupported: true,
       },
     ]);

@@ -133,6 +133,8 @@ export interface GoalFormHost {
   thinkingSupported: boolean;
   /** The host takes `userWaitMinutes` (`goalUserWait`). */
   userWaitSupported: boolean;
+  /** The host takes `isolation` (`goalIsolation`). */
+  isolationSupported: boolean;
   /** The host takes the `auto` permission policy (`goalConfigEdit`). */
   autoPermissionSupported: boolean;
 }
@@ -162,6 +164,8 @@ export interface GoalFormSnapshot {
   thinkingSupported?: boolean;
   /** The host takes `userWaitMinutes`. Without it the wait limit is neither shown nor sent. */
   userWaitSupported?: boolean;
+  /** The host takes `isolation`. Without it the setting is neither offered nor sent. */
+  isolationSupported?: boolean;
   /** The host takes the `auto` permission policy. Without it `auto` is neither offered nor sent. */
   autoPermissionSupported?: boolean;
 }
@@ -279,6 +283,7 @@ function buildGoalConfig(input: {
   budgetSupported: boolean;
   thinkingSupported: boolean;
   userWaitSupported: boolean;
+  isolationSupported: boolean;
   baseCommit?: string | null;
 }): GoalConfig {
   const { values } = input;
@@ -302,7 +307,10 @@ function buildGoalConfig(input: {
     ...(hasLimits ? { limits } : {}),
     ...(reviewProvider ? { reviewProvider } : {}),
     ...(testCommand ? { testCommand } : {}),
-    ...(values.isolation !== "auto" ? { isolation: values.isolation } : {}),
+    // An older daemon drops the setting and cuts worktrees, so it is sent only to one that has it.
+    ...(input.isolationSupported && values.isolation !== "auto"
+      ? { isolation: values.isolation }
+      : {}),
     ...(values.allowedProviders.length > 0
       ? { allowedProviders: [...values.allowedProviders] }
       : {}),
@@ -345,6 +353,7 @@ export function buildGoalCreateInput(
     budgetSupported?: boolean;
     thinkingSupported?: boolean;
     userWaitSupported?: boolean;
+    isolationSupported?: boolean;
     cwdCheck?: GoalCwdCheck | null;
     baseCommit?: string | null;
   } = {},
@@ -359,6 +368,7 @@ export function buildGoalCreateInput(
         budgetSupported: options.budgetSupported ?? false,
         thinkingSupported: options.thinkingSupported ?? false,
         userWaitSupported: options.userWaitSupported ?? false,
+        isolationSupported: options.isolationSupported ?? false,
         baseCommit: options.baseCommit ?? null,
       })
     : null;
@@ -376,6 +386,9 @@ export type GoalOutcomeStep =
   | "planAuto"
   | "planReview"
   | "worktrees"
+  | "checkout"
+  | "checkoutNoReview"
+  | "autoIsolation"
   | "mergeAsk"
   | "mergeReviewed"
   | "branch";
@@ -384,9 +397,13 @@ export function describeGoalOutcome(values: GoalFormValues): GoalOutcomeStep[] {
   if (!values.managed) {
     return ["manual"];
   }
+  const plan = values.settings.autoApprovePlan ? "planAuto" : "planReview";
+  // In the checkout nothing is reviewed or approved before it lands: there is no change set.
+  if (values.isolation === "workspace") return [plan, "checkout", "checkoutNoReview"];
   return [
-    values.settings.autoApprovePlan ? "planAuto" : "planReview",
-    "worktrees",
+    plan,
+    // The host decides for `auto`, so neither the worktrees nor the review are promised.
+    values.isolation === "auto" ? "autoIsolation" : "worktrees",
     values.settings.requireHumanApproval ? "mergeAsk" : "mergeReviewed",
     "branch",
   ];
@@ -518,6 +535,7 @@ export interface GoalFormState {
   budgetSupported: boolean;
   thinkingSupported: boolean;
   userWaitSupported: boolean;
+  isolationSupported: boolean;
   autoPermissionSupported: boolean;
   /** The thinking levels each role's model offers; empty hides that role's picker. */
   thinkingOptions: Record<GoalThinkingRole, GoalThinkingOption[]>;
@@ -689,6 +707,7 @@ function withDerived(input: BaseState): GoalFormState {
       budgetSupported: state.budgetSupported,
       thinkingSupported: state.thinkingSupported,
       userWaitSupported: state.userWaitSupported,
+      isolationSupported: state.isolationSupported,
       cwdCheck: state.cwdCheck,
       baseCommit: state.baseCommit?.commit ?? null,
     }),
@@ -799,6 +818,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
     budgetSupported: snapshot.budgetSupported ?? false,
     thinkingSupported: snapshot.thinkingSupported ?? false,
     userWaitSupported: snapshot.userWaitSupported ?? false,
+    isolationSupported: snapshot.isolationSupported ?? false,
     autoPermissionSupported: snapshot.autoPermissionSupported ?? false,
     touched: [],
     submitAttempted: false,
@@ -921,6 +941,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
         budgetSupported: host ? host.budgetSupported : state.budgetSupported,
         thinkingSupported: host ? host.thinkingSupported : state.thinkingSupported,
         userWaitSupported: host ? host.userWaitSupported : state.userWaitSupported,
+        isolationSupported: host ? host.isolationSupported : state.isolationSupported,
         autoPermissionSupported: host
           ? host.autoPermissionSupported
           : state.autoPermissionSupported,
@@ -970,6 +991,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
         budgetSupported: host?.budgetSupported ?? false,
         thinkingSupported: host?.thinkingSupported ?? false,
         userWaitSupported: host?.userWaitSupported ?? false,
+        isolationSupported: host?.isolationSupported ?? false,
         autoPermissionSupported: host?.autoPermissionSupported ?? false,
         submitError: null,
       });

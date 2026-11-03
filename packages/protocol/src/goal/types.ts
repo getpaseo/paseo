@@ -52,6 +52,10 @@ export const TaskSpecSchema = z.object({
   // Turn time limit for this task's runs. It can only lower the goal's
   // limits.runTimeoutMinutes, so a plan cannot widen a limit a person set.
   runTimeoutMinutes: boundedInt(B.limits.runTimeoutMinutes).optional(),
+  // Paths (files, or directories ending in "/") an implement task changes. In a goal that works
+  // in the checkout (isolation "workspace") tasks run at the same time only when these do not
+  // overlap; a task that declares none runs alone.
+  touches: z.array(z.string().trim().min(1)).optional(),
 });
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 

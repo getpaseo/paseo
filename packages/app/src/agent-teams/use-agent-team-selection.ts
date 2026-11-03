@@ -73,6 +73,10 @@ export function useAgentTeamSelection(serverId: string | null): AgentTeamSelecti
     key: string;
     models: Record<string, string>;
   }>({ key: overrideKey, models: EMPTY_RECORD });
+  // Clear what the previous host or team held, so returning to it does not bring it back.
+  if (overrideState.key !== overrideKey) {
+    setOverrideState({ key: overrideKey, models: EMPTY_RECORD });
+  }
   const roleModelOverrides =
     overrideState.key === overrideKey ? overrideState.models : EMPTY_RECORD;
   const onSetRoleModel = useCallback(

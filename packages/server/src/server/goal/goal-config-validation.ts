@@ -121,9 +121,15 @@ export function createGoalConfigValidator(deps: ConfigValidationDeps): GoalConfi
     }
     await assertAutoPolicy(config, deps);
     const isolation = await resolveIsolation(config, deps);
-    // One checkout cannot take two agents at once.
-    const maxParallel = isolation === "workspace" ? 1 : config.maxParallel;
-    return { ...config, baseCommit, isolation, maxParallel };
+    // The checkout cannot be started from another commit: its files are what they are.
+    if (isolation === "workspace" && baseCommit !== head) {
+      throw new Error(
+        `baseCommit "${config.baseCommit}" is not the checkout's HEAD, and a goal that works in the checkout ` +
+          "builds on the files as they are. Leave baseCommit out, or set isolation to worktree to start from that commit.",
+      );
+    }
+    // In the checkout, tasks run together only when their declared paths do not overlap.
+    return { ...config, baseCommit, isolation };
   };
 }
 

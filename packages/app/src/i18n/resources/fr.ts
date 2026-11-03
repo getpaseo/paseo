@@ -1231,6 +1231,12 @@ export const fr: TranslationResources = {
         planReview: "Le Lead lit le projet et propose un plan à approuver.",
         worktrees:
           "Chaque agent travaille dans son propre worktree. Votre espace de travail n'est pas modifié.",
+        checkout:
+          "Les agents travaillent dans votre propre checkout, pas dans des worktrees. Les tâches ne s'exécutent en même temps que si elles modifient des fichiers différents.",
+        checkoutNoReview:
+          "Les changements ne sont ni relus ni approuvés avant d'être appliqués, et chaque tâche est validée à sa fin. Rien n'est poussé.",
+        autoIsolation:
+          "Chaque agent travaille dans son propre worktree. Dans un dépôt géré par GitButler, ils travaillent dans votre checkout et les changements sont appliqués sans relecture ni approbation.",
         mergeAsk: "Un nouvel agent relit chaque changement, puis il attend votre approbation.",
         mergeReviewed: "Un nouvel agent relit chaque changement avant sa fusion.",
         branch: "Le résultat arrive sur sa propre branche. Rien n'est poussé.",

@@ -64,7 +64,7 @@ export function buildLeadPlanningPrompt(goal: Goal, context: LeadPlanningContext
     "",
     "Read the repository as needed, then break the work into tasks that other coding agents will carry out.",
     "Reply with a short explanation followed by exactly one fenced ```json block containing:",
-    '{"tasks": [{"id": "t1", "title": "...", "description": "what to do and how to know it is done", "kind": "implement" | "review" | "read", "dependsOn": ["t0"], "provider": "optional provider id", "thinking": "optional thinking option id"}]}',
+    '{"tasks": [{"id": "t1", "title": "...", "description": "what to do and how to know it is done", "kind": "implement" | "review" | "read", "dependsOn": ["t0"], "provider": "optional provider id", "thinking": "optional thinking option id", "touches": ["optional: paths this implement task changes"]}]}',
     "Rules: ids are unique; dependsOn lists only ids from this plan and must not form a cycle;",
     "give each implement task a self-contained description, since its agent starts with no other context;",
     "tasks that can run in parallel should not depend on each other;",
@@ -80,11 +80,26 @@ export function buildLeadPlanningPrompt(goal: Goal, context: LeadPlanningContext
     "- Put read and review tasks that need no code from other tasks at the start, with no dependencies.",
     "- Avoid one task that depends on all the others, unless it is the final integration or report step. Keep the work after it short, for example one check and one fix task, not a chain.",
     "In your short explanation, name the critical path: the longest chain of dependent tasks.",
-    "Never put absolute paths of your own worktree in task descriptions; each worker has its own worktree.",
+    ...(goal.config?.isolation === "workspace"
+      ? workspacePlanningLines()
+      : [
+          "Never put absolute paths of your own worktree in task descriptions; each worker has its own worktree.",
+        ]),
     "",
     ...revisionSection(goal),
     ...rejectionSection(goal),
   ].join("\n");
+}
+
+/** How tasks run when the goal works in the person's checkout, and the paths a plan must declare. */
+function workspacePlanningLines(): string[] {
+  return [
+    "This goal works in the person's own checkout, not in worktrees. All tasks share one tree, so the rules above about merging and merge conflicts do not apply. These do:",
+    '- Give every implement task a "touches" array: the files, or directories ending in "/", that it changes, for example "touches": ["src/auth/", "docs/auth.md"].',
+    "- The daemon starts an implement task only when no running implement task has a path that overlaps its own, and it commits only the declared paths. A task without touches runs alone, so declare them.",
+    "- Split the work along files and directories so that independent tasks do not overlap. Tasks that must change the same file should depend on each other.",
+    "- Never put absolute paths in task descriptions; workers run in the checkout and see relative paths.",
+  ];
 }
 
 /** How the Lead changes the plan once it runs, and the rules a revision must follow. */
@@ -240,7 +255,7 @@ function revisionOption(goal: Goal, id: string, otherwise: string): string[] {
     "Revision rules:",
     `- The revision must replace or remove ${id}. To split it, replace or remove ${id}, add the parts under new ids, and replace the tasks that depend on ${id} so they depend on the parts.`,
     "- Only pending, failed or cancelled tasks change. New tasks need ids never used in this goal.",
-    "- Task fields: id, title, description, kind (implement, review or read), dependsOn, and optional provider, thinking and runTimeoutMinutes (it can only lower the goal's limit).",
+    "- Task fields: id, title, description, kind (implement, review or read), dependsOn, and optional provider, thinking, touches (paths an implement task changes, required to run beside other tasks when the goal works in the checkout) and runTimeoutMinutes (it can only lower the goal's limit).",
     "- Never put ``` code fences inside a task description; describe code in words or indent it.",
     `- A description is at most ${MAX_REVISED_DESCRIPTION_CHARS} characters.`,
     goal.config?.autoApprovePlan
@@ -377,6 +392,7 @@ function toSpec(task: Task): TaskSpec {
     ...(task.provider ? { provider: task.provider } : {}),
     ...(task.thinking ? { thinking: task.thinking } : {}),
     ...(task.runTimeoutMinutes ? { runTimeoutMinutes: task.runTimeoutMinutes } : {}),
+    ...(task.touches ? { touches: task.touches } : {}),
   };
 }
 
@@ -402,11 +418,31 @@ export function buildTaskPrompt(goal: Goal, task: Task): string {
     upstream ? `\nResults from tasks you depend on:\n${upstream}` : "",
     ...guidanceSection(goal, task),
     "",
-    task.kind === "implement"
-      ? "You are in your own git worktree. Make the change and commit it there. End with a brief report of what you changed and any open issues."
-      : "Do not modify files. End with a brief report of your findings.",
+    taskClosing(goal, task),
     ...WORKER_STATUS_LINES,
   ].join("\n");
+}
+
+/** What a worker in the person's checkout is told: shared tree, no git writes, its own files. */
+function workspaceImplementLines(task: Task): string {
+  const own = task.touches?.length
+    ? `Your task owns these paths: ${task.touches.join(", ")}. Change files only there; the daemon commits only those. If the task cannot be done without another file, say so in your report instead of editing it.`
+    : "No paths were declared for this task, so nothing else runs while you work.";
+  return [
+    "You are working in the person's own checkout, not in a worktree of your own. Make the change and leave it uncommitted: do not run git commit, git checkout, git switch, git stash, git reset or git worktree, and do not create or switch branches. The daemon commits your files after you finish.",
+    own,
+    "Other tasks may be changing other files in the same tree at the same time, and some changes in it are the person's. Do not format, lint-fix, rename or delete anything outside your files, do not revert changes you did not make, and run only the checks that cover your files.",
+    "End with a brief report of what you changed and any open issues.",
+  ].join(" ");
+}
+
+/** What a worker is told about where it works and whether to commit. */
+function taskClosing(goal: Goal, task: Task): string {
+  if (task.kind !== "implement") {
+    return "Do not modify files. End with a brief report of your findings.";
+  }
+  if (goal.config?.isolation === "workspace") return workspaceImplementLines(task);
+  return "You are in your own git worktree. Make the change and commit it there. End with a brief report of what you changed and any open issues.";
 }
 
 /**
@@ -629,7 +665,7 @@ function recoveryRevisionOption(goal: Goal, fixing: boolean, judged: Judgement):
     '- {"decision": "revise", "reason": "why", "ops": [...], "hints": {...}}: change the plan, then run every failed and cancelled task that remains. Ops are {"op": "add", "task": {...}}, {"op": "replace", "task": {...}} and {"op": "remove", "taskId": "t7"}. Or give the desired plan as "tasks" with "remove" instead of "ops", listing every pending, failed or cancelled task or naming it in remove.',
     "Revision rules:",
     "- Only pending, failed or cancelled tasks change. New tasks need ids never used in this goal.",
-    "- Task fields: id, title, description, kind (implement, review or read), dependsOn, and optional provider, thinking and runTimeoutMinutes (it can only lower the goal's limit).",
+    "- Task fields: id, title, description, kind (implement, review or read), dependsOn, and optional provider, thinking, touches (paths an implement task changes, required to run beside other tasks when the goal works in the checkout) and runTimeoutMinutes (it can only lower the goal's limit).",
     `- A description is at most ${MAX_REVISED_DESCRIPTION_CHARS} characters.`,
     ...(fixing
       ? [

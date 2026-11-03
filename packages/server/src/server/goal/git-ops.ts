@@ -4,6 +4,7 @@ import { spawnProcess } from "../../utils/spawn.js";
 import {
   commitWorkspaceChanges,
   snapshotWorkspace,
+  type WorkspaceCommitInput,
   type WorkspaceCommitResult,
   type WorkspaceSnapshot,
 } from "./workspace-commit.js";
@@ -78,12 +79,7 @@ export interface GitPort {
    * exercise it; a goal then leaves the work uncommitted.
    */
   snapshotWorkspace?(cwd: string): Promise<WorkspaceSnapshot>;
-  commitWorkspaceChanges?(input: {
-    cwd: string;
-    before: WorkspaceSnapshot;
-    branch: string;
-    message: string;
-  }): Promise<WorkspaceCommitResult | null>;
+  commitWorkspaceChanges?(input: WorkspaceCommitInput): Promise<WorkspaceCommitResult | null>;
 }
 
 const OUTPUT_TAIL_CHARS = 4000;

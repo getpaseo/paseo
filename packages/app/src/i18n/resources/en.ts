@@ -1196,6 +1196,12 @@ export const en = {
         planAuto: "The Lead reads the project, plans the tasks and starts them.",
         planReview: "The Lead reads the project and proposes a plan for you to approve.",
         worktrees: "Each agent works in its own worktree. Your workspace is not touched.",
+        checkout:
+          "Agents work in your own checkout, not in worktrees. Tasks run together only when they change different files.",
+        checkoutNoReview:
+          "Changes are not reviewed or approved before they land, and each task is committed when it finishes. Nothing is pushed.",
+        autoIsolation:
+          "Each agent works in its own worktree. In a repository GitButler manages, they work in your checkout instead, and changes land without a review or approval.",
         mergeAsk: "A fresh agent reviews each change, then it waits for your approval.",
         mergeReviewed: "A fresh agent reviews each change before it is merged.",
         branch: "The result lands on its own branch. Nothing is pushed.",

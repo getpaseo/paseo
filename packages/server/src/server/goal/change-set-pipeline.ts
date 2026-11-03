@@ -29,7 +29,9 @@ import {
 import { goalRoleThinking } from "@getpaseo/protocol/goal/thinking";
 import type { GitPort } from "./git-ops.js";
 import { isolationOf } from "./isolation.js";
+import { isWithinClaim } from "./workspace-touches.js";
 import type { WorkspaceSnapshot } from "./workspace-commit.js";
+import type { WorkspaceSnapshotStore } from "./workspace-snapshot-store.js";
 import { reworkReasonFor } from "./goal-reducer.js";
 import { thinkingInput } from "./goal-thinking.js";
 import type {
@@ -80,6 +82,8 @@ export interface PipelineOptions {
   host: PipelineHost;
   /** Time allowed for the test command. */
   testTimeoutMs?: number;
+  /** Where a checkout task's pre-run snapshot is kept; read back when a restart lost it. */
+  snapshots?: WorkspaceSnapshotStore;
 }
 
 const DEFAULT_MAX_REWORK_ROUNDS = 2;
@@ -108,6 +112,17 @@ export function rootTaskId(taskId: string): string {
  * into rework. It is deterministic: agents only judge and edit; the transitions,
  * ordering and limits are decided here and enforced by the reducer.
  */
+/** What the verifier must leave as it found it. */
+type VerifierBaseline =
+  | { kind: "scratch"; head: string }
+  | { kind: "checkout"; head: string; files: WorkspaceSnapshot };
+
+/** Paths that are new, gone or different between two snapshots of the uncommitted files. */
+function changedFiles(before: WorkspaceSnapshot, after: WorkspaceSnapshot): string[] {
+  const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...paths].filter((p) => before[p] !== after[p]).sort();
+}
+
 export class ChangeSetPipeline {
   private readonly store: PipelineOptions["store"];
   private readonly agents: ManagerAgentPort;
@@ -115,6 +130,7 @@ export class ChangeSetPipeline {
   private readonly git: GitPort;
   private readonly logger: pino.Logger;
   private readonly host: PipelineHost;
+  private readonly snapshots: WorkspaceSnapshotStore | undefined;
   private readonly testTimeoutMs: number;
   private readonly integrationQueues = new Map<string, Promise<unknown>>();
   private readonly preparing = new Map<string, Promise<Integration>>();
@@ -133,6 +149,7 @@ export class ChangeSetPipeline {
     this.logger = options.logger.child({ module: "change-set-pipeline" });
     this.host = options.host;
     this.testTimeoutMs = options.testTimeoutMs ?? DEFAULT_TEST_TIMEOUT_MS;
+    this.snapshots = options.snapshots;
   }
 
   // ---- queries the Manager uses to schedule ------------------------------
@@ -257,12 +274,24 @@ export class ChangeSetPipeline {
       // manages the checkout, the task's files go to a branch of their own for you to review.
       if (input.snapshot && this.git.commitWorkspaceChanges) {
         const prefix = goal.config.branchPrefix ?? DEFAULT_GOAL_BRANCH_PREFIX;
-        const committed = await this.git.commitWorkspaceChanges({
-          cwd: input.cwd,
-          before: input.snapshot,
-          branch: `${prefix}/${goalId}-${task.id}`,
-          message: `Task ${task.id}: ${task.title}`,
-        });
+        // The commit is a convenience: the task already succeeded, so a checkout GitButler can
+        // no longer read (the worker left its branches) leaves the work uncommitted, not failed.
+        const committed = await this.git
+          .commitWorkspaceChanges({
+            cwd: input.cwd,
+            before: input.snapshot,
+            branch: `${prefix}/${goalId}-${task.id}`,
+            message: `Task ${task.id}: ${task.title}`,
+            // Tasks run side by side: each commits only the files it declared.
+            include: (filePath) => isWithinClaim(task, filePath),
+          })
+          .catch((error: unknown) => {
+            this.logger.warn(
+              { err: error, goalId, taskId: task.id },
+              "Could not commit a workspace task; its work stays uncommitted",
+            );
+            return null;
+          });
         if (committed) {
           this.logger.info(
             { goalId, taskId: task.id, branch: committed.branch, files: committed.files.length },
@@ -277,6 +306,7 @@ export class ChangeSetPipeline {
         taskId: task.id,
         runId,
       });
+      await this.snapshots?.remove(goalId, runId).catch(() => undefined);
       return;
     }
     const integration = await this.ensureIntegration(goalId);
@@ -772,7 +802,16 @@ export class ChangeSetPipeline {
         await this.host.failGoal(goalId, `${WORK_NOT_RECOVERED_PREFIX} ${task.id} for review.`);
         return;
       }
-      await this.capture({ goalId, task, runId: run.id, workspaceId, cwd });
+      // A checkout task's pre-run snapshot, kept on disk: the restart lost the one in memory.
+      const snapshot = await this.snapshots?.load(goalId, run.id);
+      await this.capture({
+        goalId,
+        task,
+        runId: run.id,
+        workspaceId,
+        cwd,
+        ...(snapshot ? { snapshot } : {}),
+      });
     }
   }
 
@@ -841,12 +880,12 @@ export class ChangeSetPipeline {
     config: GoalConfig,
   ): Promise<{
     scratch: { workspaceId: string; cwd: string } | null;
-    scratchBase: string | null;
+    baseline: VerifierBaseline | null;
     workspace: { workspaceId: string; cwd: string };
   } | null> {
     if (goal.integration) {
       const { workspaceId, cwd } = goal.integration;
-      return { scratch: null, scratchBase: null, workspace: { workspaceId, cwd } };
+      return { scratch: null, baseline: null, workspace: { workspaceId, cwd } };
     }
     const scratch = await this.workspaces.create({
       cwd: config.cwd,
@@ -854,8 +893,11 @@ export class ChangeSetPipeline {
       title: `${goal.title} (verify)`,
       ...(config.baseCommit ? { baseRef: config.baseCommit } : {}),
     });
-    const scratchBase = isolationOf(goal) === "worktree" ? await this.git.head(scratch.cwd) : null;
-    return { scratch, scratchBase, workspace: scratch };
+    return {
+      scratch,
+      baseline: await this.verifierBaseline(goal, scratch.cwd),
+      workspace: scratch,
+    };
   }
 
   /** Returns the unmet criteria as readable lines, or null if the goal ended meanwhile. */
@@ -864,7 +906,7 @@ export class ChangeSetPipeline {
     if (!config) return null;
     const prepared = await this.verifierWorkspace(goal, config);
     if (!prepared) return null;
-    const { scratch, scratchBase, workspace } = prepared;
+    const { scratch, baseline, workspace } = prepared;
     const { agentId, thinking } = await this.agents.createAgent({
       provider: verifierProvider(config),
       ...thinkingInput(goalRoleThinking(config, "verifier")),
@@ -889,7 +931,7 @@ export class ChangeSetPipeline {
         if (result.outcome !== "completed") {
           throw new Error(`Verifier did not finish (${turnEnd(result)})`);
         }
-        await this.assertUnchanged(goal, workspace.cwd, scratchBase);
+        await this.assertUnchanged(goal, workspace.cwd, baseline);
         try {
           return await this.recordVerification(goal.id, parseVerification(result.text, ids), goal);
         } catch (error) {
@@ -912,7 +954,7 @@ export class ChangeSetPipeline {
   private async assertUnchanged(
     goal: Goal,
     cwd: string,
-    scratchBase: string | null,
+    baseline: VerifierBaseline | null,
   ): Promise<void> {
     if (goal.integration) {
       const unchanged =
@@ -921,13 +963,56 @@ export class ChangeSetPipeline {
       await this.git.resetHard({ cwd, commit: goal.integration.headCommit });
       throw new Error("The verifier changed the integration branch, so its verdict was discarded");
     }
-    if (!scratchBase) return;
+    if (!baseline) return;
+    if (baseline.kind === "checkout") {
+      await this.assertCheckoutUnchanged(cwd, baseline);
+      return;
+    }
     // Setup scripts may leave untracked files, so only commits and edits to tracked files count.
     const unchanged =
-      (await this.git.head(cwd)) === scratchBase && !(await this.git.trackedChanges(cwd)).trim();
+      (await this.git.head(cwd)) === baseline.head && !(await this.git.trackedChanges(cwd)).trim();
     if (unchanged) return;
-    await this.git.resetHard({ cwd, commit: scratchBase });
+    await this.git.resetHard({ cwd, commit: baseline.head });
     throw new Error("The verifier changed the scratch worktree, so its verdict was discarded");
+  }
+
+  /** What a verifier must leave alone: the scratch worktree's start, or the checkout as it was. */
+  private async verifierBaseline(goal: Goal, cwd: string): Promise<VerifierBaseline | null> {
+    if (isolationOf(goal) === "worktree")
+      return { kind: "scratch", head: await this.git.head(cwd) };
+    if (!this.git.snapshotWorkspace) return null;
+    try {
+      return {
+        kind: "checkout",
+        head: await this.git.head(cwd),
+        files: await this.git.snapshotWorkspace(cwd),
+      };
+    } catch (error) {
+      this.logger.warn(
+        { err: error },
+        "Could not note the checkout; the verifier's edits go unchecked",
+      );
+      return null;
+    }
+  }
+
+  /**
+   * The verifier works in the person's own checkout, so nothing is reset: their edits stand.
+   * Any commit, or any uncommitted file that is new, gone or different from before, discards the
+   * verdict, and the files it touched stay for the person to look at.
+   */
+  private async assertCheckoutUnchanged(
+    cwd: string,
+    baseline: Extract<VerifierBaseline, { kind: "checkout" }>,
+  ): Promise<void> {
+    const after = await this.git.snapshotWorkspace?.(cwd);
+    const moved = (await this.git.head(cwd)) !== baseline.head;
+    const files = after ? changedFiles(baseline.files, after) : [];
+    if (!moved && files.length === 0) return;
+    const what = [moved ? "made a commit" : "", files.length ? `changed ${files.join(", ")}` : ""];
+    throw new Error(
+      `The verifier ${what.filter(Boolean).join(" and ")} in the checkout, so its verdict was discarded. Its edits were left in place for you to review`,
+    );
   }
 
   private async recordVerification(

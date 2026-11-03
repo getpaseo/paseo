@@ -68,6 +68,8 @@ import type { GoalStore } from "./goal-store.js";
 import { ChangeSetPipeline } from "./change-set-pipeline.js";
 import type { GitPort } from "./git-ops.js";
 import { isolationOf } from "./isolation.js";
+import { tasksOverlap } from "./workspace-touches.js";
+import type { WorkspaceSnapshotStore } from "./workspace-snapshot-store.js";
 import type { WorkspaceSnapshot } from "./workspace-commit.js";
 import {
   PlanParseError,
@@ -276,6 +278,8 @@ export interface GoalManagerOptions {
   clock?: Clock;
   /** How long a cancelled turn may take to stop before it is abandoned. */
   cancelGraceMs?: number;
+  /** Keeps a checkout task's pre-run snapshot across a restart. Without it, a restart loses it. */
+  workspaceSnapshots?: WorkspaceSnapshotStore;
 }
 
 const MAX_PLAN_ATTEMPTS = 3;
@@ -361,6 +365,7 @@ export class GoalManager {
   /** Notifications with an attempt in progress, so one is never sent twice at once. */
   private readonly delivering = new Set<string>();
   private readonly cancelGraceMs: number;
+  private readonly workspaceSnapshots: WorkspaceSnapshotStore | undefined;
   private readonly planValidator: PlanValidator;
   private readonly interventions: LeadInterventions;
   private readonly failureWakeUps: InterventionHandler<FailureDecision>;
@@ -400,6 +405,7 @@ export class GoalManager {
     this.readMaxConcurrentRuns = typeof cap === "function" ? cap : () => cap;
     this.clock = options.clock ?? systemClock;
     this.cancelGraceMs = options.cancelGraceMs ?? 30_000;
+    this.workspaceSnapshots = options.workspaceSnapshots;
     this.planValidator = new PlanValidator(options.agents);
     this.pipeline = new ChangeSetPipeline({
       store: options.store,
@@ -408,6 +414,7 @@ export class GoalManager {
       git: options.git,
       logger: options.logger,
       testTimeoutMs: options.testTimeoutMs,
+      ...(options.workspaceSnapshots ? { snapshots: options.workspaceSnapshots } : {}),
       host: {
         dispatchOutcome: (goalId, input) => this.dispatchOutcome(goalId, input),
         dispatch: (goalId, input) => this.dispatch(goalId, input),
@@ -1897,6 +1904,28 @@ export class GoalManager {
     );
   }
 
+  /**
+   * Goals that work in the checkout share one tree, so an implement task starts only when no
+   * running implement task claims a file it does. A task that declared no paths claims all of
+   * them, so it runs alone. This holds across goals: two goals in the same `cwd` share that tree
+   * too, whatever their `maxParallel`. Worktree goals never wait: every task has its own tree.
+   */
+  private waitsForOverlap(goal: Goal, task: Task): boolean {
+    if (goal.config?.isolation !== "workspace" || task.kind !== "implement") return false;
+    return this.store.list().some((other) => {
+      if (other.config?.isolation !== "workspace" || other.config.cwd !== goal.config?.cwd) {
+        return false;
+      }
+      return other.tasks.some(
+        (running) =>
+          !(other.id === goal.id && running.id === task.id) &&
+          running.status === "running" &&
+          running.kind === "implement" &&
+          tasksOverlap(task, running),
+      );
+    });
+  }
+
   private liveRunsFor(goalId: string): number {
     let count = 0;
     for (const run of this.inFlight.values()) if (run.goalId === goalId) count += 1;
@@ -1936,6 +1965,8 @@ export class GoalManager {
     // so the run starts on the spec the reducer accepts it under.
     const task = this.launchable(goal).find((t) => t.id === taskId);
     if (!task) return;
+    // In the checkout a task waits while another one that may change the same files runs.
+    if (this.waitsForOverlap(goal, task)) return;
     const { maxRuns } = resolveLimits(goal.config);
     if (goal.runs.length >= maxRuns) {
       await this.failGoal(goalId, `Run limit of ${maxRuns} reached`);
@@ -2017,7 +2048,7 @@ export class GoalManager {
       live.workspaceId = workspace.workspaceId;
       live.cwd = workspace.cwd;
       if (workspace.baseRef) live.baseRef = workspace.baseRef;
-      live.snapshot = await this.snapshotWorkspace(goal, task, workspace.cwd);
+      live.snapshot = await this.snapshotWorkspace(goal, task, workspace.cwd, runId);
       if (!alive()) return await this.abandon(live, this.stopped);
 
       live.policy = goalPermissionPolicy(goal.config);
@@ -2202,12 +2233,18 @@ export class GoalManager {
     goal: Goal,
     task: Task,
     cwd: string,
+    runId: string,
   ): Promise<WorkspaceSnapshot | undefined> {
     const goalId = goal.id;
     if (goal.config?.isolation !== "workspace" || task.kind !== "implement") return undefined;
     if (!this.git.snapshotWorkspace) return undefined;
     try {
-      return await this.git.snapshotWorkspace(cwd);
+      const snapshot = await this.git.snapshotWorkspace(cwd);
+      // Kept on disk: a restart before the capture must still tell this task's files apart.
+      await this.workspaceSnapshots?.save(goalId, runId, snapshot).catch((error: unknown) => {
+        this.logger.warn({ err: error, goalId }, "Could not keep the workspace snapshot");
+      });
+      return snapshot;
     } catch (error) {
       this.logger.warn(
         { err: error, goalId },
