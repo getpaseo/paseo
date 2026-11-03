@@ -2357,3 +2357,74 @@ test("a pre-write host budget rejection leaves sibling routes connected", async 
     true,
   ]);
 }, 30000);
+
+test.each([false, true])(
+  "remote prompt to a closed agent (archived=%s) reports its new turn instead of stale closure",
+  { timeout: 30000 },
+  async (archived) => {
+    const parentPrompts: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const a = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => parentPrompts.push(String(prompt)),
+      }),
+    });
+    const b = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: () => started.resolve(),
+        beforeTurnComplete: () => finish.promise,
+      }),
+    });
+    cleanup.push(async () => finish.resolve());
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const remoteId = (await online(origin.paseo)).hosts[0]!.serverId!;
+    const workspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Closed target caller",
+    });
+    const child = await remoteWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Closed target",
+    });
+    if (archived) await child.archive();
+    else await b.daemon.agentManager.closeAgent(child.id);
+    expect((await destination.client.fetchAgent(child.id))?.agent.status).toBe("closed");
+    const mcp = new Client({ name: "closed-target-caller", version: "1" });
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    cleanup.push(() => mcp.close());
+    const result = await mcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId: remoteId, agentId: child.id, prompt: "Finish the new task" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ deliveryStatus: "queued", status: "closed" });
+    await started.promise;
+    expect(parentPrompts).toEqual([]);
+    finish.resolve();
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
+    expect(parentPrompts[0]).toContain('event="finished"');
+    expect(parentPrompts[0]).not.toContain('event="closed"');
+    expect((await destination.client.fetchAgent(child.id))?.agent).toMatchObject({
+      status: "idle",
+      archivedAt: null,
+    });
+    await expect
+      .poll(async () =>
+        JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+      )
+      .toEqual([]);
+  },
+);

@@ -12,6 +12,7 @@
  */
 import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import type { ForgeReferenceSigil } from "@/git/client-forge-module";
 import { getClientForgeLogicModule } from "@/git/forges";
 
 export interface ForgeBlobUrlInput {
@@ -25,6 +26,14 @@ export interface ForgeBlobUrlInput {
 export interface ForgeBranchTreeUrlInput {
   remoteUrl: string | null | undefined;
   branch: string | null | undefined;
+}
+
+export interface ForgeReferenceUrlInput {
+  remoteUrl: string | null | undefined;
+  /** Repository path of a cross-repository reference; the remote's repository when absent. */
+  repo?: string | null;
+  sigil: ForgeReferenceSigil;
+  number: number;
 }
 
 export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): string | null {
@@ -45,6 +54,8 @@ export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): st
 }
 
 interface ForgeWebLocation {
+  /** "http" only for a self-hosted http:// remote; every other remote browses over https. */
+  scheme: "http" | "https";
   host: string;
   /** Non-default port for a self-hosted http(s) origin, or undefined. */
   port?: string;
@@ -87,16 +98,18 @@ function resolveForgeWebLocation(
     !isCloudHost && (location.transport === "http" || location.transport === "https")
       ? location.port
       : undefined;
-  return { host: webHost, port, repo: location.path };
+  const scheme = !isCloudHost && location.transport === "http" ? "http" : "https";
+  return { scheme, host: webHost, port, repo: location.path };
 }
 
 function encodeBranch(branch: string): string {
   return branch.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Host, plus `:port` when the remote pins a non-default port. */
-function forgeAuthority(location: ForgeWebLocation): string {
-  return location.port ? `${location.host}:${location.port}` : location.host;
+/** Scheme and host, plus `:port` when the remote pins a non-default port. */
+function forgeOrigin(location: ForgeWebLocation): string {
+  const authority = location.port ? `${location.host}:${location.port}` : location.host;
+  return `${location.scheme}://${authority}`;
 }
 
 function normalizeBlobPath(path: string | null | undefined): string | null {
@@ -131,7 +144,7 @@ export function buildForgeBranchTreeUrl(
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
   }
-  return `https://${forgeAuthority(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
+  return `${forgeOrigin(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
 }
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
@@ -143,11 +156,38 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
     return null;
   }
   const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-  let url = `https://${forgeAuthority(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
+  let url = `${forgeOrigin(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
   if (input.lineStart && input.lineStart > 0) {
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }
   return url;
+}
+
+/**
+ * Web URL of a shorthand reference such as `#12` or `group/project!12`. A
+ * cross-repository reference stays on the remote's host. Null when the forge
+ * has no shorthand for the sigil.
+ */
+export function buildForgeReferenceUrl(
+  forge: string,
+  input: ForgeReferenceUrlInput,
+): string | null {
+  const referencePath = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths?.find(
+    (path) => path.sigil === input.sigil,
+  );
+  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const repo = input.repo ?? location?.repo;
+  if (
+    !referencePath ||
+    !location ||
+    !repo ||
+    !isValidRepoPath(repo) ||
+    !Number.isSafeInteger(input.number) ||
+    input.number <= 0
+  ) {
+    return null;
+  }
+  return `${forgeOrigin(location)}/${repo}${referencePath.infix}${input.number}`;
 }
 
 /** Whether the forge has web URL builders (i.e. a known URL grammar). */

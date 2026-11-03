@@ -1,3 +1,5 @@
+import { buildAgentForkContextAttachment } from "../../activity-curator.js";
+import { readPiTranscript } from "./transcript.js";
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -292,4 +294,236 @@ test("replayed Pi images keep their position before the following reply", async 
       event.item?.type === "assistant_message" ? event.item.text : event.item?.type,
     ),
   ).toEqual(["tool_call", expect.stringContaining("![Image]("), "Image read complete."]);
+});
+
+test("replays both sides of compaction with native IDs and isolates rewound branches", async () => {
+  const records = [
+    { type: "session", version: 3, id: "session" },
+    {
+      type: "message",
+      id: "u1",
+      parentId: null,
+      message: { role: "user", content: "old question" },
+    },
+    {
+      type: "message",
+      id: "a1",
+      parentId: "u1",
+      message: { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+    },
+    { type: "compaction", id: "c1", parentId: "a1", summary: "summary", firstKeptEntryId: "a1" },
+    { type: "message", id: "u2", parentId: "c1", message: { role: "user", content: "follow up" } },
+  ];
+  const decode = (rows: unknown[]) =>
+    readPiTranscript(rows.map((row) => JSON.stringify(row)).join("\n"));
+  const history = decode(records);
+  expect(history.userEntries.map((entry) => entry.id)).toEqual(["u1", "u2"]);
+  expect(history.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+  expect(await collectHistory(history.messages, history.userEntries)).toHaveLength(3);
+  const rewound = [
+    ...records,
+    { type: "custom", id: "r1", parentId: null, customType: "paseo_rewind" },
+  ];
+  expect(decode(rewound).messages).toEqual([]);
+  const replacement = [
+    ...rewound,
+    {
+      type: "message",
+      id: "u3",
+      parentId: "r1",
+      message: { role: "user", content: "replacement" },
+    },
+  ];
+  expect(decode(replacement).userEntries.map((entry) => entry.id)).toEqual(["u3"]);
+  expect(
+    decode([
+      ...replacement,
+      { type: "custom", id: "r2", parentId: "a1", customType: "paseo_rewind" },
+    ]).userEntries.map((entry) => entry.id),
+  ).toEqual(["u1"]);
+});
+
+test("preserves native custom entries and legacy linear messages without inventing native IDs", async () => {
+  const custom = {
+    type: "custom_message",
+    id: "custom",
+    parentId: null,
+    customType: "notice",
+    content: "visible notice",
+    display: true,
+    details: { key: 1 },
+  };
+  const history = readPiTranscript(
+    [JSON.stringify({ type: "session", version: 3 }), JSON.stringify(custom)].join("\n"),
+  );
+  expect(history.messages).toEqual([{ ...custom, role: "custom" }]);
+  expect(await collectHistory(history.messages, history.userEntries)).toHaveLength(1);
+  const legacy = readPiTranscript(
+    '{"type":"session","version":1}\n{"type":"message","message":{"role":"user","content":"legacy"}}',
+  );
+  expect(legacy.messages).toEqual([{ role: "user", content: "legacy" }]);
+  expect(legacy.userEntries).toEqual([]);
+});
+
+test.each([
+  [{ type: "message", id: "x", parentId: "x", message: { role: "user", content: "cycle" } }],
+  [{ type: "message", id: "x", parentId: "missing", message: { role: "user", content: "orphan" } }],
+  [
+    { type: "custom", id: "x", parentId: null },
+    { type: "custom", id: "x", parentId: null },
+  ],
+  [{ type: "custom", id: "x" }],
+])("rejects corrupt ancestry rather than replaying a plausible branch: %j", (...entries) => {
+  expect(() =>
+    readPiTranscript(
+      [
+        JSON.stringify({ type: "session", version: 3 }),
+        ...entries.map((entry) => JSON.stringify(entry)),
+      ].join("\n"),
+    ),
+  ).toThrow();
+});
+
+test("Fork chat stops at a restored pre-compaction reply on the active branch", async () => {
+  const entries = [
+    { type: "session", version: 3 },
+    {
+      type: "message",
+      id: "u1",
+      parentId: null,
+      message: { role: "user", content: "retained question" },
+    },
+    {
+      type: "message",
+      id: "a1",
+      parentId: "u1",
+      message: { role: "assistant", content: [{ type: "text", text: "retained answer" }] },
+    },
+    {
+      type: "message",
+      id: "abandoned",
+      parentId: "a1",
+      message: { role: "user", content: "abandoned branch" },
+    },
+    { type: "compaction", id: "c1", parentId: "a1", summary: "summary" },
+    {
+      type: "message",
+      id: "later",
+      parentId: "c1",
+      message: { role: "user", content: "later question" },
+    },
+  ];
+  const transcript = readPiTranscript(entries.map((entry) => JSON.stringify(entry)).join("\n"));
+  const events = await collectHistory(transcript.messages, transcript.userEntries);
+  const rows = events
+    .filter((event) => event.type === "timeline")
+    .map((event, index) => ({
+      seq: index + 1,
+      timestamp: "2026-10-31T00:00:00.000Z",
+      item: event.item,
+    }));
+  const fork = buildAgentForkContextAttachment({
+    rows,
+    cursorBoundary: { cursor: { epoch: "test", seq: 2 }, timelineEpoch: "test" },
+  });
+  expect(fork.attachment.text).toContain("retained question");
+  expect(fork.attachment.text).toContain("retained answer");
+  expect(fork.attachment.text).not.toContain("abandoned branch");
+  expect(fork.attachment.text).not.toContain("later question");
+  expect(transcript.userEntries.map((entry) => entry.id)).toEqual(["u1", "later"]);
+});
+
+test("keeps reasoning, image content and tool results across structural entries", async () => {
+  const messages: PiAgentMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        { type: "text", text: "inspect" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "consider" },
+        { type: "toolCall", id: "call", name: "read", arguments: { path: "a.txt" } },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "read",
+      content: [{ type: "text", text: "file contents" }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "answer" }] },
+  ];
+  const records = [
+    { type: "session", version: 3 },
+    ...messages.map((message, index) => ({
+      type: "message",
+      id: String(index),
+      parentId: index === 0 ? null : String(index - 1),
+      message,
+    })),
+    { type: "compaction", id: "compact", parentId: "3", summary: "summary" },
+  ];
+  const history = readPiTranscript(records.map((record) => JSON.stringify(record)).join("\n"));
+  expect(history.messages).toEqual(messages);
+  expect(history.userEntries).toEqual([{ id: "0", text: "inspect" }]);
+  expect(await collectHistory(history.messages, history.userEntries)).toEqual(
+    await collectHistory(messages, [{ id: "0", text: "inspect" }]),
+  );
+});
+
+test("traverses native system and summary messages without displaying private context", () => {
+  const roles = [
+    { role: "system", content: "private instructions" },
+    { role: "user", content: "question" },
+    { role: "branchSummary", summary: "branch context" },
+    { role: "compactionSummary", summary: "compacted context" },
+    { role: "system", content: null },
+  ];
+  const rows = [
+    { type: "session", version: 3 },
+    ...roles.map((message, index) => ({
+      type: "message",
+      id: String(index),
+      parentId: index === 0 ? null : String(index - 1),
+      message,
+    })),
+  ];
+  expect(readPiTranscript(rows.map((row) => JSON.stringify(row)).join("\n"))).toEqual({
+    messages: [{ role: "user", content: "question" }],
+    userEntries: [{ id: "1", text: "question" }],
+  });
+});
+
+test("restores surrounding chat when native system content uses text blocks", async () => {
+  const records = [
+    { type: "session", version: 3 },
+    { type: "message", id: "u", parentId: null, message: { role: "user", content: "question" } },
+    {
+      type: "message",
+      id: "s",
+      parentId: "u",
+      message: { role: "system", content: [{ type: "text", text: "private instructions" }] },
+    },
+    {
+      type: "message",
+      id: "a",
+      parentId: "s",
+      message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+    },
+  ];
+  const history = readPiTranscript(records.map((record) => JSON.stringify(record)).join("\n"));
+  expect(history.messages).toEqual([
+    { role: "user", content: "question" },
+    { role: "assistant", content: [{ type: "text", text: "answer" }] },
+  ]);
+  expect(history.userEntries).toEqual([{ id: "u", text: "question" }]);
+  const events = await collectHistory(history.messages, history.userEntries);
+  expect(events.map((event) => event.item)).toEqual([
+    { type: "user_message", text: "question", messageId: "u" },
+    { type: "assistant_message", text: "answer", messageId: "pi-history-assistant-1" },
+  ]);
 });
