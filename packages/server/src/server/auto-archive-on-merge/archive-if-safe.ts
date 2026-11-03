@@ -1,3 +1,4 @@
+import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import type { Logger } from "pino";
 
 import type { AgentManager } from "../agent/agent-manager.js";
@@ -37,6 +38,7 @@ export interface AutoArchiveArchiveOptions {
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
+  lifecycle: Pick<PluginLifecycle, "before"> | null;
 }
 
 export interface ArchiveIfSafeDependencies {
@@ -97,6 +99,7 @@ export async function archiveIfSafe(input: {
 
     await deps.archiveByScope(
       {
+        lifecycle: options.lifecycle,
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
         github: options.github,
