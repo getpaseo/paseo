@@ -396,10 +396,15 @@ async function runFollowMode({
     // First, get existing timeline.
     let existingItems: AgentTimelineItem[] = [];
     try {
-      existingItems = await fetchAgentTimelineItems(client, agentId, {
-        timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
-        sinceTimestampMs,
-      });
+      const history = await Promise.race([
+        fetchAgentTimelineItems(client, agentId, {
+          timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+          sinceTimestampMs,
+        }),
+        stopped,
+      ]);
+      if (!history) return;
+      existingItems = history;
     } catch (error) {
       console.warn("Warning: failed to fetch existing timeline", error);
     }
@@ -464,7 +469,8 @@ async function runFollowMode({
     });
 
     unsubscribe = subscription;
-    await subscription.ready;
+    const ready = await Promise.race([subscription.ready.then(() => true), stopped]);
+    if (!ready) return;
     notice(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
     await stopped;

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 
@@ -277,6 +278,84 @@ test.each([
       expect(await exited, stderr).toEqual([0, null]);
     } finally {
       follow?.kill("SIGKILL");
+      await client.close();
+      await daemon.close();
+    }
+  },
+  30_000,
+);
+
+// Windows kill("SIGINT") force-terminates rather than delivering a console interrupt.
+test.skipIf(process.platform === "win32")(
+  "logs --follow stops on SIGINT while subscription startup is waiting",
+  async () => {
+    await mkdir(".artifacts", { recursive: true });
+    const paseoHomeRoot = await mkdtemp(resolve(".artifacts/logs-follow-startup-"));
+    const staticDir = join(paseoHomeRoot, "static");
+    await mkdir(staticDir);
+    const daemon = await createTestPaseoDaemon({ paseoHomeRoot, staticDir });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const proxy = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await once(proxy, "listening");
+    const address = proxy.address();
+    if (typeof address === "string" || address === null) throw new Error("Missing proxy port");
+    const upstreams: WebSocket[] = [];
+    let waitingForSubscription = false;
+    proxy.on("connection", (downstream) => {
+      const upstream = new WebSocket(`ws://127.0.0.1:${daemon.port}/ws`);
+      upstreams.push(upstream);
+      const connected = once(upstream, "open");
+      downstream.on("message", async (data, binary) => {
+        await connected;
+        const frame = binary ? undefined : JSON.parse(data.toString());
+        // Hold only the subscription request. All other traffic uses the real daemon.
+        if (frame?.message?.type === "agent.timeline.set_subscription.request") {
+          waitingForSubscription = true;
+          return;
+        }
+        upstream.send(data, { binary });
+      });
+      upstream.on("message", (data, binary) => downstream.send(data, { binary }));
+      downstream.on("close", () => upstream.close());
+    });
+    let follow: ReturnType<typeof spawn> | undefined;
+    try {
+      await client.connect();
+      const agent = await client.createAgent({ provider: "claude", cwd: daemon.paseoHome });
+      follow = spawn(
+        process.execPath,
+        [
+          "--conditions=source",
+          "--import",
+          "tsx",
+          fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
+          "--host",
+          `127.0.0.1:${address.port}`,
+          "logs",
+          agent.id,
+          "--follow",
+          "--json",
+        ],
+        {
+          env: { ...process.env, PASEO_HOME: daemon.paseoHome },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      follow.stdout?.resume();
+      follow.stderr?.resume();
+      const exited = once(follow, "exit");
+      await expect.poll(() => waitingForSubscription, { timeout: 10_000 }).toBe(true);
+      follow.kill("SIGINT");
+      await expect.poll(() => follow?.exitCode, { timeout: 5_000 }).toBe(0);
+      expect(await exited).toEqual([0, null]);
+    } finally {
+      if (follow && follow.exitCode === null && follow.signalCode === null) {
+        follow.kill("SIGKILL");
+        await once(follow, "exit");
+      }
+      for (const upstream of upstreams) upstream.terminate();
+      for (const downstream of proxy.clients) downstream.terminate();
+      await new Promise<void>((done) => proxy.close(() => done()));
       await client.close();
       await daemon.close();
     }
