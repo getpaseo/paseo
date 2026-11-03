@@ -23,7 +23,7 @@ const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
@@ -3219,7 +3219,7 @@ describe("ForgeService", () => {
     });
   });
 
-  it("keeps a merged PR only when headRefOid matches the checkout HEAD", async () => {
+  it("keeps a merged PR when headRefOid matches the checkout HEAD", async () => {
     const headSha = "2222222222222222222222222222222222222222";
     const runner = createRunner([
       currentPullRequestJson({
@@ -3243,8 +3243,9 @@ describe("ForgeService", () => {
     expect(status?.state).toBe("merged");
   });
 
-  it("does not attach a stale merged PR after a same-name branch advances", async () => {
+  it("keeps a merged PR when its remote head advances beyond the checkout", async () => {
     const stale = currentPullRequestJson({
+      headRepositoryOwner: { login: "parentOwner" },
       state: "MERGED",
       mergedAt: "2026-07-17T12:00:00Z",
       headRefOid: "1111111111111111111111111111111111111111",
@@ -3265,10 +3266,44 @@ describe("ForgeService", () => {
         headRef: "feature/fork",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ state: "merged" });
     expect(runner.calls.some((call) => call.args[0] === "pr" && call.args[1] === "list")).toBe(
       true,
     );
+  });
+
+  it("prefers an exact terminal head and otherwise the most recently updated terminal PR", async () => {
+    const owner = { login: "forkOwner" };
+    const terminal = (number: number, headRefOid: string, updatedAt: string, state: string) =>
+      JSON.parse(
+        currentPullRequestJson({
+          number,
+          headRefOid,
+          updatedAt,
+          state,
+          mergedAt: state === "MERGED" ? updatedAt : null,
+          headRepositoryOwner: owner,
+        }),
+      );
+    const older = terminal(41, "old", "2026-07-01T00:00:00Z", "MERGED");
+    const newer = terminal(42, "new", "2026-07-02T00:00:00Z", "CLOSED");
+    for (const [headSha, expected] of [
+      ["old", 41],
+      ["other", 42],
+    ] as const) {
+      const runner = createScriptedRunner([JSON.stringify(older), JSON.stringify([older, newer])]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+      const status = await service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/fork",
+        headRepositoryOwner: "forkOwner",
+        headSha,
+      });
+      expect(status?.number).toBe(expected);
+    }
   });
 
   it("prefers an open PR over an exact-SHA merged PR for the same head", async () => {

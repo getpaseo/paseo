@@ -155,6 +155,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     repoRoot: string | null;
     mainRepoRoot: string | null;
     currentBranch: string | null;
+    headSha?: string;
     remoteUrl: string | null;
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
@@ -185,6 +186,7 @@ export interface WorkspaceGitRuntimeSnapshot {
       state: string;
       baseRefName: string;
       headRefName: string;
+      headSha?: string;
       isMerged: boolean;
       isDraft?: boolean;
       mergeable?: PullRequestMergeable;
@@ -320,6 +322,7 @@ export type WorkspaceGitSnapshotOptions =
   | {
       force: true;
       includeForge?: boolean;
+      afterInFlight?: boolean;
       reason: string;
     };
 
@@ -3250,7 +3253,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       refreshWorktree: true,
       includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
-      queueIfBusy: false,
+      queueIfBusy: force && options?.afterInFlight === true,
       movedRemoteRefs: new Set(),
     };
   }
@@ -3550,6 +3553,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoRoot: checkoutStatus.repoRoot,
       mainRepoRoot: checkoutStatus.mainRepoRoot,
       currentBranch: checkoutStatus.currentBranch,
+      headSha: facts.isGit ? facts.pullRequestLookupTarget?.headSha : undefined,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
       isDirty: refreshWorktree
