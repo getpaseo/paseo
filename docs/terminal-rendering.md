@@ -6,15 +6,25 @@ Web and Electron draw terminals with xterm.js. iOS and Android keep an `@xterm/h
 
 xterm decides which column every cell occupies. The native views never let text advance move a cell. Each row is shaped once, one run per font face, so Hangul jamo, ligatures, combining marks, conjuncts and fallback fonts see their neighbours. Each shaped cluster is then drawn at its first cell's column, centred in the columns it owns, and scaled down when its glyphs are wider. Cursor, selection, hit-testing and copy all use xterm's columns, so they stay correct whatever the font does.
 
-A cluster is the run of cells the shaper merged, and it is drawn once from the shaped row. Drawing part of a cluster on its own reshapes it: a half-form conjunct such as `स्ते` comes apart into `स्` with a visible virama. So colour and selection never split a cluster. A cluster whose cells differ in colour is drawn once per colour, clipped to that colour's columns.
+A cluster is the run of cells the shaper merged, and it is drawn once from the shaped row. xterm usually keeps a conjunct in one cell (see [Character widths](#character-widths)), but a colour change inside it leaves `क्` and `ष` in separate cells that still shape together. Drawing part of a cluster on its own reshapes it: the conjunct comes apart into `क्` with a visible virama. So colour and selection never split a cluster. A cluster whose cells differ in colour is drawn once per colour, clipped to that colour's columns.
 
-Android also groups cells with `android.icu.text.BreakIterator`, because Minikin's advances and cursor boundaries alone split some conjuncts. Grapheme rules follow the OS ICU version. Android 10 (API 29) splits `स्ते` after the virama and renders it incorrectly. The tested corpus passed on API 33, 34 and 35; API 30–32 have not been tested. We accept that version-dependent limitation to avoid bundling approximately 14 MB of ICU4J data. CoreText keeps this conjunct together on iOS. This renderer does not guarantee identical shaping across OS versions.
+Android also groups cells with `android.icu.text.BreakIterator`, because Minikin's advances and cursor boundaries alone split some clusters that span cells. Grouping only merges whole cells, so a conjunct xterm keeps in one cell cannot be split by the OS. Grapheme rules follow the OS ICU version, and we accept that to avoid bundling approximately 14 MB of ICU4J data. Before the buffers used grapheme widths, Android 10 (API 29) split `स्ते` across its two cells. This renderer does not guarantee identical shaping across OS versions.
 
 `TerminalRowLayoutTest.kt` is the Android regression test. It draws the rows of `grapheme-rows.json` and compares each with its grapheme clusters drawn one at a time, and with a wrong clustering that must not match. `terminal-frame.test.ts` checks that those rows are what xterm produces and that the clusters are UAX #29 grapheme clusters. Run it with `./gradlew :paseo-terminal:connectedDebugAndroidTest` from `packages/app/android`, with `ANDROID_SERIAL` set.
 
 The view reports ready only after it has measured its grid size. The pane attaches with that size, so the daemon replays the terminal at the client's size. Before this, the replay arrived at the PTY's old size, the resize came after it, and the shell's redraw landed on the wrong rows.
 
-Emoji widths come from the headless buffer, which uses xterm's default Unicode 6 table. `👍` gets one column, and `👋🏽` and `🇰🇷` get two cells drawn as one cluster. Web loads the Unicode 11 addon, so the same output can wrap differently on web and native.
+## Character widths
+
+The daemon, native and web buffers all load `@xterm/addon-unicode-graphemes`: the daemon through `packages/server/src/terminal/headless-terminal.ts`, native in `createNativeHeadlessTerminal`, web in `terminal-emulator-runtime.ts`. Each emoji cluster takes one two-column cell, including VS16 (`❤️`), skin tones (`👋🏽`), flags (`🇰🇷`) and ZWJ sequences (`👨‍👩‍👧`). That is the width colour-emoji fonts draw at. Under xterm's default Unicode 6 table `😀` got one column, and the native views scaled it to half size to fit.
+
+Every buffer must use the same table. The daemon answers cursor-position reports (`CSI 6n`) from its buffer, and a client re-parses the daemon's ANSI replay with its own table. A disagreement moves the cursor and the later cells of any row that holds a disputed cluster: after replay from a Unicode 6 daemon, the cursor that followed `A😀😀😀B` lands inside the third emoji.
+
+Daemons that use grapheme widths advertise `server_info.features["terminal-grapheme-widths"]`. `terminal-pane.tsx` reads it once and passes `characterWidths` to the emulator. Against an older daemon the app keeps each renderer's previous table: xterm's default on native, Unicode 11 on web. An older app against a newer daemon cannot match it, because every client shares the daemon's one buffer. A terminal kept by a worker from an unreleased pre-grapheme build keeps that worker's table until it exits.
+
+The table follows Unicode grapheme clusters, as Node's `string-width` does for Ink-based agent TUIs. Indic conjuncts follow the same rule: `क्ष` and `स्ते` take one column, and the native views scale them down to fit it. Shells measure with the C library's `wcwidth` instead. glibc counts `❤️` as one column, `👋🏽` as four and `क्ष` as two, so a line editor that measures those disagrees with the terminal.
+
+Use `@xterm/addon-unicode-graphemes` 0.5.0-beta.330 or later. Earlier versions read their width table from the wrong offset when Node decodes it into a pooled `Buffer`, which gives wrong widths or a load error depending on earlier allocations. `headless-terminal.test.ts` forces that case in a fresh process.
 
 ## Ink outside the row
 

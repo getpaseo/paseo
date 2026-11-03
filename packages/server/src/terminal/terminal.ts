@@ -1,5 +1,5 @@
 import * as pty from "node-pty";
-import xterm, { type Terminal as TerminalType } from "@xterm/headless";
+import type { Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import {
   accessSync,
@@ -25,6 +25,7 @@ import {
   findExecutable,
   findExecutableWithoutProbing,
 } from "../executable-resolution/executable-resolution.js";
+import { createHeadlessTerminal } from "./headless-terminal.js";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import {
   captureTerminalLines,
@@ -36,7 +37,6 @@ import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 
-const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
@@ -796,13 +796,7 @@ export async function createTerminal(
   const activityChangeListeners = new Set<(transition: TerminalActivityTransition) => void>();
   let titleChangeSubscription: { dispose(): void } | null = null;
 
-  // Create xterm.js headless terminal
-  const terminal = new Terminal({
-    rows,
-    cols,
-    scrollback: 10000,
-    allowProposedApi: true,
-  });
+  const terminal = createHeadlessTerminal({ rows, cols, scrollback: 10000 });
 
   const serialize = createTerminalSerializer(terminal);
 

@@ -55,11 +55,13 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  fileChangesToPreview,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
+import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -150,6 +152,15 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+// `turn/interrupt` ends a turn but leaves the shell commands it started running.
+// Each terminate is bounded by the first constant. A turn start waits for the
+// interrupted turn's commands to end, at most the interrupt's own bound plus one
+// terminate's and a margin, so it gives up only when a request outlives its timeout.
+const INTERRUPTED_TURN_TERMINATE_TIMEOUT_MS = 2_000;
+const INTERRUPTED_TURN_CLEANUP_WAIT_MS =
+  INTERRUPT_TIMEOUT_MS + INTERRUPTED_TURN_TERMINATE_TIMEOUT_MS + 500;
+// Turns whose commands are remembered; older turns are forgotten first.
+const INTERRUPTED_TURN_TRACKED_TURNS = 16;
 const CODEX_PROVIDER = "codex" as const;
 // These native provider identities belong to Codex, not to an older custom
 // Paseo provider. Never include them in a custom provider's legacy import scan.
@@ -1393,6 +1404,15 @@ interface CodexPatchFileChange {
   path: string;
   kind?: string;
   content?: string;
+  movePath?: string;
+}
+
+function codexPatchMovePath(value: unknown): string | undefined {
+  const record = toObjectRecord(value);
+  if (!record) return undefined;
+  const kind = toObjectRecord(record.kind);
+  const destination = record.move_path ?? kind?.move_path;
+  return typeof destination === "string" ? destination : undefined;
 }
 
 function extractPatchLikeText(value: unknown): string | undefined {
@@ -1525,6 +1545,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
             (typeof record.type === "string" && record.type) ||
             undefined,
           content: extractPatchLikeText(record),
+          movePath: codexPatchMovePath(record),
         };
       })
       .filter((entry): entry is CodexPatchFileChange => entry !== null);
@@ -1544,6 +1565,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
           (typeof recordChanges.type === "string" && recordChanges.type) ||
           undefined,
         content: extractPatchLikeText(recordChanges),
+        movePath: codexPatchMovePath(recordChanges),
       },
     ];
   }
@@ -1563,6 +1585,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
             ? ((value as { type?: string }).type ?? undefined)
             : undefined,
         content: extractPatchLikeText(value),
+        movePath: codexPatchMovePath(value),
       };
     })
     .filter((entry): entry is CodexPatchFileChange => entry !== null);
@@ -1671,6 +1694,31 @@ function mapCodexExecNotificationToToolCall(params: {
   return params.running ? toRunningToolCall(mapped) : mapped;
 }
 
+function codexPatchPreview(
+  files: CodexPatchFileChange[],
+  cwd?: string | null,
+): {
+  filePath: string | undefined;
+  patchText: string | undefined;
+} {
+  const preview =
+    files.length > 1
+      ? fileChangesToPreview(
+          files.map((file) => ({
+            path: normalizeCodexFilePath(file.path, cwd) ?? file.path,
+            kind: file.kind,
+            diff: file.content,
+            movePath: file.movePath ? normalizeCodexFilePath(file.movePath, cwd) : undefined,
+          })),
+        )
+      : undefined;
+  const firstPath = preview?.filePath ?? files[0]?.path;
+  const firstPatchText = files
+    .map((file) => file.content?.trim())
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  return { filePath: firstPath, patchText: preview?.unifiedDiff ?? firstPatchText };
+}
+
 export function mapCodexPatchNotificationToToolCall(params: {
   callId?: string | null;
   changes: unknown;
@@ -1681,11 +1729,7 @@ export function mapCodexPatchNotificationToToolCall(params: {
   running: boolean;
 }): ToolCallTimelineItem | null {
   const files = parseCodexPatchChanges(params.changes);
-  const firstPath = files[0]?.path;
-  const firstPatchText = files
-    .map((file) => file.content?.trim())
-    .find((value): value is string => typeof value === "string" && value.length > 0);
-  const patchText = firstPatchText;
+  const { filePath: firstPath, patchText } = codexPatchPreview(files, params.cwd);
   const patchFields = codexPatchTextFields(patchText);
   const mapped = mapCodexToolCallEnvelope({
     callId: params.callId ?? null,
@@ -3435,6 +3479,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   > | null = null;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
+  // Codex writes a new thread's rollout at its first turn. Until then the thread exists only
+  // in this app-server, so no other app-server can resume it and it is not reported.
+  private savedThreadId: string | null = null;
   private currentTurnId: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
@@ -3471,8 +3518,17 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
+  private pendingToolCallDetails = new Map<string, ToolCallTimelineItem["detail"]>();
   private pendingAssistantMessageBoundary = false;
   private terminalCommandByProcessId = new Map<string, string>();
+  // The root thread's still-running command process ids, keyed by the native turn that
+  // started them. Codex's `thread/backgroundTerminals/list` carries no turn, so
+  // `item/started` is the only record of which turn owns a process.
+  private terminalProcessIdsByTurnId = new Map<
+    string,
+    { processIds: Set<string>; terminatedProcessIds: Set<string>; interruptAccepted: boolean }
+  >();
+  private interruptedTurnCleanup: Promise<void> | null = null;
   private pendingUnlabeledTerminalInteractions = new Map<
     string,
     Array<{ callId: string; stdin: string | null }>
@@ -3572,6 +3628,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
+      this.savedThreadId = this.resumeHandle.sessionId;
       this.historyIndexed = false;
       // Resuming can start a goal before the caller receives the session.
       if (this.initialResumePurpose === "interactive") this.startupEvents = [];
@@ -4427,6 +4484,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
         hasCodexConfig: turnStart.hasCodexConfig,
       });
+      // The interrupted turn's commands end before this turn begins, so none of them
+      // outlives it into the new turn.
+      await this.waitForInterruptedTurnCleanup();
       if (pendingStart.cancelRequested) {
         throw new Error("Codex turn start was interrupted before reaching Codex");
       }
@@ -4605,7 +4665,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const info: AgentRuntimeInfo = {
       provider: CODEX_PROVIDER,
-      sessionId: this.currentThreadId,
+      sessionId: this.savedCurrentThreadId(),
       model: this.config.model ?? null,
       thinkingOptionId: normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null,
       modeId: this.currentMode ?? null,
@@ -4936,17 +4996,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     nativeHandle: string;
     metadata: Record<string, unknown>;
   } | null {
-    if (!this.currentThreadId) return null;
+    const threadId = this.savedCurrentThreadId();
+    if (!threadId) return null;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null;
     return {
       provider: CODEX_PROVIDER,
-      sessionId: this.currentThreadId,
-      nativeHandle: this.currentThreadId,
+      sessionId: threadId,
+      nativeHandle: threadId,
       metadata: {
         provider: CODEX_PROVIDER,
         cwd: this.config.cwd,
         title: this.config.title ?? null,
-        threadId: this.currentThreadId,
+        threadId,
         modeId: this.config.modeId,
         model: this.config.model ?? null,
         thinkingOptionId,
@@ -4956,6 +5017,12 @@ export class CodexAppServerAgentSession implements AgentSession {
         asyncQuestions: this.asyncQuestions.serialize(),
       },
     };
+  }
+
+  private savedCurrentThreadId(): string | null {
+    return this.currentThreadId !== null && this.currentThreadId === this.savedThreadId
+      ? this.currentThreadId
+      : null;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -4982,6 +5049,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
+        // Codex writes a forked thread's rollout when it forks it, even before any turn.
+        this.savedThreadId = threadId;
         this.cachedRuntimeInfo = null;
         this.stagedHistory = await this.readThreadHistory(this.client);
         this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
@@ -5023,15 +5092,27 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!turnId || (foregroundTurnId && this.activeForegroundTurnId !== foregroundTurnId)) {
       throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
     }
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    const interruptRequest = client.request(
+      "turn/interrupt",
+      {
+        threadId,
+        turnId,
+      },
+      INTERRUPT_TIMEOUT_MS,
+    );
+    // Once Codex accepts the interrupt, end the commands this turn started. Registered
+    // before the await, so a turn start racing this interrupt waits for it. An already-idle
+    // turn was not interrupted, and what it left running stays.
+    this.trackInterruptedTurnCleanup(
+      interruptRequest.then(
+        () => this.endInterruptedTurnProcesses(client, threadId, turnId),
+        () => undefined,
+      ),
+    );
     try {
-      await this.client.request(
-        "turn/interrupt",
-        {
-          threadId: this.currentThreadId,
-          turnId,
-        },
-        INTERRUPT_TIMEOUT_MS,
-      );
+      await interruptRequest;
     } catch (error) {
       if (!isCodexAlreadyIdleInterrupt(error)) {
         throw error;
@@ -5072,9 +5153,141 @@ export class CodexAppServerAgentSession implements AgentSession {
     return !this.client.hasPendingRequests();
   }
 
+  // Remember which turn started a command, so an interrupt ends that turn's commands and
+  // no other turn's. Only the root thread's: a subagent's commands live on its own thread.
+  // A command that starts after its turn's interrupt was accepted is ended as soon as it
+  // is seen.
+  private recordTurnTerminalProcess(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_started" | "item_completed" }>,
+  ): void {
+    const processId = parsed.item.processId;
+    if (
+      parsed.source !== "item" ||
+      !parsed.turnId ||
+      !parsed.threadId ||
+      parsed.threadId !== this.currentThreadId ||
+      typeof processId !== "string" ||
+      !processId ||
+      normalizeCodexThreadItemType(
+        typeof parsed.item.type === "string" ? parsed.item.type : undefined,
+      ) !== "commandExecution"
+    ) {
+      return;
+    }
+    const record = this.terminalProcessIdsByTurnId.get(parsed.turnId);
+    if (parsed.kind === "item_completed") {
+      // Only a completed command has exited. A failed one can still be running:
+      // Codex reports an interrupted turn's live command as failed.
+      if (parsed.item.status === "completed") record?.processIds.delete(processId);
+      return;
+    }
+    const current = record ?? this.getTurnTerminalRecord(parsed.turnId);
+    current.processIds.add(processId);
+    if (current.interruptAccepted && this.client) {
+      this.trackInterruptedTurnCleanup(
+        this.endInterruptedTurnProcesses(this.client, parsed.threadId, parsed.turnId),
+      );
+    }
+  }
+
+  // An accepted interrupt needs a record even before any of its turn's commands is seen:
+  // an `item/started` can still be queued behind an earlier notification's conversion.
+  private getTurnTerminalRecord(turnId: string) {
+    const existing = this.terminalProcessIdsByTurnId.get(turnId);
+    if (existing) return existing;
+    const record = {
+      processIds: new Set<string>(),
+      terminatedProcessIds: new Set<string>(),
+      interruptAccepted: false,
+    };
+    this.terminalProcessIdsByTurnId.set(turnId, record);
+    for (const oldestTurnId of this.terminalProcessIdsByTurnId.keys()) {
+      if (this.terminalProcessIdsByTurnId.size <= INTERRUPTED_TURN_TRACKED_TURNS) break;
+      this.terminalProcessIdsByTurnId.delete(oldestTurnId);
+    }
+    return record;
+  }
+
+  // A later sweep joins the pending one, so a turn start waits for both.
+  private trackInterruptedTurnCleanup(cleanup: Promise<void>): void {
+    const tracked = Promise.all([this.interruptedTurnCleanup, cleanup])
+      .then(() => undefined)
+      .finally(() => {
+        if (this.interruptedTurnCleanup === tracked) this.interruptedTurnCleanup = null;
+      });
+    this.interruptedTurnCleanup = tracked;
+  }
+
+  // Terminate each process the interrupted turn started, by its own id, once each.
+  // `thread/backgroundTerminals/clean` is never used: it ends every terminal on the thread,
+  // an earlier turn's included. A process already gone answers `terminated: false`. Never
+  // rejects; failures are logged.
+  private async endInterruptedTurnProcesses(
+    client: CodexAppServerClient,
+    threadId: string | null,
+    turnId: string,
+  ): Promise<void> {
+    if (!threadId) return;
+    const record = this.getTurnTerminalRecord(turnId);
+    record.interruptAccepted = true;
+    const processIds = [...record.processIds].filter(
+      (processId) => !record.terminatedProcessIds.has(processId),
+    );
+    for (const processId of processIds) record.terminatedProcessIds.add(processId);
+    const logContext = { agentId: this.agentId, provider: CODEX_PROVIDER, threadId, turnId };
+    await Promise.all(
+      processIds.map(async (processId) => {
+        try {
+          const response = await client.request(
+            "thread/backgroundTerminals/terminate",
+            { threadId, processId },
+            INTERRUPTED_TURN_TERMINATE_TIMEOUT_MS,
+          );
+          this.logger.info(
+            { ...logContext, processId, terminated: toObjectRecord(response)?.terminated ?? null },
+            "provider.codex.interrupt.terminal_terminated",
+          );
+        } catch (error) {
+          this.logger.warn(
+            { ...logContext, processId, err: error },
+            "provider.codex.interrupt.terminal_terminate_failed",
+          );
+        }
+      }),
+    );
+  }
+
+  // A new turn starts only after every pending sweep of interrupted turns' commands has
+  // ended, or after the bound, whichever is first.
+  private async waitForInterruptedTurnCleanup(): Promise<void> {
+    if (!this.interruptedTurnCleanup) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      (async () => {
+        while (this.interruptedTurnCleanup) await this.interruptedTurnCleanup;
+        return false;
+      })(),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), INTERRUPTED_TURN_CLEANUP_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (timedOut) {
+      this.logger.warn(
+        {
+          agentId: this.agentId,
+          provider: CODEX_PROVIDER,
+          waitMs: INTERRUPTED_TURN_CLEANUP_WAIT_MS,
+        },
+        "provider.codex.interrupt.terminal_cleanup_timed_out",
+      );
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     this.clearPendingPermissions();
+    this.pendingToolCallDetails.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
     this.startupEvents = null;
@@ -6155,6 +6368,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
+    this.markCurrentThreadSaved(parsed.threadId);
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
@@ -6166,6 +6380,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.resetTurnTrackingState();
     this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+  }
+
+  // Codex has written the rollout by the time it announces a thread's turn, including a
+  // goal's or a compaction's. From here on the thread can be reported and resumed.
+  private markCurrentThreadSaved(threadId: string | null): void {
+    const current = this.currentThreadId;
+    if (!current || (threadId !== null && threadId !== current)) return;
+    if (this.savedThreadId === current) return;
+    this.savedThreadId = current;
+    this.cachedRuntimeInfo = null;
+    this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: current });
   }
 
   private handleTurnCompletedNotification(
@@ -6184,6 +6409,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.completePendingRootCompactions();
+    // What a turn that was not interrupted leaves running, it left on purpose; no later
+    // interrupt may end it.
+    if (parsed.status !== "interrupted" && this.currentTurnId) {
+      this.terminalProcessIdsByTurnId.delete(this.currentTurnId);
+    }
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -6223,6 +6453,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingReasoning.clear();
     this.pendingCommandOutputDeltas.clear();
     this.pendingFileChangeOutputDeltas.clear();
+    this.pendingToolCallDetails.clear();
     this.pendingAssistantMessageBoundary = false;
     this.warnedIncompleteEditToolCallIds.clear();
     this.pendingRootCompactionItemIds.clear();
@@ -6588,12 +6819,16 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async handleItemCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
   ): Promise<void> {
+    this.recordTurnTerminalProcess(parsed);
     // Codex emits mirrored lifecycle notifications via both `codex/event/item_*`
     // and canonical `item/*`. Render ordinary items only from the canonical
     // channel, but accept a legacy-only child announcement so it can establish
     // the provider-subagent route.
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
+    }
+    if (parsed.item.id) {
+      this.pendingToolCallDetails.delete(parsed.item.id);
     }
     this.receiveAsyncQuestion(parsed.threadId, parsed.item);
     if (this.isUserMessageItem(parsed.item)) {
@@ -6642,10 +6877,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (timelineItem.type === "assistant_message") {
         this.pendingAssistantMessageBoundary = true;
       }
-      if (itemId) {
-        this.emittedItemCompletedIds.add(itemId);
-        this.emittedItemStartedIds.delete(itemId);
-      }
+      this.emittedItemCompletedIds.add(itemId);
+      this.emittedItemStartedIds.delete(itemId);
       await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
     }
@@ -6681,7 +6914,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private consumeStreamedTextCompletion(
     timelineItem: AgentTimelineItem,
     itemId: string | null | undefined,
-  ): boolean {
+  ): itemId is string {
     if (!itemId) {
       return false;
     }
@@ -6750,6 +6983,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async handleItemStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_started" }>,
   ): Promise<void> {
+    this.recordTurnTerminalProcess(parsed);
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
     }
@@ -6789,6 +7023,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!timelineItem || timelineItem.type !== "tool_call") {
       return;
     }
+    this.pendingToolCallDetails.set(timelineItem.callId, timelineItem.detail);
     const registeredChildThreadIds = this.registerSubAgentToolCall({
       timelineItem,
       rawItem: parsed.item,
@@ -7058,7 +7293,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+  private async handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+    await this.pendingNotifications;
     const parsed = z
       .object({
         itemId: z.string(),
@@ -7068,20 +7304,25 @@ export class CodexAppServerAgentSession implements AgentSession {
       })
       .parse(params);
     const requestId = `permission-${parsed.itemId}`;
+    const detail: ToolCallTimelineItem["detail"] = this.pendingToolCallDetails.get(
+      parsed.itemId,
+    ) ?? {
+      type: "unknown",
+      input: { reason: parsed.reason ?? null },
+      output: null,
+    };
+    const title =
+      detail.type === "edit" && detail.filePath
+        ? `Apply file changes: ${detail.filePath}`
+        : "Apply file changes";
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: CODEX_PROVIDER,
       name: "CodexFileChange",
       kind: "tool",
-      title: "Apply file changes",
+      title,
       description: parsed.reason ?? undefined,
-      detail: {
-        type: "unknown",
-        input: {
-          reason: parsed.reason ?? null,
-        },
-        output: null,
-      },
+      detail,
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,

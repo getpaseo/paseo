@@ -1924,6 +1924,140 @@ export default function contribute(server: PluginServerContext) {
 
 后端处理函数以 `{ paseo }` 的形式收到同样的 `PaseoApi`。它们的连接属于子进程，并在插件停止时关闭。在插件代码订阅之前，它不会订阅时间线或目录事件。清理和时间线替换请遵循 [SDK 事件契约](/docs/sdk/events)。后端代码可以使用 Node API 以及安装在插件目录中的依赖。
 
+## 从 daemon 推送事件 {#subscriptions}
+
+订阅会在一个客户端监听期间运行 daemon 处理函数，并向该客户端发送带类型的事件。监听文件、追踪日志和实时媒体使用订阅；只需要一次应答时使用插件 RPC。
+
+在 `shared/` 中定义契约：
+
+```ts
+// shared/diff.ts
+import { defineSubscription } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const diffWatch = defineSubscription({
+  name: "diff.watch",
+  input: z.object({ cwd: z.string(), from: z.string() }),
+  event: z.object({ type: z.literal("changes"), files: z.array(z.string()) }),
+});
+```
+
+在 `index.server.ts` 中处理它。处理函数除了 `paseo`，还会收到 `push` 和一个中止 `signal`：
+
+```ts
+server.handle(diffWatch, ({ cwd, from }, { push, signal }) => {
+  const watcher = watchChanges(cwd, from, (files) => void push({ type: "changes", files }));
+  signal.addEventListener("abort", () => watcher.close(), { once: true });
+});
+```
+
+在界面中用 `useSubscription(contract, input, onEvent)` 订阅：
+
+```tsx
+const [files, setFiles] = useState<string[]>([]);
+const subscription = useSubscription(diffWatch, { cwd, from: "HEAD" }, (event) => {
+  setFiles(event.files);
+});
+if (subscription.status === "error") return <Text>{subscription.error.message}</Text>;
+```
+
+在 React 之外，`client.subscribe` 接受同样的参数和一个选项对象，并返回一个移除函数：
+
+```ts
+const stop = client.subscribe(diffWatch, { cwd, from: "HEAD" }, onChanges, { signal });
+await stop.ready; // the daemon accepted the subscription
+stop(); // or await stop.release()
+```
+
+RPC 和订阅共用一个名称空间；同一个名称同时注册为 RPC 和订阅会导致插件加载失败。
+
+### 处理函数的生命周期 {#handler-lifetime}
+
+| 处理函数……               | 结果                                         |
+| ------------------------ | -------------------------------------------- |
+| 同步抛出错误，或输入无效 | 订阅调用失败并返回该错误，不会发送任何事件。 |
+| 不返回任何值             | 订阅保持打开，直到客户端释放它。             |
+| 返回一个兑现的 Promise   | 订阅关闭。                                   |
+| 返回一个拒绝的 Promise   | 订阅关闭并带上该错误。                       |
+
+当客户端释放订阅、卸载 hook、更改输入、断开连接，或者插件停止时，`signal` 会中止。中止之后的推送会被丢弃。`push` 会按契约校验事件，并在事件离开插件进程后兑现；在循环中 await 它可以控制生产者的速度。
+
+每个订阅者运行各自的处理函数。Paseo 不会在多个客户端之间共享同一个处理函数，也不会重放错过的事件：重新连接或重新加载插件之后，已挂载的界面会重新订阅，处理函数从头开始运行。多个订阅者需要同一个昂贵的监听器时，请在插件内部共享它。
+
+`useSubscription` 返回一个以 `status` 区分的联合类型：
+
+| 状态         | 含义                                                     |
+| ------------ | -------------------------------------------------------- |
+| `connecting` | 已发送，daemon 尚未接受。                                |
+| `live`       | 处理函数正在运行，事件通过 `onEvent` 送达。              |
+| `closed`     | 处理函数已结束。                                         |
+| `error`      | 订阅失败、处理函数失败、事件不符合契约，或者插件已停止。 |
+
+`input` 按浅比较发生变化时，hook 会重新订阅。`onEvent` 始终是最近一次渲染的回调，所以内联函数不会导致重新订阅。`client.subscribe` 接受 `{ signal, onClosed }`；`onClosed` 会收到 `{ error? }`。
+
+### 字节 {#bytes}
+
+顶层的 `Uint8Array` 以二进制形式传输，不经过 JSON 或 base64，其他值都是 JSON。这条规则适用于订阅事件、RPC 输出和 RPC 输入。Node 的 `Buffer` 也是 `Uint8Array`。
+
+```ts
+export const thumbnail = defineRpc({
+  name: "thumbnail.render",
+  input: z.object({ path: z.string(), width: z.number() }),
+  output: z.instanceof(Uint8Array),
+});
+
+// index.server.ts
+server.handle(thumbnail, ({ path, width }) => renderPng(path, width));
+
+// client
+const renderThumbnail = useRpc(thumbnail);
+const png = await renderThumbnail({ path, width }); // Uint8Array
+```
+
+用 `z.instanceof(Uint8Array)` 声明字节。事件可以在每次推送时选择字节或 JSON：声明一个联合类型，并用 `event instanceof Uint8Array` 分支。嵌套在对象中的 `Uint8Array` 会在发送端校验失败，错误信息会说明这条规则；把字节作为单独的事件或 RPC 值发送，元数据作为另一个 JSON 事件发送。
+
+一个事件或 RPC 值最多 100 MiB（减去 65 KiB 的帧头）。大载荷请按几百 KiB 分块推送；每次 `push` 都会等待上一次离开插件进程。手机上传的上限更低：一次发送超过 16 MiB 时 Android 会关闭连接，所以较大的上传请拆成多个 RPC。
+
+### 在一个订阅中传输多条流 {#several-streams-on-one-subscription}
+
+在每个载荷前加一个头字节即可复用多条流。把布局放在 `shared/` 中，让处理函数和界面调用有名字的函数：
+
+```ts
+// shared/media-frames.ts
+export const MediaOpcode = { Video: 0x01, Audio: 0x02 } as const;
+
+export function encodeMediaFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(1 + payload.byteLength);
+  bytes[0] = opcode;
+  bytes.set(payload, 1);
+  return bytes;
+}
+
+export function decodeMediaFrame(bytes: Uint8Array) {
+  return { opcode: bytes[0], payload: bytes.subarray(1) }; // a view, not a copy
+}
+
+export const mediaStream = defineSubscription({
+  name: "media.stream",
+  input: z.object({ source: z.string() }),
+  event: z.instanceof(Uint8Array),
+});
+```
+
+```ts
+useSubscription(mediaStream, { source }, (bytes) => {
+  const frame = decodeMediaFrame(bytes);
+  if (frame.opcode === MediaOpcode.Audio) audio.enqueue(frame.payload);
+  else video.draw(frame.payload);
+});
+```
+
+同一个订阅的事件按推送顺序到达，JSON 和二进制都一样。`plugin-examples/media-stream` 用这种方式传输视频和音频，并通过一个输入为 `Uint8Array` 的 RPC 把一帧上传回去；`plugin-examples/diff-watch` 监听工作树。
+
+### 旧版主机 {#older-hosts}
+
+订阅和二进制 RPC 值需要主机声明支持。连接旧版主机时，`useSubscription` 会报告 `error` 并提示更新主机，`client.subscribe` 的 `ready` 会以同样的信息拒绝，带有 `Uint8Array` 输入或输出的 RPC 会失败。请把插件的 `requirements.paseo` 提高到包含订阅功能的版本。
+
 ## 调试后端输出 {#debug-backend-output}
 
 后端贡献可以用普通的 Node 日志写入 stdout 和 stderr：

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -54,6 +55,7 @@ function makeSources(bundleSource = "export {};\n"): {
   mkdirSync(native, { recursive: true });
   writeFileSync(path.join(native, "pty.node"), "native");
   writeFileSync(path.join(native, "spawn-helper"), "#!/bin/sh\n", { mode: 0o755 });
+  chmodSync(path.join(native, "spawn-helper"), 0o755);
   // Another platform's build is not copied.
   mkdirSync(path.join(nodePtyDirectory, "prebuilds", "other-platform"));
   return { bundleDirectory, nodePtyDirectory };

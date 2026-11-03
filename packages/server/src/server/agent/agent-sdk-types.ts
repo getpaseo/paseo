@@ -697,6 +697,7 @@ export interface AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
+  /** Null until a new provider process could resume this session; see docs/providers.md. */
   describePersistence(): AgentPersistenceHandle | null;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.

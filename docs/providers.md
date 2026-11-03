@@ -507,6 +507,8 @@ interface AgentSession {
 }
 ```
 
+`describePersistence()` returns a handle only once a new provider process could resume it. Reload, idle runtime collection and daemon restart resume whatever handle the agent stored; a stored agent without one starts a new session instead. When there is no handle, `AgentManager` stores `getRuntimeInfo().sessionId` as one, so that ID follows the same rule. Codex, for example, starts a thread when the agent is created but writes its rollout only at its first turn, and `thread/resume` fails for it until then, so its adapter reports neither ID before Codex announces that turn.
+
 `setMode` and `setThinkingOption` may return an `AgentProviderNotice` when the provider knows the change needs user-facing context. For example, providers that stage changes until the next turn should return an `info` notice while a turn is already running. The app renders the notice generically as a toast; provider-specific lifecycle behavior stays in the provider implementation.
 
 ### Steps

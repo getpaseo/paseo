@@ -3,12 +3,14 @@ import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
   createInlinePathOpener,
+  type AssistantFileLinkResolverProviderProps,
   type InlinePathTarget,
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
+import { ForgeShorthandProvider } from "@/git/forge-shorthand";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
 import {
@@ -3778,7 +3780,8 @@ function WorkspaceScreenContent({
       workspaceKey={persistenceKey}
       sheetPaneHost={sheetPaneHost}
     >
-      <AssistantFileLinkResolverProvider
+      <WorkspaceMarkdownLinks
+        workspace={workspaceDescriptor}
         client={client}
         serverId={normalizedServerId}
         workspaceRoot={workspaceDirectory ?? undefined}
@@ -3786,8 +3789,23 @@ function WorkspaceScreenContent({
         toast={toast}
       >
         {renderedWorkspaceScreen}
-      </AssistantFileLinkResolverProvider>
+      </WorkspaceMarkdownLinks>
     </WorkspaceContentProviders>
+  );
+}
+
+/** File links and forge references for every Markdown surface in the workspace. */
+function WorkspaceMarkdownLinks({
+  workspace,
+  children,
+  ...fileLinks
+}: AssistantFileLinkResolverProviderProps & { workspace: WorkspaceDescriptor | null | undefined }) {
+  return (
+    <AssistantFileLinkResolverProvider {...fileLinks}>
+      <ForgeShorthandProvider forge={workspace?.forge} remoteUrl={workspace?.gitRuntime?.remoteUrl}>
+        {children}
+      </ForgeShorthandProvider>
+    </AssistantFileLinkResolverProvider>
   );
 }
 
