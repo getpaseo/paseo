@@ -92,6 +92,7 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { useSessionStore } from "@/stores/session-store";
+import { useDoublePress } from "@/hooks/use-double-press";
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -731,6 +732,7 @@ function TabChip({
   resolvedTab,
   setHoveredCloseTabKey,
   onNavigateTab,
+  onRenameTab,
   onCloseTab,
   dragHandleProps,
 }: {
@@ -753,6 +755,7 @@ function TabChip({
   resolvedTab: WorkspaceDesktopTabActions;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
+  onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
@@ -816,6 +819,17 @@ function TabChip({
     onNavigateTab(tab.tabId);
   }, [onNavigateTab, tab.tabId]);
 
+  // Single press selects the tab; a double press opens the rename modal — the
+  // same behavior the sidebar workspace rows have. Only agent and terminal
+  // tabs are renamable; the rename handler no-ops for the rest.
+  const handleRenameTabPress = useCallback(() => {
+    onRenameTab(tab);
+  }, [onRenameTab, tab]);
+  const handleTabPress = useDoublePress({
+    onPress: handleNavigateTab,
+    onRename: handleRenameTabPress,
+  });
+
   const handleCloseButtonPressIn = useCallback((event: { stopPropagation?: () => void }) => {
     event.stopPropagation?.();
   }, []);
@@ -861,7 +875,8 @@ function TabChip({
               testID={`workspace-tab-${testIdentity}`}
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               style={tabChipStyle}
-              onPress={handleNavigateTab}
+              onPressIn={isWeb ? handleNavigateTab : undefined}
+              onPress={handleTabPress}
               accessibilityRole="button"
               accessibilityLabel={accessibilityLabel}
               accessibilityState={tabAccessibilityState}
@@ -1582,6 +1597,7 @@ function ResolvedDesktopTabChip({
         resolvedTab={resolvedTab}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
         onNavigateTab={onNavigateTab}
+        onRenameTab={onRenameTab}
         onCloseTab={onCloseTab}
         dragHandleProps={dragHandleProps}
       />
