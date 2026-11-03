@@ -345,6 +345,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       baseEnv: environment,
+      envMode: "internal",
     });
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,

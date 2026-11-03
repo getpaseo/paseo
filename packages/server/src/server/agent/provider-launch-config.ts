@@ -5,6 +5,7 @@ import {
 } from "../../executable-resolution/executable-resolution.js";
 import {
   createExternalProcessEnv,
+  RUNTIME_CONTROL_ENV_KEYS,
   type ProcessEnvRecord,
   type ExternalProcessEnv,
 } from "../paseo-env.js";
@@ -222,8 +223,8 @@ export interface ProviderEnvOptions {
 }
 
 export interface ProviderEnvSpec {
-  baseEnv?: ProcessEnvRecord;
-  envOverlay: ProcessEnvRecord;
+  env: ExternalProcessEnv;
+  envMode: "internal";
 }
 
 function collectProviderEnvOverlays(
@@ -236,20 +237,24 @@ function collectProviderEnvOverlays(
 }
 
 export function createProviderEnvSpec(options: ProviderEnvOptions = {}): ProviderEnvSpec {
-  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
-  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
-  for (const key of PARENT_SESSION_ENV_VARS) {
-    envOverlay[key] = undefined;
-  }
-  return {
-    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-    envOverlay,
-  };
+  // Provider env is finalized here so spawning cannot scrub explicit user settings again.
+  return { env: createProviderEnv(options), envMode: "internal" };
 }
 
 export function createProviderEnv(options: ProviderEnvOptions = {}): ExternalProcessEnv {
-  const spec = createProviderEnvSpec(options);
-  return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
+  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
+  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
+  const env = createExternalProcessEnv(options.baseEnv ?? process.env, envOverlay);
+  for (const key of RUNTIME_CONTROL_ENV_KEYS) {
+    const configured = options.runtimeSettings?.env?.[key];
+    if (configured !== undefined) {
+      env[key] = configured;
+    }
+  }
+  for (const key of PARENT_SESSION_ENV_VARS) {
+    delete env[key];
+  }
+  return env;
 }
 
 export async function isProviderCommandAvailable(

@@ -129,6 +129,37 @@ function writePiResponse(
 }
 
 describe("PiCliRuntime", () => {
+  test("passes configured runtime controls to the spawned RPC process", async () => {
+    const source = `
+      const readline = require("node:readline");
+      readline.createInterface({ input: process.stdin }).on("line", (line) => {
+        const command = JSON.parse(line);
+        const env = {
+          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? null,
+          PASEO_NODE_ENV: process.env.PASEO_NODE_ENV ?? null,
+        };
+        console.log(JSON.stringify({ type: "response", id: command.id, success: true,
+          data: { commands: [{ name: "env", description: JSON.stringify(env) }] } }));
+      });
+    `;
+    const runtime = new PiCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: [process.execPath, "-e", source, "--"],
+      runtimeSettings: { env: { ELECTRON_RUN_AS_NODE: "1" } },
+    });
+    const session = await runtime.startSession({
+      cwd: process.cwd(),
+      env: { ELECTRON_RUN_AS_NODE: "session", PASEO_NODE_ENV: "development" },
+    });
+    try {
+      expect(await session.getCommands()).toEqual([
+        { name: "env", description: '{"ELECTRON_RUN_AS_NODE":"1","PASEO_NODE_ENV":null}' },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("starts pi in rpc mode and resolves command responses", async () => {
     const child = createPiChild();
     replyToCommands(child, (command) =>
