@@ -28,8 +28,17 @@ runMinimaxACPSmoke("MiniMax Code ACP live smoke", () => {
     try {
       const terminal = Promise.withResolvers<{ type: string; error?: string }>();
       let phase: 1 | 2 = 1;
-      const turn1 = { sawTerminal: false, error: null as string | null };
+      const turn1 = {
+        sawTerminal: false,
+        type: null as string | null,
+        error: null as string | null,
+      };
+      const turn1Started = Promise.withResolvers<void>();
       session.subscribe((event) => {
+        if (event.type === "turn_started" && phase === 1) {
+          turn1Started.resolve();
+          return;
+        }
         if (
           event.type !== "turn_completed" &&
           event.type !== "turn_failed" &&
@@ -40,6 +49,7 @@ runMinimaxACPSmoke("MiniMax Code ACP live smoke", () => {
         const error = event.type === "turn_failed" ? event.error : undefined;
         if (phase === 1) {
           turn1.sawTerminal = true;
+          turn1.type = event.type;
           turn1.error = error ?? null;
           return;
         }
@@ -47,10 +57,18 @@ runMinimaxACPSmoke("MiniMax Code ACP live smoke", () => {
       });
 
       await session.startTurn("Use bash to run: echo paseo-interrupt-probe-1");
-      // Let the provider actually start, then cancel mid-flight.
+      // The cancel has to land while the provider still owns the turn, so wait
+      // for the turn to start before interrupting it.
+      await turn1Started.promise;
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       await session.interrupt();
+
+      // A turn that ended before the cancel arrived was never cancelled, so the
+      // interrupt would have had nothing to do. Only a cancelled turn proves
+      // the provider was still holding it.
       expect(turn1.sawTerminal).toBe(true);
+      expect(turn1.type).toBe("turn_canceled");
+      expect(turn1.error).toBeNull();
 
       phase = 2;
       await session.startTurn("Use bash to run: echo paseo-interrupt-probe-2");

@@ -1775,6 +1775,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly usageSessionKey = randomUUID();
   private readonly harnessEnvironment: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  /** Called when the foreground turn ends, so an interrupt can stop watching. */
+  private readonly turnEndListeners = new Set<() => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
@@ -2700,18 +2702,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       // window where a replacement prompt races the provider's own release and
       // is rejected with "already has an active turn".
       const cancelledTurnId = this.activeForegroundTurnId;
+      const check = () => {
+        if (this.activeForegroundTurnId !== cancelledTurnId) {
+          this.turnEndListeners.delete(check);
+          resolveReleased();
+        }
+      };
+      let resolveReleased!: () => void;
       const released = new Promise<void>((resolve) => {
-        const check = () => {
-          if (this.activeForegroundTurnId !== cancelledTurnId) resolve();
-        };
-        this.subscribe(check);
+        resolveReleased = resolve;
+        this.turnEndListeners.add(check);
       });
-      await this.connection.cancel({ sessionId: this.sessionId });
-      await withTimeout(
-        released,
-        ACP_INTERRUPT_RELEASE_TIMEOUT_MS,
-        `ACP interrupt timed out after ${ACP_INTERRUPT_RELEASE_TIMEOUT_MS}ms`,
-      ).catch(() => undefined);
+      try {
+        await this.connection.cancel({ sessionId: this.sessionId });
+        await withTimeout(
+          released,
+          ACP_INTERRUPT_RELEASE_TIMEOUT_MS,
+          `ACP interrupt timed out after ${ACP_INTERRUPT_RELEASE_TIMEOUT_MS}ms`,
+        ).catch(() => undefined);
+      } finally {
+        // The gate watches for the turn to end and has nothing left to watch
+        // once it fired, so it must not stay subscribed to later events.
+        this.turnEndListeners.delete(check);
+      }
     }
   }
 
@@ -2730,6 +2743,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    this.turnEndListeners.clear();
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
@@ -3632,6 +3646,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
+    // The turn is over, so anything waiting for it to end can stop waiting. The
+    // listeners are copied first: one of them may remove itself while it runs.
+    for (const listener of Array.from(this.turnEndListeners)) {
+      listener();
+    }
   }
 
   private cancelPendingPermissions(

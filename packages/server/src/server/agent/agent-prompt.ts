@@ -168,7 +168,15 @@ async function startAgentRunInner(
   options?.onDispatch?.("turn_started");
   void (async () => {
     try {
-      await drainAgentRunEvents(agentManager, agentId, prompt, options, iterator, logger, snapshot);
+      await drainAgentRunEvents({
+        agentManager,
+        agentId,
+        prompt,
+        options,
+        iterator,
+        logger,
+        snapshot,
+      });
     } catch (error) {
       logger.trace(
         {
@@ -193,21 +201,26 @@ async function startAgentRunInner(
  * session from persistence and redelivers the prompt at most once, so a provider
  * that never unblocks still surfaces its error to the user.
  */
-async function drainAgentRunEvents(
-  agentManager: AgentRunController,
-  agentId: string,
-  prompt: AgentPromptInput,
-  options: StartAgentRunOptions | undefined,
-  iterator: AsyncGenerator<AgentStreamEvent>,
-  logger: Logger,
-  snapshot: ManagedAgent | null,
-): Promise<void> {
+async function drainAgentRunEvents(input: {
+  agentManager: AgentRunController;
+  agentId: string;
+  prompt: AgentPromptInput;
+  options: StartAgentRunOptions | undefined;
+  iterator: AsyncGenerator<AgentStreamEvent>;
+  logger: Logger;
+  snapshot: ManagedAgent | null;
+}): Promise<void> {
+  const { agentManager, agentId, prompt, options, iterator, logger, snapshot } = input;
   let failure: { type: string; error: string; code?: string } | null;
   try {
     failure = await drainAgentRunIterator(iterator);
   } catch (error) {
     if (!isStaleProviderSessionError(error)) throw error;
     logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
+    if (isSuperseded(agentManager, agentId, logger)) {
+      logRunDrained(agentId, snapshot, logger);
+      return;
+    }
     await agentManager.reloadAgentSession(agentId);
     const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
     await drainAgentRunIterator(retry.iterator);
@@ -224,6 +237,14 @@ async function drainAgentRunEvents(
       },
       "Provider still owns its previous turn; reopening the session from persistence and redelivering the prompt once",
     );
+    // The failed run released its slot before the recovery starts, so the user
+    // may have sent another prompt in that window. Reloading the session would
+    // cancel that newer run, and redelivering this prompt would replace it.
+    // The recovery belongs to the run that failed, so it steps aside.
+    if (isSuperseded(agentManager, agentId, logger)) {
+      logRunDrained(agentId, snapshot, logger);
+      return;
+    }
     await agentManager.reloadAgentSession(agentId);
     const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
     const retryFailure = await drainAgentRunIterator(retry.iterator);
@@ -232,6 +253,21 @@ async function drainAgentRunEvents(
     }
   }
   logRunDrained(agentId, snapshot, logger);
+}
+
+/**
+ * Whether a newer run took over the agent while this run was failing.
+ *
+ * The recovery exists to redeliver the prompt that failed. A run that started
+ * after the failure already carries the user's newest intent, and reloading
+ * the session under it would cancel work the user asked for.
+ */
+function isSuperseded(agentManager: AgentRunController, agentId: string, logger: Logger): boolean {
+  if (!agentManager.hasInFlightRun(agentId)) {
+    return false;
+  }
+  logger.info({ agentId }, "A newer run took over the agent; leaving the recovery to it");
+  return true;
 }
 
 function logRunDrained(agentId: string, snapshot: ManagedAgent | null, logger: Logger): void {

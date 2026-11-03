@@ -17,6 +17,7 @@ import { AgentManager } from "./agent-manager.js";
 import { startAgentRun, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
 import type {
   AgentClient,
+  AgentPromptInput,
   AgentRunResult,
   AgentSession,
   AgentStreamEvent,
