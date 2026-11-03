@@ -353,7 +353,9 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollAttempts).toHaveLength(0);
   });
 
-  it("leaves the viewport to a user scroll that owns it", () => {
+  // While following, the list keeps its end through every content change, so a drag that kept
+  // following would see each streamed line move the rows under the finger.
+  it("stops following while a user scroll owns the viewport", () => {
     const harness = createDriverHarness({
       transportBehavior: {
         verificationDelayFrames: 2,
@@ -371,7 +373,7 @@ describe("bottom anchor controller driver", () => {
     harness.scheduler.flushAll();
 
     expect(harness.scrollAttempts).toHaveLength(0);
-    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+    expect(harness.driver.getSnapshot().mode).toBe("detached");
 
     harness.driver.endUserScroll({ isNearBottom: false });
 
@@ -406,7 +408,8 @@ describe("bottom anchor controller driver", () => {
       pendingRequest: null,
       pendingVerification: null,
     });
-    expect(harness.scrollAttempts).toHaveLength(0);
+    // Following stopped for the gesture, so content that arrived meanwhile left the end below it.
+    expect(harness.scrollAttempts).toEqual([false]);
   });
 
   it("holds a disclosure detached and resumes following when it is released at the end", () => {

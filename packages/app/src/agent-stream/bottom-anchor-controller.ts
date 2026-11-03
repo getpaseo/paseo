@@ -504,13 +504,19 @@ function createBottomAnchorControllerDriver(
     requestLocalAnchor(request) {
       createRequest(request);
     },
+    // The gesture owns the viewport, so following stops until it ends: content growing at the end
+    // must not move the rows under the finger. The gesture's end decides whether following resumes.
     beginUserScroll() {
       isUserScrollActive = true;
       cancelPendingAttempt();
+      setModeInternal("detached");
     },
     endUserScroll(params) {
       isUserScrollActive = false;
       if (params.isNearBottom) {
+        // Released short of the end, or with output that arrived during the gesture below it. The
+        // scroll there is not animated: on Android a line mounting during a smooth scroll cancels it
+        // and the list follows from short of the end.
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
           pendingVerification = { requestId: null, retries: 0 };
@@ -532,9 +538,8 @@ function createBottomAnchorControllerDriver(
         markStickyMeasurementVerified();
         return;
       }
-      if (mode === "sticky-bottom") {
-        this.detachByUser();
-      }
+      cancelPendingRequest("user_scrolled_away");
+      setModeInternal("detached");
     },
     detachByUser() {
       if (mode === "detached") {

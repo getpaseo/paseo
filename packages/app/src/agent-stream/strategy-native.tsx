@@ -358,6 +358,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   //   and the controller reads that as the user scrolling away.
   // - A disclosure hold: the held row. The hold detaches the controller, which removes the pin, and
   //   LegendList keeps only the held row in place.
+  // - A user scroll: the finger. The controller detaches for the gesture, so streamed lines grow below
+  //   the rows the user is dragging, and resumes following if the gesture ends at the end.
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading
   //   above or rows growing below leave what the user is reading where it is.
   const isFollowingEnd = bottomAnchorController.mode === "sticky-bottom";
