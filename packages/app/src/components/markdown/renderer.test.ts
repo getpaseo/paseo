@@ -47,19 +47,20 @@ describe("CJK emphasis flanking", () => {
       { type: "Text", content: "决定去哪找、哪些文件算更新包、应该加载哪个版本。" },
     ]);
   });
-  it.each([
-    ["前**「中文」**后", "Strong", "「中文」"],
-    ["前*「日本語。」*后", "Emphasis", "「日本語。」"],
-    ["前**（한국어）**后", "Strong", "（한국어）"],
-  ])("renders CJK punctuation inside emphasis: %s", async (source, type, text) => {
-    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
-    const content = tree.children?.[0]?.children;
-    expect(content?.map((node) => node.type)).toEqual(["Text", type, "Text"]);
-    function nodeText(node: ASTNode): string {
-      return node.content ?? node.children?.map(nodeText).join("") ?? "";
-    }
-    expect(content?.map(nodeText)).toEqual(["前", text, "后"]);
-  });
+  it.each(["前**「中文」**后", "前*「日本語。」*后", "前**（한국어）**后"])(
+    "keeps letter-bounded emphasis after punctuation literal, as CommonMark: %s",
+    async (source) => {
+      const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+      const content = tree.children?.[0]?.children;
+      expect(content?.some((node) => node.type === "Strong" || node.type === "Emphasis")).toBe(
+        false,
+      );
+      function nodeText(node: ASTNode): string {
+        return node.content ?? node.children?.map(nodeText).join("") ?? "";
+      }
+      expect(content?.map(nodeText).join("")).toBe(source);
+    },
+  );
   it.each([
     "\\*\\*Obsidian：\\*\\*决定",
     "before**word:**after",
@@ -77,6 +78,32 @@ describe("CJK emphasis flanking", () => {
     const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
     expect(tree.children?.[0]?.children).toEqual([
       { type: "Code", children: [{ type: "Text", content: "**Obsidian：**决定" }] },
+    ]);
+  });
+  it("renders highlight spans with nested emphasis and code", async () => {
+    const source = "==**重要：**请读 `file.ts`==";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      latexMath: false,
+      highlight: true,
+    });
+    expect(tree.children?.[0]?.children).toEqual([
+      {
+        type: "Highlight",
+        children: [
+          { type: "Strong", children: [{ type: "Text", content: "重要：" }] },
+          { type: "Text", content: "请读 " },
+          { type: "Code", children: [{ type: "Text", content: "file.ts" }] },
+        ],
+      },
+    ]);
+  });
+  it("keeps highlight delimiters literal in code", async () => {
+    const tree = await parseMarkdown(prepareMarkdownSource("`==高亮==`").render(), {
+      latexMath: false,
+      highlight: true,
+    });
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Code", children: [{ type: "Text", content: "==高亮==" }] },
     ]);
   });
 });
@@ -649,6 +676,10 @@ describe("shared Markdown theme colours", () => {
       markerColor: theme.colors.foregroundMuted,
     });
     expect(style.h6?.color).toBe(theme.colors.foregroundMuted);
+    expect(style.highlight).toEqual({
+      color: theme.colors.foreground,
+      backgroundColor: theme.colors.statusWarningTint,
+    });
     expect(style.taskList).toMatchObject({
       checkedTextColor: theme.colors.foregroundMuted,
       checkedColor: theme.colors.accent,

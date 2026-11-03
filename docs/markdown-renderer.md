@@ -18,7 +18,7 @@ Resolve workspace image paths over the existing session RPC, then give the libra
 
 The pinned nightly has the same React Native package and core source trees as upstream commit `73ac5085eb1fdc743973b3473d4dba65abad5261`. Compatibility was checked with React Native 0.81.5. Native dependencies must be rebuilt when changing the highlighting configuration; JavaScript refresh cannot enable compiled grammars.
 
-Math and video are disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
+Math and video are disabled. Task lists, admonitions and `==highlight==` spans are enabled; task checkboxes are read-only. Highlights keep the surrounding text colour over the theme's amber tint. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
 
 The MD4C patch treats CJK punctuation and fullwidth forms as word content for asterisk emphasis flanking. This departs from CommonMark so `**Obsidian：**决定` and `**「中文」**后` render without inserting spaces or changing copied text. Underscore emphasis, ASCII punctuation, escapes and code keep their existing rules. Rebuild both checked-in WASM copies when changing the C parser; native clients require a rebuild too.
 
