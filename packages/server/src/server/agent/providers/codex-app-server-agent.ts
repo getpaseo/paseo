@@ -3521,7 +3521,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   // in this app-server, so no other app-server can resume it and it is not reported.
   private savedThreadId: string | null = null;
   private currentTurnId: string | null = null;
-  private promptRejection: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -6452,7 +6451,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       .map((entry) => entry.text.trim())
       .filter((text) => text.length > 0)
       .join("\n\n");
-    this.promptRejection = feedback || "Prompt rejected by a UserPromptSubmit hook.";
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: {
+        type: "notification",
+        level: "error",
+        message: feedback || "Prompt rejected by a UserPromptSubmit hook.",
+      },
+    });
   }
 
   private handleTurnCompletedNotification(
@@ -6476,12 +6483,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (parsed.status !== "interrupted" && this.currentTurnId) {
       this.terminalProcessIdsByTurnId.delete(this.currentTurnId);
     }
-    // Codex completes rejected submissions successfully without accepting a user message.
-    if (parsed.status === "failed" || this.promptRejection !== null) {
+    if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
-        error: this.promptRejection ?? parsed.errorMessage ?? "Codex turn failed",
+        error: parsed.errorMessage ?? "Codex turn failed",
       });
     } else if (parsed.status === "interrupted") {
       this.dismissInterruptedAsyncQuestions();
@@ -6506,7 +6512,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resetTurnTrackingState(): void {
-    this.promptRejection = null;
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
