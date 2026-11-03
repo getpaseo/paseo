@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
   cleanupRewindFlow,
@@ -119,15 +120,46 @@ test.describe("real provider composer task lists", () => {
   });
 });
 
-async function openBackgroundWork(page: Page, compact: boolean): Promise<void> {
-  const pill = page.getByRole("button", { name: /Background · 1/ });
-  await expect(pill).toBeVisible({ timeout: 30_000 });
+async function openBackgroundInventory(
+  page: Page,
+  options: { compact: boolean; count: number; timeout: number },
+): Promise<Locator> {
+  const pill = page.getByRole("button", { name: `Background · ${options.count}` });
+  await expect(pill).toBeVisible({ timeout: options.timeout });
   await pill.click();
   const panel = page.getByTestId(
-    compact ? "background-work-panel-content" : "background-work-panel",
+    options.compact ? "background-work-panel-content" : "background-work-panel",
   );
+  if (options.compact) await waitForSettledPosition(panel);
+  return panel;
+}
+
+async function openBackgroundWork(page: Page, compact: boolean): Promise<void> {
+  const panel = await openBackgroundInventory(page, { compact, count: 1, timeout: 30_000 });
   await expect(panel).toContainText(/sleep 120/);
-  if (compact) await waitForSettledPosition(panel);
+}
+
+async function expectBackgroundItems(
+  panel: Locator,
+  selected: string,
+  sibling: string,
+): Promise<void> {
+  await expect(panel).toContainText(selected);
+  await expect(panel).toContainText(sibling);
+}
+
+async function stopBackgroundItem(panel: Locator, selected: string): Promise<void> {
+  const escaped = selected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await panel.getByRole("button", { name: new RegExp(`Stop .*${escaped}`) }).click();
+}
+
+async function expectStoppedItemAndSibling(
+  panel: Locator,
+  selected: string,
+  sibling: string,
+): Promise<void> {
+  await expect(panel).not.toContainText(selected, { timeout: 40_000 });
+  await expect(panel).toContainText(sibling);
 }
 
 async function closeBackgroundWork(page: Page, compact: boolean): Promise<void> {
@@ -380,15 +412,14 @@ for (const scenario of [
         providerConfig: scenario.providerConfig,
       });
       await sendMessage(handle, scenario.prompt);
-      const pill = page.getByRole("button", { name: /Background · 2/ });
-      await expect(pill).toBeVisible({ timeout: 60_000 });
-      await pill.click();
-      const panel = page.getByTestId("background-work-panel");
-      await expect(panel).toContainText("sleep 180");
-      await expect(panel).toContainText("sleep 181");
-      await panel.getByRole("button", { name: /Stop .*sleep 180/ }).click();
-      await expect(panel).not.toContainText("sleep 180", { timeout: 40_000 });
-      await expect(panel).toContainText("sleep 181");
+      const panel = await openBackgroundInventory(page, {
+        compact: false,
+        count: 2,
+        timeout: 60_000,
+      });
+      await expectBackgroundItems(panel, "sleep 180", "sleep 181");
+      await stopBackgroundItem(panel, "sleep 180");
+      await expectStoppedItemAndSibling(panel, "sleep 180", "sleep 181");
       await page.screenshot({
         path: path.resolve(`../../.artifacts/phase3-${scenario.provider}-stop.png`),
         animations: "disabled",
@@ -420,16 +451,10 @@ test("Claude stops a selected monitor in the compact sheet", async ({ page }) =>
       'Use exactly two separate Monitor tool calls, each with command `sleep 150`, timeout_ms 150000, persistent false, descriptions "probe monitor one" and "probe monitor two". Launch both independently, do not wait, then reply SPAWNED. Do not use any other tools.',
     );
     await expectAssistantReply(page, "SPAWNED");
-    const pill = page.getByRole("button", { name: /Background · 2/ });
-    await expect(pill).toBeVisible({ timeout: 30_000 });
-    await pill.click();
-    const panel = page.getByTestId("background-work-panel-content");
-    await waitForSettledPosition(panel);
-    await expect(panel).toContainText("probe monitor one");
-    await expect(panel).toContainText("probe monitor two");
-    await panel.getByRole("button", { name: /Stop .*probe monitor one/ }).click();
-    await expect(panel).not.toContainText("probe monitor one", { timeout: 40_000 });
-    await expect(panel).toContainText("probe monitor two");
+    const panel = await openBackgroundInventory(page, { compact: true, count: 2, timeout: 30_000 });
+    await expectBackgroundItems(panel, "probe monitor one", "probe monitor two");
+    await stopBackgroundItem(panel, "probe monitor one");
+    await expectStoppedItemAndSibling(panel, "probe monitor one", "probe monitor two");
     await page.screenshot({
       path: path.resolve("../../.artifacts/phase3-claude-monitor-compact.png"),
       animations: "disabled",
