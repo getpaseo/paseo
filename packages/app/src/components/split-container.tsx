@@ -430,17 +430,20 @@ function SplitNodeView({
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
   const groupSizes =
     storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
-  const dockChildIndex =
-    node.kind === "group" && bottomPaneId
-      ? node.group.children.findIndex(
-          (child) => child.kind === "pane" && child.pane.id === bottomPaneId,
-        )
-      : -1;
   // The dock's pixel height is a seed, not a ceiling: it caps the untouched default so a
   // fraction cannot grow with tall windows, but the user's own resizes win afterwards -
   // free to drag taller, bounded only by the sibling panes' minimums at commit. Vertical
   // groups only: splitting the dock left or right puts it in a horizontal group whose
-  // width must stay untouched.
+  // width must stay untouched. The dock may sit inside that nested horizontal group, so
+  // a vertical group caps the child subtree that contains it.
+  const dockChildIndex =
+    node.kind === "group" && bottomPaneId
+      ? node.group.children.findIndex(
+          (child) =>
+            (child.kind === "pane" && child.pane.id === bottomPaneId) ||
+            (child.kind === "group" && splitNodeContainsPane(child, bottomPaneId)),
+        )
+      : -1;
   const maxDockFraction =
     dockChildIndex >= 0 && groupDirection === "vertical" && groupContainerSize > 0
       ? BOTTOM_DOCK_DEFAULT_HEIGHT_PX / groupContainerSize
@@ -847,22 +850,28 @@ function removePaneFromSplitTree(node: SplitNode, paneId: string | null): SplitN
     return node.pane.id === paneId ? null : node;
   }
 
-  const children = node.group.children.flatMap((child) => {
+  const kept = node.group.children.flatMap((child, index) => {
     const nextChild = removePaneFromSplitTree(child, paneId);
-    return nextChild ? [nextChild] : [];
+    return nextChild ? [{ child: nextChild, size: node.group.sizes[index] ?? 0 }] : [];
   });
-  if (children.length === 0) {
+  if (kept.length === 0) {
     return null;
   }
-  if (children.length === 1) {
-    return children[0] ?? null;
+  if (kept.length === 1) {
+    return kept[0]?.child ?? null;
   }
+  const keptTotal = kept.reduce((sum, entry) => sum + entry.size, 0);
   return {
     kind: "group",
     group: {
       ...node.group,
-      children,
-      sizes: children.map(() => 1 / children.length),
+      children: kept.map((entry) => entry.child),
+      // Renormalize the surviving fractions so removal keeps the group's proportions;
+      // equal-splitting here would reset e.g. the dock's quarter-height seed.
+      sizes:
+        keptTotal > 0
+          ? kept.map((entry) => entry.size / keptTotal)
+          : kept.map(() => 1 / kept.length),
     },
   };
 }
