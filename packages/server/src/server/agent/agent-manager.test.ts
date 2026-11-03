@@ -4720,6 +4720,74 @@ test("importProviderSession imports the selected session without listing and pub
   expect((await storage.get(imported.id))?.title).toBe("Renamed in Paseo");
 });
 
+test.each([1, 2])(
+  "importProviderSession retains title changes during registration snapshot %i",
+  async (snapshotNumber) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-title-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    class TitleSession extends TestAgentSession {
+      title = "Initial provider title";
+
+      override async getRuntimeInfo() {
+        return { ...(await super.getRuntimeInfo()), extra: { title: this.title } };
+      }
+    }
+    const session = new TitleSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      async importSession() {
+        return {
+          session,
+          config: { provider: "codex" as const, cwd: workdir },
+          persistence: session.describePersistence(),
+          timeline: [],
+        };
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const applySnapshot = storage.applySnapshot.bind(storage);
+    let snapshots = 0;
+    const snapshotSpy = vi.spyOn(storage, "applySnapshot").mockImplementation(async (...args) => {
+      snapshots += 1;
+      if (snapshots === snapshotNumber) {
+        session.title = "Renamed during registration";
+        session.pushEvent({
+          type: "provider_title_changed",
+          provider: session.provider,
+          title: session.title,
+        });
+      }
+      return await applySnapshot(...args);
+    });
+
+    try {
+      const imported = await manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: session.id,
+        cwd: workdir,
+        workspaceId: "ws-imported",
+        title: "Listed provider title",
+        providerTitleSync: true,
+      });
+
+      expect((await storage.get(imported.id))?.title).toBe("Renamed during registration");
+      expect((await storage.get(imported.id))?.providerTitleSync).toBe(true);
+
+      session.pushEvent({
+        type: "provider_title_changed",
+        provider: session.provider,
+        title: "Renamed after registration",
+      });
+      await manager.flush();
+      expect((await storage.get(imported.id))?.title).toBe("Renamed after registration");
+    } finally {
+      snapshotSpy.mockRestore();
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
   const storagePath = join(workdir, "agents");

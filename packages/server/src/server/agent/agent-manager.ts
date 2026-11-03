@@ -3894,6 +3894,7 @@ export class AgentManager {
         }
         this.refreshSessionPersistence(managed);
       }
+      const releaseSessionEvents = this.subscribeToSession(managed);
       await this.refreshRuntimeInfo(managed, { emit: false });
       initialPersistedTitle = this.resolveInitialProviderTitle(managed, initialPersistedTitle);
       this.assertAgentRegistrationActive(managed);
@@ -3917,7 +3918,7 @@ export class AgentManager {
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
-      this.subscribeToSession(managed);
+      releaseSessionEvents();
       await this.drainSessionEvents(managed.id);
       this.assertAgentRegistrationActive(managed);
       return { ...managed };
@@ -4147,15 +4148,28 @@ export class AgentManager {
       });
     }
   }
-  private subscribeToSession(agent: ActiveManagedAgent): void {
+  private subscribeToSession(agent: ActiveManagedAgent): () => void {
     if (agent.unsubscribeSession) {
-      return;
+      return () => {};
     }
     const agentId = agent.id;
+    // Registration writes initial snapshots before provider events may mutate the agent.
+    let bufferedEvents: AgentStreamEvent[] | null = [];
     const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
-      this.enqueueSessionEvent(agentId, event);
+      if (bufferedEvents) {
+        bufferedEvents.push(event);
+      } else {
+        this.enqueueSessionEvent(agentId, event);
+      }
     });
     agent.unsubscribeSession = unsubscribe;
+    return () => {
+      const events = bufferedEvents ?? [];
+      bufferedEvents = null;
+      for (const event of events) {
+        this.enqueueSessionEvent(agentId, event);
+      }
+    };
   }
 
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
