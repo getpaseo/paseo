@@ -6,7 +6,7 @@ import {
   actionsWithoutPrimary,
   buildGitActions,
   isCurrentBranchBase,
-  isCurrentBranchLocalMergeTarget,
+  canMergeIntoLocalBase,
   type BuildGitActionsInput,
 } from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
@@ -78,7 +78,7 @@ function createInput(
     hasRemote: false,
     isPaseoOwnedWorktree: false,
     isOnBaseBranch: true,
-    isOnLocalMergeTarget: false,
+    canMergeLocally: true,
     hasUncommittedChanges: false,
     baseRefAvailable: true,
     baseRefLabel: "main",
@@ -221,9 +221,9 @@ describe("git-actions-policy", () => {
     expect(isCurrentBranchBase("release", "release")).toBe(true);
     expect(isCurrentBranchBase("release", "origin/release")).toBe(true);
     expect(isCurrentBranchBase(null, "refs/heads/release")).toBe(false);
-    expect(isCurrentBranchLocalMergeTarget("release", "refs/heads/release")).toBe(true);
-    expect(isCurrentBranchLocalMergeTarget("feature", "refs/remotes/origin/release")).toBe(false);
-    expect(isCurrentBranchLocalMergeTarget("release", "refs/remotes/upstream/release")).toBe(false);
+    expect(canMergeIntoLocalBase("release", "refs/heads/release")).toBe(false);
+    expect(canMergeIntoLocalBase("feature", "refs/remotes/origin/release")).toBe(true);
+    expect(canMergeIntoLocalBase("release", "refs/remotes/upstream/release")).toBe(false);
   });
 
   it("offers local merge when the selected local base starts with origin slash", () => {
@@ -231,10 +231,7 @@ describe("git-actions-policy", () => {
       createInput({
         isPaseoOwnedWorktree: true,
         isOnBaseBranch: isCurrentBranchBase("release", "refs/heads/origin/release"),
-        isOnLocalMergeTarget: isCurrentBranchLocalMergeTarget(
-          "release",
-          "refs/heads/origin/release",
-        ),
+        canMergeLocally: canMergeIntoLocalBase("release", "refs/heads/origin/release"),
         baseRefLabel: "origin/release",
         aheadCount: 1,
         shipDefault: "merge",
@@ -243,15 +240,30 @@ describe("git-actions-policy", () => {
     expect(actions.primary?.id).toBe("merge-branch");
   });
 
+  it("offers update but not local merge for a non-origin remote base", () => {
+    const actions = buildGitActions(
+      createInput({
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        canMergeLocally: canMergeIntoLocalBase("feature", "refs/remotes/upstream/release"),
+        baseRefLabel: "upstream/release",
+        aheadCount: 1,
+        behindBaseCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        shipDefault: "merge",
+      }),
+    );
+    expect(actions.primary?.id).toBe("merge-from-base");
+    expect(actionsWithoutPrimary(actions).map((action) => action.id)).not.toContain("merge-branch");
+  });
+
   it("does not offer merging into the current local branch when the remote base shares its name", () => {
     const actions = buildGitActions(
       createInput({
         isPaseoOwnedWorktree: true,
         isOnBaseBranch: false,
-        isOnLocalMergeTarget: isCurrentBranchLocalMergeTarget(
-          "release",
-          "refs/remotes/origin/release",
-        ),
+        canMergeLocally: canMergeIntoLocalBase("release", "refs/remotes/origin/release"),
         baseRefLabel: "release",
         aheadCount: 1,
         behindBaseCount: 1,
