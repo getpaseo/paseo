@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { expect, it } from "vitest";
 import { dispatchTopOverlayKeyDown } from "@/keyboard";
-import { useComposerFullscreenExit } from "./fullscreen-exit.native";
+import { useComposerFullscreenExit } from "./fullscreen-exit";
 
 it("the native entry claims Escape until fullscreen closes", () => {
   let exits = 0;
