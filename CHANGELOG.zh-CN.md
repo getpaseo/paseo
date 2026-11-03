@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.15.0-beta.1 - 2026-11-01
+## 0.15.0 - 2026-11-03
 
-daemon 重启后，终端中的程序继续运行，被中断的 Agent 会自动在原有会话中恢复工作。
+daemon 重启后，终端中的程序继续运行。开启 Agent 恢复后，被中断的 Agent 会在原有会话中恢复工作。
 
 移动端终端采用原生渲染，并提供可拖动的文本选择手柄。重新连接时最多恢复 10,000 行终端历史。
 
@@ -13,7 +13,7 @@ worktree 初始化支持复制被忽略的文件，并在 Agent 启动前使用�
 - 点击回复中的已知 Agent 命令，将其插入 Composer 草稿 ([#8371](https://github.com/getpaseo/paseo/pull/8371))
 - 复用已运行的 OpenCode v2 服务 ([#7435](https://github.com/getpaseo/paseo/pull/7435)，贡献者：[@mcowger](https://github.com/mcowger))
 - 让终端中的程序在 daemon 重启、崩溃和支持的更新过程中继续运行 ([#7644](https://github.com/getpaseo/paseo/pull/7644), [#8155](https://github.com/getpaseo/paseo/pull/8155)，贡献者：[@sebastianarena](https://github.com/sebastianarena))
-- 主机重启后，自动在原有会话中恢复被中断的 Agent ([#8127](https://github.com/getpaseo/paseo/pull/8127)，贡献者：[@coolwindX](https://github.com/coolwindX), [@suntianc](https://github.com/suntianc))
+- 新增可选设置，在主机重启后于原有会话中恢复被中断的 Agent ([#8127](https://github.com/getpaseo/paseo/pull/8127), [#8619](https://github.com/getpaseo/paseo/pull/8619)，贡献者：[@coolwindX](https://github.com/coolwindX), [@suntianc](https://github.com/suntianc))
 - 在 iOS 和 Android 终端中新增可拖动的文本选择手柄 ([#8348](https://github.com/getpaseo/paseo/pull/8348))
 - 让手机和平板遵循系统屏幕旋转设置 ([#8256](https://github.com/getpaseo/paseo/pull/8256)，贡献者：[@magiclaw](https://github.com/magiclaw), [@yzim](https://github.com/yzim))
 - 通过 `.worktreeinclude` 选择要复制到新 worktree 的被忽略文件，在初始化和 Agent 启动前完成复制 ([#8100](https://github.com/getpaseo/paseo/pull/8100)，贡献者：[@cprecioso](https://github.com/cprecioso))
@@ -64,6 +64,7 @@ worktree 初始化支持复制被忽略的文件，并在 Agent 启动前使用�
 - 修复了 MiniMax Code 目录命令无法选定可执行文件的问题 ([#8201](https://github.com/getpaseo/paseo/pull/8201)，贡献者：[@Peanut-HZM](https://github.com/Peanut-HZM))
 - 修复了 Android 应用在后台折叠或展开后保留错误布局的问题 ([#8285](https://github.com/getpaseo/paseo/pull/8285))
 - 修复了 Android 屏幕旋转后工作区布局和顶栏渐变保留旧尺寸的问题 ([#8349](https://github.com/getpaseo/paseo/pull/8349), [#8377](https://github.com/getpaseo/paseo/pull/8377))
+- 修复了 iOS 和 Android 手机聊天中重新连接和更新状态被顶栏遮挡的问题 ([#8568](https://github.com/getpaseo/paseo/pull/8568))
 - 修复了删除 Agent 后，另一个窗口留下无法关闭的标签页的问题 ([#8248](https://github.com/getpaseo/paseo/pull/8248)，贡献者：[@loganmeyer](https://github.com/loganmeyer))
 - 修复了窗口隐藏期间切换主题后，聊天文本保留旧主题颜色的问题 ([#8199](https://github.com/getpaseo/paseo/pull/8199)，贡献者：[@Nurshot](https://github.com/Nurshot), [@dansabin](https://github.com/dansabin))
 - 修复了网页菜单加载内容后跳回加载时尺寸的问题 ([#8180](https://github.com/getpaseo/paseo/pull/8180)，贡献者：[@babo-jeonguk](https://github.com/babo-jeonguk))
@@ -74,7 +75,7 @@ worktree 初始化支持复制被忽略的文件，并在 Agent 启动前使用�
 ### 说明
 
 - 首次从 0.14.0 升级时仍会关闭终端；安装新 daemon 后才支持保留终端，Windows 桌面应用升级仍会关闭终端
-- Agent 自动恢复默认开启，并发送 `Resume working.`；可在主机设置 → Agent 中修改提示词或关闭此功能
+- Agent 恢复默认关闭；在主机设置 → Agent 中开启 **重启后恢复智能体**，即可发送 `Resume working.` 或自定义提示词
 - 降级到 0.14.0 前，请恢复备份的 `config.json`，或删除已保存的 Agent 恢复和用量查询设置
 
 ## 0.14.0 - 2026-10-29

@@ -550,44 +550,45 @@ function createGitHubPrRemoteRepo() {
 
 describe("runWorktreeSetupInBackground", () => {
   const cleanupPaths: string[] = [];
+  let stopSetup: (() => Promise<void>) | undefined;
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopSetup?.();
+    stopSetup = undefined;
     for (const target of cleanupPaths.splice(0)) {
       rmSync(target, { recursive: true, force: true });
     }
   });
 
-  test("runs setup from an exact workspace subdirectory", async () => {
-    const { tempDir, repoDir } = createGitRepo();
+  function startSubdirectorySetup(command: string) {
+    const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
     cleanupPaths.push(tempDir);
+    const repoDir = path.join(tempDir, "source");
     const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+    const worktree: WorktreeConfig = {
+      branchName: "feature-subdirectory-setup",
+      worktreePath: path.join(tempDir, "worktree"),
+    };
+    const workspaceCwd = path.join(worktree.worktreePath, "packages", "app");
+    // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
     mkdirSync(sourceWorkspaceCwd, { recursive: true });
+    mkdirSync(workspaceCwd, { recursive: true });
+    execFileSync("git", ["init", "-b", worktree.branchName], {
+      cwd: worktree.worktreePath,
+      stdio: "pipe",
+    });
     writeFileSync(
-      path.join(sourceWorkspaceCwd, "paseo.json"),
+      path.join(workspaceCwd, "paseo.json"),
       JSON.stringify({
         worktree: {
-          setup: ["pwd > setup-cwd.txt"],
+          setup: [command],
         },
       }),
     );
-    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add app setup"], {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
-
     const paseoHome = path.join(tempDir, ".paseo");
-    const createdWorktree = await createLegacyWorktreeForTest({
-      branchName: "feature-subdirectory-setup",
-      cwd: repoDir,
-      baseBranch: "main",
-      worktreeSlug: "feature-subdirectory-setup",
 
-      paseoHome,
-    });
-    const workspaceCwd = path.join(createdWorktree.worktreePath, "packages", "app");
-
-    await runWorktreeSetupInBackground(
+    const controller = new AbortController();
+    const completion = runWorktreeSetupInBackground(
       {
         paseoHome,
         emitWorkspaceUpdateForWorkspaceId: async () => {},
@@ -600,16 +601,62 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: sourceWorkspaceCwd,
         repoRoot: repoDir,
         workspaceId: "ws-subdirectory-setup",
-        worktree: createdWorktree,
+        worktree,
         shouldBootstrap: true,
         slug: "feature-subdirectory-setup",
-        worktreePath: createdWorktree.worktreePath,
+        worktreePath: worktree.worktreePath,
         workspaceCwd,
       },
+      controller.signal,
     );
+    const stop = async () => {
+      controller.abort();
+      await completion;
+    };
+    stopSetup = stop;
+    return { tempDir, workspaceCwd, worktreePath: worktree.worktreePath, completion, stop };
+  }
 
-    expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
-    expect(existsSync(path.join(createdWorktree.worktreePath, "setup-cwd.txt"))).toBe(false);
+  test("runs setup from an exact workspace subdirectory", async () => {
+    const setup = startSubdirectorySetup("pwd > setup-cwd.txt");
+    await setup.completion;
+
+    expect(existsSync(path.join(setup.workspaceCwd, "setup-cwd.txt"))).toBe(true);
+    expect(existsSync(path.join(setup.worktreePath, "setup-cwd.txt"))).toBe(false);
+  });
+
+  test("teardown stops unfinished setup before removing its workspace", async ({
+    onTestFinished,
+  }) => {
+    const setup = startSubdirectorySetup(
+      `node -e "require('fs').writeFileSync('setup-pid.txt', String(process.pid)); setInterval(()=>{},1000)"`,
+    );
+    let pid = 0;
+    const probeChild = () => process.kill(pid, 0);
+    onTestFinished(async () => {
+      try {
+        expect(pid).toBeGreaterThan(0);
+        expect(existsSync(setup.tempDir)).toBe(false);
+        expect(probeChild).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      } finally {
+        // Keep a failing cleanup regression from leaking its deliberately live child.
+        await setup.stop();
+      }
+    });
+    await expect
+      .poll(
+        () => {
+          try {
+            pid = Number(readFileSync(path.join(setup.workspaceCwd, "setup-pid.txt"), "utf8"));
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            pid = 0;
+          }
+          return pid;
+        },
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
   });
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {

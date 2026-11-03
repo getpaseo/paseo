@@ -270,6 +270,7 @@ function loadBabel(): BabelCore {
   return babelCore;
 }
 
+// COMPAT(hermesClassLowering): added in v0.15.0; remove after RN 0.81 client support floor is dropped.
 // Older clients on React Native 0.81.5 cannot evaluate unlowered classes in plugin
 // bundles. Hosts and clients update independently, so preserve lowering for those
 // clients even when the host uses a newer Hermes compiler. Plugin bundles bypass

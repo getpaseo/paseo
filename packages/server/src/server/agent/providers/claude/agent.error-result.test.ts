@@ -13,6 +13,11 @@ interface ScriptedTurn {
   before?: string;
   after?: string;
   isError: boolean;
+  subtype?:
+    | "error_max_turns"
+    | "error_during_execution"
+    | "error_max_budget_usd"
+    | "error_max_structured_output_retries";
   usage?: {
     inputTokens: number;
     cachedInputTokens: number;
@@ -57,11 +62,12 @@ function scriptedQuery(turns: ScriptedTurn[]): ClaudeQueryFactory {
         if (turn.after) yield assistant(`after-${index}`, turn.after);
         yield {
           type: "result",
-          subtype: "success",
+          subtype: turn.subtype ?? "success",
           session_id: "error-session",
           duration_ms: 1,
           duration_api_ms: 0,
           is_error: turn.isError,
+          ...(turn.subtype ? { errors: ["Reached maximum number of turns (1)"] } : {}),
           num_turns: 1,
           result: turn.isError ? (turn.errorReply ?? "") : (turn.after ?? turn.errorReply ?? ""),
           stop_reason: "stop_sequence",
@@ -187,4 +193,34 @@ test("an error reply the turn moves past is still shown", async () => {
 
   expect(terminal(completed)).toMatchObject({ type: "turn_completed" });
   expect(assistantTexts(completed)).toEqual([LIMIT]);
+});
+
+test.each([
+  "error_max_turns",
+  "error_during_execution",
+  "error_max_budget_usd",
+  "error_max_structured_output_retries",
+] as const)("a %s result publishes final usage before failure", async (subtype) => {
+  const usage = {
+    inputTokens: 2,
+    cachedInputTokens: 12577,
+    outputTokens: 110,
+    totalCostUsd: 0.00365537,
+  };
+  const [failed, next] = await runTurns([
+    { before: "Running the command.", isError: true, subtype, usage },
+    { after: "Done.", isError: false },
+  ]);
+
+  // Collection ends at the terminal event, so this also checks ordering.
+  expect(failed).toContainEqual(
+    expect.objectContaining({ type: "usage_updated", usage: expect.objectContaining(usage) }),
+  );
+  expect(terminal(failed)).toMatchObject({
+    type: "turn_failed",
+    error: "Reached maximum number of turns (1)",
+  });
+  expect(assistantTexts(failed)).toEqual(["Running the command."]);
+  expect(terminal(next)).toMatchObject({ type: "turn_completed" });
+  expect(assistantTexts(next)).toEqual(["Done."]);
 });

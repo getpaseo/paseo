@@ -9,7 +9,10 @@ interface CatalogSyncInput {
   audio: Pick<AudioEngine, "play"> | null;
   connected: boolean;
   supported: boolean;
-  registry: Pick<PluginRegistry, "installCatalog" | "getSnapshot" | "removeHost">;
+  registry: Pick<
+    PluginRegistry,
+    "installCatalog" | "getSnapshot" | "removeHost" | "setCatalogStatus"
+  >;
 }
 
 export function syncPluginCatalog({
@@ -22,30 +25,36 @@ export function syncPluginCatalog({
 }: CatalogSyncInput): () => void {
   if (!supported || !audio) {
     registry.removeHost(serverId);
+    registry.setCatalogStatus(serverId, "ready");
     return () => {};
   }
   // A dropped socket reconnects on the same client, so installations keep rendering offline.
   if (!connected) return () => {};
+  registry.setCatalogStatus(serverId, "loading");
   const installationOptions = { client, audio };
   let cancelled = false;
   let refreshQueue = Promise.resolve();
   function refresh(replacePluginId?: string) {
-    refreshQueue = refreshQueue.then(() =>
-      client
+    refreshQueue = refreshQueue.then(() => {
+      if (cancelled) return undefined;
+      registry.setCatalogStatus(serverId, "loading");
+      return client
         .getPluginCatalog()
         .then((catalog) => {
           if (!cancelled) {
             registry.installCatalog(serverId, catalog, { ...installationOptions, replacePluginId });
+            registry.setCatalogStatus(serverId, "ready");
           }
           return undefined;
         })
         .catch((error) => {
           if (!cancelled) {
+            registry.setCatalogStatus(serverId, "error");
             console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
           }
           return undefined;
-        }),
-    );
+        });
+    });
     return refreshQueue;
   }
   const observation = client.observeEvents([
