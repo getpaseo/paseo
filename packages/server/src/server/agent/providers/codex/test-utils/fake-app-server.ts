@@ -87,6 +87,7 @@ export interface FakeCodexAppServer {
     itemId: string;
     text: string;
   }): void;
+  addsHookContext(params: { threadId: string; turnId: string; itemId: string; text: string }): void;
   completesHook(params: FakeHookCompletion): void;
   completeTurn(params?: {
     threadId?: string;
@@ -439,6 +440,15 @@ export function createFakeCodexAppServer(
         threadId,
         turnId,
         item: { type: "userMessage", id: itemId, content: [{ type: "text", text }] },
+      };
+      writeNotification("item/started", params);
+      writeNotification("item/completed", params);
+    },
+    addsHookContext({ threadId, turnId, itemId, text }) {
+      const params = {
+        threadId,
+        turnId,
+        item: { type: "hookPrompt", id: itemId, fragments: [{ text, hookRunId: "hook-run" }] },
       };
       writeNotification("item/started", params);
       writeNotification("item/completed", params);

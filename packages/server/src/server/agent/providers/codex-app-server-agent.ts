@@ -6442,7 +6442,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     const rejectsCurrentPrompt =
       parsed.eventName === "userPromptSubmit" &&
-      parsed.status === "blocked" &&
+      (parsed.status === "blocked" || parsed.status === "stopped") &&
       this.currentTurnId !== null &&
       parsed.turnId === this.currentTurnId;
     if (!rejectsCurrentPrompt) return;
@@ -6523,8 +6523,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private recordAcceptedTurnWork(
     parsed: Extract<ParsedCodexNotification, { kind: "item_started" | "item_completed" }>,
   ): void {
-    // Rejected prompts produce no user-message or work items. Any accepted input or
-    // autonomous work in this native turn keeps a rejected follow-up from failing it.
+    // Pre-prompt housekeeping can precede a rejected input. Only admitted input or
+    // task work keeps a rejected follow-up from failing the native turn.
+    const itemType = normalizeCodexThreadItemType(parsed.item.type);
+    if (itemType === CODEX_CONTEXT_COMPACTION_TYPE || itemType === "hookPrompt") return;
     if (
       this.currentTurnId !== null &&
       parsed.threadId === this.currentThreadId &&
