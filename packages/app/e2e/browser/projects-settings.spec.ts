@@ -13,6 +13,8 @@ import {
   corruptPaseoConfig,
   editWorktreeSetup,
   expectEmptyScriptList,
+  expectHomeCardsInColumns,
+  expectHomeCardsStacked,
   expectProjectHostContextHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
@@ -470,29 +472,7 @@ test.describe("Projects settings — error UX", () => {
 test("home cards follow the available pane width", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 1000 });
   await page.goto(buildOpenProjectRoute());
-  const first = page.getByTestId("open-project-submit");
-  const second = page.getByTestId("open-project-import-session");
-  const third = page.getByTestId("open-project-setup-providers");
-  await expect(third).toBeVisible();
-  await expect
-    .poll(async () => {
-      const boxes = await Promise.all([
-        first.boundingBox(),
-        second.boundingBox(),
-        third.boundingBox(),
-      ]);
-      return (
-        boxes.every((box) => box && Math.abs(box.x - boxes[0]!.x) < 1) &&
-        boxes[1]!.y > boxes[0]!.y &&
-        boxes[2]!.y > boxes[1]!.y
-      );
-    })
-    .toBe(true);
+  await expectHomeCardsStacked(page);
   await page.setViewportSize({ width: 1200, height: 1000 });
-  await expect
-    .poll(async () => {
-      const [a, b] = await Promise.all([first.boundingBox(), second.boundingBox()]);
-      return a && b && b.x > a.x && Math.abs(b.y - a.y) < 1;
-    })
-    .toBe(true);
+  await expectHomeCardsInColumns(page);
 });
