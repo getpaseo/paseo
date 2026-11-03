@@ -2654,7 +2654,7 @@ test("foreground verification preserves a healthy socket and deduplicates simult
   expect(daemon.closesFromClient()).toEqual([]);
 });
 
-test("chunks extend the heartbeat deadline until silence causes two misses", async () => {
+test("chunks prevent heartbeat misses until silence causes two misses", async () => {
   useHeartbeatClock();
   const daemon = new FakeDaemon();
   daemon.daemonGoesSilent();
@@ -2685,9 +2685,9 @@ test("chunks extend the heartbeat deadline until silence causes two misses", asy
     daemon.receiveChunk(index === 0);
     expect(daemon.closesFromClient()).toEqual([]);
   }
-  // No complete message or pong has arrived, but chunks keep the ping alive.
-  expect(daemon.pingTimestamps()).toEqual(["0s"]);
-  await vi.advanceTimersByTimeAsync(15_000);
+  // No complete message or pong has arrived, but progress prevents misses.
+  expect(daemon.pingTimestamps()).toEqual(["0s", "25s"]);
+  await vi.advanceTimersByTimeAsync(25_000);
   expect(daemon.closesFromClient()).toEqual([]);
   await vi.advanceTimersByTimeAsync(25_000);
   expect(daemon.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
@@ -2716,8 +2716,41 @@ test("foreground preserves a multi-MB transfer with its pong queued behind chunk
     daemon.receiveChunk(index === 0);
     expect(daemon.closesFromClient()).toEqual([]);
   }
-  // No complete message or pong has arrived, but chunks keep the ping alive.
-  expect(daemon.pingTimestamps()).toEqual(["0s"]);
+  // No complete message or pong has arrived, but progress prevents misses.
+  expect(daemon.pingTimestamps()).toEqual(["0s", "25s"]);
+  daemon.finishTransfer();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+test("chunk progress beyond the daemon lease keeps sending heartbeat pings", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "long-download",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  for (let index = 0; index < 12; index++) {
+    await vi.advanceTimersByTimeAsync(5_000);
+    daemon.receiveChunk(index === 0);
+    // Each completed window starts the next ping ten seconds later,
+    // even though the response and all queued pongs are still in flight.
+    const expected = ["0s"];
+    if (index >= 4) expected.push("25s");
+    if (index >= 9) expected.push("50s");
+    expect(daemon.pingTimestamps()).toEqual(expected);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
   daemon.finishTransfer();
   await vi.advanceTimersByTimeAsync(30_000);
   expect(client.getConnectionState()).toEqual({ status: "connected" });

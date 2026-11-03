@@ -1295,7 +1295,7 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
-  extendDeadline: () => void;
+  receivedActivity: boolean;
   // Whether a timeout on this ping should be recorded as a liveness failure. Only the
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
@@ -1800,7 +1800,7 @@ export class DaemonClient {
 
   private recordTransportActivity(): void {
     this.consecutiveLivenessFailures = 0;
-    if (this.pingProbe?.drivesLivenessFailure) this.pingProbe.extendDeadline();
+    if (this.pingProbe) this.pingProbe.receivedActivity = true;
   }
 
   requireConnectedHosts(): void {
@@ -2588,7 +2588,9 @@ export class DaemonClient {
       this.pingProbe = null;
       const error = new PingTimeoutError(timeoutMs);
       probe.reject(error);
-      if (probe.drivesLivenessFailure) {
+      // Keep the deadline fixed so subsequent pings renew the daemon socket lease
+      // during a long download. Progress proves life even when its pong is queued.
+      if (probe.drivesLivenessFailure && !probe.receivedActivity) {
         this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
       }
     };
@@ -2597,10 +2599,7 @@ export class DaemonClient {
       resolve: (value) => resolveProbe?.(value),
       reject: (error) => rejectProbe?.(error),
       timeoutHandle: setTimeout(expire, timeoutMs),
-      extendDeadline: () => {
-        clearTimeout(probe.timeoutHandle);
-        probe.timeoutHandle = setTimeout(expire, timeoutMs);
-      },
+      receivedActivity: false,
       startedAt,
       drivesLivenessFailure: params.drivesLivenessFailure,
     };
