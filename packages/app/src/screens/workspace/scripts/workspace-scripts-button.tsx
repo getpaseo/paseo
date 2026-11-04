@@ -32,19 +32,14 @@ import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
 import { scriptToneColorMapping } from "./script-status";
-import {
-  useWorkspaceScriptActions,
-  type WorkspaceScriptActions,
-} from "./use-workspace-script-actions";
+import type { WorkspaceScriptActions } from "./use-workspace-script-actions";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
 interface WorkspaceScriptsButtonProps {
-  serverId: string;
-  workspaceId: string;
+  actions: WorkspaceScriptActions;
   scripts: WorkspaceDescriptor["scripts"];
   liveTerminalIds?: readonly string[];
-  onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
@@ -448,22 +443,14 @@ function ScriptRow({
 }
 
 export function WorkspaceScriptsButton({
-  serverId,
-  workspaceId,
+  actions,
   scripts,
   liveTerminalIds = [],
-  onScriptTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
   hideLabels,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
-  const actions = useWorkspaceScriptActions({
-    serverId,
-    workspaceId,
-    scripts,
-    onScriptTerminalStarted,
-  });
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
 
   const triggerStyle = useCallback(
