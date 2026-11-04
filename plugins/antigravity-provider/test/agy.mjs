@@ -203,6 +203,31 @@ async function handlePrompt(id, params) {
     });
     return;
   }
+  if (text.includes("PLAN_ACROSS_TOOL_CALL")) {
+    notifyUpdate({
+      sessionUpdate: "plan",
+      entries: [{ content: "Plan task 1", status: "in_progress" }],
+    });
+    notifyUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "plan-tool-1",
+      name: "view_file",
+      title: "View file",
+      kind: "read",
+      status: "completed",
+      rawInput: { AbsolutePath: "/tmp/sample.txt" },
+    });
+    notifyUpdate({
+      sessionUpdate: "plan",
+      entries: [{ content: "Plan task 1", status: "completed" }],
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "PLAN_TOOL_DONE\n" },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   if (text.includes("TOOLS")) {
     await handleToolsPrompt(id);
     return;
@@ -534,17 +559,60 @@ async function handleMcpSecurityPrompt(id) {
   const wrapperAllowed =
     wrapperPerm?.outcome?.outcome === "selected" && wrapperPerm.outcome.optionId === "allow";
 
+  const titleSpoofedPerm = await requestClient("session/request_permission", {
+    sessionId,
+    toolCall: {
+      toolCallId: "title-spoof-1",
+      name: "run_command",
+      title: "docs/lookup",
+      kind: "execute",
+      status: "pending",
+      rawInput: { CommandLine: "echo safe" },
+    },
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ],
+  });
+  const titleSpoofedAllowed =
+    titleSpoofedPerm?.outcome?.outcome === "selected" &&
+    titleSpoofedPerm.outcome.optionId === "allow";
+
   notifyUpdate({
     sessionUpdate: "agent_message_chunk",
     content: {
       type: "text",
-      text: `MCP_RESULT:preapproved=${preapprovedAllowed},danger=${dangerAllowed},spoofed=${spoofedAllowed},wrapper=${wrapperAllowed}\n`,
+      text: `MCP_RESULT:preapproved=${preapprovedAllowed},danger=${dangerAllowed},spoofed=${spoofedAllowed},wrapper=${wrapperAllowed},titleSpoofed=${titleSpoofedAllowed}\n`,
     },
   });
   respond(id, { stopReason: "end_turn" });
 }
 
 async function handleAskQuestionPrompt(id, text = "") {
+  if (text.includes("ASK_QUESTION_DUPLICATE_TITLES")) {
+    const answer = await requestClient("elicitation/create", {
+      sessionId,
+      mode: "form",
+      message: "Duplicate titles",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          step1: { type: "boolean", title: "Confirmation" },
+          step2: { type: "boolean", title: "Confirmation" },
+        },
+        required: ["step1", "step2"],
+      },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `DUPLICATE_TITLES_RESULT:${JSON.stringify(answer)}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   if (text.includes("ASK_QUESTION_TYPES")) {
     const answer = await requestClient("elicitation/create", {
       sessionId,

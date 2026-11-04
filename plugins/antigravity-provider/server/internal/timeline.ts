@@ -177,35 +177,44 @@ export function matchesPreapprovedMcpTool(
   );
 }
 
+function parseMcpCandidate(
+  candidate: string | null | undefined,
+): { server: string; tool: string } | null {
+  const trimmed = candidate?.trim();
+  if (!trimmed) return null;
+  const dunder = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(trimmed);
+  if (dunder) return { server: dunder[1]!, tool: dunder[2]! };
+  const colon = /^mcp:([A-Za-z0-9._-]+):([A-Za-z0-9._-]+)$/.exec(trimmed);
+  if (colon) return { server: colon[1]!, tool: colon[2]! };
+  const slash = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(trimmed);
+  if (slash) return { server: slash[1]!, tool: slash[2]! };
+  return null;
+}
+
 function extractMcpIdentity(
   tool: AcpToolCallPayload,
   name: string,
 ): { server: string; tool: string } | null {
-  for (const candidate of [tool.name, name, tool.title]) {
-    const trimmed = candidate?.trim();
-    if (!trimmed) continue;
-    const dunder = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(trimmed);
-    if (dunder) return { server: dunder[1]!, tool: dunder[2]! };
-    const slash = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(trimmed);
-    if (slash) return { server: slash[1]!, tool: slash[2]! };
-    const colon = /^mcp:([A-Za-z0-9._-]+):([A-Za-z0-9._-]+)$/.exec(trimmed);
-    if (colon) return { server: colon[1]!, tool: colon[2]! };
+  const explicit =
+    tool.name?.trim() || (name && name !== "tool" && name !== tool.title ? name.trim() : undefined);
+
+  if (explicit) {
+    const parsed = parseMcpCandidate(explicit);
+    if (parsed) return parsed;
+
+    const isWrapper = explicit === "call_mcp_tool" || explicit === "call_mcp";
+    if (isWrapper) {
+      const rawInput = asRecord(tool.rawInput);
+      const wrapperServer =
+        stringField(rawInput, "ServerName") ?? stringField(rawInput, "serverName");
+      const wrapperTool = stringField(rawInput, "ToolName") ?? stringField(rawInput, "toolName");
+      if (wrapperServer && wrapperTool) return { server: wrapperServer, tool: wrapperTool };
+    }
+
+    return null;
   }
 
-  const isWrapper =
-    name === "call_mcp_tool" ||
-    tool.name === "call_mcp_tool" ||
-    name === "call_mcp" ||
-    tool.name === "call_mcp";
-  if (isWrapper) {
-    const rawInput = asRecord(tool.rawInput);
-    const wrapperServer =
-      stringField(rawInput, "ServerName") ?? stringField(rawInput, "serverName");
-    const wrapperTool = stringField(rawInput, "ToolName") ?? stringField(rawInput, "toolName");
-    if (wrapperServer && wrapperTool) return { server: wrapperServer, tool: wrapperTool };
-  }
-
-  return null;
+  return parseMcpCandidate(tool.title);
 }
 
 function looksLikeMcpIdentifier(value: string): boolean {
@@ -220,7 +229,10 @@ function isExternalOrMcpTool(tool: AcpToolCallPayload, name: string): boolean {
   if (name === "call_mcp_tool" || extractMcpIdentity(tool, name) !== null) return true;
   const rawInput = asRecord(tool.rawInput);
   if (rawInput && ("ServerName" in rawInput || "serverName" in rawInput)) return true;
-  return looksLikeMcpIdentifier(name) || Boolean(tool.title && looksLikeMcpIdentifier(tool.title));
+  return (
+    looksLikeMcpIdentifier(name) ||
+    Boolean(!tool.name?.trim() && tool.title && looksLikeMcpIdentifier(tool.title))
+  );
 }
 
 function hasNativeFileEvidence(tool: AcpToolCallPayload): boolean {
