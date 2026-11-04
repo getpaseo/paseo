@@ -122,6 +122,10 @@ workspace the call creates is background too. With a `parent` and no value, the 
 
 `agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. Delivery is live-only. Reconnect emits a local `subscription_restored` event; request missed history explicitly with `refetch()`. A live replacement invalidates the previous epoch. See the callback shapes, paging and failure behavior in [timeline events](./events.md#follow-timeline-events).
 
+### Provider subagents
+
+`agent.providerSubagents.list()` returns the child executions the provider runs inside the agent, such as Claude Code Task subagents. They are not managed agents, so `client.agents.list()` omits them. Each descriptor has `id`, `parentAgentId`, `parentSubagentId` (the direct provider-subagent parent, or `null` for a direct child of the agent), `provider`, `title`, `description`, `status` (`"running"`, `"completed"`, `"failed"`, or `"canceled"`), `createdAt`, and `updatedAt`. The call rejects when the daemon reports an error for the parent agent.
+
 ## `client.projects`
 
 | Method               | Result                   | Behavior                                                                                       |
