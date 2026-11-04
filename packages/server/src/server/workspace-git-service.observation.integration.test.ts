@@ -624,8 +624,8 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       await writeFile(join(worktree, 'ignored', 'noise'), 'noise');
       await symlink(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
       const subscription = await service.requestWorkingTreeWatch(alias, () => { notifications++; });
-      // The observer batches paths in a Map before delivering them. Reuse the
-      // two path identities so fixture string construction is outside the filter budget.
+      // The observer hashes and coalesces paths in a Map before delivery. Reuse
+      // two prepared strings instead of constructing 10,000 equal-valued strings.
       const noisePaths = [join(worktree, 'ignored', 'noise'), join(alias, 'ignored', 'noise')];
       const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: noisePaths[i % 2] }));
       let fsCalls = 0;
