@@ -21,6 +21,7 @@ function startsAtOpenEdge(edge: MobilePanelOpenEdge, direction: MobilePanelGestu
 }
 
 export function resolveMobilePanelGestureIntent(input: {
+  enabled: boolean;
   deltaX: number;
   deltaY: number;
   direction: MobilePanelGestureDirection;
@@ -29,7 +30,7 @@ export function resolveMobilePanelGestureIntent(input: {
   openEdge: MobilePanelOpenEdge | null;
 }): MobilePanelGestureIntent {
   "worklet";
-  if (input.openGesturesBlocked) {
+  if (!input.enabled || input.openGesturesBlocked) {
     return "fail";
   }
   if (input.openEdge && !startsAtOpenEdge(input.openEdge, input.direction)) {

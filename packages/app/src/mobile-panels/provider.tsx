@@ -1,4 +1,6 @@
 import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { subscribeMobilePanelSelection } from "./selection";
+
 import {
   createContext,
   useCallback,
@@ -179,11 +181,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    return usePanelStore.subscribe((state, previousState) => {
-      const selection = state.mobilePanel;
-      if (selection === previousState.mobilePanel) {
-        return;
-      }
+    return subscribeMobilePanelSelection((selection) => {
       scheduleOnUI(applySelection, selection);
     });
   }, [applySelection]);

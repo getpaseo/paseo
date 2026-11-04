@@ -96,6 +96,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: gate.value,
             deltaX,
             deltaY,
             direction: 1,
@@ -199,6 +200,7 @@ export function useCloseAgentListGesture(enabled = true) {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: gate.value,
             deltaX,
             deltaY,
             direction: -1,
@@ -302,6 +304,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: enabled,
             deltaX,
             deltaY,
             direction: -1,
@@ -396,6 +399,7 @@ export function useCloseFileExplorerGesture(enabled = true) {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: enabled,
             deltaX,
             deltaY,
             direction: 1,
