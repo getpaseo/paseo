@@ -663,6 +663,20 @@ async function handleSessionLoad(id, params) {
       { content: "Ship ACP provider", status: "in_progress" },
     ],
   });
+  if (process.env.AGY_TEST_REPLAY_SUCCESSIVE_PLANS) {
+    notifyUpdate({
+      sessionUpdate: "user_message_chunk",
+      messageId: "replay-u2",
+      content: { type: "text", text: "REPLAYED_USER_2" },
+    });
+    notifyUpdate({
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Step 2.1", status: "completed" },
+        { content: "Step 2.2", status: "in_progress" },
+      ],
+    });
+  }
   respond(id, {
     sessionId,
     models: {

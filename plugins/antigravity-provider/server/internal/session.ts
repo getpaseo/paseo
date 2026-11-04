@@ -816,6 +816,7 @@ export class Session {
       }
       this.chunkIds.delete("agent_message_chunk");
       this.chunkIds.delete("agent_thought_chunk");
+      this.chunkIds.delete("plan");
       if (update.content.type !== "text" || !update.content.text) return;
       const itemId = this.resolveChunkId("user_message_chunk", update.messageId);
       const nextText = `${this.chunkTexts.get(itemId) ?? ""}${update.content.text}`;
