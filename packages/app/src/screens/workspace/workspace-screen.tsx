@@ -71,7 +71,7 @@ import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { subscribeCompactWorkspaceBack } from "@/screens/workspace/compact-workspace-back";
-import { systemBackPress } from "@/components/ui/isolated-bottom-sheet-modal/back-press";
+import { screenBackPress } from "@/components/ui/isolated-bottom-sheet-modal/back-press";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   isExplorerSidebarOpen,
@@ -1294,7 +1294,7 @@ function WorkspaceScreenContent({
       return;
     }
 
-    return subscribeCompactWorkspaceBack(systemBackPress, {
+    return subscribeCompactWorkspaceBack(screenBackPress, {
       current: () => usePanelStore.getState().mobilePanel.target,
       show: (panel) => (panel === "agent-list" ? showMobileAgentList() : showMobileAgent()),
     });

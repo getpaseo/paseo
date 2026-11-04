@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createBackPressLayers } from "@/components/ui/isolated-bottom-sheet-modal/back-press-layers";
 import type { BackPressSource } from "@/components/ui/isolated-bottom-sheet-modal/visibility-tracker";
 import type { MobilePanelView } from "@/stores/panel-store";
 import { subscribeCompactWorkspaceBack } from "./compact-workspace-back";
@@ -84,6 +85,33 @@ describe("Android Back in a compact workspace", () => {
 
     expect(workspace.backPress.press()).toBe(true);
     expect(workspace.panel()).toBe("agent-list");
+  });
+
+  it("leaves the fullscreen composer first when the workspace subscribed after it", () => {
+    // A compact-wide-compact layout change remounts the composer, still fullscreen, and the
+    // workspace in one commit; the composer's child effect subscribes first.
+    const platform = new FakeBackPress();
+    const layers = createBackPressLayers(platform);
+    let fullscreen = true;
+    const leaveFullscreen = layers.overlay.subscribe(() => {
+      fullscreen = false;
+      leaveFullscreen();
+      return true;
+    });
+    let panel: MobilePanelView = "agent";
+    subscribeCompactWorkspaceBack(layers.screen, {
+      current: () => panel,
+      show: (next) => {
+        panel = next;
+      },
+    });
+
+    expect(platform.press()).toBe(true);
+    expect(fullscreen).toBe(false);
+    expect(panel).toBe("agent");
+
+    expect(platform.press()).toBe(true);
+    expect(panel).toBe("agent-list");
   });
 
   it("stops handling Back once the workspace unsubscribes", () => {
