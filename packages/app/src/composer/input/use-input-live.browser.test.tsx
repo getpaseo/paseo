@@ -1,21 +1,18 @@
-/**
- * @vitest-environment jsdom
- */
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { useIsInputLive } from "./use-input-live";
 
-// App sources compile against the classic JSX runtime, which expects React on the global.
+// App sources compile against the classic JSX runtime, which expects React on the global, as the
+// other browser tests here arrange.
 beforeEach(() => vi.stubGlobal("React", React));
-afterEach(() => vi.unstubAllGlobals());
 
-function render(
-  active: boolean,
-  input: { current: unknown },
-  publish: (isLive: () => boolean) => void,
-) {
+interface InputRef {
+  current: object | null;
+}
+
+function render(active: boolean, input: InputRef, publish: (isLive: () => boolean) => void) {
   function Probe() {
     publish(useIsInputLive(input));
     return null;
@@ -28,7 +25,7 @@ function render(
 }
 
 it("an input kept mounted in a panel that is not showing is not live", () => {
-  const input: { current: object | null } = { current: {} };
+  const input: InputRef = { current: {} };
   let isLive: () => boolean = () => false;
   const publish = (read: () => boolean) => {
     isLive = read;
