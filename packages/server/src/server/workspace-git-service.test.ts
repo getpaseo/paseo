@@ -1,6 +1,8 @@
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path, { join } from "node:path";
@@ -421,20 +423,20 @@ function linkedWorktreeFacts(gitCommonDir: string) {
   });
 }
 
-const SETTLE_ATTEMPTS = 1_000;
-
 async function settle(assertion: () => void): Promise<void> {
-  let lastFailure: unknown = null;
-  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
+  // Observation setup resolves real filesystem paths even while the polling clock is frozen.
+  // Give that I/O wall-clock time without advancing the service's polling deadlines.
+  const deadline = performance.now() + 5_000;
+  while (true) {
     try {
       assertion();
       return;
     } catch (failure) {
-      lastFailure = failure;
+      if (performance.now() >= deadline) throw failure;
     }
+    await delay(1);
     await vi.advanceTimersByTimeAsync(0);
   }
-  throw lastFailure;
 }
 
 async function waitForRefreshesToSettle(service: WorkspaceGitServiceImpl): Promise<void> {
@@ -1743,48 +1745,65 @@ describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", 
     await service.dispose();
   });
 
-  test("a deleted worktree leaves its shared repository polling and fetch to the surviving worktree", async () => {
-    const gitCommonDir = join(await createTemporaryFolder(), ".git");
-    const deletedWorktree = await createTemporaryFolder();
-    const survivingWorktree = await createTemporaryFolder();
-    const git = createFolderBackedGit({ facts: linkedWorktreeFacts(gitCommonDir) });
-    let survivingWorktreeEdits = 0;
-    git.deps.getCheckoutShortstat.mockImplementation(async (cwd: string) => ({
-      additions: cwd === survivingWorktree ? ++survivingWorktreeEdits : 1,
-      deletions: 0,
-    }));
-    const service = createService(git.deps);
-    const deletedSubscription = service.registerWorkspace({ cwd: deletedWorktree }, vi.fn());
-    await waitForObservationToSettle(service, 1);
-    const survivingSubscription = service.registerWorkspace({ cwd: survivingWorktree }, vi.fn());
-    await waitForObservationToSettle(service, 2);
-
-    await rm(deletedWorktree, { recursive: true, force: true });
-    await vi.advanceTimersByTimeAsync(60_000);
-    await waitForRefreshesToSettle(service);
-    const deletedWorktreeCommands = git.gitCommandsIn(deletedWorktree);
-
-    for (let tick = 0; tick < 3; tick += 1) {
-      const survivingWorktreePolls = git.pollsOf(survivingWorktree);
-      await vi.advanceTimersByTimeAsync(5_000);
-      await settle(() => {
-        expect(git.pollsOf(survivingWorktree)).toBe(survivingWorktreePolls + 1);
+  test.each([0, 250])(
+    "a deleted worktree leaves its shared repository polling and fetch to the surviving worktree (watch delay: %ims)",
+    async (watchDelayMs) => {
+      const gitCommonDir = join(await createTemporaryFolder(), ".git");
+      const deletedWorktree = await createTemporaryFolder();
+      const survivingWorktree = await createTemporaryFolder();
+      const watchReady = createDeferred<void>();
+      const git = createFolderBackedGit({
+        facts: linkedWorktreeFacts(gitCommonDir),
+        heldWatch: { directory: survivingWorktree, release: watchReady.promise },
       });
-    }
-    expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+      let survivingWorktreeEdits = 0;
+      git.deps.getCheckoutShortstat.mockImplementation(async (cwd: string) => ({
+        additions: cwd === survivingWorktree ? ++survivingWorktreeEdits : 1,
+        deletions: 0,
+      }));
+      const service = createService(git.deps);
+      try {
+        const deletedSubscription = service.registerWorkspace({ cwd: deletedWorktree }, vi.fn());
+        await waitForObservationToSettle(service, 1);
+        const survivingSubscription = service.registerWorkspace(
+          { cwd: survivingWorktree },
+          vi.fn(),
+        );
+        const pollingTime = Date.now();
+        void delay(watchDelayMs).then(() => watchReady.resolve());
+        await waitForObservationToSettle(service, 2);
+        expect(Date.now()).toBe(pollingTime);
 
-    const fetchesBefore = git.deps.runGitFetch.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(2 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
-    expect(git.deps.runGitFetch.mock.calls.slice(fetchesBefore).map(([cwd]) => cwd)).toEqual([
-      survivingWorktree,
-      survivingWorktree,
-    ]);
-    expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+        await rm(deletedWorktree, { recursive: true, force: true });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await waitForRefreshesToSettle(service);
+        const deletedWorktreeCommands = git.gitCommandsIn(deletedWorktree);
 
-    deletedSubscription.unsubscribe();
-    survivingSubscription.unsubscribe();
-    await service.dispose();
-  });
+        for (let tick = 0; tick < 3; tick += 1) {
+          const survivingWorktreePolls = git.pollsOf(survivingWorktree);
+          await vi.advanceTimersByTimeAsync(5_000);
+          await settle(() => {
+            expect(git.pollsOf(survivingWorktree)).toBe(survivingWorktreePolls + 1);
+          });
+        }
+        expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+
+        const fetchesBefore = git.deps.runGitFetch.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(2 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+        expect(git.deps.runGitFetch.mock.calls.slice(fetchesBefore).map(([cwd]) => cwd)).toEqual([
+          survivingWorktree,
+          survivingWorktree,
+        ]);
+        expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+
+        deletedSubscription.unsubscribe();
+        survivingSubscription.unsubscribe();
+      } finally {
+        watchReady.resolve();
+        await service.dispose();
+      }
+    },
+  );
 
   test("deleting every worktree of a repository stops its polling and background fetch", async () => {
     const gitCommonDir = join(await createTemporaryFolder(), ".git");

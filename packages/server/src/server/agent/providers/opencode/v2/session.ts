@@ -257,6 +257,10 @@ export class OpenCodeV2Session implements AgentSession {
     this.listeners.add(callback);
     const background = this.background.snapshot();
     if (background) callback(background);
+    // Reopening can adopt an execution during initialization, before its caller
+    // can subscribe. Deliver that live turn so it remains visible and interruptible.
+    if (this.turns.id)
+      callback({ type: "turn_started", provider: "opencode", turnId: this.turns.id });
     return () => {
       this.listeners.delete(callback);
     };

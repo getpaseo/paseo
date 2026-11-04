@@ -263,6 +263,7 @@ interface AgentState {
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
   backgroundWork?: AgentSnapshotPayload["backgroundWork"];
+  background?: boolean;
 }
 
 function createAgent(
@@ -274,6 +275,7 @@ function createAgent(
     provider: "codex",
     cwd: input.cwd,
     ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.background ? { background: true } : {}),
     model: null,
     thinkingOptionId: null,
     effectiveThinkingOptionId: null,
@@ -341,6 +343,15 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("a running background agent does not make its workspace running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "root-agent", status: "idle" });
+    workspace.hasRootAgent({ id: "classifier", status: "running", background: true });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
   });
 
   test("same-cwd workspaces attribute agent status only to the owner", async () => {

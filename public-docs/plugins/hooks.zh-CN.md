@@ -571,7 +571,7 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
-Agent 钩子不包括 daemon 的私有临时辅助 Agent。公开的后台工作区及其普通 Agent 使用相同钩子。
+Agent 钩子不包括 daemon 的私有临时辅助 Agent。后台 Agent 和后台工作区中的 Agent 使用相同钩子。
 
 ## 顺序与返回值 {#ordering-and-returned-values}
 

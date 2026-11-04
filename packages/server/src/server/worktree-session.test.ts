@@ -550,14 +550,17 @@ function createGitHubPrRemoteRepo() {
 
 describe("runWorktreeSetupInBackground", () => {
   const cleanupPaths: string[] = [];
+  let stopSetup: (() => Promise<void>) | undefined;
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopSetup?.();
+    stopSetup = undefined;
     for (const target of cleanupPaths.splice(0)) {
       rmSync(target, { recursive: true, force: true });
     }
   });
 
-  test("runs setup from an exact workspace subdirectory", async () => {
+  function startSubdirectorySetup(command: string) {
     const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
     cleanupPaths.push(tempDir);
     const repoDir = path.join(tempDir, "source");
@@ -578,13 +581,14 @@ describe("runWorktreeSetupInBackground", () => {
       path.join(workspaceCwd, "paseo.json"),
       JSON.stringify({
         worktree: {
-          setup: ["pwd > setup-cwd.txt"],
+          setup: [command],
         },
       }),
     );
     const paseoHome = path.join(tempDir, ".paseo");
 
-    await runWorktreeSetupInBackground(
+    const controller = new AbortController();
+    const completion = runWorktreeSetupInBackground(
       {
         paseoHome,
         emitWorkspaceUpdateForWorkspaceId: async () => {},
@@ -603,10 +607,56 @@ describe("runWorktreeSetupInBackground", () => {
         worktreePath: worktree.worktreePath,
         workspaceCwd,
       },
+      controller.signal,
     );
+    const stop = async () => {
+      controller.abort();
+      await completion;
+    };
+    stopSetup = stop;
+    return { tempDir, workspaceCwd, worktreePath: worktree.worktreePath, completion, stop };
+  }
 
-    expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(true);
-    expect(existsSync(path.join(worktree.worktreePath, "setup-cwd.txt"))).toBe(false);
+  test("runs setup from an exact workspace subdirectory", async () => {
+    const setup = startSubdirectorySetup("pwd > setup-cwd.txt");
+    await setup.completion;
+
+    expect(existsSync(path.join(setup.workspaceCwd, "setup-cwd.txt"))).toBe(true);
+    expect(existsSync(path.join(setup.worktreePath, "setup-cwd.txt"))).toBe(false);
+  });
+
+  test("teardown stops unfinished setup before removing its workspace", async ({
+    onTestFinished,
+  }) => {
+    const setup = startSubdirectorySetup(
+      `node -e "require('fs').writeFileSync('setup-pid.txt', String(process.pid)); setInterval(()=>{},1000)"`,
+    );
+    let pid = 0;
+    const probeChild = () => process.kill(pid, 0);
+    onTestFinished(async () => {
+      try {
+        expect(pid).toBeGreaterThan(0);
+        expect(existsSync(setup.tempDir)).toBe(false);
+        expect(probeChild).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      } finally {
+        // Keep a failing cleanup regression from leaking its deliberately live child.
+        await setup.stop();
+      }
+    });
+    await expect
+      .poll(
+        () => {
+          try {
+            pid = Number(readFileSync(path.join(setup.workspaceCwd, "setup-pid.txt"), "utf8"));
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            pid = 0;
+          }
+          return pid;
+        },
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
   });
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {

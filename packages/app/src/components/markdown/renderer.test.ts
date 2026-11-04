@@ -3,6 +3,7 @@ import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/util
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
 import { matchCommandLink } from "@/agent-commands";
+import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
@@ -441,6 +442,47 @@ it("lets the engine own code boundaries while classifying candidate values", asy
     "src/final.ts",
     "src/newline.ts",
   ]);
+});
+
+it("recognizes forge references in prose but not in code, links or paths", async () => {
+  const shorthand = createForgeShorthand({
+    forge: "gitlab",
+    remoteUrl: "git@gitlab.com:g/p.git",
+  })!;
+  const source = [
+    "Fixed in #12 and !13, see g/sub/q#14 and https://example.com/a#15.",
+    "`#16` and [#17](https://example.com) and src/app/index.ts and src/a/b/c#18",
+    "```\n#19\n```",
+  ].join("\n\n");
+  const prepared = prepareMarkdownSource(source, "/repo", {
+    forgeReferencePattern: shorthand.pattern,
+  });
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const recognized: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link" && node.attributes?.recognizedLink === "true") {
+      recognized.push(String(node.attributes.url));
+    }
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(recognized).toEqual(["#12", "!13", "g/sub/q#14", "src/app/index.ts", "src/a/b/c#18"]);
+  expect(recognized.map((url) => shorthand.resolve(url))).toEqual([
+    "https://gitlab.com/g/p/-/issues/12",
+    "https://gitlab.com/g/p/-/merge_requests/13",
+    "https://gitlab.com/g/sub/q/-/issues/14",
+    null,
+    "https://gitlab.com/src/a/b/c/-/issues/18",
+  ]);
+  // A rejected native regex silently falls back to no recognition at all.
+  expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+    isDisabled: false,
+    isDefault: false,
+  });
 });
 
 describe("bare URL sentence punctuation", () => {
