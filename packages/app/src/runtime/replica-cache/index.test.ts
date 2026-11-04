@@ -513,6 +513,23 @@ describe("ReplicaCache", () => {
     expect(storage.changes[0]?.deletes).toEqual([]);
   });
 
+  it("keeps a background agent background across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const helper = { ...agent("helper"), background: true };
+    const visible = agent("visible");
+    writer.commitDirectoryMutations(SERVER_ID, [
+      { kind: "agent", type: "upsert", id: helper.id, value: helper },
+      { kind: "agent", type: "upsert", id: visible.id, value: visible },
+    ]);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.agents.get("helper")?.background).toBe(true);
+    expect(restored.agents.get("visible")?.background).toBe(false);
+  });
+
   it("round-trips identified and anonymous open turns without changing protocol status", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

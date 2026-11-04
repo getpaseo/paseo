@@ -163,11 +163,11 @@ export const sectionKitStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    // Fixed, not minHeight plus padding. A row's trailing slot holds an xs Button
+    // Fixed, not minHeight plus padding. A row's trailing slot holds an sm Button
     // (28pt), which stacked on the vertical padding and made rows with an
     // "Add to chat" button taller than rows without one. The row is single-line by
     // construction, so it declares a height the button fits inside instead.
-    height: CONTROL_HEIGHTS.compact,
+    height: CONTROL_HEIGHTS.sm + theme.spacing[1],
   },
   checkName: {
     fontSize: theme.fontSize.base,

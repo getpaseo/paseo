@@ -420,6 +420,7 @@ export interface PaseoDaemonConfig {
   trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  usageEnabled?: boolean;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -590,6 +591,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     ...(config.providerCatalogRefreshTimeoutMs !== undefined
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
+    usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
     metadataGeneration: {
@@ -598,7 +600,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
-    resumeOnStartup: config.resumeOnStartup !== false,
+    resumeOnStartup: config.resumeOnStartup === true,
     resumePrompt: config.resumePrompt ?? "Resume working.",
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
@@ -962,7 +964,7 @@ export async function createPaseoDaemon(
   workspaceRegistry.subscribeToMutations(async (mutation) => {
     if (mutation.kind === "remove" && mutation.workspace) {
       const cwd = path.resolve(mutation.workspace.cwd);
-      const workspaces = await workspaceRegistry.list();
+      const workspaces = await workspaceRegistry.listActive();
       const hasActiveWorkspace = workspaces.some(
         (workspace) => !workspace.archivedAt && path.resolve(workspace.cwd) === cwd,
       );
@@ -1045,7 +1047,7 @@ export async function createPaseoDaemon(
   const restartRecovery = createRestartRecovery({
     storage: agentStorage,
     settings: () => ({
-      enabled: daemonConfigStore.get().resumeOnStartup !== false,
+      enabled: daemonConfigStore.get().resumeOnStartup === true,
       prompt: daemonConfigStore.get().resumePrompt ?? "Resume working.",
     }),
     eligible: async (record) =>
@@ -1112,12 +1114,13 @@ export async function createPaseoDaemon(
   // external path→workspace adapter, not ownership: archive-by-path requests that
   // arrive with a worktree path and no workspaceId (old clients / CLI).
   const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
-    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list());
+    // Explicit archive administration must prefer an archived exact match to an active ancestor.
+    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listAll());
   };
   const ensureWorkspaceForCreateExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
@@ -1135,7 +1138,7 @@ export async function createPaseoDaemon(
     return workspace.workspaceId;
   };
   const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listActive();
     return workspaces
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => ({
@@ -1170,14 +1173,14 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext, context);
     await emitWorkspaceUpdatesExternal([workspaceId]);
     return workspaceId;
   };
   const emitWorkspaceUpdateForCwdExternal = async (cwd: string) => {
-    const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.list(), cwd);
+    const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.listActive(), cwd);
     await emitWorkspaceUpdatesExternal(workspaceIds);
   };
   const emitExternalSessionMessage = (message: SessionOutboundMessage) => {
@@ -1463,7 +1466,8 @@ export async function createPaseoDaemon(
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
-  const persistedRecords = await agentStorage.list();
+  // Startup loads persisted agent history once before restoring the registry.
+  const persistedRecords = await agentStorage.listAll();
   logger.info(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,

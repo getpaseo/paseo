@@ -1,7 +1,8 @@
-import { Ajv } from "ajv";
+import AjvModule from "ajv";
 import { z } from "zod";
 import type { SessionMessageInfo } from "@opencode/client";
 
+const Ajv = (AjvModule as unknown as { default?: typeof AjvModule }).default ?? AjvModule;
 export const STRUCTURED_OUTPUT_TOOL = "paseo_structured_output";
 const schemas = new Ajv({ strict: false, allErrors: true });
 

@@ -28,6 +28,10 @@ interface SeedProjectDescriptor {
  * prefer those wrappers over reaching for this client directly.
  */
 export interface SeedDaemonClient {
+  patchDaemonConfig(
+    config: import("@getpaseo/protocol/messages").MutableDaemonConfigPatch,
+  ): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
+  getDaemonConfig(): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -114,6 +118,7 @@ export interface SeedDaemonClient {
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
     labels?: Record<string, string>;
+    background?: boolean;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
     entries: Array<{
