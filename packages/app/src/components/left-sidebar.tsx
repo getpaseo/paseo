@@ -171,41 +171,26 @@ export const LeftSidebar = memo(function LeftSidebar({
   const openProjectPicker = useOpenAddProject();
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
-  const handleOpenProjectMobile = useCallback(() => {
+  // Each destination closes the navigation overlay first. Closing is idempotent, so a docked
+  // sidebar runs the same handler.
+  const handleOpenProject = useCallback(() => {
     void openProjectPicker();
   }, [openProjectPicker]);
 
-  const handleOpenProjectDesktop = useCallback(() => {
-    void openProjectPicker();
-  }, [openProjectPicker]);
-
-  const handleSettingsMobile = useCallback(() => {
+  const handleSettings = useCallback(() => {
     showMobileAgent();
     router.push(buildSettingsRoute());
   }, [showMobileAgent]);
 
-  const handleSettingsDesktop = useCallback(() => {
-    router.push(buildSettingsRoute());
-  }, []);
+  const handleAddHost = useAddHost();
 
-  const handleAddHostMobile = useAddHost();
-  const handleAddHostDesktop = handleAddHostMobile;
-
-  const handleOpenHostSettingsMobile = useCallback(
+  const handleOpenHostSettings = useCallback(
     (serverId: string) => {
       showMobileAgent();
       openHostOverview(serverId);
     },
     [showMobileAgent],
   );
-
-  const handleOpenHostSettingsDesktop = useCallback((serverId: string) => {
-    openHostOverview(serverId);
-  }, []);
-
-  const handleImportSessionMobile = useCallback(() => {
-    openImportSession();
-  }, [openImportSession]);
 
   const labels = useMemo(
     (): SidebarLabels => ({
@@ -239,44 +224,35 @@ export const LeftSidebar = memo(function LeftSidebar({
     labels,
   };
 
-  if (isCompactLayout) {
-    return (
-      <>
-        <RetainedPanelActivity active={active}>
-          <MobileSidebar
-            {...sharedProps}
-            active={active}
-            insetsTop={insets.top}
-            insetsBottom={insets.bottom}
-            closeSidebar={showMobileAgent}
-            handleOpenProject={handleOpenProjectMobile}
-            handleImportSession={handleImportSessionMobile}
-            handleSettings={handleSettingsMobile}
-            handleAddHost={handleAddHostMobile}
-            handleOpenHostSettings={handleOpenHostSettingsMobile}
-          />
-        </RetainedPanelActivity>
-        {importSessionSheet}
-      </>
-    );
-  }
+  const handlers = {
+    handleOpenProject,
+    handleImportSession: openImportSession,
+    handleSettings,
+    handleAddHost,
+    handleOpenHostSettings,
+  };
 
   return (
     <>
       <RetainedPanelActivity active={active}>
-        <DesktopSidebar
-          {...sharedProps}
-          insetsTop={insets.top}
-          active={active}
-          overlay={desktopOverlay}
-          handleOpenProject={handleOpenProjectDesktop}
-          handleImportSession={openImportSession}
-          handleSettings={desktopOverlay ? handleSettingsMobile : handleSettingsDesktop}
-          handleAddHost={desktopOverlay ? handleAddHostMobile : handleAddHostDesktop}
-          handleOpenHostSettings={
-            desktopOverlay ? handleOpenHostSettingsMobile : handleOpenHostSettingsDesktop
-          }
-        />
+        {isCompactLayout ? (
+          <MobileSidebar
+            {...sharedProps}
+            {...handlers}
+            active={active}
+            insetsTop={insets.top}
+            insetsBottom={insets.bottom}
+            closeSidebar={showMobileAgent}
+          />
+        ) : (
+          <DesktopSidebar
+            {...sharedProps}
+            {...handlers}
+            insetsTop={insets.top}
+            active={active}
+            overlay={desktopOverlay}
+          />
+        )}
       </RetainedPanelActivity>
       {importSessionSheet}
     </>
@@ -700,7 +676,6 @@ function DesktopSidebar({
     enabled: overlay,
     panelWidth: visibleSidebarWidth,
   });
-  const onBeforeNavigate = overlay ? closeSidebar : undefined;
 
 
   const startWidth = useSharedValue(visibleSidebarWidth);
@@ -812,7 +787,7 @@ function DesktopSidebar({
             ) : (
               <TitlebarDragRegion />
             )}
-            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={onBeforeNavigate} />
+            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
           </View>
 
           {isInitialLoad && !hasActiveHostFilter ? (
@@ -834,7 +809,7 @@ function DesktopSidebar({
               onRefresh={handleRefresh}
               onAddProject={handleOpenProject}
               onImportSession={handleImportSession}
-              onWorkspacePress={onBeforeNavigate}
+              onWorkspacePress={closeSidebar}
               parentGestureRef={overlay ? closeGestureRef : undefined}
               dragGestureHostActive={active}
               listHeaderComponent={workspacesSectionHeaderElement}
@@ -849,7 +824,7 @@ function DesktopSidebar({
             labels={labels}
             handleAddHost={handleAddHost}
             handleOpenHostSettings={handleOpenHostSettings}
-            onBeforeNavigate={onBeforeNavigate}
+            onBeforeNavigate={closeSidebar}
           />
 
           {!overlay && divisionLayout === null ? (
