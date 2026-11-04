@@ -198,7 +198,7 @@ function trimIncompleteTrailingFragment(text: string): string {
     return text;
   }
 
-  const withoutTrailingNewlines = text.replace(/(?:\r\n|\r|\n)+$/, "");
+  const withoutTrailingNewlines = trimTrailingLineBreaks(text);
   if (withoutTrailingNewlines.length !== text.length) {
     return withoutTrailingNewlines;
   }
@@ -217,6 +217,27 @@ function trimIncompleteTrailingFragment(text: string): string {
   }
 
   return text;
+}
+
+/**
+ * Index past the last non-newline character, scanning backward.
+ *
+ * A regex alternation of `\r\n|\r|\n` is ambiguous on a run of CRLFs — the
+ * engine can split it into pairs or into lone `\r`/`\n` tokens, and retries
+ * every split once the surrounding match fails. That backtracking is
+ * exponential in the run length and runs on every streamed render frame, so
+ * this walks backward one unit at a time instead.
+ */
+function trimTrailingLineBreaks(text: string): string {
+  let end = text.length;
+  while (end > 0) {
+    const unit = text.charCodeAt(end - 1);
+    if (unit !== 0x0a && unit !== 0x0d) {
+      break;
+    }
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 /** Number of regional indicators at the end of `text`. A flag is a pair. */

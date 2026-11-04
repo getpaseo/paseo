@@ -302,4 +302,14 @@ describe("trailing fragments from arrival boundaries", () => {
     const state = beginTextReveal("First thought.\r\n\r\n");
     expect(visibleRevealedText(state, { streaming: true })).toBe("First thought.");
   });
+
+  it("stays fast on a long run of CRLFs followed by text", () => {
+    // A regex alternation of \r\n|\r|\n is ambiguous on a run of CRLFs — the
+    // engine can retry every way of splitting it into pairs vs. lone units.
+    // A plain backward scan has no such blowup regardless of run length.
+    const pathological = `${"\r\n".repeat(5_000)}x`;
+    const start = performance.now();
+    visibleRevealedText(beginTextReveal(pathological), { streaming: true });
+    expect(performance.now() - start).toBeLessThan(50);
+  });
 });
