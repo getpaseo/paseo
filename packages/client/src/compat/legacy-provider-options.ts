@@ -203,11 +203,15 @@ export class LegacyProviderOptions {
   };
 }
 
-/** A legacy daemon stores a profile's options under `featureValues`. */
+/**
+ * A legacy daemon stores a profile's options under `featureValues`, and keeps an `options` field
+ * a newer daemon left on it. Both are read, and an explicit `options` key wins, as it does on the
+ * daemon (`foldFeatureValues`).
+ */
 function profileWithOptions(profile: AgentProfile): AgentProfile {
-  if (profile.options || !profile.featureValues) return profile;
+  if (!profile.featureValues) return profile;
   const { featureValues, ...rest } = profile;
-  return { ...rest, options: featureValues };
+  return { ...rest, options: { ...featureValues, ...profile.options } };
 }
 
 function profileWithFeatureValues(profile: AgentProfile): AgentProfile {

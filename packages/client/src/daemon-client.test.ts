@@ -9165,6 +9165,47 @@ describe("provider options across daemon versions", () => {
     expect(written).not.toMatchObject({ config: { agentProfiles: [{ options: {} }] } });
   });
 
+  test("a legacy daemon's profile with both featureValues and options keeps both when saved", async () => {
+    // `options` survives on a legacy daemon's passthrough profile after a downgrade, while its
+    // own app keeps editing `featureValues`.
+    const { client, sentMessages, mock } = await connect({});
+    const reading = client.getDaemonConfig();
+    const [read] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "get_daemon_config_response",
+        payload: {
+          requestId: read.requestId,
+          config: {
+            mcp: { injectIntoAgents: true },
+            agentProfiles: [
+              {
+                id: "p1",
+                name: "Mixed",
+                provider: "codex",
+                featureValues: { service_tier: "fast", sandbox_mode: "workspace-write" },
+                options: { sandbox_mode: "read-only" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const { config } = await reading;
+    expect(config.agentProfiles?.[0]).toMatchObject({
+      options: { service_tier: "fast", sandbox_mode: "read-only" },
+    });
+    expect(config.agentProfiles?.[0]).not.toHaveProperty("featureValues");
+
+    void client.patchDaemonConfig({ agentProfiles: config.agentProfiles }).catch(() => {});
+    const written = sentMessages().find((message) => message.type === "set_daemon_config_request");
+    expect(written).toMatchObject({
+      config: {
+        agentProfiles: [{ featureValues: { service_tier: "fast", sandbox_mode: "read-only" } }],
+      },
+    });
+  });
+
   test("a legacy daemon applies a profile's options as feature values", async () => {
     const { client, sentMessages } = await connect({});
     void client.applyAgentConfig("agent-1", { options: { service_tier: "fast" } }).catch(() => {});

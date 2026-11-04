@@ -118,6 +118,15 @@ export type DraftControlsRequest = Pick<
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "providerOptions"
 >;
 
+/** What the draft's form has chosen; the options come from the model. */
+export interface DraftControlsForm {
+  provider: string | null;
+  cwd: string;
+  modeId?: string | null;
+  modelId?: string | null;
+  thinkingOptionId?: string | null;
+}
+
 /**
  * The listing request for the draft's form, built from one snapshot of the model. The form
  * reaches a new provider before the model has observed it, and the model still holds the
@@ -126,13 +135,7 @@ export type DraftControlsRequest = Pick<
  */
 export function draftControlsRequest(
   state: DraftOptionsState,
-  form: {
-    provider: string | null;
-    cwd: string;
-    modeId?: string | null;
-    modelId?: string | null;
-    thinkingOptionId?: string | null;
-  },
+  form: DraftControlsForm,
 ): DraftControlsRequest | null {
   if (!form.provider || !form.cwd || form.provider !== state.provider) return null;
   const providerOptions = ownDraftOptions(state);
