@@ -102,6 +102,7 @@ interface ACPSessionInternals {
   connection: {
     prompt: (...args: unknown[]) => Promise<PromptResponse>;
     signal: AbortSignal;
+    cancel: (request: { sessionId: string }) => Promise<void>;
   };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
@@ -115,6 +116,7 @@ function openPromptConnection(
   return {
     prompt: prompt as ACPSessionInternals["connection"]["prompt"],
     signal: new AbortController().signal,
+    async cancel() {},
   };
 }
 
@@ -3573,6 +3575,134 @@ describe("ACPAgentSession", () => {
     });
   });
 
+  test.each(["cancelled", "end_turn", "rejected"] as const)(
+    "interrupt waits for prompt settlement (%s) before allowing a replacement",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      let resolvePrompt!: (response: PromptResponse) => void;
+      let rejectPrompt!: (error: Error) => void;
+      const pendingPrompt = new Promise<PromptResponse>((resolve, reject) => {
+        resolvePrompt = resolve;
+        rejectPrompt = reject;
+      });
+      const prompt = vi.fn().mockReturnValueOnce(pendingPrompt).mockResolvedValue({
+        stopReason: "end_turn",
+      });
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      const internals = asInternals<ACPSessionInternals>(session);
+      internals.sessionId = "session-1";
+      internals.connection = { ...openPromptConnection(prompt), cancel };
+      try {
+        const first = await session.startTurn("first");
+        let interrupted = false;
+        const interruption = session.interrupt().then(() => {
+          interrupted = true;
+          return;
+        });
+        await vi.advanceTimersByTimeAsync(2_500);
+        expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+        expect(interrupted).toBe(false);
+        await expect(session.startTurn("too early")).rejects.toThrow(
+          "A foreground turn is already active",
+        );
+        expect(prompt).toHaveBeenCalledTimes(1);
+
+        if (outcome === "rejected") {
+          rejectPrompt(new Error("prompt failed during cancellation"));
+        } else {
+          resolvePrompt({ stopReason: outcome });
+        }
+        await interruption;
+        expect(terminalEvents(events)).toEqual([expect.objectContaining({ turnId: first.turnId })]);
+        await expect(session.startTurn("replacement")).resolves.toHaveProperty("turnId");
+        expect(prompt).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test.each(["concurrent", "retry", "hanging"] as const)(
+    "interrupt cancellation races: %s",
+    async (scenario) => {
+      const session = createSession();
+      let resolvePrompt!: (response: PromptResponse) => void;
+      const pending = new Promise<PromptResponse>((resolve) => {
+        resolvePrompt = resolve;
+      });
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      if (scenario === "retry") {
+        cancel.mockRejectedValueOnce(new Error("cancel write failed"));
+      } else if (scenario === "hanging") {
+        cancel.mockReturnValue(new Promise<void>(() => {}));
+      }
+      const internals = asInternals<ACPSessionInternals>(session);
+      internals.sessionId = "session-1";
+      internals.connection = { ...openPromptConnection(() => pending), cancel };
+      const first = await session.startTurn("first");
+      if (scenario === "retry") {
+        await expect(session.interrupt()).rejects.toThrow("cancel write failed");
+        expect(internals.activeForegroundTurnId).toBe(first.turnId);
+        await expect(session.startTurn("too early")).rejects.toThrow(
+          "A foreground turn is already active",
+        );
+      }
+      let settled = false;
+      const interruption = session.interrupt().then(() => {
+        settled = true;
+        return;
+      });
+      const concurrent = session.interrupt();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cancel).toHaveBeenCalledTimes(scenario === "retry" ? 2 : 1);
+      expect(settled).toBe(false);
+      resolvePrompt({ stopReason: "cancelled" });
+      await Promise.all([interruption, concurrent]);
+      expect(internals.activeForegroundTurnId).toBeNull();
+      internals.connection = openPromptConnection(async () => ({ stopReason: "end_turn" }));
+      await expect(session.startTurn("replacement")).resolves.toHaveProperty("turnId");
+    },
+  );
+
+  test.each(["response", "rejection"] as const)(
+    "interrupt ignores late prompt %s after disconnected turn settlement",
+    async (outcome) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      let resolvePrompt!: (response: PromptResponse) => void;
+      let rejectPrompt!: (error: Error) => void;
+      const pending = new Promise<PromptResponse>((resolve, reject) => {
+        resolvePrompt = resolve;
+        rejectPrompt = reject;
+      });
+      const abort = new AbortController();
+      const internals = asInternals<ACPSessionInternals>(session);
+      internals.sessionId = "session-1";
+      internals.connection = { ...openPromptConnection(() => pending), signal: abort.signal };
+      const first = await session.startTurn("first");
+      const interruption = session.interrupt();
+      abort.abort();
+      await interruption;
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({ type: "turn_failed", turnId: first.turnId }),
+      ]);
+      internals.connection = openPromptConnection(() => new Promise(() => {}));
+      const replacement = await session.startTurn("replacement");
+      if (outcome === "response") {
+        resolvePrompt({ stopReason: "cancelled" });
+      } else {
+        rejectPrompt(new Error("late failure"));
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(internals.activeForegroundTurnId).toBe(replacement.turnId);
+      expect(terminalEvents(events)).toHaveLength(1);
+    },
+  );
+
   function fakeACPAgent(prompt: Agent["prompt"]): Agent {
     return {
       async initialize() {
@@ -3639,6 +3769,64 @@ describe("ACPAgentSession", () => {
       closeTransport: () => agentOutput.close(),
     };
   }
+
+  test.each(["cancelled", "disconnected"] as const)(
+    "interrupt awaits real ACP settlement: %s",
+    async (outcome) => {
+      let resolvePrompt!: (response: PromptResponse) => void;
+      const pending = new Promise<PromptResponse>((resolve) => {
+        resolvePrompt = resolve;
+      });
+      let promptReceived!: () => void;
+      const received = new Promise<void>((resolve) => {
+        promptReceived = resolve;
+      });
+      let cancelReceived!: () => void;
+      const canceled = new Promise<void>((resolve) => {
+        cancelReceived = resolve;
+      });
+      const provider = fakeACPAgent(() => {
+        promptReceived();
+        return pending;
+      });
+      provider.cancel = async () => cancelReceived();
+      const agent = await connectInMemoryACPAgent(provider);
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const internals = asInternals<ACPSessionInternals>(session);
+      internals.sessionId = agent.sessionId;
+      internals.connection = agent.connection;
+      const first = await session.startTurn("first");
+      await received;
+      let settled = false;
+      const interruption = session.interrupt().then(() => {
+        settled = true;
+        return;
+      });
+      await canceled;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(internals.activeForegroundTurnId).toBe(first.turnId);
+      if (outcome === "disconnected") {
+        await agent.closeTransport();
+      } else {
+        resolvePrompt({ stopReason: "cancelled" });
+      }
+      await interruption;
+      expect(internals.activeForegroundTurnId).toBeNull();
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({
+          type: outcome === "cancelled" ? "turn_canceled" : "turn_failed",
+          turnId: first.turnId,
+        }),
+      ]);
+      if (outcome === "cancelled") {
+        await agent.closeTransport();
+      }
+      await agent.connection.closed;
+    },
+  );
 
   test("startTurn fails instead of hanging when the ACP connection has closed", async () => {
     const agent = await connectInMemoryACPAgent(
