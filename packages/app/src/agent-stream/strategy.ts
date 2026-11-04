@@ -56,6 +56,9 @@ export interface StreamViewportHandle {
    * Following output stops; it resumes if the change leaves the list at its end.
    */
   holdRow: (rowId: string, apply: () => void) => void;
+  /** Stop following output so new rows do not pull the list away from where the reader is. */
+  holdReadingPosition: () => void;
+  scrollToStart?: () => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 

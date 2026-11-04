@@ -19,6 +19,110 @@ import {
   seedLongMockAgentTimeline,
 } from "../support/helpers/timeline-pagination";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import { openSettings } from "../support/helpers/app";
+import { openSettingsSection } from "../support/helpers/settings";
+import {
+  failPromptIndexResponses,
+  trackPromptJumpRequests,
+} from "../support/helpers/agent-timeline-gate";
+
+async function chooseChatOpenPosition(page: Page, position: "Start" | "End") {
+  await openSettings(page);
+  await openSettingsSection(page, "chat");
+  await page.getByRole("button", { name: /^Open chat at:/ }).click();
+  await page.getByRole("menuitem", { name: `${position} of conversation`, exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: `Open chat at: ${position} of conversation`, exact: true }),
+  ).toBeVisible();
+}
+
+test("chat open position persists and opens unloaded history without following new output", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 80 });
+  const backgroundPrompt = "New output while reading the beginning";
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await expectChatAtBottom(page);
+    await chooseChatOpenPosition(page, "Start");
+    // Opening at the beginning must also work with the outline hidden.
+    await page.getByRole("switch", { name: "Chat outline", exact: true }).click();
+    await expect(page.getByRole("switch", { name: "Chat outline", exact: true })).not.toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath("chat-open-position-setting.png") });
+    const jumps = await trackPromptJumpRequests(page, agent.agentId);
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    await expect(page.getByTestId("chat-outline-rail")).toBeHidden();
+    await expect.poll(() => jumps.requests().length).toBe(1);
+    expect(jumps.requests()[0]).toMatchObject({ limit: 40, mergeWindow: true });
+    await page.reload();
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    await agent.client.sendAgentMessage(agent.agentId, backgroundPrompt);
+    await agent.client.waitForFinish(agent.agentId, 20_000);
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    await page.screenshot({ path: testInfo.outputPath("chat-open-position-start.png") });
+    await page.getByTestId("scroll-to-bottom-button").click();
+    await expectTimelinePromptVisible(page, backgroundPrompt);
+    await expectChatAtBottom(page);
+    await chooseChatOpenPosition(page, "End");
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, backgroundPrompt);
+    await expectChatAtBottom(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("chat open position applies when returning through the compact sidebar", async ({ page }) => {
+  test.setTimeout(240_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 30 });
+  const other = await seedMockAgentWorkspace({
+    repoPrefix: "chat-open-position-other-",
+    title: "Other chat",
+    initialPrompt: "Other workspace",
+  });
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await chooseChatOpenPosition(page, "Start");
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("scroll-to-bottom-button").click();
+    await expectChatAtBottom(page);
+    await openCompactWorkspace(page, other);
+    await openCompactWorkspace(page, agent);
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+  } finally {
+    await Promise.allSettled([agent.cleanup(), other.cleanup()]);
+  }
+});
+
+test("chat open position exposes a failed history jump and retries", async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 30 });
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await chooseChatOpenPosition(page, "Start");
+    const failure = await failPromptIndexResponses(page);
+    await openAgentTimeline(page, agent);
+    const error = page.getByTestId("chat-open-start-error");
+    await expect(error).toContainText("Couldn't open the start of this conversation");
+    await page.screenshot({ path: testInfo.outputPath("chat-open-position-retry.png") });
+    failure.recover();
+    await error.getByRole("button", { name: "Retry", exact: true }).click();
+    await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    await expect(error).toBeHidden();
+  } finally {
+    await agent.cleanup();
+  }
+});
 
 async function expectChatAtBottom(page: Page): Promise<void> {
   await expect

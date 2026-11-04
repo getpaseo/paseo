@@ -266,6 +266,7 @@ describe("useChatOutline", () => {
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
       holdRow: vi.fn(),
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
     };
     const viewportRef = { current: viewport };
@@ -318,6 +319,7 @@ describe("useChatOutline", () => {
         scrollToBottom: vi.fn(),
         prepareForViewportChange: vi.fn(),
         holdRow: vi.fn(),
+        holdReadingPosition: vi.fn(),
         scrollToMessage,
       },
     };
@@ -374,6 +376,7 @@ describe("useChatOutline", () => {
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
       holdRow: vi.fn(),
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
     };
     const livePrompt = {

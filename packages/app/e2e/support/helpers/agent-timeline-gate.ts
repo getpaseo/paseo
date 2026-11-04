@@ -39,6 +39,31 @@ export interface PromptJumpRequestTracker {
   requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
 }
 
+export async function failPromptIndexResponses(page: Page): Promise<{ recover(): void }> {
+  let failing = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const session = getSessionMessage(message);
+      if (failing && session?.type === "agent.timeline.list_prompts.response") {
+        const envelope = JSON.parse(message.toString()) as {
+          message: { payload: { error: string | null } };
+        };
+        envelope.message.payload.error = "Timeline index temporarily unavailable";
+        socket.send(JSON.stringify(envelope));
+        return;
+      }
+      socket.send(message);
+    });
+  });
+  return {
+    recover() {
+      failing = false;
+    },
+  };
+}
+
 export async function trackPromptJumpRequests(
   page: Page,
   agentId: string,

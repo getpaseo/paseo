@@ -237,6 +237,9 @@ export const fr: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "Ouverture du début de la conversation…",
+    openStartFailed:
+      "Impossible d’ouvrir le début de la conversation. Réessayez ou mettez à jour l’hôte s’il ne permet pas de parcourir l’historique.",
     empty: "Commencez à discuter avec cet agent…",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
@@ -2494,6 +2497,11 @@ export const fr: TranslationResources = {
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
+      },
+      chatOpenPosition: {
+        label: "Ouvrir le chat au",
+        description: "Point de départ à l’ouverture d’un chat",
+        options: { end: "Fin de la conversation", start: "Début de la conversation" },
       },
       chatDisplay: {
         label: "Affichage du chat",

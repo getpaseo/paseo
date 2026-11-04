@@ -44,6 +44,31 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each(["start", "end"] as const)(
+    "persists the chat open position: %s",
+    async (chatOpenPosition) => {
+      const deps = makeDeps();
+      await saveAppSettings({
+        queryClient: new QueryClient(),
+        deps,
+        updates: { chatOpenPosition },
+      });
+      expect((await loadAppSettingsFromStorage(deps)).chatOpenPosition).toBe(chatOpenPosition);
+    },
+  );
+
+  it.each([undefined, null, "invalid"])(
+    "opens at the end for missing or invalid preferences: %j",
+    async (chatOpenPosition) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ chatOpenPosition }),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).chatOpenPosition).toBe("end");
+    },
+  );
+
   it("persists file panel associations, including panels absent from this host", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();

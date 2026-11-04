@@ -234,6 +234,9 @@ export const ko: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "대화 시작 부분을 여는 중…",
+    openStartFailed:
+      "대화 시작 부분을 열 수 없습니다. 다시 시도하거나, 호스트가 기록 탐색을 지원하지 않으면 업데이트하세요.",
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
@@ -2453,6 +2456,11 @@ export const ko: TranslationResources = {
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
+      },
+      chatOpenPosition: {
+        label: "채팅 시작 위치",
+        description: "채팅을 열 때 표시할 위치",
+        options: { end: "대화 끝", start: "대화 시작" },
       },
       chatDisplay: {
         label: "채팅 표시",

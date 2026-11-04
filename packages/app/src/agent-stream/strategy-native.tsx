@@ -425,6 +425,15 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
       },
       holdRow,
+      holdReadingPosition: () => bottomAnchorController.detachByUser(),
+      scrollToStart: () => {
+        bottomAnchorController.detachByUser();
+        programmaticScrollEventBudgetRef.current = 3;
+        const list = listRef.current;
+        list?.cancelScroll();
+        // The scroll component is `EndPinnedScrollView`, a ScrollView.
+        (list?.getNativeScrollRef() as ScrollView | undefined)?.scrollTo({ y: 0, animated: false });
+      },
     };
     viewportRef.current = handle;
     return () => {
