@@ -54,7 +54,7 @@ const workspace = await client.workspaces.create({
 
 传入 `background: true` 可以让工作区不出现在默认的发现结果中。它的 Agent 和终端仍然是持久的，有正常的历史记录、生命周期钩子、归档和精确 ID 访问。应用侧边栏提供 **显示后台工作区**，不会丢弃已同步的状态。
 
-`background` 只能在创建时设置。省略时默认为 false；当 `callerAgentId` 指明是某个 Agent 在创建新工作区时，省略则继承该 Agent 所在工作区的值。显式的 false 或 true 会覆盖继承。带 `workspaceId` 创建 Agent 时会拒绝显式的后台创建意图；请在创建工作区时配置可见性。SDK/RPC 的隐式 Agent 创建也接受 `background`，但它表示工作区的创建意图，而不是 Agent 的属性。
+`background` 只能在创建时设置。省略时默认为 false；当 `callerAgentId` 指明是某个 Agent 在创建新工作区时，省略则继承调用方的可见性：调用方 Agent 或其工作区为后台时即为 true。显式的 false 或 true 会覆盖继承。同时创建工作区的 Agent 创建请求会把 `background` 同时应用到工作区和 Agent。要在已有工作区中隐藏单个 Agent，见[后台 Agent](./agents.md#run-a-helper-as-a-background-agent)。
 
 创建和包含后台工作区的发现都需要 `features.backgroundWorkspaces`；对于不支持的主机，客户端会拒绝并提示更新主机。
 
@@ -122,7 +122,7 @@ do {
 } while (cursor);
 ```
 
-除非 `filter.includeBackground` 为 true，否则后台工作区不会被列出。使用 `client.workspaces.list({ filter: { includeBackground: true } })` 或 `client.agents.list({ filter: { includeBackground: true } })`。工作区描述符带有 `background`；Agent 的可见性来自它所在的工作区，没有单独的设置。
+除非 `filter.includeBackground` 为 true，否则后台工作区不会被列出。使用 `client.workspaces.list({ filter: { includeBackground: true } })` 或 `client.agents.list({ filter: { includeBackground: true } })`。工作区和 Agent 快照都带有 `background`。Agent 本身或其工作区为后台时，Agent 会被隐藏。
 
 ## 刷新和归档句柄 {#refresh-and-archive-a-handle}
 

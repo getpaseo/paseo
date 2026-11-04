@@ -2084,6 +2084,8 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
+To run a helper the user shouldn't see, such as a classifier or summarizer, create it as a [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) in an existing workspace.
+
 ### Discover hosts and target another host
 
 Use `useHosts()` to display configured hosts and `getPaseoClient(serverId)` in an action callback
