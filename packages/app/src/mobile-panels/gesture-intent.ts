@@ -1,6 +1,39 @@
 export type MobilePanelGestureDirection = -1 | 1;
 export type MobilePanelGestureIntent = "activate" | "fail" | "wait";
 
+export interface MobilePanelGestureExclusion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const MOBILE_PANEL_EDGE_SWIPE_WIDTH = 32;
+
+interface MobilePanelOpenGestureStart {
+  x: number;
+  y: number;
+  direction: MobilePanelGestureDirection;
+  windowWidth: number;
+  exclusions: MobilePanelGestureExclusion[];
+}
+
+export function canStartMobilePanelOpenGesture(input: MobilePanelOpenGestureStart): boolean {
+  "worklet";
+  const startsAtEdge =
+    input.direction === 1
+      ? input.x <= MOBILE_PANEL_EDGE_SWIPE_WIDTH
+      : input.x >= input.windowWidth - MOBILE_PANEL_EDGE_SWIPE_WIDTH;
+  if (!startsAtEdge) return false;
+  return !input.exclusions.some(
+    (area) =>
+      input.x >= area.x &&
+      input.x <= area.x + area.width &&
+      input.y >= area.y &&
+      input.y < area.y + area.height,
+  );
+}
+
 export function resolveMobilePanelGestureIntent(input: {
   deltaX: number;
   deltaY: number;
