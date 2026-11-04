@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
+import { gotoAppShell } from "../support/helpers/app";
 import {
   BOTS_PLUGIN_ID,
   COMPACT,
@@ -174,6 +175,37 @@ test.describe("Plugin sidebar items", () => {
 
   test.afterEach(async () => {
     await cleanup();
+  });
+
+  test("a short compact sidebar keeps workspaces usable while navigation scrolls", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 600 });
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
+    await expect(botRow(page, "status")).toBeAttached();
+    const workspace = visibleTestId(page, `sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+    await expect(workspace).toBeInViewport({ ratio: 1 });
+
+    await test.step("scrolling navigation reaches its last row without moving workspaces", async () => {
+      const before = await boxOf(workspace);
+      await visibleTestId(page, "sidebar-global-new-workspace").hover();
+      await page.mouse.wheel(0, 800);
+      await expect(botRow(page, "status")).toBeInViewport({ ratio: 1 });
+      await expect(workspace).toBeInViewport({ ratio: 1 });
+      expect((await boxOf(workspace)).y).toBe(before.y);
+      await botRow(page, "status").click();
+      await expect(page.getByText("Bot status details", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Close bot status", exact: true }).click();
+    });
+
+    await test.step("the workspace still opens and closes the sidebar", async () => {
+      await workspace.click();
+      await expect(
+        page.getByRole("button", { name: "Open menu", exact: true }).first(),
+      ).toBeVisible();
+      await expect(workspace).not.toBeInViewport();
+    });
   });
 
   test("a restored plugin screen waits for its catalog before rendering", async ({ page }) => {
