@@ -2,6 +2,7 @@ import { PanelRight } from "lucide-react-native";
 import { type StyleProp, type ViewStyle } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import {
   extraMutedIconColorMapping,
   iconButtonChromeGlyphSize,
@@ -92,6 +93,17 @@ export function WorkspaceExplorerSidebarToggle({
   owner,
   ...toggleProps
 }: DesktopWorkspaceExplorerToggleProps) {
-  if (owner !== "window") return null;
+  if (owner === "header") return null;
+  if (owner === "mobile") {
+    // The compact Explorer is an overlay like the compact agent list, so it closes with the same X.
+    return (
+      <SidebarCloseButton
+        label={toggleProps.label}
+        onPress={toggleProps.onPress}
+        testID="workspace-explorer-toggle"
+        accessibilityState={toggleProps.accessibilityState}
+      />
+    );
+  }
   return <WorkspaceExplorerToggle {...toggleProps} mobile={false} />;
 }

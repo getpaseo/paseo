@@ -1,3 +1,16 @@
+import { buildStoredAgentPayload } from "./agent/agent-projections.js";
+import type { ManagedAgent } from "./agent/agent-manager.js";
+import { Session as InspectorSession } from "node:inspector/promises";
+import type { HeapProfiler } from "node:inspector";
+import {
+  FileBackedWorkspaceRegistry,
+  createPersistedWorkspaceRecord,
+} from "./workspace-registry.js";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentStorage } from "./agent/agent-storage.js";
+import { AgentDirectory } from "./agent/directory.js";
 import { describe, expect, test } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
@@ -68,8 +81,21 @@ class WorkspaceStatus {
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
-    workspaceRegistry: { list: async () => this.workspaces },
+    workspaceRegistry: {
+      listActive: async () => this.workspaces.filter((w) => !w.archivedAt),
+      get: async (id) => this.workspaces.find((w) => w.workspaceId === id) ?? null,
+    },
     listAgentPayloads: async () => this.agents,
+    workspaceLastUserMessageTimes: async () => {
+      const times = new Map<string, string>();
+      for (const agent of this.agents) {
+        if (!agent.workspaceId || !agent.lastUserMessageAt) continue;
+        const previous = times.get(agent.workspaceId);
+        if (!previous || agent.lastUserMessageAt > previous)
+          times.set(agent.workspaceId, agent.lastUserMessageAt);
+      }
+      return times;
+    },
     listProviderSubagentActivity: async () => this.providerSubagents,
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
@@ -242,9 +268,12 @@ class WorkspaceStatus {
 interface AgentState {
   id: string;
   status: AgentSnapshotPayload["status"];
+  lastUserMessageAt?: string | null;
+  archivedAt?: string | null;
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
+  background?: boolean;
 }
 
 function createAgent(
@@ -256,12 +285,13 @@ function createAgent(
     provider: "codex",
     cwd: input.cwd,
     ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.background ? { background: true } : {}),
     model: null,
     thinkingOptionId: null,
     effectiveThinkingOptionId: null,
     createdAt: NOW,
     updatedAt: NOW,
-    lastUserMessageAt: null,
+    lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status,
     capabilities: {
       supportsStreaming: true,
@@ -289,7 +319,7 @@ function createAgent(
     requiresAttention: input.requiresAttention ?? false,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
-    archivedAt: null,
+    archivedAt: input.archivedAt ?? null,
   } satisfies AgentSnapshotPayload;
 }
 
@@ -311,6 +341,15 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("a running background agent does not make its workspace running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "root-agent", status: "idle" });
+    workspace.hasRootAgent({ id: "classifier", status: "running", background: true });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
   });
 
   test("same-cwd workspaces attribute agent status only to the owner", async () => {
@@ -558,8 +597,12 @@ describe("WorkspaceDirectory empty projects", () => {
     return new WorkspaceDirectory({
       logger: createTestLogger(),
       projectRegistry: { list: async () => input.projects },
-      workspaceRegistry: { list: async () => input.workspaces },
+      workspaceRegistry: {
+        listActive: async () => input.workspaces.filter((w) => !w.archivedAt),
+        get: async (id) => input.workspaces.find((w) => w.workspaceId === id) ?? null,
+      },
       listAgentPayloads: async () => [],
+      workspaceLastUserMessageTimes: async () => new Map(),
       listProviderSubagentActivity: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
@@ -716,13 +759,14 @@ test("Git observation targets exclude archived records without hydrating app des
     logger: createTestLogger(),
     projectRegistry: { list: async () => [project("active"), project("archived", NOW)] },
     workspaceRegistry: {
-      list: async () => [
+      get: async () => null,
+      listActive: async () => [
         workspace("observed", "active"),
-        workspace("hidden", "active", NOW),
         workspace("hidden-project", "archived"),
       ],
     },
     listAgentPayloads: unexpectedHydration,
+    workspaceLastUserMessageTimes: unexpectedHydration,
     listProviderSubagentActivity: unexpectedHydration,
     listTerminalActivityContributions: unexpectedHydration,
     buildWorkspaceDescriptor: unexpectedHydration,
@@ -732,3 +776,224 @@ test("Git observation targets exclude archived records without hydrating app des
     { id: "observed", workspaceDirectory: "/workspace/observed", workspaceKind: "local_checkout" },
   ]);
 });
+
+test("workspace sort times retain the latest human prompt after its agent is archived", async () => {
+  const scenario = new WorkspaceStatus();
+  scenario.hasRootAgent({
+    id: "older",
+    status: "idle",
+    lastUserMessageAt: "2026-03-03T12:00:00.000Z",
+  });
+  scenario.hasRootAgent({
+    id: "archived",
+    status: "idle",
+    lastUserMessageAt: "2026-03-04T12:00:00.000Z",
+    archivedAt: "2026-03-05T12:00:00.000Z",
+  });
+  scenario.hasRootAgent({ id: "output-only", status: "running" });
+  expect(await scenario.workspaceDescriptor()).toMatchObject({
+    createdAt: NOW,
+    lastUserMessageAt: "2026-03-04T12:00:00.000Z",
+    status: "running",
+  });
+});
+
+test("prompt recency reads archived records without projecting agents or exposing internal prompts", async () => {
+  const home = await mkdtemp(join(tmpdir(), "workspace-prompt-times-"));
+  const storage = new AgentStorage(home, createTestLogger());
+  try {
+    const base = {
+      provider: "unavailable",
+      cwd: home,
+      workspaceId: "w",
+      createdAt: NOW,
+      updatedAt: NOW,
+      labels: {},
+      lastStatus: "closed" as const,
+    };
+    await storage.upsert({
+      ...base,
+      id: "archived",
+      archivedAt: NOW,
+      lastUserMessageAt: "2026-03-04T00:00:00.000Z",
+    });
+    await storage.upsert({
+      ...base,
+      id: "internal",
+      internal: true,
+      lastUserMessageAt: "2026-03-05T00:00:00.000Z",
+    });
+    await storage.upsert({ ...base, id: "output", lastActivityAt: "2026-03-06T00:00:00.000Z" });
+    await storage.upsert({ ...base, id: "live", lastUserMessageAt: "2026-03-09T00:00:00.000Z" });
+    const unexpectedProjection = (): never => {
+      throw new Error("Prompt sorting projected an agent payload");
+    };
+    const directory = new AgentDirectory({
+      storage,
+      manager: {
+        listAgents: () => [
+          {
+            id: "live",
+            workspaceId: "w",
+            lastUserMessageAt: new Date("2026-03-02T00:00:00.000Z"),
+          } as ManagedAgent,
+        ],
+      },
+      workspaces: { get: async () => null },
+      projectLive: unexpectedProjection,
+      projectStored: unexpectedProjection,
+      isProviderVisible: () => false,
+      isStoredProviderAvailable: () => false,
+    });
+    expect(await directory.workspaceLastUserMessageTimes()).toEqual(
+      new Map([["w", "2026-03-04T00:00:00.000Z"]]),
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("scoped descriptor builds allocate independently of archived history", async () => {
+  const home = await mkdtemp(join(tmpdir(), "descriptor-history-"));
+  try {
+    const logger = createTestLogger();
+    const agentsPath = join(home, "agents");
+    await mkdir(agentsPath);
+    const records = Array.from({ length: 10001 }, (_, i) =>
+      createPersistedWorkspaceRecord({
+        workspaceId: `w${i}`,
+        projectId: "p",
+        cwd: home,
+        kind: "directory",
+        displayName: "workspace",
+        createdAt: NOW,
+        updatedAt: NOW,
+        archivedAt: i ? NOW : null,
+      }),
+    );
+    await writeFile(join(home, "workspaces.json"), JSON.stringify(records));
+    for (let offset = 0; offset < 10000; offset += 100)
+      await Promise.all(
+        Array.from({ length: 100 }, (_, i) => {
+          const id = `a${offset + i}`;
+          return writeFile(
+            join(agentsPath, `${id}.json`),
+            JSON.stringify({
+              id,
+              provider: "codex",
+              cwd: home,
+              workspaceId: "w1",
+              createdAt: NOW,
+              updatedAt: NOW,
+              labels: {},
+              archivedAt: NOW,
+              lastUserMessageAt: NOW,
+            }),
+          );
+        }),
+      );
+    const storage = new AgentStorage(agentsPath, logger);
+    const registry = new FileBackedWorkspaceRegistry(join(home, "workspaces.json"), logger);
+    await storage.initialize();
+    await storage.upsert({
+      id: "parent",
+      provider: "codex",
+      cwd: home,
+      workspaceId: "w2",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    await storage.upsert({
+      id: "child",
+      provider: "codex",
+      cwd: home,
+      workspaceId: "w0",
+      createdAt: NOW,
+      updatedAt: NOW,
+      lastStatus: "running",
+      labels: { "paseo.parent-agent-id": "parent" },
+    });
+    await registry.initialize();
+    const agents = new AgentDirectory({
+      storage,
+      workspaces: registry,
+      manager: { listAgents: () => [] },
+      projectLive: async () => {
+        throw new Error("Unexpected live projection");
+      },
+      projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+      isProviderVisible: () => true,
+      isStoredProviderAvailable: () => true,
+    });
+    const directory = new WorkspaceDirectory({
+      logger,
+      workspaceRegistry: registry,
+      projectRegistry: {
+        list: async () => [
+          {
+            projectId: "p",
+            rootPath: home,
+            kind: "non_git",
+            displayName: "project",
+            createdAt: NOW,
+            updatedAt: NOW,
+            archivedAt: null,
+          },
+        ],
+      },
+      listAgentPayloads: (workspaceIds) =>
+        agents.list({ workspaceIds, includeBackground: true, includeAncestors: true }),
+      workspaceLastUserMessageTimes: (workspaceIds) =>
+        agents.workspaceLastUserMessageTimes(workspaceIds),
+      listProviderSubagentActivity: async () => [],
+      listTerminalActivityContributions: async () => [],
+      isProviderVisibleToClient: () => true,
+      buildWorkspaceDescriptor: async ({ workspace }) => ({
+        id: workspace.workspaceId,
+        projectId: "p",
+        projectDisplayName: "project",
+        projectRootPath: home,
+        projectKind: "non_git",
+        workspaceDirectory: home,
+        workspaceKind: "directory",
+        name: "workspace",
+        status: "done",
+        activityAt: null,
+        diffStat: null,
+        scripts: [],
+        gitRuntime: null,
+        githubRuntime: null,
+      }),
+    });
+    const scoped = await directory.buildDescriptorMap({
+      workspaceIds: new Set(["w0"]).values(),
+      includeGitData: false,
+    });
+    expect(scoped.get("w0")?.status).toBe("running");
+    const inspector = new InspectorSession();
+    inspector.connect();
+    let bytes = 0;
+    try {
+      await inspector.post("HeapProfiler.startSampling", {
+        samplingInterval: 16384,
+        includeObjectsCollectedByMajorGC: true,
+        includeObjectsCollectedByMinorGC: true,
+      });
+      for (let i = 0; i < 100; i++)
+        await directory.buildDescriptorMap({
+          workspaceIds: new Set(["w0"]).values(),
+          includeGitData: false,
+        });
+      const { profile } = await inspector.post("HeapProfiler.stopSampling");
+      function sum(node: HeapProfiler.SamplingHeapProfileNode): number {
+        return node.selfSize + node.children.reduce((total, child) => total + sum(child), 0);
+      }
+      bytes = sum(profile.head);
+    } finally {
+      inspector.disconnect();
+    }
+    expect(bytes).toBeLessThan(8 * 1024 * 1024);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}, 30000);

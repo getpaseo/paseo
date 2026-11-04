@@ -27,7 +27,7 @@ const WORKSPACE_KEY = "server-1:workspace-1";
 beforeEach(() => {
   useWorkspaceLayoutStore.setState({
     layoutMode: "split-panes",
-    sheetByWorkspace: {},
+    sheetsByWorkspace: {},
     layoutByWorkspace: {},
     explorerSidebarPaneIdByWorkspace: {},
     sidePaneIdByWorkspace: {},
@@ -56,7 +56,7 @@ describe("openPreferredWorkspacePreview", () => {
     });
 
     const state = useWorkspaceLayoutStore.getState();
-    expect(state.sheetByWorkspace[WORKSPACE_KEY]?.tab).toMatchObject({
+    expect(state.sheetsByWorkspace[WORKSPACE_KEY]?.at(-1)?.tab).toMatchObject({
       tabId,
       target: { kind: "file", path: "src/preview.ts" },
     });
@@ -96,7 +96,7 @@ describe("previews under a sheet with unsaved work", () => {
     });
   }
 
-  it("reuses one preview tab instead of adding a tab per link", () => {
+  it("stacks link previews over the sheet instead of dropping its unsaved work", () => {
     const store = useWorkspaceLayoutStore.getState();
     store.openTab({
       workspaceKey: WORKSPACE_KEY,
@@ -114,18 +114,17 @@ describe("previews under a sheet with unsaved work", () => {
       { modified: true },
     );
 
-    const firstPreviewTabId = previewFile("src/first.ts");
-    const secondPreviewTabId = previewFile("src/second.ts");
+    previewFile("src/first.ts");
+    previewFile("src/second.ts");
 
     const state = useWorkspaceLayoutStore.getState();
-    expect(state.sheetByWorkspace[WORKSPACE_KEY]?.tab.target).toEqual(sheetTarget);
-    expect(secondPreviewTabId).toBe(firstPreviewTabId);
-    const root = state.layoutByWorkspace[WORKSPACE_KEY].root;
-    const tabsById = new Map(collectAllTabs(root).map((tab) => [tab.tabId, tab.target]));
-    expect(findPaneById(root, "main")?.tabIds.map((tabId) => tabsById.get(tabId))).toEqual([
-      { kind: "terminal", terminalId: "term-1" },
+    expect(state.sheetsByWorkspace[WORKSPACE_KEY]?.map((sheet) => sheet.tab.target)).toEqual([
+      sheetTarget,
+      { kind: "file", path: "src/first.ts" },
       { kind: "file", path: "src/second.ts" },
     ]);
+    const root = state.layoutByWorkspace[WORKSPACE_KEY].root;
+    expect(findPaneById(root, "main")?.tabIds).toHaveLength(1);
   });
 });
 

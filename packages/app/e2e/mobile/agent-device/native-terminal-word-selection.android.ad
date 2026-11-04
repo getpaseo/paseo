@@ -1,0 +1,19 @@
+# Prerequisite: a native terminal showing the output of echo '한글 문장'
+# on its first row, with no active selection. Use a dedicated QA workspace.
+# Coordinates target the first half of 문 on a 1080x1920 phone at default
+# code size. Override WORD_X/WORD_Y for other device geometry.
+context platform=android timeout=30000 retries=0
+env APP_ID=sh.paseo.debug
+env WORD_X=105
+env WORD_Y=251
+
+open "${APP_ID}"
+wait "label=\"Terminal input\"" 10000
+wait "label=\"한글 문장\"" 10000
+longpress "${WORD_X}" "${WORD_Y}" 650
+wait "id=\"terminal-copy\"" 5000
+press "id=\"terminal-copy\""
+# Copy clears the selection; only Android's clipboard preview has this exact
+# text, since the unselected terminal row contains the full sentence.
+wait "text=\"문장\"" 3000
+close

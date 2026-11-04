@@ -3,11 +3,13 @@
 // to keep the module graph importable.
 const Stub = () => null;
 const PassThrough = ({ children }: { children?: unknown }) => children;
+const sharedValue = (value: unknown) => ({ get: () => value });
 
 export default Stub;
 export const BottomSheetModal = Stub;
 export const BottomSheetModalProvider = PassThrough;
 export const BottomSheetBackdrop = Stub;
+export const BottomSheetHandle = Stub;
 export const BottomSheetScrollView = PassThrough;
 export const BottomSheetView = PassThrough;
 export const BottomSheetTextInput = Stub;
@@ -16,10 +18,31 @@ export function useBottomSheetModal(): never {
   throw new Error("Modal stack interactions require the real Gorhom provider in browser E2E tests");
 }
 
+// A sheet host scope only redirects where sheets draw; with no sheet drawn there is nothing to host.
+export function useBottomSheet(): never {
+  throw new Error("useBottomSheet is unavailable in tests");
+}
+// A drag area only hands its gesture to a sheet; with no sheet drawn there is nothing to drag.
+export function useBottomSheetGestureHandlers(): never {
+  throw new Error("useBottomSheetGestureHandlers is unavailable in tests");
+}
+export const BottomSheetModalInternalProvider = PassThrough;
+export const INITIAL_CONTAINER_LAYOUT = {
+  height: 0,
+  offset: { top: 0, bottom: 0, left: 0, right: 0 },
+};
+export function useBottomSheetModalInternal() {
+  return {
+    hostName: "stub",
+    containerLayoutState: sharedValue(INITIAL_CONTAINER_LAYOUT),
+    mountSheet: () => undefined,
+    unmountSheet: () => undefined,
+    willUnmountSheet: () => undefined,
+  };
+}
+
 // The app imports the internal layout values to compute the visible sheet body. Browser unit tests
 // never render the native sheet, but Vite still validates this module's export surface.
-const sharedValue = (value: unknown) => ({ get: () => value });
-
 export const KEYBOARD_STATUS = { SHOWN: "SHOWN" };
 export function useBottomSheetInternal() {
   return {

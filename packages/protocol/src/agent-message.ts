@@ -5,6 +5,7 @@ export const AgentMessageSchema = z.object({
   event: z.enum(["message", "finished", "errored", "permission-required", "closed"]),
   sender: z.object({
     id: z.string().min(1),
+    serverId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
   }),
   text: z.string(),

@@ -38,7 +38,7 @@ export function createNoopWorkspaceGitService(
     onSnapshotUpdated: () => ({
       unsubscribe: () => {},
     }),
-    peekSnapshot: () => null,
+
     getCheckout: async (cwd: string) => ({
       cwd,
       isGit: false,

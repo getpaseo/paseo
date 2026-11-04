@@ -66,9 +66,9 @@ export const PressHighlight = forwardRef<View, PressHighlightProps>(function Pre
 
 const styles = StyleSheet.create({
   highlight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   highlightFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

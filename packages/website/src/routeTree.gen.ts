@@ -9,1496 +9,1612 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/__root";
-import { Route as VtcodeRouteImport } from "./routes/vtcode";
-import { Route as TermsRouteImport } from "./routes/terms";
-import { Route as StakpakRouteImport } from "./routes/stakpak";
-import { Route as SponsorRouteImport } from "./routes/sponsor";
-import { Route as SigitRouteImport } from "./routes/sigit";
-import { Route as QwenCodeRouteImport } from "./routes/qwen-code";
-import { Route as QoderRouteImport } from "./routes/qoder";
-import { Route as PrivacyRouteImport } from "./routes/privacy";
-import { Route as PoolsideRouteImport } from "./routes/poolside";
-import { Route as PiRouteImport } from "./routes/pi";
-import { Route as OpencodeRouteImport } from "./routes/opencode";
-import { Route as OmpRouteImport } from "./routes/omp";
-import { Route as NovaRouteImport } from "./routes/nova";
-import { Route as MuseCodeRouteImport } from "./routes/muse-code";
-import { Route as MistralVibeRouteImport } from "./routes/mistral-vibe";
-import { Route as MinionCodeRouteImport } from "./routes/minion-code";
-import { Route as KimiRouteImport } from "./routes/kimi";
-import { Route as KiloRouteImport } from "./routes/kilo";
-import { Route as JunieRouteImport } from "./routes/junie";
-import { Route as HubRouteImport } from "./routes/hub";
-import { Route as HermesRouteImport } from "./routes/hermes";
-import { Route as GrokRouteImport } from "./routes/grok";
-import { Route as GooseRouteImport } from "./routes/goose";
-import { Route as GlmRouteImport } from "./routes/glm";
-import { Route as GeminiRouteImport } from "./routes/gemini";
-import { Route as FastAgentRouteImport } from "./routes/fast-agent";
-import { Route as FactoryDroidRouteImport } from "./routes/factory-droid";
-import { Route as DownloadRouteImport } from "./routes/download";
-import { Route as DocsRouteImport } from "./routes/docs";
-import { Route as DiracRouteImport } from "./routes/dirac";
-import { Route as DimcodeRouteImport } from "./routes/dimcode";
-import { Route as DeepseekTuiRouteImport } from "./routes/deepseek-tui";
-import { Route as DeepagentsRouteImport } from "./routes/deepagents";
-import { Route as CursorRouteImport } from "./routes/cursor";
-import { Route as CrowRouteImport } from "./routes/crow";
-import { Route as CorustRouteImport } from "./routes/corust";
-import { Route as CortexCodeRouteImport } from "./routes/cortex-code";
-import { Route as CopilotRouteImport } from "./routes/copilot";
-import { Route as CodexRouteImport } from "./routes/codex";
-import { Route as CodebuddyRouteImport } from "./routes/codebuddy";
-import { Route as ClineRouteImport } from "./routes/cline";
-import { Route as ClaudeCodeRouteImport } from "./routes/claude-code";
-import { Route as ChangelogRouteImport } from "./routes/changelog";
-import { Route as BlogRouteImport } from "./routes/blog";
-import { Route as AutohandRouteImport } from "./routes/autohand";
-import { Route as AuggieRouteImport } from "./routes/auggie";
-import { Route as AntigravityRouteImport } from "./routes/antigravity";
-import { Route as AmpRouteImport } from "./routes/amp";
-import { Route as AgoragenticRouteImport } from "./routes/agoragentic";
-import { Route as AgentsRouteImport } from "./routes/agents";
-import { Route as IndexRouteImport } from "./routes/index";
-import { Route as PluginsIndexRouteImport } from "./routes/plugins/index";
-import { Route as DocsIndexRouteImport } from "./routes/docs/index";
-import { Route as BlogIndexRouteImport } from "./routes/blog/index";
-import { Route as PluginsAllRouteImport } from "./routes/plugins/all";
-import { Route as PluginsOwnerRouteImport } from "./routes/plugins/$owner";
-import { Route as DownloadThanksRouteImport } from "./routes/download_.thanks";
-import { Route as DocsSplatRouteImport } from "./routes/docs/$";
-import { Route as BlogSplatRouteImport } from "./routes/blog/$";
-import { Route as AlternativesSupersetRouteImport } from "./routes/alternatives/superset";
-import { Route as AlternativesOrcaRouteImport } from "./routes/alternatives/orca";
-import { Route as AlternativesOpencodeDesktopRouteImport } from "./routes/alternatives/opencode-desktop";
-import { Route as AlternativesOpenchamberRouteImport } from "./routes/alternatives/openchamber";
-import { Route as AlternativesHappyCoderRouteImport } from "./routes/alternatives/happy-coder";
-import { Route as AlternativesConductorRouteImport } from "./routes/alternatives/conductor";
-import { Route as AlternativesCodexAppRouteImport } from "./routes/alternatives/codex-app";
-import { Route as AlternativesClaudeDesktopRouteImport } from "./routes/alternatives/claude-desktop";
-import { Route as PluginsCategorySlugRouteImport } from "./routes/plugins/category/$slug";
-import { Route as PluginsOwnerSlugRouteImport } from "./routes/plugins/$owner_.$slug";
+import { Route as Char123LocaleChar125RouteRouteImport } from "./routes/{-$locale}/route";
+import { Route as Char123LocaleChar125IndexRouteImport } from "./routes/{-$locale}/index";
+import { Route as Char123LocaleChar125VtcodeRouteImport } from "./routes/{-$locale}/vtcode";
+import { Route as Char123LocaleChar125TermsRouteImport } from "./routes/{-$locale}/terms";
+import { Route as Char123LocaleChar125StakpakRouteImport } from "./routes/{-$locale}/stakpak";
+import { Route as Char123LocaleChar125SponsorRouteImport } from "./routes/{-$locale}/sponsor";
+import { Route as Char123LocaleChar125SigitRouteImport } from "./routes/{-$locale}/sigit";
+import { Route as Char123LocaleChar125QwenCodeRouteImport } from "./routes/{-$locale}/qwen-code";
+import { Route as Char123LocaleChar125QoderRouteImport } from "./routes/{-$locale}/qoder";
+import { Route as Char123LocaleChar125PrivacyRouteImport } from "./routes/{-$locale}/privacy";
+import { Route as Char123LocaleChar125PoolsideRouteImport } from "./routes/{-$locale}/poolside";
+import { Route as Char123LocaleChar125PiRouteImport } from "./routes/{-$locale}/pi";
+import { Route as Char123LocaleChar125OpencodeRouteImport } from "./routes/{-$locale}/opencode";
+import { Route as Char123LocaleChar125OmpRouteImport } from "./routes/{-$locale}/omp";
+import { Route as Char123LocaleChar125NovaRouteImport } from "./routes/{-$locale}/nova";
+import { Route as Char123LocaleChar125MuseCodeRouteImport } from "./routes/{-$locale}/muse-code";
+import { Route as Char123LocaleChar125MistralVibeRouteImport } from "./routes/{-$locale}/mistral-vibe";
+import { Route as Char123LocaleChar125MinionCodeRouteImport } from "./routes/{-$locale}/minion-code";
+import { Route as Char123LocaleChar125KimiRouteImport } from "./routes/{-$locale}/kimi";
+import { Route as Char123LocaleChar125KiloRouteImport } from "./routes/{-$locale}/kilo";
+import { Route as Char123LocaleChar125JunieRouteImport } from "./routes/{-$locale}/junie";
+import { Route as Char123LocaleChar125HubRouteImport } from "./routes/{-$locale}/hub";
+import { Route as Char123LocaleChar125HermesRouteImport } from "./routes/{-$locale}/hermes";
+import { Route as Char123LocaleChar125GrokRouteImport } from "./routes/{-$locale}/grok";
+import { Route as Char123LocaleChar125GooseRouteImport } from "./routes/{-$locale}/goose";
+import { Route as Char123LocaleChar125GlmRouteImport } from "./routes/{-$locale}/glm";
+import { Route as Char123LocaleChar125GeminiRouteImport } from "./routes/{-$locale}/gemini";
+import { Route as Char123LocaleChar125FastAgentRouteImport } from "./routes/{-$locale}/fast-agent";
+import { Route as Char123LocaleChar125FactoryDroidRouteImport } from "./routes/{-$locale}/factory-droid";
+import { Route as Char123LocaleChar125DownloadRouteImport } from "./routes/{-$locale}/download";
+import { Route as Char123LocaleChar125DocsRouteImport } from "./routes/{-$locale}/docs";
+import { Route as Char123LocaleChar125DiracRouteImport } from "./routes/{-$locale}/dirac";
+import { Route as Char123LocaleChar125DimcodeRouteImport } from "./routes/{-$locale}/dimcode";
+import { Route as Char123LocaleChar125DeepseekTuiRouteImport } from "./routes/{-$locale}/deepseek-tui";
+import { Route as Char123LocaleChar125DeepagentsRouteImport } from "./routes/{-$locale}/deepagents";
+import { Route as Char123LocaleChar125CursorRouteImport } from "./routes/{-$locale}/cursor";
+import { Route as Char123LocaleChar125CrowRouteImport } from "./routes/{-$locale}/crow";
+import { Route as Char123LocaleChar125CorustRouteImport } from "./routes/{-$locale}/corust";
+import { Route as Char123LocaleChar125CortexCodeRouteImport } from "./routes/{-$locale}/cortex-code";
+import { Route as Char123LocaleChar125CopilotRouteImport } from "./routes/{-$locale}/copilot";
+import { Route as Char123LocaleChar125CodexRouteImport } from "./routes/{-$locale}/codex";
+import { Route as Char123LocaleChar125CodebuddyRouteImport } from "./routes/{-$locale}/codebuddy";
+import { Route as Char123LocaleChar125ClineRouteImport } from "./routes/{-$locale}/cline";
+import { Route as Char123LocaleChar125ClaudeCodeRouteImport } from "./routes/{-$locale}/claude-code";
+import { Route as Char123LocaleChar125ChangelogRouteImport } from "./routes/{-$locale}/changelog";
+import { Route as Char123LocaleChar125BlogRouteImport } from "./routes/{-$locale}/blog";
+import { Route as Char123LocaleChar125AutohandRouteImport } from "./routes/{-$locale}/autohand";
+import { Route as Char123LocaleChar125AuggieRouteImport } from "./routes/{-$locale}/auggie";
+import { Route as Char123LocaleChar125AntigravityRouteImport } from "./routes/{-$locale}/antigravity";
+import { Route as Char123LocaleChar125AmpRouteImport } from "./routes/{-$locale}/amp";
+import { Route as Char123LocaleChar125AgoragenticRouteImport } from "./routes/{-$locale}/agoragentic";
+import { Route as Char123LocaleChar125AgentsRouteImport } from "./routes/{-$locale}/agents";
+import { Route as Char123LocaleChar125PluginsIndexRouteImport } from "./routes/{-$locale}/plugins/index";
+import { Route as Char123LocaleChar125DocsIndexRouteImport } from "./routes/{-$locale}/docs/index";
+import { Route as Char123LocaleChar125BlogIndexRouteImport } from "./routes/{-$locale}/blog/index";
+import { Route as Char123LocaleChar125PluginsAllRouteImport } from "./routes/{-$locale}/plugins/all";
+import { Route as Char123LocaleChar125PluginsOwnerRouteImport } from "./routes/{-$locale}/plugins/$owner";
+import { Route as Char123LocaleChar125DownloadThanksRouteImport } from "./routes/{-$locale}/download_.thanks";
+import { Route as Char123LocaleChar125DocsSplatRouteImport } from "./routes/{-$locale}/docs/$";
+import { Route as Char123LocaleChar125BlogSplatRouteImport } from "./routes/{-$locale}/blog/$";
+import { Route as Char123LocaleChar125AlternativesSupersetRouteImport } from "./routes/{-$locale}/alternatives/superset";
+import { Route as Char123LocaleChar125AlternativesOrcaRouteImport } from "./routes/{-$locale}/alternatives/orca";
+import { Route as Char123LocaleChar125AlternativesOpencodeDesktopRouteImport } from "./routes/{-$locale}/alternatives/opencode-desktop";
+import { Route as Char123LocaleChar125AlternativesOpenchamberRouteImport } from "./routes/{-$locale}/alternatives/openchamber";
+import { Route as Char123LocaleChar125AlternativesHappyCoderRouteImport } from "./routes/{-$locale}/alternatives/happy-coder";
+import { Route as Char123LocaleChar125AlternativesConductorRouteImport } from "./routes/{-$locale}/alternatives/conductor";
+import { Route as Char123LocaleChar125AlternativesCodexAppRouteImport } from "./routes/{-$locale}/alternatives/codex-app";
+import { Route as Char123LocaleChar125AlternativesClaudeDesktopRouteImport } from "./routes/{-$locale}/alternatives/claude-desktop";
+import { Route as Char123LocaleChar125PluginsCategorySlugRouteImport } from "./routes/{-$locale}/plugins/category/$slug";
+import { Route as Char123LocaleChar125PluginsOwnerSlugRouteImport } from "./routes/{-$locale}/plugins/$owner_.$slug";
 
-const VtcodeRoute = VtcodeRouteImport.update({
-  id: "/vtcode",
-  path: "/vtcode",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const TermsRoute = TermsRouteImport.update({
-  id: "/terms",
-  path: "/terms",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const StakpakRoute = StakpakRouteImport.update({
-  id: "/stakpak",
-  path: "/stakpak",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const SponsorRoute = SponsorRouteImport.update({
-  id: "/sponsor",
-  path: "/sponsor",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const SigitRoute = SigitRouteImport.update({
-  id: "/sigit",
-  path: "/sigit",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const QwenCodeRoute = QwenCodeRouteImport.update({
-  id: "/qwen-code",
-  path: "/qwen-code",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const QoderRoute = QoderRouteImport.update({
-  id: "/qoder",
-  path: "/qoder",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: "/privacy",
-  path: "/privacy",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PoolsideRoute = PoolsideRouteImport.update({
-  id: "/poolside",
-  path: "/poolside",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PiRoute = PiRouteImport.update({
+const Char123LocaleChar125RouteRoute =
+  Char123LocaleChar125RouteRouteImport.update({
+    id: "/{-$locale}",
+    path: "/{-$locale}",
+    getParentRoute: () => rootRouteImport,
+  } as any);
+const Char123LocaleChar125IndexRoute =
+  Char123LocaleChar125IndexRouteImport.update({
+    id: "/",
+    path: "/",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125VtcodeRoute =
+  Char123LocaleChar125VtcodeRouteImport.update({
+    id: "/vtcode",
+    path: "/vtcode",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125TermsRoute =
+  Char123LocaleChar125TermsRouteImport.update({
+    id: "/terms",
+    path: "/terms",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125StakpakRoute =
+  Char123LocaleChar125StakpakRouteImport.update({
+    id: "/stakpak",
+    path: "/stakpak",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125SponsorRoute =
+  Char123LocaleChar125SponsorRouteImport.update({
+    id: "/sponsor",
+    path: "/sponsor",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125SigitRoute =
+  Char123LocaleChar125SigitRouteImport.update({
+    id: "/sigit",
+    path: "/sigit",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125QwenCodeRoute =
+  Char123LocaleChar125QwenCodeRouteImport.update({
+    id: "/qwen-code",
+    path: "/qwen-code",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125QoderRoute =
+  Char123LocaleChar125QoderRouteImport.update({
+    id: "/qoder",
+    path: "/qoder",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PrivacyRoute =
+  Char123LocaleChar125PrivacyRouteImport.update({
+    id: "/privacy",
+    path: "/privacy",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PoolsideRoute =
+  Char123LocaleChar125PoolsideRouteImport.update({
+    id: "/poolside",
+    path: "/poolside",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PiRoute = Char123LocaleChar125PiRouteImport.update({
   id: "/pi",
   path: "/pi",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
-const OpencodeRoute = OpencodeRouteImport.update({
-  id: "/opencode",
-  path: "/opencode",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const OmpRoute = OmpRouteImport.update({
+const Char123LocaleChar125OpencodeRoute =
+  Char123LocaleChar125OpencodeRouteImport.update({
+    id: "/opencode",
+    path: "/opencode",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125OmpRoute = Char123LocaleChar125OmpRouteImport.update({
   id: "/omp",
   path: "/omp",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
-const NovaRoute = NovaRouteImport.update({
-  id: "/nova",
-  path: "/nova",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const MuseCodeRoute = MuseCodeRouteImport.update({
-  id: "/muse-code",
-  path: "/muse-code",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const MistralVibeRoute = MistralVibeRouteImport.update({
-  id: "/mistral-vibe",
-  path: "/mistral-vibe",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const MinionCodeRoute = MinionCodeRouteImport.update({
-  id: "/minion-code",
-  path: "/minion-code",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const KimiRoute = KimiRouteImport.update({
-  id: "/kimi",
-  path: "/kimi",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const KiloRoute = KiloRouteImport.update({
-  id: "/kilo",
-  path: "/kilo",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const JunieRoute = JunieRouteImport.update({
-  id: "/junie",
-  path: "/junie",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const HubRoute = HubRouteImport.update({
+const Char123LocaleChar125NovaRoute =
+  Char123LocaleChar125NovaRouteImport.update({
+    id: "/nova",
+    path: "/nova",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125MuseCodeRoute =
+  Char123LocaleChar125MuseCodeRouteImport.update({
+    id: "/muse-code",
+    path: "/muse-code",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125MistralVibeRoute =
+  Char123LocaleChar125MistralVibeRouteImport.update({
+    id: "/mistral-vibe",
+    path: "/mistral-vibe",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125MinionCodeRoute =
+  Char123LocaleChar125MinionCodeRouteImport.update({
+    id: "/minion-code",
+    path: "/minion-code",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125KimiRoute =
+  Char123LocaleChar125KimiRouteImport.update({
+    id: "/kimi",
+    path: "/kimi",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125KiloRoute =
+  Char123LocaleChar125KiloRouteImport.update({
+    id: "/kilo",
+    path: "/kilo",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125JunieRoute =
+  Char123LocaleChar125JunieRouteImport.update({
+    id: "/junie",
+    path: "/junie",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125HubRoute = Char123LocaleChar125HubRouteImport.update({
   id: "/hub",
   path: "/hub",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
-const HermesRoute = HermesRouteImport.update({
-  id: "/hermes",
-  path: "/hermes",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const GrokRoute = GrokRouteImport.update({
-  id: "/grok",
-  path: "/grok",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const GooseRoute = GooseRouteImport.update({
-  id: "/goose",
-  path: "/goose",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const GlmRoute = GlmRouteImport.update({
+const Char123LocaleChar125HermesRoute =
+  Char123LocaleChar125HermesRouteImport.update({
+    id: "/hermes",
+    path: "/hermes",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125GrokRoute =
+  Char123LocaleChar125GrokRouteImport.update({
+    id: "/grok",
+    path: "/grok",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125GooseRoute =
+  Char123LocaleChar125GooseRouteImport.update({
+    id: "/goose",
+    path: "/goose",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125GlmRoute = Char123LocaleChar125GlmRouteImport.update({
   id: "/glm",
   path: "/glm",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
-const GeminiRoute = GeminiRouteImport.update({
-  id: "/gemini",
-  path: "/gemini",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const FastAgentRoute = FastAgentRouteImport.update({
-  id: "/fast-agent",
-  path: "/fast-agent",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const FactoryDroidRoute = FactoryDroidRouteImport.update({
-  id: "/factory-droid",
-  path: "/factory-droid",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DownloadRoute = DownloadRouteImport.update({
-  id: "/download",
-  path: "/download",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DocsRoute = DocsRouteImport.update({
-  id: "/docs",
-  path: "/docs",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DiracRoute = DiracRouteImport.update({
-  id: "/dirac",
-  path: "/dirac",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DimcodeRoute = DimcodeRouteImport.update({
-  id: "/dimcode",
-  path: "/dimcode",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DeepseekTuiRoute = DeepseekTuiRouteImport.update({
-  id: "/deepseek-tui",
-  path: "/deepseek-tui",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DeepagentsRoute = DeepagentsRouteImport.update({
-  id: "/deepagents",
-  path: "/deepagents",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CursorRoute = CursorRouteImport.update({
-  id: "/cursor",
-  path: "/cursor",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CrowRoute = CrowRouteImport.update({
-  id: "/crow",
-  path: "/crow",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CorustRoute = CorustRouteImport.update({
-  id: "/corust",
-  path: "/corust",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CortexCodeRoute = CortexCodeRouteImport.update({
-  id: "/cortex-code",
-  path: "/cortex-code",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CopilotRoute = CopilotRouteImport.update({
-  id: "/copilot",
-  path: "/copilot",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CodexRoute = CodexRouteImport.update({
-  id: "/codex",
-  path: "/codex",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const CodebuddyRoute = CodebuddyRouteImport.update({
-  id: "/codebuddy",
-  path: "/codebuddy",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ClineRoute = ClineRouteImport.update({
-  id: "/cline",
-  path: "/cline",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ClaudeCodeRoute = ClaudeCodeRouteImport.update({
-  id: "/claude-code",
-  path: "/claude-code",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ChangelogRoute = ChangelogRouteImport.update({
-  id: "/changelog",
-  path: "/changelog",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const BlogRoute = BlogRouteImport.update({
-  id: "/blog",
-  path: "/blog",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AutohandRoute = AutohandRouteImport.update({
-  id: "/autohand",
-  path: "/autohand",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AuggieRoute = AuggieRouteImport.update({
-  id: "/auggie",
-  path: "/auggie",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AntigravityRoute = AntigravityRouteImport.update({
-  id: "/antigravity",
-  path: "/antigravity",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AmpRoute = AmpRouteImport.update({
+const Char123LocaleChar125GeminiRoute =
+  Char123LocaleChar125GeminiRouteImport.update({
+    id: "/gemini",
+    path: "/gemini",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125FastAgentRoute =
+  Char123LocaleChar125FastAgentRouteImport.update({
+    id: "/fast-agent",
+    path: "/fast-agent",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125FactoryDroidRoute =
+  Char123LocaleChar125FactoryDroidRouteImport.update({
+    id: "/factory-droid",
+    path: "/factory-droid",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DownloadRoute =
+  Char123LocaleChar125DownloadRouteImport.update({
+    id: "/download",
+    path: "/download",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DocsRoute =
+  Char123LocaleChar125DocsRouteImport.update({
+    id: "/docs",
+    path: "/docs",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DiracRoute =
+  Char123LocaleChar125DiracRouteImport.update({
+    id: "/dirac",
+    path: "/dirac",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DimcodeRoute =
+  Char123LocaleChar125DimcodeRouteImport.update({
+    id: "/dimcode",
+    path: "/dimcode",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DeepseekTuiRoute =
+  Char123LocaleChar125DeepseekTuiRouteImport.update({
+    id: "/deepseek-tui",
+    path: "/deepseek-tui",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DeepagentsRoute =
+  Char123LocaleChar125DeepagentsRouteImport.update({
+    id: "/deepagents",
+    path: "/deepagents",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CursorRoute =
+  Char123LocaleChar125CursorRouteImport.update({
+    id: "/cursor",
+    path: "/cursor",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CrowRoute =
+  Char123LocaleChar125CrowRouteImport.update({
+    id: "/crow",
+    path: "/crow",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CorustRoute =
+  Char123LocaleChar125CorustRouteImport.update({
+    id: "/corust",
+    path: "/corust",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CortexCodeRoute =
+  Char123LocaleChar125CortexCodeRouteImport.update({
+    id: "/cortex-code",
+    path: "/cortex-code",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CopilotRoute =
+  Char123LocaleChar125CopilotRouteImport.update({
+    id: "/copilot",
+    path: "/copilot",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CodexRoute =
+  Char123LocaleChar125CodexRouteImport.update({
+    id: "/codex",
+    path: "/codex",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125CodebuddyRoute =
+  Char123LocaleChar125CodebuddyRouteImport.update({
+    id: "/codebuddy",
+    path: "/codebuddy",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125ClineRoute =
+  Char123LocaleChar125ClineRouteImport.update({
+    id: "/cline",
+    path: "/cline",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125ClaudeCodeRoute =
+  Char123LocaleChar125ClaudeCodeRouteImport.update({
+    id: "/claude-code",
+    path: "/claude-code",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125ChangelogRoute =
+  Char123LocaleChar125ChangelogRouteImport.update({
+    id: "/changelog",
+    path: "/changelog",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125BlogRoute =
+  Char123LocaleChar125BlogRouteImport.update({
+    id: "/blog",
+    path: "/blog",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AutohandRoute =
+  Char123LocaleChar125AutohandRouteImport.update({
+    id: "/autohand",
+    path: "/autohand",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AuggieRoute =
+  Char123LocaleChar125AuggieRouteImport.update({
+    id: "/auggie",
+    path: "/auggie",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AntigravityRoute =
+  Char123LocaleChar125AntigravityRouteImport.update({
+    id: "/antigravity",
+    path: "/antigravity",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AmpRoute = Char123LocaleChar125AmpRouteImport.update({
   id: "/amp",
   path: "/amp",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
-const AgoragenticRoute = AgoragenticRouteImport.update({
-  id: "/agoragentic",
-  path: "/agoragentic",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AgentsRoute = AgentsRouteImport.update({
-  id: "/agents",
-  path: "/agents",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PluginsIndexRoute = PluginsIndexRouteImport.update({
-  id: "/plugins/",
-  path: "/plugins/",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DocsIndexRoute = DocsIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => DocsRoute,
-} as any);
-const BlogIndexRoute = BlogIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => BlogRoute,
-} as any);
-const PluginsAllRoute = PluginsAllRouteImport.update({
-  id: "/plugins/all",
-  path: "/plugins/all",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PluginsOwnerRoute = PluginsOwnerRouteImport.update({
-  id: "/plugins/$owner",
-  path: "/plugins/$owner",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DownloadThanksRoute = DownloadThanksRouteImport.update({
-  id: "/download_/thanks",
-  path: "/download/thanks",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DocsSplatRoute = DocsSplatRouteImport.update({
-  id: "/$",
-  path: "/$",
-  getParentRoute: () => DocsRoute,
-} as any);
-const BlogSplatRoute = BlogSplatRouteImport.update({
-  id: "/$",
-  path: "/$",
-  getParentRoute: () => BlogRoute,
-} as any);
-const AlternativesSupersetRoute = AlternativesSupersetRouteImport.update({
-  id: "/alternatives/superset",
-  path: "/alternatives/superset",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesOrcaRoute = AlternativesOrcaRouteImport.update({
-  id: "/alternatives/orca",
-  path: "/alternatives/orca",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesOpencodeDesktopRoute =
-  AlternativesOpencodeDesktopRouteImport.update({
+const Char123LocaleChar125AgoragenticRoute =
+  Char123LocaleChar125AgoragenticRouteImport.update({
+    id: "/agoragentic",
+    path: "/agoragentic",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AgentsRoute =
+  Char123LocaleChar125AgentsRouteImport.update({
+    id: "/agents",
+    path: "/agents",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PluginsIndexRoute =
+  Char123LocaleChar125PluginsIndexRouteImport.update({
+    id: "/plugins/",
+    path: "/plugins/",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DocsIndexRoute =
+  Char123LocaleChar125DocsIndexRouteImport.update({
+    id: "/",
+    path: "/",
+    getParentRoute: () => Char123LocaleChar125DocsRoute,
+  } as any);
+const Char123LocaleChar125BlogIndexRoute =
+  Char123LocaleChar125BlogIndexRouteImport.update({
+    id: "/",
+    path: "/",
+    getParentRoute: () => Char123LocaleChar125BlogRoute,
+  } as any);
+const Char123LocaleChar125PluginsAllRoute =
+  Char123LocaleChar125PluginsAllRouteImport.update({
+    id: "/plugins/all",
+    path: "/plugins/all",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PluginsOwnerRoute =
+  Char123LocaleChar125PluginsOwnerRouteImport.update({
+    id: "/plugins/$owner",
+    path: "/plugins/$owner",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DownloadThanksRoute =
+  Char123LocaleChar125DownloadThanksRouteImport.update({
+    id: "/download_/thanks",
+    path: "/download/thanks",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125DocsSplatRoute =
+  Char123LocaleChar125DocsSplatRouteImport.update({
+    id: "/$",
+    path: "/$",
+    getParentRoute: () => Char123LocaleChar125DocsRoute,
+  } as any);
+const Char123LocaleChar125BlogSplatRoute =
+  Char123LocaleChar125BlogSplatRouteImport.update({
+    id: "/$",
+    path: "/$",
+    getParentRoute: () => Char123LocaleChar125BlogRoute,
+  } as any);
+const Char123LocaleChar125AlternativesSupersetRoute =
+  Char123LocaleChar125AlternativesSupersetRouteImport.update({
+    id: "/alternatives/superset",
+    path: "/alternatives/superset",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesOrcaRoute =
+  Char123LocaleChar125AlternativesOrcaRouteImport.update({
+    id: "/alternatives/orca",
+    path: "/alternatives/orca",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesOpencodeDesktopRoute =
+  Char123LocaleChar125AlternativesOpencodeDesktopRouteImport.update({
     id: "/alternatives/opencode-desktop",
     path: "/alternatives/opencode-desktop",
-    getParentRoute: () => rootRouteImport,
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
   } as any);
-const AlternativesOpenchamberRoute = AlternativesOpenchamberRouteImport.update({
-  id: "/alternatives/openchamber",
-  path: "/alternatives/openchamber",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesHappyCoderRoute = AlternativesHappyCoderRouteImport.update({
-  id: "/alternatives/happy-coder",
-  path: "/alternatives/happy-coder",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesConductorRoute = AlternativesConductorRouteImport.update({
-  id: "/alternatives/conductor",
-  path: "/alternatives/conductor",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesCodexAppRoute = AlternativesCodexAppRouteImport.update({
-  id: "/alternatives/codex-app",
-  path: "/alternatives/codex-app",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const AlternativesClaudeDesktopRoute =
-  AlternativesClaudeDesktopRouteImport.update({
+const Char123LocaleChar125AlternativesOpenchamberRoute =
+  Char123LocaleChar125AlternativesOpenchamberRouteImport.update({
+    id: "/alternatives/openchamber",
+    path: "/alternatives/openchamber",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesHappyCoderRoute =
+  Char123LocaleChar125AlternativesHappyCoderRouteImport.update({
+    id: "/alternatives/happy-coder",
+    path: "/alternatives/happy-coder",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesConductorRoute =
+  Char123LocaleChar125AlternativesConductorRouteImport.update({
+    id: "/alternatives/conductor",
+    path: "/alternatives/conductor",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesCodexAppRoute =
+  Char123LocaleChar125AlternativesCodexAppRouteImport.update({
+    id: "/alternatives/codex-app",
+    path: "/alternatives/codex-app",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125AlternativesClaudeDesktopRoute =
+  Char123LocaleChar125AlternativesClaudeDesktopRouteImport.update({
     id: "/alternatives/claude-desktop",
     path: "/alternatives/claude-desktop",
-    getParentRoute: () => rootRouteImport,
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
   } as any);
-const PluginsCategorySlugRoute = PluginsCategorySlugRouteImport.update({
-  id: "/plugins/category/$slug",
-  path: "/plugins/category/$slug",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PluginsOwnerSlugRoute = PluginsOwnerSlugRouteImport.update({
-  id: "/plugins/$owner_/$slug",
-  path: "/plugins/$owner/$slug",
-  getParentRoute: () => rootRouteImport,
-} as any);
+const Char123LocaleChar125PluginsCategorySlugRoute =
+  Char123LocaleChar125PluginsCategorySlugRouteImport.update({
+    id: "/plugins/category/$slug",
+    path: "/plugins/category/$slug",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
+const Char123LocaleChar125PluginsOwnerSlugRoute =
+  Char123LocaleChar125PluginsOwnerSlugRouteImport.update({
+    id: "/plugins/$owner_/$slug",
+    path: "/plugins/$owner/$slug",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/agents": typeof AgentsRoute;
-  "/agoragentic": typeof AgoragenticRoute;
-  "/amp": typeof AmpRoute;
-  "/antigravity": typeof AntigravityRoute;
-  "/auggie": typeof AuggieRoute;
-  "/autohand": typeof AutohandRoute;
-  "/blog": typeof BlogRouteWithChildren;
-  "/changelog": typeof ChangelogRoute;
-  "/claude-code": typeof ClaudeCodeRoute;
-  "/cline": typeof ClineRoute;
-  "/codebuddy": typeof CodebuddyRoute;
-  "/codex": typeof CodexRoute;
-  "/copilot": typeof CopilotRoute;
-  "/cortex-code": typeof CortexCodeRoute;
-  "/corust": typeof CorustRoute;
-  "/crow": typeof CrowRoute;
-  "/cursor": typeof CursorRoute;
-  "/deepagents": typeof DeepagentsRoute;
-  "/deepseek-tui": typeof DeepseekTuiRoute;
-  "/dimcode": typeof DimcodeRoute;
-  "/dirac": typeof DiracRoute;
-  "/docs": typeof DocsRouteWithChildren;
-  "/download": typeof DownloadRoute;
-  "/factory-droid": typeof FactoryDroidRoute;
-  "/fast-agent": typeof FastAgentRoute;
-  "/gemini": typeof GeminiRoute;
-  "/glm": typeof GlmRoute;
-  "/goose": typeof GooseRoute;
-  "/grok": typeof GrokRoute;
-  "/hermes": typeof HermesRoute;
-  "/hub": typeof HubRoute;
-  "/junie": typeof JunieRoute;
-  "/kilo": typeof KiloRoute;
-  "/kimi": typeof KimiRoute;
-  "/minion-code": typeof MinionCodeRoute;
-  "/mistral-vibe": typeof MistralVibeRoute;
-  "/muse-code": typeof MuseCodeRoute;
-  "/nova": typeof NovaRoute;
-  "/omp": typeof OmpRoute;
-  "/opencode": typeof OpencodeRoute;
-  "/pi": typeof PiRoute;
-  "/poolside": typeof PoolsideRoute;
-  "/privacy": typeof PrivacyRoute;
-  "/qoder": typeof QoderRoute;
-  "/qwen-code": typeof QwenCodeRoute;
-  "/sigit": typeof SigitRoute;
-  "/sponsor": typeof SponsorRoute;
-  "/stakpak": typeof StakpakRoute;
-  "/terms": typeof TermsRoute;
-  "/vtcode": typeof VtcodeRoute;
-  "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
-  "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
-  "/alternatives/conductor": typeof AlternativesConductorRoute;
-  "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
-  "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
-  "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
-  "/alternatives/orca": typeof AlternativesOrcaRoute;
-  "/alternatives/superset": typeof AlternativesSupersetRoute;
-  "/blog/$": typeof BlogSplatRoute;
-  "/docs/$": typeof DocsSplatRoute;
-  "/download/thanks": typeof DownloadThanksRoute;
-  "/plugins/$owner": typeof PluginsOwnerRoute;
-  "/plugins/all": typeof PluginsAllRoute;
-  "/blog/": typeof BlogIndexRoute;
-  "/docs/": typeof DocsIndexRoute;
-  "/plugins/": typeof PluginsIndexRoute;
-  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
-  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
+  "/{-$locale}": typeof Char123LocaleChar125RouteRouteWithChildren;
+  "/{-$locale}/agents": typeof Char123LocaleChar125AgentsRoute;
+  "/{-$locale}/agoragentic": typeof Char123LocaleChar125AgoragenticRoute;
+  "/{-$locale}/amp": typeof Char123LocaleChar125AmpRoute;
+  "/{-$locale}/antigravity": typeof Char123LocaleChar125AntigravityRoute;
+  "/{-$locale}/auggie": typeof Char123LocaleChar125AuggieRoute;
+  "/{-$locale}/autohand": typeof Char123LocaleChar125AutohandRoute;
+  "/{-$locale}/blog": typeof Char123LocaleChar125BlogRouteWithChildren;
+  "/{-$locale}/changelog": typeof Char123LocaleChar125ChangelogRoute;
+  "/{-$locale}/claude-code": typeof Char123LocaleChar125ClaudeCodeRoute;
+  "/{-$locale}/cline": typeof Char123LocaleChar125ClineRoute;
+  "/{-$locale}/codebuddy": typeof Char123LocaleChar125CodebuddyRoute;
+  "/{-$locale}/codex": typeof Char123LocaleChar125CodexRoute;
+  "/{-$locale}/copilot": typeof Char123LocaleChar125CopilotRoute;
+  "/{-$locale}/cortex-code": typeof Char123LocaleChar125CortexCodeRoute;
+  "/{-$locale}/corust": typeof Char123LocaleChar125CorustRoute;
+  "/{-$locale}/crow": typeof Char123LocaleChar125CrowRoute;
+  "/{-$locale}/cursor": typeof Char123LocaleChar125CursorRoute;
+  "/{-$locale}/deepagents": typeof Char123LocaleChar125DeepagentsRoute;
+  "/{-$locale}/deepseek-tui": typeof Char123LocaleChar125DeepseekTuiRoute;
+  "/{-$locale}/dimcode": typeof Char123LocaleChar125DimcodeRoute;
+  "/{-$locale}/dirac": typeof Char123LocaleChar125DiracRoute;
+  "/{-$locale}/docs": typeof Char123LocaleChar125DocsRouteWithChildren;
+  "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
+  "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
+  "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
+  "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
+  "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
+  "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
+  "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
+  "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
+  "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
+  "/{-$locale}/kimi": typeof Char123LocaleChar125KimiRoute;
+  "/{-$locale}/minion-code": typeof Char123LocaleChar125MinionCodeRoute;
+  "/{-$locale}/mistral-vibe": typeof Char123LocaleChar125MistralVibeRoute;
+  "/{-$locale}/muse-code": typeof Char123LocaleChar125MuseCodeRoute;
+  "/{-$locale}/nova": typeof Char123LocaleChar125NovaRoute;
+  "/{-$locale}/omp": typeof Char123LocaleChar125OmpRoute;
+  "/{-$locale}/opencode": typeof Char123LocaleChar125OpencodeRoute;
+  "/{-$locale}/pi": typeof Char123LocaleChar125PiRoute;
+  "/{-$locale}/poolside": typeof Char123LocaleChar125PoolsideRoute;
+  "/{-$locale}/privacy": typeof Char123LocaleChar125PrivacyRoute;
+  "/{-$locale}/qoder": typeof Char123LocaleChar125QoderRoute;
+  "/{-$locale}/qwen-code": typeof Char123LocaleChar125QwenCodeRoute;
+  "/{-$locale}/sigit": typeof Char123LocaleChar125SigitRoute;
+  "/{-$locale}/sponsor": typeof Char123LocaleChar125SponsorRoute;
+  "/{-$locale}/stakpak": typeof Char123LocaleChar125StakpakRoute;
+  "/{-$locale}/terms": typeof Char123LocaleChar125TermsRoute;
+  "/{-$locale}/vtcode": typeof Char123LocaleChar125VtcodeRoute;
+  "/{-$locale}/": typeof Char123LocaleChar125IndexRoute;
+  "/{-$locale}/alternatives/claude-desktop": typeof Char123LocaleChar125AlternativesClaudeDesktopRoute;
+  "/{-$locale}/alternatives/codex-app": typeof Char123LocaleChar125AlternativesCodexAppRoute;
+  "/{-$locale}/alternatives/conductor": typeof Char123LocaleChar125AlternativesConductorRoute;
+  "/{-$locale}/alternatives/happy-coder": typeof Char123LocaleChar125AlternativesHappyCoderRoute;
+  "/{-$locale}/alternatives/openchamber": typeof Char123LocaleChar125AlternativesOpenchamberRoute;
+  "/{-$locale}/alternatives/opencode-desktop": typeof Char123LocaleChar125AlternativesOpencodeDesktopRoute;
+  "/{-$locale}/alternatives/orca": typeof Char123LocaleChar125AlternativesOrcaRoute;
+  "/{-$locale}/alternatives/superset": typeof Char123LocaleChar125AlternativesSupersetRoute;
+  "/{-$locale}/blog/$": typeof Char123LocaleChar125BlogSplatRoute;
+  "/{-$locale}/docs/$": typeof Char123LocaleChar125DocsSplatRoute;
+  "/{-$locale}/download/thanks": typeof Char123LocaleChar125DownloadThanksRoute;
+  "/{-$locale}/plugins/$owner": typeof Char123LocaleChar125PluginsOwnerRoute;
+  "/{-$locale}/plugins/all": typeof Char123LocaleChar125PluginsAllRoute;
+  "/{-$locale}/blog/": typeof Char123LocaleChar125BlogIndexRoute;
+  "/{-$locale}/docs/": typeof Char123LocaleChar125DocsIndexRoute;
+  "/{-$locale}/plugins/": typeof Char123LocaleChar125PluginsIndexRoute;
+  "/{-$locale}/plugins/$owner/$slug": typeof Char123LocaleChar125PluginsOwnerSlugRoute;
+  "/{-$locale}/plugins/category/$slug": typeof Char123LocaleChar125PluginsCategorySlugRoute;
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/agents": typeof AgentsRoute;
-  "/agoragentic": typeof AgoragenticRoute;
-  "/amp": typeof AmpRoute;
-  "/antigravity": typeof AntigravityRoute;
-  "/auggie": typeof AuggieRoute;
-  "/autohand": typeof AutohandRoute;
-  "/changelog": typeof ChangelogRoute;
-  "/claude-code": typeof ClaudeCodeRoute;
-  "/cline": typeof ClineRoute;
-  "/codebuddy": typeof CodebuddyRoute;
-  "/codex": typeof CodexRoute;
-  "/copilot": typeof CopilotRoute;
-  "/cortex-code": typeof CortexCodeRoute;
-  "/corust": typeof CorustRoute;
-  "/crow": typeof CrowRoute;
-  "/cursor": typeof CursorRoute;
-  "/deepagents": typeof DeepagentsRoute;
-  "/deepseek-tui": typeof DeepseekTuiRoute;
-  "/dimcode": typeof DimcodeRoute;
-  "/dirac": typeof DiracRoute;
-  "/download": typeof DownloadRoute;
-  "/factory-droid": typeof FactoryDroidRoute;
-  "/fast-agent": typeof FastAgentRoute;
-  "/gemini": typeof GeminiRoute;
-  "/glm": typeof GlmRoute;
-  "/goose": typeof GooseRoute;
-  "/grok": typeof GrokRoute;
-  "/hermes": typeof HermesRoute;
-  "/hub": typeof HubRoute;
-  "/junie": typeof JunieRoute;
-  "/kilo": typeof KiloRoute;
-  "/kimi": typeof KimiRoute;
-  "/minion-code": typeof MinionCodeRoute;
-  "/mistral-vibe": typeof MistralVibeRoute;
-  "/muse-code": typeof MuseCodeRoute;
-  "/nova": typeof NovaRoute;
-  "/omp": typeof OmpRoute;
-  "/opencode": typeof OpencodeRoute;
-  "/pi": typeof PiRoute;
-  "/poolside": typeof PoolsideRoute;
-  "/privacy": typeof PrivacyRoute;
-  "/qoder": typeof QoderRoute;
-  "/qwen-code": typeof QwenCodeRoute;
-  "/sigit": typeof SigitRoute;
-  "/sponsor": typeof SponsorRoute;
-  "/stakpak": typeof StakpakRoute;
-  "/terms": typeof TermsRoute;
-  "/vtcode": typeof VtcodeRoute;
-  "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
-  "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
-  "/alternatives/conductor": typeof AlternativesConductorRoute;
-  "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
-  "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
-  "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
-  "/alternatives/orca": typeof AlternativesOrcaRoute;
-  "/alternatives/superset": typeof AlternativesSupersetRoute;
-  "/blog/$": typeof BlogSplatRoute;
-  "/docs/$": typeof DocsSplatRoute;
-  "/download/thanks": typeof DownloadThanksRoute;
-  "/plugins/$owner": typeof PluginsOwnerRoute;
-  "/plugins/all": typeof PluginsAllRoute;
-  "/blog": typeof BlogIndexRoute;
-  "/docs": typeof DocsIndexRoute;
-  "/plugins": typeof PluginsIndexRoute;
-  "/plugins/$owner/$slug": typeof PluginsOwnerSlugRoute;
-  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
+  "/{-$locale}/agents": typeof Char123LocaleChar125AgentsRoute;
+  "/{-$locale}/agoragentic": typeof Char123LocaleChar125AgoragenticRoute;
+  "/{-$locale}/amp": typeof Char123LocaleChar125AmpRoute;
+  "/{-$locale}/antigravity": typeof Char123LocaleChar125AntigravityRoute;
+  "/{-$locale}/auggie": typeof Char123LocaleChar125AuggieRoute;
+  "/{-$locale}/autohand": typeof Char123LocaleChar125AutohandRoute;
+  "/{-$locale}/changelog": typeof Char123LocaleChar125ChangelogRoute;
+  "/{-$locale}/claude-code": typeof Char123LocaleChar125ClaudeCodeRoute;
+  "/{-$locale}/cline": typeof Char123LocaleChar125ClineRoute;
+  "/{-$locale}/codebuddy": typeof Char123LocaleChar125CodebuddyRoute;
+  "/{-$locale}/codex": typeof Char123LocaleChar125CodexRoute;
+  "/{-$locale}/copilot": typeof Char123LocaleChar125CopilotRoute;
+  "/{-$locale}/cortex-code": typeof Char123LocaleChar125CortexCodeRoute;
+  "/{-$locale}/corust": typeof Char123LocaleChar125CorustRoute;
+  "/{-$locale}/crow": typeof Char123LocaleChar125CrowRoute;
+  "/{-$locale}/cursor": typeof Char123LocaleChar125CursorRoute;
+  "/{-$locale}/deepagents": typeof Char123LocaleChar125DeepagentsRoute;
+  "/{-$locale}/deepseek-tui": typeof Char123LocaleChar125DeepseekTuiRoute;
+  "/{-$locale}/dimcode": typeof Char123LocaleChar125DimcodeRoute;
+  "/{-$locale}/dirac": typeof Char123LocaleChar125DiracRoute;
+  "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
+  "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
+  "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
+  "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
+  "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
+  "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
+  "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
+  "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
+  "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
+  "/{-$locale}/kimi": typeof Char123LocaleChar125KimiRoute;
+  "/{-$locale}/minion-code": typeof Char123LocaleChar125MinionCodeRoute;
+  "/{-$locale}/mistral-vibe": typeof Char123LocaleChar125MistralVibeRoute;
+  "/{-$locale}/muse-code": typeof Char123LocaleChar125MuseCodeRoute;
+  "/{-$locale}/nova": typeof Char123LocaleChar125NovaRoute;
+  "/{-$locale}/omp": typeof Char123LocaleChar125OmpRoute;
+  "/{-$locale}/opencode": typeof Char123LocaleChar125OpencodeRoute;
+  "/{-$locale}/pi": typeof Char123LocaleChar125PiRoute;
+  "/{-$locale}/poolside": typeof Char123LocaleChar125PoolsideRoute;
+  "/{-$locale}/privacy": typeof Char123LocaleChar125PrivacyRoute;
+  "/{-$locale}/qoder": typeof Char123LocaleChar125QoderRoute;
+  "/{-$locale}/qwen-code": typeof Char123LocaleChar125QwenCodeRoute;
+  "/{-$locale}/sigit": typeof Char123LocaleChar125SigitRoute;
+  "/{-$locale}/sponsor": typeof Char123LocaleChar125SponsorRoute;
+  "/{-$locale}/stakpak": typeof Char123LocaleChar125StakpakRoute;
+  "/{-$locale}/terms": typeof Char123LocaleChar125TermsRoute;
+  "/{-$locale}/vtcode": typeof Char123LocaleChar125VtcodeRoute;
+  "/{-$locale}": typeof Char123LocaleChar125IndexRoute;
+  "/{-$locale}/alternatives/claude-desktop": typeof Char123LocaleChar125AlternativesClaudeDesktopRoute;
+  "/{-$locale}/alternatives/codex-app": typeof Char123LocaleChar125AlternativesCodexAppRoute;
+  "/{-$locale}/alternatives/conductor": typeof Char123LocaleChar125AlternativesConductorRoute;
+  "/{-$locale}/alternatives/happy-coder": typeof Char123LocaleChar125AlternativesHappyCoderRoute;
+  "/{-$locale}/alternatives/openchamber": typeof Char123LocaleChar125AlternativesOpenchamberRoute;
+  "/{-$locale}/alternatives/opencode-desktop": typeof Char123LocaleChar125AlternativesOpencodeDesktopRoute;
+  "/{-$locale}/alternatives/orca": typeof Char123LocaleChar125AlternativesOrcaRoute;
+  "/{-$locale}/alternatives/superset": typeof Char123LocaleChar125AlternativesSupersetRoute;
+  "/{-$locale}/blog/$": typeof Char123LocaleChar125BlogSplatRoute;
+  "/{-$locale}/docs/$": typeof Char123LocaleChar125DocsSplatRoute;
+  "/{-$locale}/download/thanks": typeof Char123LocaleChar125DownloadThanksRoute;
+  "/{-$locale}/plugins/$owner": typeof Char123LocaleChar125PluginsOwnerRoute;
+  "/{-$locale}/plugins/all": typeof Char123LocaleChar125PluginsAllRoute;
+  "/{-$locale}/blog": typeof Char123LocaleChar125BlogIndexRoute;
+  "/{-$locale}/docs": typeof Char123LocaleChar125DocsIndexRoute;
+  "/{-$locale}/plugins": typeof Char123LocaleChar125PluginsIndexRoute;
+  "/{-$locale}/plugins/$owner/$slug": typeof Char123LocaleChar125PluginsOwnerSlugRoute;
+  "/{-$locale}/plugins/category/$slug": typeof Char123LocaleChar125PluginsCategorySlugRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
-  "/": typeof IndexRoute;
-  "/agents": typeof AgentsRoute;
-  "/agoragentic": typeof AgoragenticRoute;
-  "/amp": typeof AmpRoute;
-  "/antigravity": typeof AntigravityRoute;
-  "/auggie": typeof AuggieRoute;
-  "/autohand": typeof AutohandRoute;
-  "/blog": typeof BlogRouteWithChildren;
-  "/changelog": typeof ChangelogRoute;
-  "/claude-code": typeof ClaudeCodeRoute;
-  "/cline": typeof ClineRoute;
-  "/codebuddy": typeof CodebuddyRoute;
-  "/codex": typeof CodexRoute;
-  "/copilot": typeof CopilotRoute;
-  "/cortex-code": typeof CortexCodeRoute;
-  "/corust": typeof CorustRoute;
-  "/crow": typeof CrowRoute;
-  "/cursor": typeof CursorRoute;
-  "/deepagents": typeof DeepagentsRoute;
-  "/deepseek-tui": typeof DeepseekTuiRoute;
-  "/dimcode": typeof DimcodeRoute;
-  "/dirac": typeof DiracRoute;
-  "/docs": typeof DocsRouteWithChildren;
-  "/download": typeof DownloadRoute;
-  "/factory-droid": typeof FactoryDroidRoute;
-  "/fast-agent": typeof FastAgentRoute;
-  "/gemini": typeof GeminiRoute;
-  "/glm": typeof GlmRoute;
-  "/goose": typeof GooseRoute;
-  "/grok": typeof GrokRoute;
-  "/hermes": typeof HermesRoute;
-  "/hub": typeof HubRoute;
-  "/junie": typeof JunieRoute;
-  "/kilo": typeof KiloRoute;
-  "/kimi": typeof KimiRoute;
-  "/minion-code": typeof MinionCodeRoute;
-  "/mistral-vibe": typeof MistralVibeRoute;
-  "/muse-code": typeof MuseCodeRoute;
-  "/nova": typeof NovaRoute;
-  "/omp": typeof OmpRoute;
-  "/opencode": typeof OpencodeRoute;
-  "/pi": typeof PiRoute;
-  "/poolside": typeof PoolsideRoute;
-  "/privacy": typeof PrivacyRoute;
-  "/qoder": typeof QoderRoute;
-  "/qwen-code": typeof QwenCodeRoute;
-  "/sigit": typeof SigitRoute;
-  "/sponsor": typeof SponsorRoute;
-  "/stakpak": typeof StakpakRoute;
-  "/terms": typeof TermsRoute;
-  "/vtcode": typeof VtcodeRoute;
-  "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
-  "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
-  "/alternatives/conductor": typeof AlternativesConductorRoute;
-  "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
-  "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
-  "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
-  "/alternatives/orca": typeof AlternativesOrcaRoute;
-  "/alternatives/superset": typeof AlternativesSupersetRoute;
-  "/blog/$": typeof BlogSplatRoute;
-  "/docs/$": typeof DocsSplatRoute;
-  "/download_/thanks": typeof DownloadThanksRoute;
-  "/plugins/$owner": typeof PluginsOwnerRoute;
-  "/plugins/all": typeof PluginsAllRoute;
-  "/blog/": typeof BlogIndexRoute;
-  "/docs/": typeof DocsIndexRoute;
-  "/plugins/": typeof PluginsIndexRoute;
-  "/plugins/$owner_/$slug": typeof PluginsOwnerSlugRoute;
-  "/plugins/category/$slug": typeof PluginsCategorySlugRoute;
+  "/{-$locale}": typeof Char123LocaleChar125RouteRouteWithChildren;
+  "/{-$locale}/agents": typeof Char123LocaleChar125AgentsRoute;
+  "/{-$locale}/agoragentic": typeof Char123LocaleChar125AgoragenticRoute;
+  "/{-$locale}/amp": typeof Char123LocaleChar125AmpRoute;
+  "/{-$locale}/antigravity": typeof Char123LocaleChar125AntigravityRoute;
+  "/{-$locale}/auggie": typeof Char123LocaleChar125AuggieRoute;
+  "/{-$locale}/autohand": typeof Char123LocaleChar125AutohandRoute;
+  "/{-$locale}/blog": typeof Char123LocaleChar125BlogRouteWithChildren;
+  "/{-$locale}/changelog": typeof Char123LocaleChar125ChangelogRoute;
+  "/{-$locale}/claude-code": typeof Char123LocaleChar125ClaudeCodeRoute;
+  "/{-$locale}/cline": typeof Char123LocaleChar125ClineRoute;
+  "/{-$locale}/codebuddy": typeof Char123LocaleChar125CodebuddyRoute;
+  "/{-$locale}/codex": typeof Char123LocaleChar125CodexRoute;
+  "/{-$locale}/copilot": typeof Char123LocaleChar125CopilotRoute;
+  "/{-$locale}/cortex-code": typeof Char123LocaleChar125CortexCodeRoute;
+  "/{-$locale}/corust": typeof Char123LocaleChar125CorustRoute;
+  "/{-$locale}/crow": typeof Char123LocaleChar125CrowRoute;
+  "/{-$locale}/cursor": typeof Char123LocaleChar125CursorRoute;
+  "/{-$locale}/deepagents": typeof Char123LocaleChar125DeepagentsRoute;
+  "/{-$locale}/deepseek-tui": typeof Char123LocaleChar125DeepseekTuiRoute;
+  "/{-$locale}/dimcode": typeof Char123LocaleChar125DimcodeRoute;
+  "/{-$locale}/dirac": typeof Char123LocaleChar125DiracRoute;
+  "/{-$locale}/docs": typeof Char123LocaleChar125DocsRouteWithChildren;
+  "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
+  "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
+  "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
+  "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
+  "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
+  "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
+  "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
+  "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
+  "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
+  "/{-$locale}/kimi": typeof Char123LocaleChar125KimiRoute;
+  "/{-$locale}/minion-code": typeof Char123LocaleChar125MinionCodeRoute;
+  "/{-$locale}/mistral-vibe": typeof Char123LocaleChar125MistralVibeRoute;
+  "/{-$locale}/muse-code": typeof Char123LocaleChar125MuseCodeRoute;
+  "/{-$locale}/nova": typeof Char123LocaleChar125NovaRoute;
+  "/{-$locale}/omp": typeof Char123LocaleChar125OmpRoute;
+  "/{-$locale}/opencode": typeof Char123LocaleChar125OpencodeRoute;
+  "/{-$locale}/pi": typeof Char123LocaleChar125PiRoute;
+  "/{-$locale}/poolside": typeof Char123LocaleChar125PoolsideRoute;
+  "/{-$locale}/privacy": typeof Char123LocaleChar125PrivacyRoute;
+  "/{-$locale}/qoder": typeof Char123LocaleChar125QoderRoute;
+  "/{-$locale}/qwen-code": typeof Char123LocaleChar125QwenCodeRoute;
+  "/{-$locale}/sigit": typeof Char123LocaleChar125SigitRoute;
+  "/{-$locale}/sponsor": typeof Char123LocaleChar125SponsorRoute;
+  "/{-$locale}/stakpak": typeof Char123LocaleChar125StakpakRoute;
+  "/{-$locale}/terms": typeof Char123LocaleChar125TermsRoute;
+  "/{-$locale}/vtcode": typeof Char123LocaleChar125VtcodeRoute;
+  "/{-$locale}/": typeof Char123LocaleChar125IndexRoute;
+  "/{-$locale}/alternatives/claude-desktop": typeof Char123LocaleChar125AlternativesClaudeDesktopRoute;
+  "/{-$locale}/alternatives/codex-app": typeof Char123LocaleChar125AlternativesCodexAppRoute;
+  "/{-$locale}/alternatives/conductor": typeof Char123LocaleChar125AlternativesConductorRoute;
+  "/{-$locale}/alternatives/happy-coder": typeof Char123LocaleChar125AlternativesHappyCoderRoute;
+  "/{-$locale}/alternatives/openchamber": typeof Char123LocaleChar125AlternativesOpenchamberRoute;
+  "/{-$locale}/alternatives/opencode-desktop": typeof Char123LocaleChar125AlternativesOpencodeDesktopRoute;
+  "/{-$locale}/alternatives/orca": typeof Char123LocaleChar125AlternativesOrcaRoute;
+  "/{-$locale}/alternatives/superset": typeof Char123LocaleChar125AlternativesSupersetRoute;
+  "/{-$locale}/blog/$": typeof Char123LocaleChar125BlogSplatRoute;
+  "/{-$locale}/docs/$": typeof Char123LocaleChar125DocsSplatRoute;
+  "/{-$locale}/download_/thanks": typeof Char123LocaleChar125DownloadThanksRoute;
+  "/{-$locale}/plugins/$owner": typeof Char123LocaleChar125PluginsOwnerRoute;
+  "/{-$locale}/plugins/all": typeof Char123LocaleChar125PluginsAllRoute;
+  "/{-$locale}/blog/": typeof Char123LocaleChar125BlogIndexRoute;
+  "/{-$locale}/docs/": typeof Char123LocaleChar125DocsIndexRoute;
+  "/{-$locale}/plugins/": typeof Char123LocaleChar125PluginsIndexRoute;
+  "/{-$locale}/plugins/$owner_/$slug": typeof Char123LocaleChar125PluginsOwnerSlugRoute;
+  "/{-$locale}/plugins/category/$slug": typeof Char123LocaleChar125PluginsCategorySlugRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | "/"
-    | "/agents"
-    | "/agoragentic"
-    | "/amp"
-    | "/antigravity"
-    | "/auggie"
-    | "/autohand"
-    | "/blog"
-    | "/changelog"
-    | "/claude-code"
-    | "/cline"
-    | "/codebuddy"
-    | "/codex"
-    | "/copilot"
-    | "/cortex-code"
-    | "/corust"
-    | "/crow"
-    | "/cursor"
-    | "/deepagents"
-    | "/deepseek-tui"
-    | "/dimcode"
-    | "/dirac"
-    | "/docs"
-    | "/download"
-    | "/factory-droid"
-    | "/fast-agent"
-    | "/gemini"
-    | "/glm"
-    | "/goose"
-    | "/grok"
-    | "/hermes"
-    | "/hub"
-    | "/junie"
-    | "/kilo"
-    | "/kimi"
-    | "/minion-code"
-    | "/mistral-vibe"
-    | "/muse-code"
-    | "/nova"
-    | "/omp"
-    | "/opencode"
-    | "/pi"
-    | "/poolside"
-    | "/privacy"
-    | "/qoder"
-    | "/qwen-code"
-    | "/sigit"
-    | "/sponsor"
-    | "/stakpak"
-    | "/terms"
-    | "/vtcode"
-    | "/alternatives/claude-desktop"
-    | "/alternatives/codex-app"
-    | "/alternatives/conductor"
-    | "/alternatives/happy-coder"
-    | "/alternatives/openchamber"
-    | "/alternatives/opencode-desktop"
-    | "/alternatives/orca"
-    | "/alternatives/superset"
-    | "/blog/$"
-    | "/docs/$"
-    | "/download/thanks"
-    | "/plugins/$owner"
-    | "/plugins/all"
-    | "/blog/"
-    | "/docs/"
-    | "/plugins/"
-    | "/plugins/$owner/$slug"
-    | "/plugins/category/$slug";
+    | "/{-$locale}"
+    | "/{-$locale}/agents"
+    | "/{-$locale}/agoragentic"
+    | "/{-$locale}/amp"
+    | "/{-$locale}/antigravity"
+    | "/{-$locale}/auggie"
+    | "/{-$locale}/autohand"
+    | "/{-$locale}/blog"
+    | "/{-$locale}/changelog"
+    | "/{-$locale}/claude-code"
+    | "/{-$locale}/cline"
+    | "/{-$locale}/codebuddy"
+    | "/{-$locale}/codex"
+    | "/{-$locale}/copilot"
+    | "/{-$locale}/cortex-code"
+    | "/{-$locale}/corust"
+    | "/{-$locale}/crow"
+    | "/{-$locale}/cursor"
+    | "/{-$locale}/deepagents"
+    | "/{-$locale}/deepseek-tui"
+    | "/{-$locale}/dimcode"
+    | "/{-$locale}/dirac"
+    | "/{-$locale}/docs"
+    | "/{-$locale}/download"
+    | "/{-$locale}/factory-droid"
+    | "/{-$locale}/fast-agent"
+    | "/{-$locale}/gemini"
+    | "/{-$locale}/glm"
+    | "/{-$locale}/goose"
+    | "/{-$locale}/grok"
+    | "/{-$locale}/hermes"
+    | "/{-$locale}/hub"
+    | "/{-$locale}/junie"
+    | "/{-$locale}/kilo"
+    | "/{-$locale}/kimi"
+    | "/{-$locale}/minion-code"
+    | "/{-$locale}/mistral-vibe"
+    | "/{-$locale}/muse-code"
+    | "/{-$locale}/nova"
+    | "/{-$locale}/omp"
+    | "/{-$locale}/opencode"
+    | "/{-$locale}/pi"
+    | "/{-$locale}/poolside"
+    | "/{-$locale}/privacy"
+    | "/{-$locale}/qoder"
+    | "/{-$locale}/qwen-code"
+    | "/{-$locale}/sigit"
+    | "/{-$locale}/sponsor"
+    | "/{-$locale}/stakpak"
+    | "/{-$locale}/terms"
+    | "/{-$locale}/vtcode"
+    | "/{-$locale}/"
+    | "/{-$locale}/alternatives/claude-desktop"
+    | "/{-$locale}/alternatives/codex-app"
+    | "/{-$locale}/alternatives/conductor"
+    | "/{-$locale}/alternatives/happy-coder"
+    | "/{-$locale}/alternatives/openchamber"
+    | "/{-$locale}/alternatives/opencode-desktop"
+    | "/{-$locale}/alternatives/orca"
+    | "/{-$locale}/alternatives/superset"
+    | "/{-$locale}/blog/$"
+    | "/{-$locale}/docs/$"
+    | "/{-$locale}/download/thanks"
+    | "/{-$locale}/plugins/$owner"
+    | "/{-$locale}/plugins/all"
+    | "/{-$locale}/blog/"
+    | "/{-$locale}/docs/"
+    | "/{-$locale}/plugins/"
+    | "/{-$locale}/plugins/$owner/$slug"
+    | "/{-$locale}/plugins/category/$slug";
   fileRoutesByTo: FileRoutesByTo;
   to:
-    | "/"
-    | "/agents"
-    | "/agoragentic"
-    | "/amp"
-    | "/antigravity"
-    | "/auggie"
-    | "/autohand"
-    | "/changelog"
-    | "/claude-code"
-    | "/cline"
-    | "/codebuddy"
-    | "/codex"
-    | "/copilot"
-    | "/cortex-code"
-    | "/corust"
-    | "/crow"
-    | "/cursor"
-    | "/deepagents"
-    | "/deepseek-tui"
-    | "/dimcode"
-    | "/dirac"
-    | "/download"
-    | "/factory-droid"
-    | "/fast-agent"
-    | "/gemini"
-    | "/glm"
-    | "/goose"
-    | "/grok"
-    | "/hermes"
-    | "/hub"
-    | "/junie"
-    | "/kilo"
-    | "/kimi"
-    | "/minion-code"
-    | "/mistral-vibe"
-    | "/muse-code"
-    | "/nova"
-    | "/omp"
-    | "/opencode"
-    | "/pi"
-    | "/poolside"
-    | "/privacy"
-    | "/qoder"
-    | "/qwen-code"
-    | "/sigit"
-    | "/sponsor"
-    | "/stakpak"
-    | "/terms"
-    | "/vtcode"
-    | "/alternatives/claude-desktop"
-    | "/alternatives/codex-app"
-    | "/alternatives/conductor"
-    | "/alternatives/happy-coder"
-    | "/alternatives/openchamber"
-    | "/alternatives/opencode-desktop"
-    | "/alternatives/orca"
-    | "/alternatives/superset"
-    | "/blog/$"
-    | "/docs/$"
-    | "/download/thanks"
-    | "/plugins/$owner"
-    | "/plugins/all"
-    | "/blog"
-    | "/docs"
-    | "/plugins"
-    | "/plugins/$owner/$slug"
-    | "/plugins/category/$slug";
+    | "/{-$locale}/agents"
+    | "/{-$locale}/agoragentic"
+    | "/{-$locale}/amp"
+    | "/{-$locale}/antigravity"
+    | "/{-$locale}/auggie"
+    | "/{-$locale}/autohand"
+    | "/{-$locale}/changelog"
+    | "/{-$locale}/claude-code"
+    | "/{-$locale}/cline"
+    | "/{-$locale}/codebuddy"
+    | "/{-$locale}/codex"
+    | "/{-$locale}/copilot"
+    | "/{-$locale}/cortex-code"
+    | "/{-$locale}/corust"
+    | "/{-$locale}/crow"
+    | "/{-$locale}/cursor"
+    | "/{-$locale}/deepagents"
+    | "/{-$locale}/deepseek-tui"
+    | "/{-$locale}/dimcode"
+    | "/{-$locale}/dirac"
+    | "/{-$locale}/download"
+    | "/{-$locale}/factory-droid"
+    | "/{-$locale}/fast-agent"
+    | "/{-$locale}/gemini"
+    | "/{-$locale}/glm"
+    | "/{-$locale}/goose"
+    | "/{-$locale}/grok"
+    | "/{-$locale}/hermes"
+    | "/{-$locale}/hub"
+    | "/{-$locale}/junie"
+    | "/{-$locale}/kilo"
+    | "/{-$locale}/kimi"
+    | "/{-$locale}/minion-code"
+    | "/{-$locale}/mistral-vibe"
+    | "/{-$locale}/muse-code"
+    | "/{-$locale}/nova"
+    | "/{-$locale}/omp"
+    | "/{-$locale}/opencode"
+    | "/{-$locale}/pi"
+    | "/{-$locale}/poolside"
+    | "/{-$locale}/privacy"
+    | "/{-$locale}/qoder"
+    | "/{-$locale}/qwen-code"
+    | "/{-$locale}/sigit"
+    | "/{-$locale}/sponsor"
+    | "/{-$locale}/stakpak"
+    | "/{-$locale}/terms"
+    | "/{-$locale}/vtcode"
+    | "/{-$locale}"
+    | "/{-$locale}/alternatives/claude-desktop"
+    | "/{-$locale}/alternatives/codex-app"
+    | "/{-$locale}/alternatives/conductor"
+    | "/{-$locale}/alternatives/happy-coder"
+    | "/{-$locale}/alternatives/openchamber"
+    | "/{-$locale}/alternatives/opencode-desktop"
+    | "/{-$locale}/alternatives/orca"
+    | "/{-$locale}/alternatives/superset"
+    | "/{-$locale}/blog/$"
+    | "/{-$locale}/docs/$"
+    | "/{-$locale}/download/thanks"
+    | "/{-$locale}/plugins/$owner"
+    | "/{-$locale}/plugins/all"
+    | "/{-$locale}/blog"
+    | "/{-$locale}/docs"
+    | "/{-$locale}/plugins"
+    | "/{-$locale}/plugins/$owner/$slug"
+    | "/{-$locale}/plugins/category/$slug";
   id:
     | "__root__"
-    | "/"
-    | "/agents"
-    | "/agoragentic"
-    | "/amp"
-    | "/antigravity"
-    | "/auggie"
-    | "/autohand"
-    | "/blog"
-    | "/changelog"
-    | "/claude-code"
-    | "/cline"
-    | "/codebuddy"
-    | "/codex"
-    | "/copilot"
-    | "/cortex-code"
-    | "/corust"
-    | "/crow"
-    | "/cursor"
-    | "/deepagents"
-    | "/deepseek-tui"
-    | "/dimcode"
-    | "/dirac"
-    | "/docs"
-    | "/download"
-    | "/factory-droid"
-    | "/fast-agent"
-    | "/gemini"
-    | "/glm"
-    | "/goose"
-    | "/grok"
-    | "/hermes"
-    | "/hub"
-    | "/junie"
-    | "/kilo"
-    | "/kimi"
-    | "/minion-code"
-    | "/mistral-vibe"
-    | "/muse-code"
-    | "/nova"
-    | "/omp"
-    | "/opencode"
-    | "/pi"
-    | "/poolside"
-    | "/privacy"
-    | "/qoder"
-    | "/qwen-code"
-    | "/sigit"
-    | "/sponsor"
-    | "/stakpak"
-    | "/terms"
-    | "/vtcode"
-    | "/alternatives/claude-desktop"
-    | "/alternatives/codex-app"
-    | "/alternatives/conductor"
-    | "/alternatives/happy-coder"
-    | "/alternatives/openchamber"
-    | "/alternatives/opencode-desktop"
-    | "/alternatives/orca"
-    | "/alternatives/superset"
-    | "/blog/$"
-    | "/docs/$"
-    | "/download_/thanks"
-    | "/plugins/$owner"
-    | "/plugins/all"
-    | "/blog/"
-    | "/docs/"
-    | "/plugins/"
-    | "/plugins/$owner_/$slug"
-    | "/plugins/category/$slug";
+    | "/{-$locale}"
+    | "/{-$locale}/agents"
+    | "/{-$locale}/agoragentic"
+    | "/{-$locale}/amp"
+    | "/{-$locale}/antigravity"
+    | "/{-$locale}/auggie"
+    | "/{-$locale}/autohand"
+    | "/{-$locale}/blog"
+    | "/{-$locale}/changelog"
+    | "/{-$locale}/claude-code"
+    | "/{-$locale}/cline"
+    | "/{-$locale}/codebuddy"
+    | "/{-$locale}/codex"
+    | "/{-$locale}/copilot"
+    | "/{-$locale}/cortex-code"
+    | "/{-$locale}/corust"
+    | "/{-$locale}/crow"
+    | "/{-$locale}/cursor"
+    | "/{-$locale}/deepagents"
+    | "/{-$locale}/deepseek-tui"
+    | "/{-$locale}/dimcode"
+    | "/{-$locale}/dirac"
+    | "/{-$locale}/docs"
+    | "/{-$locale}/download"
+    | "/{-$locale}/factory-droid"
+    | "/{-$locale}/fast-agent"
+    | "/{-$locale}/gemini"
+    | "/{-$locale}/glm"
+    | "/{-$locale}/goose"
+    | "/{-$locale}/grok"
+    | "/{-$locale}/hermes"
+    | "/{-$locale}/hub"
+    | "/{-$locale}/junie"
+    | "/{-$locale}/kilo"
+    | "/{-$locale}/kimi"
+    | "/{-$locale}/minion-code"
+    | "/{-$locale}/mistral-vibe"
+    | "/{-$locale}/muse-code"
+    | "/{-$locale}/nova"
+    | "/{-$locale}/omp"
+    | "/{-$locale}/opencode"
+    | "/{-$locale}/pi"
+    | "/{-$locale}/poolside"
+    | "/{-$locale}/privacy"
+    | "/{-$locale}/qoder"
+    | "/{-$locale}/qwen-code"
+    | "/{-$locale}/sigit"
+    | "/{-$locale}/sponsor"
+    | "/{-$locale}/stakpak"
+    | "/{-$locale}/terms"
+    | "/{-$locale}/vtcode"
+    | "/{-$locale}/"
+    | "/{-$locale}/alternatives/claude-desktop"
+    | "/{-$locale}/alternatives/codex-app"
+    | "/{-$locale}/alternatives/conductor"
+    | "/{-$locale}/alternatives/happy-coder"
+    | "/{-$locale}/alternatives/openchamber"
+    | "/{-$locale}/alternatives/opencode-desktop"
+    | "/{-$locale}/alternatives/orca"
+    | "/{-$locale}/alternatives/superset"
+    | "/{-$locale}/blog/$"
+    | "/{-$locale}/docs/$"
+    | "/{-$locale}/download_/thanks"
+    | "/{-$locale}/plugins/$owner"
+    | "/{-$locale}/plugins/all"
+    | "/{-$locale}/blog/"
+    | "/{-$locale}/docs/"
+    | "/{-$locale}/plugins/"
+    | "/{-$locale}/plugins/$owner_/$slug"
+    | "/{-$locale}/plugins/category/$slug";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  AgentsRoute: typeof AgentsRoute;
-  AgoragenticRoute: typeof AgoragenticRoute;
-  AmpRoute: typeof AmpRoute;
-  AntigravityRoute: typeof AntigravityRoute;
-  AuggieRoute: typeof AuggieRoute;
-  AutohandRoute: typeof AutohandRoute;
-  BlogRoute: typeof BlogRouteWithChildren;
-  ChangelogRoute: typeof ChangelogRoute;
-  ClaudeCodeRoute: typeof ClaudeCodeRoute;
-  ClineRoute: typeof ClineRoute;
-  CodebuddyRoute: typeof CodebuddyRoute;
-  CodexRoute: typeof CodexRoute;
-  CopilotRoute: typeof CopilotRoute;
-  CortexCodeRoute: typeof CortexCodeRoute;
-  CorustRoute: typeof CorustRoute;
-  CrowRoute: typeof CrowRoute;
-  CursorRoute: typeof CursorRoute;
-  DeepagentsRoute: typeof DeepagentsRoute;
-  DeepseekTuiRoute: typeof DeepseekTuiRoute;
-  DimcodeRoute: typeof DimcodeRoute;
-  DiracRoute: typeof DiracRoute;
-  DocsRoute: typeof DocsRouteWithChildren;
-  DownloadRoute: typeof DownloadRoute;
-  FactoryDroidRoute: typeof FactoryDroidRoute;
-  FastAgentRoute: typeof FastAgentRoute;
-  GeminiRoute: typeof GeminiRoute;
-  GlmRoute: typeof GlmRoute;
-  GooseRoute: typeof GooseRoute;
-  GrokRoute: typeof GrokRoute;
-  HermesRoute: typeof HermesRoute;
-  HubRoute: typeof HubRoute;
-  JunieRoute: typeof JunieRoute;
-  KiloRoute: typeof KiloRoute;
-  KimiRoute: typeof KimiRoute;
-  MinionCodeRoute: typeof MinionCodeRoute;
-  MistralVibeRoute: typeof MistralVibeRoute;
-  MuseCodeRoute: typeof MuseCodeRoute;
-  NovaRoute: typeof NovaRoute;
-  OmpRoute: typeof OmpRoute;
-  OpencodeRoute: typeof OpencodeRoute;
-  PiRoute: typeof PiRoute;
-  PoolsideRoute: typeof PoolsideRoute;
-  PrivacyRoute: typeof PrivacyRoute;
-  QoderRoute: typeof QoderRoute;
-  QwenCodeRoute: typeof QwenCodeRoute;
-  SigitRoute: typeof SigitRoute;
-  SponsorRoute: typeof SponsorRoute;
-  StakpakRoute: typeof StakpakRoute;
-  TermsRoute: typeof TermsRoute;
-  VtcodeRoute: typeof VtcodeRoute;
-  AlternativesClaudeDesktopRoute: typeof AlternativesClaudeDesktopRoute;
-  AlternativesCodexAppRoute: typeof AlternativesCodexAppRoute;
-  AlternativesConductorRoute: typeof AlternativesConductorRoute;
-  AlternativesHappyCoderRoute: typeof AlternativesHappyCoderRoute;
-  AlternativesOpenchamberRoute: typeof AlternativesOpenchamberRoute;
-  AlternativesOpencodeDesktopRoute: typeof AlternativesOpencodeDesktopRoute;
-  AlternativesOrcaRoute: typeof AlternativesOrcaRoute;
-  AlternativesSupersetRoute: typeof AlternativesSupersetRoute;
-  DownloadThanksRoute: typeof DownloadThanksRoute;
-  PluginsOwnerRoute: typeof PluginsOwnerRoute;
-  PluginsAllRoute: typeof PluginsAllRoute;
-  PluginsIndexRoute: typeof PluginsIndexRoute;
-  PluginsOwnerSlugRoute: typeof PluginsOwnerSlugRoute;
-  PluginsCategorySlugRoute: typeof PluginsCategorySlugRoute;
+  Char123LocaleChar125RouteRoute: typeof Char123LocaleChar125RouteRouteWithChildren;
 }
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    "/vtcode": {
-      id: "/vtcode";
+    "/{-$locale}": {
+      id: "/{-$locale}";
+      path: "/{-$locale}";
+      fullPath: "/{-$locale}";
+      preLoaderRoute: typeof Char123LocaleChar125RouteRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/{-$locale}/": {
+      id: "/{-$locale}/";
+      path: "/";
+      fullPath: "/{-$locale}/";
+      preLoaderRoute: typeof Char123LocaleChar125IndexRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
+    };
+    "/{-$locale}/vtcode": {
+      id: "/{-$locale}/vtcode";
       path: "/vtcode";
-      fullPath: "/vtcode";
-      preLoaderRoute: typeof VtcodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/vtcode";
+      preLoaderRoute: typeof Char123LocaleChar125VtcodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/terms": {
-      id: "/terms";
+    "/{-$locale}/terms": {
+      id: "/{-$locale}/terms";
       path: "/terms";
-      fullPath: "/terms";
-      preLoaderRoute: typeof TermsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/terms";
+      preLoaderRoute: typeof Char123LocaleChar125TermsRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/stakpak": {
-      id: "/stakpak";
+    "/{-$locale}/stakpak": {
+      id: "/{-$locale}/stakpak";
       path: "/stakpak";
-      fullPath: "/stakpak";
-      preLoaderRoute: typeof StakpakRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/stakpak";
+      preLoaderRoute: typeof Char123LocaleChar125StakpakRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/sponsor": {
-      id: "/sponsor";
+    "/{-$locale}/sponsor": {
+      id: "/{-$locale}/sponsor";
       path: "/sponsor";
-      fullPath: "/sponsor";
-      preLoaderRoute: typeof SponsorRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/sponsor";
+      preLoaderRoute: typeof Char123LocaleChar125SponsorRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/sigit": {
-      id: "/sigit";
+    "/{-$locale}/sigit": {
+      id: "/{-$locale}/sigit";
       path: "/sigit";
-      fullPath: "/sigit";
-      preLoaderRoute: typeof SigitRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/sigit";
+      preLoaderRoute: typeof Char123LocaleChar125SigitRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/qwen-code": {
-      id: "/qwen-code";
+    "/{-$locale}/qwen-code": {
+      id: "/{-$locale}/qwen-code";
       path: "/qwen-code";
-      fullPath: "/qwen-code";
-      preLoaderRoute: typeof QwenCodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/qwen-code";
+      preLoaderRoute: typeof Char123LocaleChar125QwenCodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/qoder": {
-      id: "/qoder";
+    "/{-$locale}/qoder": {
+      id: "/{-$locale}/qoder";
       path: "/qoder";
-      fullPath: "/qoder";
-      preLoaderRoute: typeof QoderRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/qoder";
+      preLoaderRoute: typeof Char123LocaleChar125QoderRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/privacy": {
-      id: "/privacy";
+    "/{-$locale}/privacy": {
+      id: "/{-$locale}/privacy";
       path: "/privacy";
-      fullPath: "/privacy";
-      preLoaderRoute: typeof PrivacyRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/privacy";
+      preLoaderRoute: typeof Char123LocaleChar125PrivacyRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/poolside": {
-      id: "/poolside";
+    "/{-$locale}/poolside": {
+      id: "/{-$locale}/poolside";
       path: "/poolside";
-      fullPath: "/poolside";
-      preLoaderRoute: typeof PoolsideRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/poolside";
+      preLoaderRoute: typeof Char123LocaleChar125PoolsideRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/pi": {
-      id: "/pi";
+    "/{-$locale}/pi": {
+      id: "/{-$locale}/pi";
       path: "/pi";
-      fullPath: "/pi";
-      preLoaderRoute: typeof PiRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/pi";
+      preLoaderRoute: typeof Char123LocaleChar125PiRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/opencode": {
-      id: "/opencode";
+    "/{-$locale}/opencode": {
+      id: "/{-$locale}/opencode";
       path: "/opencode";
-      fullPath: "/opencode";
-      preLoaderRoute: typeof OpencodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/opencode";
+      preLoaderRoute: typeof Char123LocaleChar125OpencodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/omp": {
-      id: "/omp";
+    "/{-$locale}/omp": {
+      id: "/{-$locale}/omp";
       path: "/omp";
-      fullPath: "/omp";
-      preLoaderRoute: typeof OmpRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/omp";
+      preLoaderRoute: typeof Char123LocaleChar125OmpRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/nova": {
-      id: "/nova";
+    "/{-$locale}/nova": {
+      id: "/{-$locale}/nova";
       path: "/nova";
-      fullPath: "/nova";
-      preLoaderRoute: typeof NovaRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/nova";
+      preLoaderRoute: typeof Char123LocaleChar125NovaRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/muse-code": {
-      id: "/muse-code";
+    "/{-$locale}/muse-code": {
+      id: "/{-$locale}/muse-code";
       path: "/muse-code";
-      fullPath: "/muse-code";
-      preLoaderRoute: typeof MuseCodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/muse-code";
+      preLoaderRoute: typeof Char123LocaleChar125MuseCodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/mistral-vibe": {
-      id: "/mistral-vibe";
+    "/{-$locale}/mistral-vibe": {
+      id: "/{-$locale}/mistral-vibe";
       path: "/mistral-vibe";
-      fullPath: "/mistral-vibe";
-      preLoaderRoute: typeof MistralVibeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/mistral-vibe";
+      preLoaderRoute: typeof Char123LocaleChar125MistralVibeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/minion-code": {
-      id: "/minion-code";
+    "/{-$locale}/minion-code": {
+      id: "/{-$locale}/minion-code";
       path: "/minion-code";
-      fullPath: "/minion-code";
-      preLoaderRoute: typeof MinionCodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/minion-code";
+      preLoaderRoute: typeof Char123LocaleChar125MinionCodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/kimi": {
-      id: "/kimi";
+    "/{-$locale}/kimi": {
+      id: "/{-$locale}/kimi";
       path: "/kimi";
-      fullPath: "/kimi";
-      preLoaderRoute: typeof KimiRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/kimi";
+      preLoaderRoute: typeof Char123LocaleChar125KimiRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/kilo": {
-      id: "/kilo";
+    "/{-$locale}/kilo": {
+      id: "/{-$locale}/kilo";
       path: "/kilo";
-      fullPath: "/kilo";
-      preLoaderRoute: typeof KiloRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/kilo";
+      preLoaderRoute: typeof Char123LocaleChar125KiloRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/junie": {
-      id: "/junie";
+    "/{-$locale}/junie": {
+      id: "/{-$locale}/junie";
       path: "/junie";
-      fullPath: "/junie";
-      preLoaderRoute: typeof JunieRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/junie";
+      preLoaderRoute: typeof Char123LocaleChar125JunieRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/hub": {
-      id: "/hub";
+    "/{-$locale}/hub": {
+      id: "/{-$locale}/hub";
       path: "/hub";
-      fullPath: "/hub";
-      preLoaderRoute: typeof HubRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/hub";
+      preLoaderRoute: typeof Char123LocaleChar125HubRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/hermes": {
-      id: "/hermes";
+    "/{-$locale}/hermes": {
+      id: "/{-$locale}/hermes";
       path: "/hermes";
-      fullPath: "/hermes";
-      preLoaderRoute: typeof HermesRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/hermes";
+      preLoaderRoute: typeof Char123LocaleChar125HermesRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/grok": {
-      id: "/grok";
+    "/{-$locale}/grok": {
+      id: "/{-$locale}/grok";
       path: "/grok";
-      fullPath: "/grok";
-      preLoaderRoute: typeof GrokRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/grok";
+      preLoaderRoute: typeof Char123LocaleChar125GrokRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/goose": {
-      id: "/goose";
+    "/{-$locale}/goose": {
+      id: "/{-$locale}/goose";
       path: "/goose";
-      fullPath: "/goose";
-      preLoaderRoute: typeof GooseRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/goose";
+      preLoaderRoute: typeof Char123LocaleChar125GooseRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/glm": {
-      id: "/glm";
+    "/{-$locale}/glm": {
+      id: "/{-$locale}/glm";
       path: "/glm";
-      fullPath: "/glm";
-      preLoaderRoute: typeof GlmRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/glm";
+      preLoaderRoute: typeof Char123LocaleChar125GlmRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/gemini": {
-      id: "/gemini";
+    "/{-$locale}/gemini": {
+      id: "/{-$locale}/gemini";
       path: "/gemini";
-      fullPath: "/gemini";
-      preLoaderRoute: typeof GeminiRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/gemini";
+      preLoaderRoute: typeof Char123LocaleChar125GeminiRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/fast-agent": {
-      id: "/fast-agent";
+    "/{-$locale}/fast-agent": {
+      id: "/{-$locale}/fast-agent";
       path: "/fast-agent";
-      fullPath: "/fast-agent";
-      preLoaderRoute: typeof FastAgentRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/fast-agent";
+      preLoaderRoute: typeof Char123LocaleChar125FastAgentRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/factory-droid": {
-      id: "/factory-droid";
+    "/{-$locale}/factory-droid": {
+      id: "/{-$locale}/factory-droid";
       path: "/factory-droid";
-      fullPath: "/factory-droid";
-      preLoaderRoute: typeof FactoryDroidRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/factory-droid";
+      preLoaderRoute: typeof Char123LocaleChar125FactoryDroidRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/download": {
-      id: "/download";
+    "/{-$locale}/download": {
+      id: "/{-$locale}/download";
       path: "/download";
-      fullPath: "/download";
-      preLoaderRoute: typeof DownloadRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/download";
+      preLoaderRoute: typeof Char123LocaleChar125DownloadRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/docs": {
-      id: "/docs";
+    "/{-$locale}/docs": {
+      id: "/{-$locale}/docs";
       path: "/docs";
-      fullPath: "/docs";
-      preLoaderRoute: typeof DocsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/docs";
+      preLoaderRoute: typeof Char123LocaleChar125DocsRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/dirac": {
-      id: "/dirac";
+    "/{-$locale}/dirac": {
+      id: "/{-$locale}/dirac";
       path: "/dirac";
-      fullPath: "/dirac";
-      preLoaderRoute: typeof DiracRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/dirac";
+      preLoaderRoute: typeof Char123LocaleChar125DiracRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/dimcode": {
-      id: "/dimcode";
+    "/{-$locale}/dimcode": {
+      id: "/{-$locale}/dimcode";
       path: "/dimcode";
-      fullPath: "/dimcode";
-      preLoaderRoute: typeof DimcodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/dimcode";
+      preLoaderRoute: typeof Char123LocaleChar125DimcodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/deepseek-tui": {
-      id: "/deepseek-tui";
+    "/{-$locale}/deepseek-tui": {
+      id: "/{-$locale}/deepseek-tui";
       path: "/deepseek-tui";
-      fullPath: "/deepseek-tui";
-      preLoaderRoute: typeof DeepseekTuiRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/deepseek-tui";
+      preLoaderRoute: typeof Char123LocaleChar125DeepseekTuiRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/deepagents": {
-      id: "/deepagents";
+    "/{-$locale}/deepagents": {
+      id: "/{-$locale}/deepagents";
       path: "/deepagents";
-      fullPath: "/deepagents";
-      preLoaderRoute: typeof DeepagentsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/deepagents";
+      preLoaderRoute: typeof Char123LocaleChar125DeepagentsRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/cursor": {
-      id: "/cursor";
+    "/{-$locale}/cursor": {
+      id: "/{-$locale}/cursor";
       path: "/cursor";
-      fullPath: "/cursor";
-      preLoaderRoute: typeof CursorRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/cursor";
+      preLoaderRoute: typeof Char123LocaleChar125CursorRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/crow": {
-      id: "/crow";
+    "/{-$locale}/crow": {
+      id: "/{-$locale}/crow";
       path: "/crow";
-      fullPath: "/crow";
-      preLoaderRoute: typeof CrowRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/crow";
+      preLoaderRoute: typeof Char123LocaleChar125CrowRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/corust": {
-      id: "/corust";
+    "/{-$locale}/corust": {
+      id: "/{-$locale}/corust";
       path: "/corust";
-      fullPath: "/corust";
-      preLoaderRoute: typeof CorustRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/corust";
+      preLoaderRoute: typeof Char123LocaleChar125CorustRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/cortex-code": {
-      id: "/cortex-code";
+    "/{-$locale}/cortex-code": {
+      id: "/{-$locale}/cortex-code";
       path: "/cortex-code";
-      fullPath: "/cortex-code";
-      preLoaderRoute: typeof CortexCodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/cortex-code";
+      preLoaderRoute: typeof Char123LocaleChar125CortexCodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/copilot": {
-      id: "/copilot";
+    "/{-$locale}/copilot": {
+      id: "/{-$locale}/copilot";
       path: "/copilot";
-      fullPath: "/copilot";
-      preLoaderRoute: typeof CopilotRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/copilot";
+      preLoaderRoute: typeof Char123LocaleChar125CopilotRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/codex": {
-      id: "/codex";
+    "/{-$locale}/codex": {
+      id: "/{-$locale}/codex";
       path: "/codex";
-      fullPath: "/codex";
-      preLoaderRoute: typeof CodexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/codex";
+      preLoaderRoute: typeof Char123LocaleChar125CodexRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/codebuddy": {
-      id: "/codebuddy";
+    "/{-$locale}/codebuddy": {
+      id: "/{-$locale}/codebuddy";
       path: "/codebuddy";
-      fullPath: "/codebuddy";
-      preLoaderRoute: typeof CodebuddyRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/codebuddy";
+      preLoaderRoute: typeof Char123LocaleChar125CodebuddyRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/cline": {
-      id: "/cline";
+    "/{-$locale}/cline": {
+      id: "/{-$locale}/cline";
       path: "/cline";
-      fullPath: "/cline";
-      preLoaderRoute: typeof ClineRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/cline";
+      preLoaderRoute: typeof Char123LocaleChar125ClineRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/claude-code": {
-      id: "/claude-code";
+    "/{-$locale}/claude-code": {
+      id: "/{-$locale}/claude-code";
       path: "/claude-code";
-      fullPath: "/claude-code";
-      preLoaderRoute: typeof ClaudeCodeRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/claude-code";
+      preLoaderRoute: typeof Char123LocaleChar125ClaudeCodeRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/changelog": {
-      id: "/changelog";
+    "/{-$locale}/changelog": {
+      id: "/{-$locale}/changelog";
       path: "/changelog";
-      fullPath: "/changelog";
-      preLoaderRoute: typeof ChangelogRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/changelog";
+      preLoaderRoute: typeof Char123LocaleChar125ChangelogRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/blog": {
-      id: "/blog";
+    "/{-$locale}/blog": {
+      id: "/{-$locale}/blog";
       path: "/blog";
-      fullPath: "/blog";
-      preLoaderRoute: typeof BlogRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/blog";
+      preLoaderRoute: typeof Char123LocaleChar125BlogRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/autohand": {
-      id: "/autohand";
+    "/{-$locale}/autohand": {
+      id: "/{-$locale}/autohand";
       path: "/autohand";
-      fullPath: "/autohand";
-      preLoaderRoute: typeof AutohandRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/autohand";
+      preLoaderRoute: typeof Char123LocaleChar125AutohandRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/auggie": {
-      id: "/auggie";
+    "/{-$locale}/auggie": {
+      id: "/{-$locale}/auggie";
       path: "/auggie";
-      fullPath: "/auggie";
-      preLoaderRoute: typeof AuggieRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/auggie";
+      preLoaderRoute: typeof Char123LocaleChar125AuggieRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/antigravity": {
-      id: "/antigravity";
+    "/{-$locale}/antigravity": {
+      id: "/{-$locale}/antigravity";
       path: "/antigravity";
-      fullPath: "/antigravity";
-      preLoaderRoute: typeof AntigravityRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/antigravity";
+      preLoaderRoute: typeof Char123LocaleChar125AntigravityRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/amp": {
-      id: "/amp";
+    "/{-$locale}/amp": {
+      id: "/{-$locale}/amp";
       path: "/amp";
-      fullPath: "/amp";
-      preLoaderRoute: typeof AmpRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/amp";
+      preLoaderRoute: typeof Char123LocaleChar125AmpRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/agoragentic": {
-      id: "/agoragentic";
+    "/{-$locale}/agoragentic": {
+      id: "/{-$locale}/agoragentic";
       path: "/agoragentic";
-      fullPath: "/agoragentic";
-      preLoaderRoute: typeof AgoragenticRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/agoragentic";
+      preLoaderRoute: typeof Char123LocaleChar125AgoragenticRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/agents": {
-      id: "/agents";
+    "/{-$locale}/agents": {
+      id: "/{-$locale}/agents";
       path: "/agents";
-      fullPath: "/agents";
-      preLoaderRoute: typeof AgentsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/agents";
+      preLoaderRoute: typeof Char123LocaleChar125AgentsRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/plugins/": {
-      id: "/plugins/";
+    "/{-$locale}/plugins/": {
+      id: "/{-$locale}/plugins/";
       path: "/plugins";
-      fullPath: "/plugins/";
-      preLoaderRoute: typeof PluginsIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/plugins/";
+      preLoaderRoute: typeof Char123LocaleChar125PluginsIndexRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/docs/": {
-      id: "/docs/";
+    "/{-$locale}/docs/": {
+      id: "/{-$locale}/docs/";
       path: "/";
-      fullPath: "/docs/";
-      preLoaderRoute: typeof DocsIndexRouteImport;
-      parentRoute: typeof DocsRoute;
+      fullPath: "/{-$locale}/docs/";
+      preLoaderRoute: typeof Char123LocaleChar125DocsIndexRouteImport;
+      parentRoute: typeof Char123LocaleChar125DocsRoute;
     };
-    "/blog/": {
-      id: "/blog/";
+    "/{-$locale}/blog/": {
+      id: "/{-$locale}/blog/";
       path: "/";
-      fullPath: "/blog/";
-      preLoaderRoute: typeof BlogIndexRouteImport;
-      parentRoute: typeof BlogRoute;
+      fullPath: "/{-$locale}/blog/";
+      preLoaderRoute: typeof Char123LocaleChar125BlogIndexRouteImport;
+      parentRoute: typeof Char123LocaleChar125BlogRoute;
     };
-    "/plugins/all": {
-      id: "/plugins/all";
+    "/{-$locale}/plugins/all": {
+      id: "/{-$locale}/plugins/all";
       path: "/plugins/all";
-      fullPath: "/plugins/all";
-      preLoaderRoute: typeof PluginsAllRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/plugins/all";
+      preLoaderRoute: typeof Char123LocaleChar125PluginsAllRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/plugins/$owner": {
-      id: "/plugins/$owner";
+    "/{-$locale}/plugins/$owner": {
+      id: "/{-$locale}/plugins/$owner";
       path: "/plugins/$owner";
-      fullPath: "/plugins/$owner";
-      preLoaderRoute: typeof PluginsOwnerRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/plugins/$owner";
+      preLoaderRoute: typeof Char123LocaleChar125PluginsOwnerRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/download_/thanks": {
-      id: "/download_/thanks";
+    "/{-$locale}/download_/thanks": {
+      id: "/{-$locale}/download_/thanks";
       path: "/download/thanks";
-      fullPath: "/download/thanks";
-      preLoaderRoute: typeof DownloadThanksRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/download/thanks";
+      preLoaderRoute: typeof Char123LocaleChar125DownloadThanksRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/docs/$": {
-      id: "/docs/$";
+    "/{-$locale}/docs/$": {
+      id: "/{-$locale}/docs/$";
       path: "/$";
-      fullPath: "/docs/$";
-      preLoaderRoute: typeof DocsSplatRouteImport;
-      parentRoute: typeof DocsRoute;
+      fullPath: "/{-$locale}/docs/$";
+      preLoaderRoute: typeof Char123LocaleChar125DocsSplatRouteImport;
+      parentRoute: typeof Char123LocaleChar125DocsRoute;
     };
-    "/blog/$": {
-      id: "/blog/$";
+    "/{-$locale}/blog/$": {
+      id: "/{-$locale}/blog/$";
       path: "/$";
-      fullPath: "/blog/$";
-      preLoaderRoute: typeof BlogSplatRouteImport;
-      parentRoute: typeof BlogRoute;
+      fullPath: "/{-$locale}/blog/$";
+      preLoaderRoute: typeof Char123LocaleChar125BlogSplatRouteImport;
+      parentRoute: typeof Char123LocaleChar125BlogRoute;
     };
-    "/alternatives/superset": {
-      id: "/alternatives/superset";
+    "/{-$locale}/alternatives/superset": {
+      id: "/{-$locale}/alternatives/superset";
       path: "/alternatives/superset";
-      fullPath: "/alternatives/superset";
-      preLoaderRoute: typeof AlternativesSupersetRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/superset";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesSupersetRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/orca": {
-      id: "/alternatives/orca";
+    "/{-$locale}/alternatives/orca": {
+      id: "/{-$locale}/alternatives/orca";
       path: "/alternatives/orca";
-      fullPath: "/alternatives/orca";
-      preLoaderRoute: typeof AlternativesOrcaRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/orca";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesOrcaRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/opencode-desktop": {
-      id: "/alternatives/opencode-desktop";
+    "/{-$locale}/alternatives/opencode-desktop": {
+      id: "/{-$locale}/alternatives/opencode-desktop";
       path: "/alternatives/opencode-desktop";
-      fullPath: "/alternatives/opencode-desktop";
-      preLoaderRoute: typeof AlternativesOpencodeDesktopRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/opencode-desktop";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesOpencodeDesktopRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/openchamber": {
-      id: "/alternatives/openchamber";
+    "/{-$locale}/alternatives/openchamber": {
+      id: "/{-$locale}/alternatives/openchamber";
       path: "/alternatives/openchamber";
-      fullPath: "/alternatives/openchamber";
-      preLoaderRoute: typeof AlternativesOpenchamberRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/openchamber";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesOpenchamberRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/happy-coder": {
-      id: "/alternatives/happy-coder";
+    "/{-$locale}/alternatives/happy-coder": {
+      id: "/{-$locale}/alternatives/happy-coder";
       path: "/alternatives/happy-coder";
-      fullPath: "/alternatives/happy-coder";
-      preLoaderRoute: typeof AlternativesHappyCoderRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/happy-coder";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesHappyCoderRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/conductor": {
-      id: "/alternatives/conductor";
+    "/{-$locale}/alternatives/conductor": {
+      id: "/{-$locale}/alternatives/conductor";
       path: "/alternatives/conductor";
-      fullPath: "/alternatives/conductor";
-      preLoaderRoute: typeof AlternativesConductorRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/conductor";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesConductorRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/codex-app": {
-      id: "/alternatives/codex-app";
+    "/{-$locale}/alternatives/codex-app": {
+      id: "/{-$locale}/alternatives/codex-app";
       path: "/alternatives/codex-app";
-      fullPath: "/alternatives/codex-app";
-      preLoaderRoute: typeof AlternativesCodexAppRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/codex-app";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesCodexAppRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/alternatives/claude-desktop": {
-      id: "/alternatives/claude-desktop";
+    "/{-$locale}/alternatives/claude-desktop": {
+      id: "/{-$locale}/alternatives/claude-desktop";
       path: "/alternatives/claude-desktop";
-      fullPath: "/alternatives/claude-desktop";
-      preLoaderRoute: typeof AlternativesClaudeDesktopRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/alternatives/claude-desktop";
+      preLoaderRoute: typeof Char123LocaleChar125AlternativesClaudeDesktopRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/plugins/category/$slug": {
-      id: "/plugins/category/$slug";
+    "/{-$locale}/plugins/category/$slug": {
+      id: "/{-$locale}/plugins/category/$slug";
       path: "/plugins/category/$slug";
-      fullPath: "/plugins/category/$slug";
-      preLoaderRoute: typeof PluginsCategorySlugRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/plugins/category/$slug";
+      preLoaderRoute: typeof Char123LocaleChar125PluginsCategorySlugRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
-    "/plugins/$owner_/$slug": {
-      id: "/plugins/$owner_/$slug";
+    "/{-$locale}/plugins/$owner_/$slug": {
+      id: "/{-$locale}/plugins/$owner_/$slug";
       path: "/plugins/$owner/$slug";
-      fullPath: "/plugins/$owner/$slug";
-      preLoaderRoute: typeof PluginsOwnerSlugRouteImport;
-      parentRoute: typeof rootRouteImport;
+      fullPath: "/{-$locale}/plugins/$owner/$slug";
+      preLoaderRoute: typeof Char123LocaleChar125PluginsOwnerSlugRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
   }
 }
 
-interface BlogRouteChildren {
-  BlogSplatRoute: typeof BlogSplatRoute;
-  BlogIndexRoute: typeof BlogIndexRoute;
+interface Char123LocaleChar125BlogRouteChildren {
+  Char123LocaleChar125BlogSplatRoute: typeof Char123LocaleChar125BlogSplatRoute;
+  Char123LocaleChar125BlogIndexRoute: typeof Char123LocaleChar125BlogIndexRoute;
 }
 
-const BlogRouteChildren: BlogRouteChildren = {
-  BlogSplatRoute: BlogSplatRoute,
-  BlogIndexRoute: BlogIndexRoute,
-};
+const Char123LocaleChar125BlogRouteChildren: Char123LocaleChar125BlogRouteChildren =
+  {
+    Char123LocaleChar125BlogSplatRoute: Char123LocaleChar125BlogSplatRoute,
+    Char123LocaleChar125BlogIndexRoute: Char123LocaleChar125BlogIndexRoute,
+  };
 
-const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren);
+const Char123LocaleChar125BlogRouteWithChildren =
+  Char123LocaleChar125BlogRoute._addFileChildren(
+    Char123LocaleChar125BlogRouteChildren,
+  );
 
-interface DocsRouteChildren {
-  DocsSplatRoute: typeof DocsSplatRoute;
-  DocsIndexRoute: typeof DocsIndexRoute;
+interface Char123LocaleChar125DocsRouteChildren {
+  Char123LocaleChar125DocsSplatRoute: typeof Char123LocaleChar125DocsSplatRoute;
+  Char123LocaleChar125DocsIndexRoute: typeof Char123LocaleChar125DocsIndexRoute;
 }
 
-const DocsRouteChildren: DocsRouteChildren = {
-  DocsSplatRoute: DocsSplatRoute,
-  DocsIndexRoute: DocsIndexRoute,
-};
+const Char123LocaleChar125DocsRouteChildren: Char123LocaleChar125DocsRouteChildren =
+  {
+    Char123LocaleChar125DocsSplatRoute: Char123LocaleChar125DocsSplatRoute,
+    Char123LocaleChar125DocsIndexRoute: Char123LocaleChar125DocsIndexRoute,
+  };
 
-const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren);
+const Char123LocaleChar125DocsRouteWithChildren =
+  Char123LocaleChar125DocsRoute._addFileChildren(
+    Char123LocaleChar125DocsRouteChildren,
+  );
+
+interface Char123LocaleChar125RouteRouteChildren {
+  Char123LocaleChar125AgentsRoute: typeof Char123LocaleChar125AgentsRoute;
+  Char123LocaleChar125AgoragenticRoute: typeof Char123LocaleChar125AgoragenticRoute;
+  Char123LocaleChar125AmpRoute: typeof Char123LocaleChar125AmpRoute;
+  Char123LocaleChar125AntigravityRoute: typeof Char123LocaleChar125AntigravityRoute;
+  Char123LocaleChar125AuggieRoute: typeof Char123LocaleChar125AuggieRoute;
+  Char123LocaleChar125AutohandRoute: typeof Char123LocaleChar125AutohandRoute;
+  Char123LocaleChar125BlogRoute: typeof Char123LocaleChar125BlogRouteWithChildren;
+  Char123LocaleChar125ChangelogRoute: typeof Char123LocaleChar125ChangelogRoute;
+  Char123LocaleChar125ClaudeCodeRoute: typeof Char123LocaleChar125ClaudeCodeRoute;
+  Char123LocaleChar125ClineRoute: typeof Char123LocaleChar125ClineRoute;
+  Char123LocaleChar125CodebuddyRoute: typeof Char123LocaleChar125CodebuddyRoute;
+  Char123LocaleChar125CodexRoute: typeof Char123LocaleChar125CodexRoute;
+  Char123LocaleChar125CopilotRoute: typeof Char123LocaleChar125CopilotRoute;
+  Char123LocaleChar125CortexCodeRoute: typeof Char123LocaleChar125CortexCodeRoute;
+  Char123LocaleChar125CorustRoute: typeof Char123LocaleChar125CorustRoute;
+  Char123LocaleChar125CrowRoute: typeof Char123LocaleChar125CrowRoute;
+  Char123LocaleChar125CursorRoute: typeof Char123LocaleChar125CursorRoute;
+  Char123LocaleChar125DeepagentsRoute: typeof Char123LocaleChar125DeepagentsRoute;
+  Char123LocaleChar125DeepseekTuiRoute: typeof Char123LocaleChar125DeepseekTuiRoute;
+  Char123LocaleChar125DimcodeRoute: typeof Char123LocaleChar125DimcodeRoute;
+  Char123LocaleChar125DiracRoute: typeof Char123LocaleChar125DiracRoute;
+  Char123LocaleChar125DocsRoute: typeof Char123LocaleChar125DocsRouteWithChildren;
+  Char123LocaleChar125DownloadRoute: typeof Char123LocaleChar125DownloadRoute;
+  Char123LocaleChar125FactoryDroidRoute: typeof Char123LocaleChar125FactoryDroidRoute;
+  Char123LocaleChar125FastAgentRoute: typeof Char123LocaleChar125FastAgentRoute;
+  Char123LocaleChar125GeminiRoute: typeof Char123LocaleChar125GeminiRoute;
+  Char123LocaleChar125GlmRoute: typeof Char123LocaleChar125GlmRoute;
+  Char123LocaleChar125GooseRoute: typeof Char123LocaleChar125GooseRoute;
+  Char123LocaleChar125GrokRoute: typeof Char123LocaleChar125GrokRoute;
+  Char123LocaleChar125HermesRoute: typeof Char123LocaleChar125HermesRoute;
+  Char123LocaleChar125HubRoute: typeof Char123LocaleChar125HubRoute;
+  Char123LocaleChar125JunieRoute: typeof Char123LocaleChar125JunieRoute;
+  Char123LocaleChar125KiloRoute: typeof Char123LocaleChar125KiloRoute;
+  Char123LocaleChar125KimiRoute: typeof Char123LocaleChar125KimiRoute;
+  Char123LocaleChar125MinionCodeRoute: typeof Char123LocaleChar125MinionCodeRoute;
+  Char123LocaleChar125MistralVibeRoute: typeof Char123LocaleChar125MistralVibeRoute;
+  Char123LocaleChar125MuseCodeRoute: typeof Char123LocaleChar125MuseCodeRoute;
+  Char123LocaleChar125NovaRoute: typeof Char123LocaleChar125NovaRoute;
+  Char123LocaleChar125OmpRoute: typeof Char123LocaleChar125OmpRoute;
+  Char123LocaleChar125OpencodeRoute: typeof Char123LocaleChar125OpencodeRoute;
+  Char123LocaleChar125PiRoute: typeof Char123LocaleChar125PiRoute;
+  Char123LocaleChar125PoolsideRoute: typeof Char123LocaleChar125PoolsideRoute;
+  Char123LocaleChar125PrivacyRoute: typeof Char123LocaleChar125PrivacyRoute;
+  Char123LocaleChar125QoderRoute: typeof Char123LocaleChar125QoderRoute;
+  Char123LocaleChar125QwenCodeRoute: typeof Char123LocaleChar125QwenCodeRoute;
+  Char123LocaleChar125SigitRoute: typeof Char123LocaleChar125SigitRoute;
+  Char123LocaleChar125SponsorRoute: typeof Char123LocaleChar125SponsorRoute;
+  Char123LocaleChar125StakpakRoute: typeof Char123LocaleChar125StakpakRoute;
+  Char123LocaleChar125TermsRoute: typeof Char123LocaleChar125TermsRoute;
+  Char123LocaleChar125VtcodeRoute: typeof Char123LocaleChar125VtcodeRoute;
+  Char123LocaleChar125IndexRoute: typeof Char123LocaleChar125IndexRoute;
+  Char123LocaleChar125AlternativesClaudeDesktopRoute: typeof Char123LocaleChar125AlternativesClaudeDesktopRoute;
+  Char123LocaleChar125AlternativesCodexAppRoute: typeof Char123LocaleChar125AlternativesCodexAppRoute;
+  Char123LocaleChar125AlternativesConductorRoute: typeof Char123LocaleChar125AlternativesConductorRoute;
+  Char123LocaleChar125AlternativesHappyCoderRoute: typeof Char123LocaleChar125AlternativesHappyCoderRoute;
+  Char123LocaleChar125AlternativesOpenchamberRoute: typeof Char123LocaleChar125AlternativesOpenchamberRoute;
+  Char123LocaleChar125AlternativesOpencodeDesktopRoute: typeof Char123LocaleChar125AlternativesOpencodeDesktopRoute;
+  Char123LocaleChar125AlternativesOrcaRoute: typeof Char123LocaleChar125AlternativesOrcaRoute;
+  Char123LocaleChar125AlternativesSupersetRoute: typeof Char123LocaleChar125AlternativesSupersetRoute;
+  Char123LocaleChar125DownloadThanksRoute: typeof Char123LocaleChar125DownloadThanksRoute;
+  Char123LocaleChar125PluginsOwnerRoute: typeof Char123LocaleChar125PluginsOwnerRoute;
+  Char123LocaleChar125PluginsAllRoute: typeof Char123LocaleChar125PluginsAllRoute;
+  Char123LocaleChar125PluginsIndexRoute: typeof Char123LocaleChar125PluginsIndexRoute;
+  Char123LocaleChar125PluginsOwnerSlugRoute: typeof Char123LocaleChar125PluginsOwnerSlugRoute;
+  Char123LocaleChar125PluginsCategorySlugRoute: typeof Char123LocaleChar125PluginsCategorySlugRoute;
+}
+
+const Char123LocaleChar125RouteRouteChildren: Char123LocaleChar125RouteRouteChildren =
+  {
+    Char123LocaleChar125AgentsRoute: Char123LocaleChar125AgentsRoute,
+    Char123LocaleChar125AgoragenticRoute: Char123LocaleChar125AgoragenticRoute,
+    Char123LocaleChar125AmpRoute: Char123LocaleChar125AmpRoute,
+    Char123LocaleChar125AntigravityRoute: Char123LocaleChar125AntigravityRoute,
+    Char123LocaleChar125AuggieRoute: Char123LocaleChar125AuggieRoute,
+    Char123LocaleChar125AutohandRoute: Char123LocaleChar125AutohandRoute,
+    Char123LocaleChar125BlogRoute: Char123LocaleChar125BlogRouteWithChildren,
+    Char123LocaleChar125ChangelogRoute: Char123LocaleChar125ChangelogRoute,
+    Char123LocaleChar125ClaudeCodeRoute: Char123LocaleChar125ClaudeCodeRoute,
+    Char123LocaleChar125ClineRoute: Char123LocaleChar125ClineRoute,
+    Char123LocaleChar125CodebuddyRoute: Char123LocaleChar125CodebuddyRoute,
+    Char123LocaleChar125CodexRoute: Char123LocaleChar125CodexRoute,
+    Char123LocaleChar125CopilotRoute: Char123LocaleChar125CopilotRoute,
+    Char123LocaleChar125CortexCodeRoute: Char123LocaleChar125CortexCodeRoute,
+    Char123LocaleChar125CorustRoute: Char123LocaleChar125CorustRoute,
+    Char123LocaleChar125CrowRoute: Char123LocaleChar125CrowRoute,
+    Char123LocaleChar125CursorRoute: Char123LocaleChar125CursorRoute,
+    Char123LocaleChar125DeepagentsRoute: Char123LocaleChar125DeepagentsRoute,
+    Char123LocaleChar125DeepseekTuiRoute: Char123LocaleChar125DeepseekTuiRoute,
+    Char123LocaleChar125DimcodeRoute: Char123LocaleChar125DimcodeRoute,
+    Char123LocaleChar125DiracRoute: Char123LocaleChar125DiracRoute,
+    Char123LocaleChar125DocsRoute: Char123LocaleChar125DocsRouteWithChildren,
+    Char123LocaleChar125DownloadRoute: Char123LocaleChar125DownloadRoute,
+    Char123LocaleChar125FactoryDroidRoute:
+      Char123LocaleChar125FactoryDroidRoute,
+    Char123LocaleChar125FastAgentRoute: Char123LocaleChar125FastAgentRoute,
+    Char123LocaleChar125GeminiRoute: Char123LocaleChar125GeminiRoute,
+    Char123LocaleChar125GlmRoute: Char123LocaleChar125GlmRoute,
+    Char123LocaleChar125GooseRoute: Char123LocaleChar125GooseRoute,
+    Char123LocaleChar125GrokRoute: Char123LocaleChar125GrokRoute,
+    Char123LocaleChar125HermesRoute: Char123LocaleChar125HermesRoute,
+    Char123LocaleChar125HubRoute: Char123LocaleChar125HubRoute,
+    Char123LocaleChar125JunieRoute: Char123LocaleChar125JunieRoute,
+    Char123LocaleChar125KiloRoute: Char123LocaleChar125KiloRoute,
+    Char123LocaleChar125KimiRoute: Char123LocaleChar125KimiRoute,
+    Char123LocaleChar125MinionCodeRoute: Char123LocaleChar125MinionCodeRoute,
+    Char123LocaleChar125MistralVibeRoute: Char123LocaleChar125MistralVibeRoute,
+    Char123LocaleChar125MuseCodeRoute: Char123LocaleChar125MuseCodeRoute,
+    Char123LocaleChar125NovaRoute: Char123LocaleChar125NovaRoute,
+    Char123LocaleChar125OmpRoute: Char123LocaleChar125OmpRoute,
+    Char123LocaleChar125OpencodeRoute: Char123LocaleChar125OpencodeRoute,
+    Char123LocaleChar125PiRoute: Char123LocaleChar125PiRoute,
+    Char123LocaleChar125PoolsideRoute: Char123LocaleChar125PoolsideRoute,
+    Char123LocaleChar125PrivacyRoute: Char123LocaleChar125PrivacyRoute,
+    Char123LocaleChar125QoderRoute: Char123LocaleChar125QoderRoute,
+    Char123LocaleChar125QwenCodeRoute: Char123LocaleChar125QwenCodeRoute,
+    Char123LocaleChar125SigitRoute: Char123LocaleChar125SigitRoute,
+    Char123LocaleChar125SponsorRoute: Char123LocaleChar125SponsorRoute,
+    Char123LocaleChar125StakpakRoute: Char123LocaleChar125StakpakRoute,
+    Char123LocaleChar125TermsRoute: Char123LocaleChar125TermsRoute,
+    Char123LocaleChar125VtcodeRoute: Char123LocaleChar125VtcodeRoute,
+    Char123LocaleChar125IndexRoute: Char123LocaleChar125IndexRoute,
+    Char123LocaleChar125AlternativesClaudeDesktopRoute:
+      Char123LocaleChar125AlternativesClaudeDesktopRoute,
+    Char123LocaleChar125AlternativesCodexAppRoute:
+      Char123LocaleChar125AlternativesCodexAppRoute,
+    Char123LocaleChar125AlternativesConductorRoute:
+      Char123LocaleChar125AlternativesConductorRoute,
+    Char123LocaleChar125AlternativesHappyCoderRoute:
+      Char123LocaleChar125AlternativesHappyCoderRoute,
+    Char123LocaleChar125AlternativesOpenchamberRoute:
+      Char123LocaleChar125AlternativesOpenchamberRoute,
+    Char123LocaleChar125AlternativesOpencodeDesktopRoute:
+      Char123LocaleChar125AlternativesOpencodeDesktopRoute,
+    Char123LocaleChar125AlternativesOrcaRoute:
+      Char123LocaleChar125AlternativesOrcaRoute,
+    Char123LocaleChar125AlternativesSupersetRoute:
+      Char123LocaleChar125AlternativesSupersetRoute,
+    Char123LocaleChar125DownloadThanksRoute:
+      Char123LocaleChar125DownloadThanksRoute,
+    Char123LocaleChar125PluginsOwnerRoute:
+      Char123LocaleChar125PluginsOwnerRoute,
+    Char123LocaleChar125PluginsAllRoute: Char123LocaleChar125PluginsAllRoute,
+    Char123LocaleChar125PluginsIndexRoute:
+      Char123LocaleChar125PluginsIndexRoute,
+    Char123LocaleChar125PluginsOwnerSlugRoute:
+      Char123LocaleChar125PluginsOwnerSlugRoute,
+    Char123LocaleChar125PluginsCategorySlugRoute:
+      Char123LocaleChar125PluginsCategorySlugRoute,
+  };
+
+const Char123LocaleChar125RouteRouteWithChildren =
+  Char123LocaleChar125RouteRoute._addFileChildren(
+    Char123LocaleChar125RouteRouteChildren,
+  );
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AgentsRoute: AgentsRoute,
-  AgoragenticRoute: AgoragenticRoute,
-  AmpRoute: AmpRoute,
-  AntigravityRoute: AntigravityRoute,
-  AuggieRoute: AuggieRoute,
-  AutohandRoute: AutohandRoute,
-  BlogRoute: BlogRouteWithChildren,
-  ChangelogRoute: ChangelogRoute,
-  ClaudeCodeRoute: ClaudeCodeRoute,
-  ClineRoute: ClineRoute,
-  CodebuddyRoute: CodebuddyRoute,
-  CodexRoute: CodexRoute,
-  CopilotRoute: CopilotRoute,
-  CortexCodeRoute: CortexCodeRoute,
-  CorustRoute: CorustRoute,
-  CrowRoute: CrowRoute,
-  CursorRoute: CursorRoute,
-  DeepagentsRoute: DeepagentsRoute,
-  DeepseekTuiRoute: DeepseekTuiRoute,
-  DimcodeRoute: DimcodeRoute,
-  DiracRoute: DiracRoute,
-  DocsRoute: DocsRouteWithChildren,
-  DownloadRoute: DownloadRoute,
-  FactoryDroidRoute: FactoryDroidRoute,
-  FastAgentRoute: FastAgentRoute,
-  GeminiRoute: GeminiRoute,
-  GlmRoute: GlmRoute,
-  GooseRoute: GooseRoute,
-  GrokRoute: GrokRoute,
-  HermesRoute: HermesRoute,
-  HubRoute: HubRoute,
-  JunieRoute: JunieRoute,
-  KiloRoute: KiloRoute,
-  KimiRoute: KimiRoute,
-  MinionCodeRoute: MinionCodeRoute,
-  MistralVibeRoute: MistralVibeRoute,
-  MuseCodeRoute: MuseCodeRoute,
-  NovaRoute: NovaRoute,
-  OmpRoute: OmpRoute,
-  OpencodeRoute: OpencodeRoute,
-  PiRoute: PiRoute,
-  PoolsideRoute: PoolsideRoute,
-  PrivacyRoute: PrivacyRoute,
-  QoderRoute: QoderRoute,
-  QwenCodeRoute: QwenCodeRoute,
-  SigitRoute: SigitRoute,
-  SponsorRoute: SponsorRoute,
-  StakpakRoute: StakpakRoute,
-  TermsRoute: TermsRoute,
-  VtcodeRoute: VtcodeRoute,
-  AlternativesClaudeDesktopRoute: AlternativesClaudeDesktopRoute,
-  AlternativesCodexAppRoute: AlternativesCodexAppRoute,
-  AlternativesConductorRoute: AlternativesConductorRoute,
-  AlternativesHappyCoderRoute: AlternativesHappyCoderRoute,
-  AlternativesOpenchamberRoute: AlternativesOpenchamberRoute,
-  AlternativesOpencodeDesktopRoute: AlternativesOpencodeDesktopRoute,
-  AlternativesOrcaRoute: AlternativesOrcaRoute,
-  AlternativesSupersetRoute: AlternativesSupersetRoute,
-  DownloadThanksRoute: DownloadThanksRoute,
-  PluginsOwnerRoute: PluginsOwnerRoute,
-  PluginsAllRoute: PluginsAllRoute,
-  PluginsIndexRoute: PluginsIndexRoute,
-  PluginsOwnerSlugRoute: PluginsOwnerSlugRoute,
-  PluginsCategorySlugRoute: PluginsCategorySlugRoute,
+  Char123LocaleChar125RouteRoute: Char123LocaleChar125RouteRouteWithChildren,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

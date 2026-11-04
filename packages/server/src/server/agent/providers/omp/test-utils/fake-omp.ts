@@ -2,6 +2,7 @@ import type {
   OmpRuntime,
   OmpRuntimeLaunch,
   OmpRuntimeSession,
+  OmpPromptInput,
   OmpStartSessionInput,
 } from "../runtime.js";
 import type {
@@ -133,7 +134,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly environment: Record<string, string>;
   fastModeResult = { enabled: false, active: false };
   readonly setFastModeRequests: boolean[] = [];
-  readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly prompts: Array<{
+    message: string;
+    imageCount: number;
+    streamingBehavior?: "steer" | "followUp";
+  }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakeOmpSubagentSubscriptionLevel[] = [];
@@ -143,7 +148,6 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
-  readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
@@ -216,14 +220,19 @@ export class FakeOmpSession implements OmpRuntimeSession {
     };
   }
 
-  async prompt(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<OmpPromptAck> {
-    if (this.state.isStreaming || this.state.isCompacting) {
+  async prompt({ message, images, streamingBehavior }: OmpPromptInput): Promise<OmpPromptAck> {
+    const busy = this.state.isStreaming || this.state.isCompacting;
+    if (busy && !streamingBehavior) {
       throw new Error("Agent is already processing");
     }
-    this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    this.prompts.push({
+      message,
+      imageCount: images?.length ?? 0,
+      ...(streamingBehavior ? { streamingBehavior: streamingBehavior } : {}),
+    });
+    if (busy) {
+      return {};
+    }
     this.promptWaiters.shift()?.();
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
@@ -410,13 +419,6 @@ export class FakeOmpSession implements OmpRuntimeSession {
   ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
     if (this.steerError) throw this.steerError;
-  }
-
-  followUp(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void {
-    this.followUpRequests.push({ message, imageCount: images?.length ?? 0 });
   }
 
   sendHostToolResult(result: OmpRpcHostToolResult): void {

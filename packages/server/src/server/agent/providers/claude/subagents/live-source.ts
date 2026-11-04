@@ -1,7 +1,8 @@
+import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import { mapTaskStatus } from "./task-status.js";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import {
@@ -121,25 +122,13 @@ function readString(value: unknown): string | undefined {
 }
 
 /**
- * The descriptor has no paused or pending state, and neither is terminal, so both read as
- * running. `killed` is a cancellation, not a failure — the child was stopped, it did not error.
+ * A subagent a reopened session rebuilt from its transcript. Its `taskId` (the transcript's
+ * agentId) is the task id Claude announces again when SendMessage resumes the child.
  */
-function mapTaskStatus(status: string | undefined): ProviderSubagentStatus | undefined {
-  switch (status) {
-    case "pending":
-    case "running":
-    case "paused":
-      return "running";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "killed":
-    case "stopped":
-      return "canceled";
-    default:
-      return undefined;
-  }
+export interface ClaudeRestoredSubagent {
+  taskId: string;
+  id: string;
+  presentation: ClaudeSubagentPresentationFacts;
 }
 
 export interface ClaudeTaskProtocolSourceInput {
@@ -183,6 +172,14 @@ export class ClaudeTaskProtocolSource {
   private readonly backgroundedIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
+  /**
+   * Children a reopened session restored from its transcript, by task id. Claude resumes one under
+   * its old task id with a new tool id, while its frames keep the original Task call as parent.
+   * Without this the resume reads as a new task: a second row, and every frame dropped as
+   * undeclared. Held apart from the declared table so a restored child is left alone until
+   * Claude announces it again.
+   */
+  private readonly restoredByTaskId = new Map<string, ClaudeRestoredSubagent>();
   /** Claude facts stay inside the provider boundary; clients receive one compact subtitle. */
   private readonly presentationById = new Map<string, ClaudeSubagentPresentationFacts>();
   private readonly lastSubtitleById = new Map<string, string>();
@@ -267,6 +264,14 @@ export class ClaudeTaskProtocolSource {
     }
   }
 
+  /** Remember the children a reopened session restored, for Claude to resume by task id. */
+  restore(subagents: Iterable<ClaudeRestoredSubagent>): void {
+    for (const subagent of subagents) {
+      if (this.subagentIdByTaskId.has(subagent.taskId)) continue;
+      this.restoredByTaskId.set(subagent.taskId, subagent);
+    }
+  }
+
   /**
    * Forget the session.
    *
@@ -280,6 +285,7 @@ export class ClaudeTaskProtocolSource {
     this.ownerSubagentIdByToolUseId.clear();
     this.ownerSubagentIdByTaskId.clear();
     this.declaredIds.clear();
+    this.restoredByTaskId.clear();
     this.workflowTaskIds.clear();
     this.lastWorkflowResultByTaskId.clear();
     this.idsWithExistingParentToolCard.clear();
@@ -336,13 +342,28 @@ export class ClaudeTaskProtocolSource {
     if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
-    const existingId = this.subagentIdByTaskId.get(message.task_id);
+    const existingId =
+      this.subagentIdByTaskId.get(message.task_id) ?? this.adoptRestored(message.task_id);
     this.recordBackgrounded(existingId ?? id, message.is_backgrounded);
     if (existingId) {
       return this.observeExistingTaskStart(message, id, existingId);
     }
 
     return this.observeNewTaskStart(message, id, parentSubagentId);
+  }
+
+  /** Declare a restored child under the id its transcript gave it, with what it already showed. */
+  private adoptRestored(taskId: string): string | undefined {
+    const restored = this.restoredByTaskId.get(taskId);
+    if (!restored) return undefined;
+    this.restoredByTaskId.delete(taskId);
+    this.subagentIdByTaskId.set(taskId, restored.id);
+    this.canonicalIdByToolUseId.set(restored.id, restored.id);
+    this.declaredIds.add(restored.id);
+    this.presentationById.set(restored.id, restored.presentation);
+    const subtitle = buildClaudeSubagentSubtitle(restored.presentation);
+    if (subtitle) this.lastSubtitleById.set(restored.id, subtitle);
+    return restored.id;
   }
 
   private observeExistingTaskStart(

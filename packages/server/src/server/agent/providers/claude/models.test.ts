@@ -365,7 +365,21 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     );
   });
 
-  it("appends concrete models from Claude settings.json", async () => {
+  it("appends concrete models from Claude settings.json with thinking options", async () => {
+    const customModelThinkingOptions = [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High", isDefault: true },
+      { id: "max", label: "Max" },
+    ];
+    const fableThinkingOptions = [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High", isDefault: true },
+      { id: "xhigh", label: "Extra High" },
+      { id: "max", label: "Max" },
+      { id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" },
+    ];
     const configDir = await createClaudeConfigDir({
       model: "us.anthropic.claude-opus-4-7[1m]",
       env: {
@@ -393,42 +407,49 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         id: "us.anthropic.claude-opus-4-7[1m]",
         label: "us.anthropic.claude-opus-4-7[1m]",
         description: "From Claude settings.json model",
+        thinkingOptions: customModelThinkingOptions,
       },
       {
         provider: "claude",
         id: "openrouter/anthropic/claude-sonnet-4.5",
         label: "openrouter/anthropic/claude-sonnet-4.5",
         description: "From Claude settings.json env.ANTHROPIC_MODEL",
+        thinkingOptions: customModelThinkingOptions,
       },
       {
         provider: "claude",
         id: "ollama/qwen3-coder",
         label: "ollama/qwen3-coder",
         description: "From Claude settings.json env.ANTHROPIC_SMALL_FAST_MODEL",
+        thinkingOptions: customModelThinkingOptions,
       },
       {
         provider: "claude",
         id: "claude-fable-5-1[1M]",
         label: "claude-fable-5-1[1M]",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_FABLE_MODEL",
+        thinkingOptions: fableThinkingOptions,
       },
       {
         provider: "claude",
         id: "bedrock-opus-from-env",
         label: "bedrock-opus-from-env",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+        thinkingOptions: customModelThinkingOptions,
       },
       {
         provider: "claude",
         id: "glm-5.1",
         label: "glm-5.1",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_SONNET_MODEL",
+        thinkingOptions: customModelThinkingOptions,
       },
       {
         provider: "claude",
         id: "glm-5",
         label: "glm-5",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        thinkingOptions: customModelThinkingOptions,
       },
     ]);
     expect(models.filter((model) => model.id === "claude-fable-5-1[1M]")).toHaveLength(1);
@@ -558,6 +579,33 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
+  });
+
+  it("keeps version-gated models when the probe command cannot identify Claude Code", async () => {
+    const configDir = await createClaudeConfigDir({});
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-wrapper-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("cux 0.4.1");\n');
+    try {
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: {
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+          env: { CLAUDE_CONFIG_DIR: configDir },
+        },
+        discoverModels: async () => [],
+      });
+
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: configDir,
+        force: false,
+      });
+
+      expect(models.map((model) => model.id)).toContain("claude-opus-5-5");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
   });
 });
 

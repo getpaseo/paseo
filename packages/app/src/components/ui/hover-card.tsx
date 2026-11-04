@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import {
   createContext,
   useCallback,
@@ -14,13 +15,12 @@ import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "rea
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { Portal } from "@gorhom/portal";
-import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
-import {
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { FloatingSurface } from "@/components/ui/floating";
+import {
+  measureFloatingPanelPortalHost,
+  useFloatingPanelPortalHostName,
+} from "@/components/ui/floating-panel-portal";
 import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import {
@@ -124,7 +124,7 @@ function WebHoverCard({
   }, [clearGraceTimer, disabled]);
 
   const keyPressed = useCallback(
-    (event: KeyboardEvent): boolean => {
+    (event: KeyboardInputEvent): boolean => {
       if (!isWeb) return false;
       const trigger = triggerRef.current as unknown as HTMLElement | null;
       if (!trigger) return false;
@@ -136,7 +136,7 @@ function WebHoverCard({
         return true;
       } else if (
         focusInside() &&
-        event.target === trigger &&
+        document.activeElement === trigger &&
         ["ArrowDown", "Enter", " "].includes(event.key)
       ) {
         event.preventDefault();
@@ -155,7 +155,8 @@ function WebHoverCard({
     [clearGraceTimer, focusInside, open, openNow],
   );
 
-  const setOverlayScope = useWebOverlayRegistration({
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
     active: !disabled && open,
     layer,
     onKeyDown: keyPressed,
@@ -207,9 +208,9 @@ function WebHoverCard({
       )
         keyPressed(event);
     };
+    // Only a scroll that moves the trigger detaches the card. A streaming chat beside it does not.
     const scrolled = (event: Event) => {
-      if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
-        close();
+      if ((event.target as Node).contains(trigger)) close();
     };
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
@@ -326,28 +327,31 @@ function HoverCardSurface({
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
 }): ReactElement {
-  const bottomSheetInternal = useBottomSheetModalInternal(true);
-  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
+  const portalHostName = useFloatingPanelPortalHostName();
+  const [anchor, setAnchor] = useState<{ triggerRect: Rect; hostRect: Rect } | null>(null);
   const [contentSize, setContentSize] = useState<Size | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!triggerRef.current) return;
     let cancelled = false;
-    void measureElement(triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect(rect);
+    void Promise.all([
+      measureElement(triggerRef.current),
+      measureFloatingPanelPortalHost(portalHostName),
+    ]).then(([triggerRect, hostRect]) => {
+      if (!cancelled && hostRect) setAnchor({ triggerRect, hostRect });
       return undefined;
     });
     return () => {
       cancelled = true;
     };
-  }, [triggerRef]);
+  }, [portalHostName, triggerRef]);
 
   useEffect(() => {
-    if (!triggerRect || !contentSize) return;
+    if (!anchor || !contentSize) return;
     const { width, height } = Dimensions.get("window");
     const { x, y } = computePosition({
-      triggerRect,
+      triggerRect: anchor.triggerRect,
       contentSize,
       displayArea: { x: 0, y: 0, width, height },
       placement,
@@ -355,8 +359,8 @@ function HoverCardSurface({
       alignment,
       offset,
     });
-    setPosition({ x, y });
-  }, [alignment, contentSize, offset, placement, triggerRect]);
+    setPosition({ x: x - anchor.hostRect.x, y: y - anchor.hostRect.y });
+  }, [alignment, anchor, contentSize, offset, placement]);
 
   const handleLayout = useCallback(
     (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
@@ -377,7 +381,7 @@ function HoverCardSurface({
   const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
 
   return (
-    <Portal hostName={bottomSheetInternal?.hostName}>
+    <Portal hostName={portalHostName}>
       <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
         <FloatingSurface
           ref={contentRef}

@@ -87,18 +87,18 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ### Agents
 
-| Tool                 | Function                                                                                                                                                       |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. Use `initialPrompt` to start work; returns without waiting for completion. |
-| `send_agent_prompt`  | Send a prompt using `agentId` and `prompt`; returns without waiting for completion.                                                                            |
-| `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                                       |
-| `list_agents`        | List recent agents as compact metadata; `includeBackground: true` includes background work.                                                                    |
-| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                                         |
-| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                                       |
-| `kill_agent`         | Terminate an agent session permanently.                                                                                                                        |
-| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features.                                                                        |
-| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                                     |
-| `set_agent_mode`     | Switch an agent's session mode.                                                                                                                                |
+| Tool                 | Function                                                                                                                                                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. Use `initialPrompt` to start work; returns without waiting for completion. `background: true` hides it from tabs, default lists, your subagent track and notifications; you still get its finish notification. Omission inherits your own value. |
+| `send_agent_prompt`  | Send a prompt using `agentId` and `prompt`; returns without waiting for completion.                                                                                                                                                                                                                                                  |
+| `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                                                                                                                                                                                                             |
+| `list_agents`        | List recent agents as compact metadata; `includeBackground: true` includes background work.                                                                                                                                                                                                                                          |
+| `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                                                                                                                                                                                                               |
+| `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                                                                                                                                                                                                             |
+| `kill_agent`         | Terminate an agent session permanently.                                                                                                                                                                                                                                                                                              |
+| `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features.                                                                                                                                                                                                                                              |
+| `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                                                                                                                                                                                                           |
+| `set_agent_mode`     | Switch an agent's session mode.                                                                                                                                                                                                                                                                                                      |
 
 Paseo agents receive finish, error, and permission notifications by default; set `notifyOnFinish: false` to disable them. External MCP clients use `get_agent_status` and `get_agent_activity` to check results.
 
@@ -154,6 +154,8 @@ Both use the same cron engine, but they have deliberately different interfaces.
 | `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
 
 MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+
+New-agent run workspaces are archived when each run ends by default. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
 
 ### Agent profiles
 

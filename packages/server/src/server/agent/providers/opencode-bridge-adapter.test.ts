@@ -80,8 +80,12 @@ describe("OpenCode bridge adapter", () => {
       await rm(paseoHome, { recursive: true, force: true });
     });
     const runtime = new TestOpenCodeHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
-    runtime.enqueueClient(new TestOpenCodeClient());
+    const envClient = new TestOpenCodeClient();
+    const mcpClient = new TestOpenCodeClient();
+    envClient.sessionCreateResponse = { data: { id: "ses_env" } };
+    mcpClient.sessionCreateResponse = { data: { id: "ses_mcp" } };
+    runtime.enqueueClient(envClient);
+    runtime.enqueueClient(mcpClient);
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
@@ -102,6 +106,12 @@ describe("OpenCode bridge adapter", () => {
     );
 
     expect(runtime.acquisitions.map(({ kind }) => kind)).toEqual(["dedicated", "dedicated"]);
+    await expect(readBridgeContext(bridge, "ses_env")).resolves.toEqual({
+      env: { PASEO_AGENT_ID: "one", CUSTOM_TOKEN: "secret" },
+    });
+    await expect(readBridgeContext(bridge, "ses_mcp")).resolves.toEqual({
+      env: { PASEO_AGENT_ID: "two" },
+    });
     await customEnv.close();
     await customMcp.close();
   });

@@ -10,33 +10,6 @@ export function reserveKeyboardLayoutShift(input: {
   return input.phase === "start" ? Math.max(input.current, input.target) : input.target;
 }
 
-export function resolveStreamKeyboardInset(input: {
-  platform: "android" | "ios";
-  settledShift: number;
-}): {
-  contentContainerPaddingBottom: number;
-  contentInset: { bottom: number } | undefined;
-} {
-  const settledShift = Math.max(0, input.settledShift);
-  if (input.platform === "ios") {
-    return {
-      contentContainerPaddingBottom: 0,
-      contentInset: { bottom: settledShift },
-    };
-  }
-  return {
-    contentContainerPaddingBottom: settledShift,
-    contentInset: undefined,
-  };
-}
-
-export function shouldUseCompactExplorerKeyboardPadding(input: {
-  isGit: boolean;
-  explorerTab: "changes" | "files" | "pr";
-}): boolean {
-  return !input.isGit || input.explorerTab !== "changes";
-}
-
 export function resolveKeyboardShift(input: {
   rawKeyboardHeight: number;
   keyboardProgress: number;
@@ -57,6 +30,16 @@ export function resolveKeyboardShift(input: {
   }
 
   return Math.max(0, input.rawKeyboardHeight - input.bottomInset);
+}
+
+/** Distance a KeyboardTranslateView lifts its content for a given keyboard shift. */
+export function resolveKeyboardLift(input: {
+  shift: number;
+  enabled: boolean;
+  bottomClearance: number;
+}): number {
+  "worklet";
+  return input.enabled ? Math.max(0, input.shift - input.bottomClearance) : 0;
 }
 
 export function shouldReconcileHiddenKeyboardEnd(input: {

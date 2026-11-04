@@ -42,6 +42,18 @@ describe("fileUriToPath", () => {
 });
 
 describe("localFileSourceToPath", () => {
+  it.each([
+    "https://example.com/image%20name.png",
+    "data:image/png;base64,abc%20",
+    "blob:https://example.com/image%20name",
+  ])("preserves a direct Markdown image URI: %s", (source) => {
+    expect(localFileSourceToPath(source, { decodeHref: true })).toBe(source);
+  });
+
+  it("preserves malformed percent escapes rather than throwing", () => {
+    expect(localFileSourceToPath("/tmp/100%.png", { decodeHref: true })).toBe("/tmp/100%.png");
+  });
+
   it("decodes markdown-encoded Windows drive-letter paths", () => {
     expect(localFileSourceToPath("C:%5CUsers%5Cfile.txt")).toBe("C:/Users/file.txt");
   });

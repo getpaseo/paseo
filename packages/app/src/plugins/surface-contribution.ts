@@ -5,6 +5,26 @@ import {
   pluginScreenParamsFromRoute,
 } from "./routes";
 import type { InstalledPlugin } from "./types";
+import type { PluginCatalogStatus } from "./registry";
+import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
+
+export type PluginSurfacePlaceholderStatus = "loading" | "offline" | "error" | "unavailable";
+
+interface PluginSurfacePlaceholderInput {
+  connectionStatus: HostRuntimeConnectionStatus;
+  catalogStatus: PluginCatalogStatus;
+}
+
+export function resolvePluginSurfacePlaceholder({
+  connectionStatus,
+  catalogStatus,
+}: PluginSurfacePlaceholderInput): PluginSurfacePlaceholderStatus {
+  if (connectionStatus === "offline" || connectionStatus === "error") return "offline";
+  if (connectionStatus !== "online") return "loading";
+  if (catalogStatus === "loading") return "loading";
+  if (catalogStatus === "error") return "error";
+  return "unavailable";
+}
 
 export type PluginSurfaceContributionIdentity =
   | { kind: "sidebar"; id: string }
@@ -42,11 +62,12 @@ export function resolvePluginScreenTitle(
   screen: InstalledPlugin["surfaces"][number],
   legacySidebarItem: InstalledPlugin["legacySidebarItems"][number] | null,
   params: PluginScreenParams,
+  resolve: (text: import("@getpaseo/plugin/client").PluginText) => string,
 ): string {
-  if (legacySidebarItem) return legacySidebarItem.title;
-  if (typeof screen.title === "string") return screen.title;
+  if (legacySidebarItem) return resolve(legacySidebarItem.title);
+  if (typeof screen.title !== "function") return resolve(screen.title);
   try {
-    const title = screen.title(params);
+    const title = resolve(screen.title(params));
     if (typeof title === "string" && title.trim()) return title.trim();
   } catch (error) {
     console.warn(`[Plugins] Screen ${screen.id} title failed`, error);

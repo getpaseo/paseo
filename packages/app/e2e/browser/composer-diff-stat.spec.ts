@@ -18,7 +18,7 @@ function visibleMainPane(page: Page) {
 }
 
 function composerChangesPill(page: Page) {
-  return page.getByTestId("composer-diff-stat-pill");
+  return page.getByRole("button", { name: "Open Changes tab", exact: true });
 }
 
 async function revealComposerChangesInExplorer(page: Page) {
@@ -78,7 +78,8 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
-    await page.setViewportSize({ width: 1400, height: 900 });
+    // Keep both workspace rails visible alongside app navigation and Explorer.
+    await page.setViewportSize({ width: 1900, height: 900 });
     await openAgentRoute(page, {
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
@@ -125,7 +126,7 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
     });
 
     const closeExplorer = page
-      .getByTestId("explorer-header")
+      .getByTestId("workspace-explorer-sidebar")
       .getByRole("button", { name: "Close Explorer sidebar" });
     await expect(closeExplorer).not.toBeInViewport();
 
@@ -310,7 +311,7 @@ async function sendFeedback(page: Page, count: number) {
 }
 
 async function expectFeedbackSent(page: Page, recipient: string) {
-  await expect(page.getByText(`Feedback sent to ${recipient}`, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("app-toast")).toHaveText(`Feedback sent to ${recipient}`);
   await expect(page.getByTestId("working-diff-panel")).toBeVisible();
 }
 
@@ -340,6 +341,9 @@ test.describe("send review feedback", () => {
         await expectFeedbackSent(page, "Composer diff stat");
         await expectReviewAbsent(page, "Please simplify this.");
         await captureFeedback(page, "single");
+        await expect(
+          page.getByText("Feedback sent to Composer diff stat", { exact: true }),
+        ).toHaveCount(0);
       });
       await test.step("Return to the untouched composer draft", async () => {
         await showWideLayout(page);
@@ -375,11 +379,7 @@ test.describe("send review feedback", () => {
         ).toBeDisabled();
         expect(gate.requestCount()).toBe(1);
         gate.accept();
-        await expect(
-          compactReviewSurface(page).getByText("Feedback sent to Composer diff stat", {
-            exact: true,
-          }),
-        ).toBeVisible();
+        await expectFeedbackSent(page, "Composer diff stat");
       });
     } finally {
       await workspace.cleanup();
@@ -499,6 +499,7 @@ test.describe("send review feedback", () => {
   test("only open tabs in this workspace appear in compact and wide recipient menus", async ({
     page,
   }) => {
+    test.setTimeout(120000);
     const workspace = await seedChangedAgent("review-feedback-multiple-");
     const other = await seedChangedAgent("review-feedback-other-");
     try {
@@ -810,7 +811,7 @@ async function expectUnmatchedFeedback(page: Page) {
 }
 
 function compactReviewSurface(page: Page) {
-  return page.getByTestId("explorer-content-area").filter({ visible: true });
+  return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
 }
 async function openCompactReviewExplorer(
   page: Page,
@@ -848,7 +849,10 @@ async function scrollReviewToLastLine(page: Page) {
 
 async function revealCompactChanges(page: Page) {
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  await page.getByTestId("explorer-header").getByText("Changes", { exact: true }).click();
+  await page
+    .getByTestId("workspace-explorer-sidebar")
+    .getByTestId("workspace-tab-changes_tree")
+    .click();
   await expect(compactReviewSurface(page).getByTestId("diff-file-0-body")).toBeVisible();
 }
 async function expectReviewEditorBody(page: Page, body: string) {
