@@ -87,23 +87,15 @@ export class Usage {
       discover: async (scope) => {
         if (scope.kind === "session") {
           if (scope.provider !== "antigravity") return [];
-          const directAccount = this.accountKey([], scope.env);
-          if (this.launches.has(directAccount)) {
-            return [
-              { key: directAccount, label: "Antigravity", input: { account: directAccount } },
-            ];
+          const exactAccount = this.accountKey(scope.args ?? [], scope.env);
+          if (this.launches.has(exactAccount)) {
+            return [{ key: exactAccount, label: "Antigravity", input: { account: exactAccount } }];
           }
-          for (const [key, launch] of this.launches) {
-            if (this.accountKey(launch.args, scope.env) === key) {
-              return [{ key, label: "Antigravity", input: { account: key } }];
-            }
-          }
-          for (const [key, launch] of this.launches) {
-            if (
-              (launch.env.HOME ?? this.defaultHome) === (scope.env.HOME ?? this.defaultHome) &&
-              (launch.env.USERPROFILE ?? "") === (scope.env.USERPROFILE ?? "")
-            ) {
-              return [{ key, label: "Antigravity", input: { account: key } }];
+          if (!scope.args) {
+            for (const [key, launch] of this.launches) {
+              if (this.accountKey(launch.args, scope.env) === key) {
+                return [{ key, label: "Antigravity", input: { account: key } }];
+              }
             }
           }
           return [];

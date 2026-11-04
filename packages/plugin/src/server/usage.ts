@@ -70,6 +70,7 @@ export const UsageScopeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("session"),
     provider: z.string(),
     model: z.string().optional(),
+    args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()),
   }),
 ]);
