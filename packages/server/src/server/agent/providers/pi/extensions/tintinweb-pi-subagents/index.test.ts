@@ -400,6 +400,39 @@ describe("@tintinweb/pi-subagents adapter", () => {
     });
     expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
   });
+  // A `schedule` spawn registers a job and returns only text, so nothing runs under its row.
+  const schedule = (text: string) => {
+    const host = createPiExtensionHost();
+    const call = {
+      callId: "call-1",
+      toolName: "Agent",
+      args: {
+        subagent_type: "general-purpose",
+        description: "Periodic check",
+        prompt: "Check CI",
+        schedule: "2h",
+        run_in_background: true,
+      },
+    };
+    host.mapToolCall({ ...call, status: "running", result: null });
+    return host.mapToolCall({
+      ...call,
+      status: "completed",
+      result: { content: [{ type: "text", text }] },
+    });
+  };
+  test("completes a scheduled spawn once its job is registered", () => {
+    const mapping = schedule(
+      'Scheduled "Periodic check" (id: 7q4KaM7ThO, type: interval). Next run: 2026-10-29T06:53:39.685Z. Manage via /agents → Scheduled jobs.',
+    );
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
+  });
+  test("fails a scheduled spawn the extension refused", () => {
+    const mapping = schedule(
+      "Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.",
+    );
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "failed" }]);
+  });
   test("declines foreign Agent results", () => {
     expect(
       createPiExtensionHost().mapToolCall({
