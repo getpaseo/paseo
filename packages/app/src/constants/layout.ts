@@ -1,5 +1,5 @@
 import { useUnistyles } from "react-native-unistyles";
-import { bySizing, TOUCH_TARGET } from "@/components/ui/control-geometry";
+import { bySizing, TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { isWeb } from "@/constants/platform";
 
 export const FOOTER_HEIGHT = 75;
