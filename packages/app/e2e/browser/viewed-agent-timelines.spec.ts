@@ -357,6 +357,8 @@ test.describe("Viewed agent timelines", () => {
   });
 
   test("two visible split chats both stay current", async ({ page }) => {
+    // Keep both split panes wide enough for the tab-rail interactions below.
+    await page.setViewportSize({ width: 1600, height: 900 });
     const scenario = await seedViewedTimelineScenario();
     try {
       await enableMoveTabShortcut(page);

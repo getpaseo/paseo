@@ -138,7 +138,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -1547,7 +1547,7 @@ function createToolCatalog(
       if (!options.workspaceRegistry) {
         throw new Error("Workspace registry is not configured");
       }
-      const workspaces = (await options.workspaceRegistry.list())
+      const workspaces = (await options.workspaceRegistry.listActive())
         .filter(
           (workspace) => !workspace.archivedAt && (includeBackground || !workspace.background),
         )

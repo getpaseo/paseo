@@ -292,7 +292,9 @@ function buildAgentStorageSpies() {
     setTitle: vi.fn().mockResolvedValue(undefined),
     upsert: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
-    list: vi.fn().mockResolvedValue([]),
+    listActive: vi.fn().mockResolvedValue([]),
+    listByWorkspaces: vi.fn().mockResolvedValue([]),
+    lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
     remove: vi.fn(),
   };
 }
@@ -639,7 +641,16 @@ class BoundaryAgentManagerFake {
 }
 
 class BoundaryAgentStorageFake {
-  public async list(): Promise<StoredAgentRecord[]> {
+  public async listActive(): Promise<StoredAgentRecord[]> {
+    return [];
+  }
+  async listByWorkspaces() {
+    return [];
+  }
+  async lastUserMessageAtByWorkspace() {
+    return new Map<string, string>();
+  }
+  async listAll() {
     return [];
   }
 }
@@ -772,7 +783,8 @@ function createPaseoWorktreeForMcpTest(options: {
     initialize: async () => {},
     existsOnDisk: async () => true,
     get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
-    list: async () => Array.from(workspaces.values()),
+    listAll: async () => Array.from(workspaces.values()),
+    listActive: async () => Array.from(workspaces.values()).filter((w) => !w.archivedAt),
     update: async (workspaceId, updater) => {
       const workspace = workspaces.get(workspaceId);
       if (!workspace) return null;
@@ -894,7 +906,11 @@ async function createAgentMcpServer(
   const server = await createAgentMcpServerWithDependencies({
     agentMessages: () => messages,
     finishSubscriptions: () => subscriptions,
-    workspaceRegistry: { get: async () => null, list: async () => [], upsert: async () => {} },
+    workspaceRegistry: {
+      get: async () => null,
+      listActive: async () => [],
+      upsert: async () => {},
+    },
     ...options,
   });
   serverSubscriptionRecords.set(server, records);
@@ -2697,7 +2713,7 @@ describe("create_agent MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: vi.fn(async () => workspace),
-        list: vi.fn(async () => [workspace]),
+        listActive: vi.fn(async () => [workspace]),
         upsert: vi.fn(async () => undefined),
       },
       logger,
@@ -2730,7 +2746,7 @@ describe("create_agent MCP tool", () => {
       providerSnapshotManager: createOpenCodeManager().manager,
       workspaceRegistry: {
         get: vi.fn(async () => backgroundWorkspace),
-        list: vi.fn(async () => [backgroundWorkspace]),
+        listActive: vi.fn(async () => [backgroundWorkspace]),
         upsert: vi.fn(async () => undefined),
       },
       createDirectoryWorkspace: async (cwd, _title, _projectId, context) => {
@@ -6326,7 +6342,7 @@ describe("agent snapshot MCP serialization", () => {
       createManagedAgent({ id: "in-child-cwd", cwd: "/tmp/workspace/packages/server" }),
       createManagedAgent({ id: "other-cwd", cwd: "/tmp/other" }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-in-cwd",
         cwd: "/tmp/workspace",
@@ -6385,7 +6401,7 @@ describe("agent snapshot MCP serialization", () => {
         updatedAt: new Date(old),
       }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({ id: "recent-archived", cwd: TARGET_CWD, archivedAt: recent }),
       createStoredRecord({ id: "old-archived", cwd: TARGET_CWD, archivedAt: old }),
       createStoredRecord({
@@ -6426,7 +6442,7 @@ describe("agent snapshot MCP serialization", () => {
         archivedAt: new Date(now - index * 60 * 1000).toISOString(),
       }),
     );
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       ...recentArchivedRecords,
       createStoredRecord({
         id: "old-archived",
@@ -6457,7 +6473,7 @@ describe("agent snapshot MCP serialization", () => {
   it("returns compact list items for stored archived agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-archived-compact",
         cwd: REPO_CWD,
@@ -6576,7 +6592,7 @@ describe("agent snapshot MCP serialization", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
     spies.agentManager.listAgents.mockReturnValue([createManagedAgent()]);
-    spies.agentStorage.list.mockResolvedValue([
+    spies.agentStorage.listActive.mockResolvedValue([
       createStoredRecord({
         id: "stored-non-archived",
         updatedAt: now,

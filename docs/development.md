@@ -593,7 +593,8 @@ rerun passes only by landing elsewhere.
 
 To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
-replace that version in the lockfile and report the URL to npm so they purge it.
+replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
+version in root `overrides` and regenerate the lockfile. Report the URL to npm so they purge it.
 
 ## ACP provider catalog versions
 

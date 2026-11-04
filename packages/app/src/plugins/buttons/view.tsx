@@ -656,8 +656,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: { xs: theme.spacing[1], md: theme.spacing[2] },
   },
   headerButton: {
-    height: { xs: 32, md: HEADER_CONTROL_HEIGHT },
-    minWidth: { xs: 32, md: HEADER_CONTROL_HEIGHT },
+    height: HEADER_CONTROL_HEIGHT,
+    minWidth: HEADER_CONTROL_HEIGHT,
     paddingHorizontal: theme.spacing[2],
     flexDirection: "row",
     alignItems: "center",

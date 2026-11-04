@@ -171,6 +171,23 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
+async function resolveResumePurpose(
+  record: StoredAgentRecord | null,
+  requested: AgentResumePurpose | undefined,
+  cwd: string,
+): Promise<AgentResumePurpose> {
+  if (!record) return requested ?? "interactive";
+  if (record.archivedAt) return "history";
+  if (requested !== "history") return "interactive";
+  try {
+    await stat(cwd);
+    return "interactive";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "history";
+    throw error;
+  }
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -783,6 +800,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly historySessions = new WeakSet<AgentSession>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
   private readonly collectingRuntimes = new Set<string>();
@@ -1501,10 +1519,8 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
-    const currentResumeOptions = record
-      ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
-      : resumeOptions;
-    const purpose = currentResumeOptions?.purpose ?? "interactive";
+    const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
+    const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
     const launchEnv = record?.launchEnv;
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
@@ -1541,6 +1557,7 @@ export class AgentManager {
       launchContext,
       currentResumeOptions,
     );
+    if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -2065,7 +2082,7 @@ export class AgentManager {
       return;
     }
     const parentAgentId = parent.id;
-    const records = await registry.list();
+    const records = await registry.listActive();
     for (const record of records) {
       if (record.archivedAt) {
         continue;
@@ -2204,7 +2221,7 @@ export class AgentManager {
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
-    const agent = this.requireSessionAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
     const notice = (await agent.session.setMode(modeId)) ?? null;
     await this.drainSessionEvents(agentId);
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
@@ -2220,7 +2237,7 @@ export class AgentManager {
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
-    const agent = this.requireSessionAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
@@ -2242,7 +2259,7 @@ export class AgentManager {
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
-    const agent = this.requireSessionAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
     const normalizedThinkingOptionId =
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
         ? thinkingOptionId
@@ -2273,7 +2290,7 @@ export class AgentManager {
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
-    const agent = this.requireAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
 
     if (!agent.session.setFeature) {
       throw new Error("Agent session does not support setting features");
@@ -2531,7 +2548,8 @@ export class AgentManager {
 
   async unarchiveSnapshotByHandle(handle: AgentPersistenceHandle): Promise<void> {
     const registry = this.requireRegistry();
-    const records = await registry.list();
+    // Restoring an archived provider session is an explicit recovery operation.
+    const records = await registry.listAll();
     const matched = records.find(
       (record) =>
         record.persistence?.provider === handle.provider &&
@@ -2654,7 +2672,7 @@ export class AgentManager {
         logger: this.logger,
       });
     }
-    const agent = this.requireSessionAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
     // Providers parse slash commands from the raw text, so a command another agent sent
     // must reach them without its sender envelope.
     const agentMessage = typeof prompt === "string" ? parseAgentMessage(prompt) : null;
@@ -2783,6 +2801,34 @@ export class AgentManager {
     }
   }
 
+  private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      await this.trackAgentRegistrationOperation(
+        this.runLifecycleMutation(agentId, async () => {
+          const record = await this.registry?.get(agentId);
+          if (record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+          const current = this.requireSessionAgent(agentId);
+          if (this.historySessions.has(current.session)) {
+            // Recheck inside the lane: another prompt may already have upgraded it.
+            // Reload validates the directory before releasing readable history.
+            await this.reloadAgentSessionInternal(agentId);
+          }
+        }),
+      );
+    }
+    return this.requireSessionAgent(agentId);
+  }
+
+  private async *streamAfterHistoryLoad(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    await this.ensureInteractiveSession(agentId);
+    yield* this.streamAgent(agentId, prompt, options);
+  }
+
   private async *streamAfterRuntimeCollection(
     agentId: string,
     prompt: AgentPromptInput,
@@ -2805,6 +2851,8 @@ export class AgentManager {
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options);
     const existingAgent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(existingAgent.session))
+      return this.streamAfterHistoryLoad(agentId, prompt, options);
     this.logger.trace(
       {
         agentId,
@@ -3491,7 +3539,12 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
-    const agent = this.requireSessionAgent(agentId);
+    let agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      agent = await this.ensureInteractiveSession(agentId);
+    }
+    // An interactive session must acquire its rewind lock without yielding.
+
     const submittedRow = this.timelineStore
       .getRows(agentId)
       .find(
