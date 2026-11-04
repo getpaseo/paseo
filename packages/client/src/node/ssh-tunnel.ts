@@ -54,10 +54,12 @@ export function createSshTunnel(target: SshTransportTarget): Promise<SshTunnel> 
       child.stderr.on("data", (chunk: Buffer | string) => {
         stderr = `${stderr}${chunk.toString()}`.slice(-SSH_STDERR_LIMIT);
       });
-      child.on("error", (error) => {
+      const fail = (error: Error) => {
         failure = error.message;
         acceptedSocket.destroy(error);
-      });
+      };
+      child.on("error", fail);
+      child.stdin.on("error", fail);
       child.on("exit", (code, signal) => {
         if (code !== 0 || signal) failure = formatSshFailure(stderr, code, signal);
         acceptedSocket.destroy(failure ? new Error(failure) : undefined);

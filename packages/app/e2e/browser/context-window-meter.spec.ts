@@ -42,6 +42,14 @@ const test = base.extend<{ agent: MockAgentSession }>({
   },
 });
 
+// The outer meter owns the accessible usage label; its SVG is decorative.
+async function expectDecorativeContextRing(meter: Locator): Promise<void> {
+  const ring = meter.locator("svg");
+  await expect(ring).toHaveAttribute("aria-hidden", "true");
+  await expect(ring).not.toHaveAttribute("accessibilityElementsHidden");
+  await expect(ring).not.toHaveAttribute("importantForAccessibility");
+}
+
 // Where the progress arc is painted, as its centroid relative to the ring's centre in pixels.
 // Reads the rendered pixels, so any rotation that does not reach the screen counts as none.
 async function progressArcCentroid(meter: Locator): Promise<{ x: number; y: number }> {
@@ -100,6 +108,7 @@ test.describe("context window meter", () => {
       const meter = page.getByTestId("context-window-meter");
       await expect(meter).toHaveAccessibleName(/25%/, { timeout: 30_000 });
 
+      await expectDecorativeContextRing(meter);
       const centroid = await progressArcCentroid(meter);
       expect(centroid.x).toBeGreaterThan(1);
       expect(centroid.y).toBeLessThan(-1);
@@ -418,6 +427,32 @@ test("context details support keyboard entry and dismiss when the viewport moves
   await expect(details).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 850 });
   await expect(details).toHaveCount(0);
+});
+
+test("context details stay open while the chat streams", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize(DESKTOP);
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "context-window-streaming-",
+    title: "Context details while streaming",
+    model: "ten-second-stream",
+  });
+  try {
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await submitMessageWithButton(page, "Stream while the context details are open.");
+    const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
+    await expect(stop).toBeVisible();
+    const details = await pressContextWindowMeter(page, /^Context window/);
+    await expect(stop).toBeVisible();
+    await qaScreenshot(page, "context-details-while-streaming");
+
+    await expect(stop).toHaveCount(0, { timeout: 30_000 });
+    await expect(details).toBeVisible();
+    await qaScreenshot(page, "context-details-after-streaming");
+  } finally {
+    await session.cleanup();
+  }
 });
 
 test("pointer hovering context details preserves composer focus", async ({ page, agent }) => {

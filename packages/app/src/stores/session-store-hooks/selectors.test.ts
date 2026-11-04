@@ -640,3 +640,27 @@ it("a prompt changes only its project's structure and output preserves both proj
   expect(output[0]).toBe(after[0]);
   expect(output[1]).toBe(after[1]);
 });
+
+it("applies manual order only when requested without mutating the automatic baseline", () => {
+  const project = {
+    viewKey: "p",
+    projectKey: "p",
+    projectName: "P",
+    projectKind: "git" as const,
+    iconWorkingDir: "/repo",
+    hosts: [],
+    workspaceKeys: ["h:new", "h:b", "h:a"],
+  };
+  const input = { projects: [project], projectOrder: ["p"] };
+  expect(
+    composeWorkspaceStructure({
+      ...input,
+      workspaceOrderByProject: { p: ["h:filtered", "h:a", "h:b"] },
+    }).projects[0].workspaceKeys,
+  ).toEqual(["h:new", "h:a", "h:b"]);
+  expect(composeWorkspaceStructure(input).projects[0].workspaceKeys).toEqual([
+    "h:new",
+    "h:b",
+    "h:a",
+  ]);
+});

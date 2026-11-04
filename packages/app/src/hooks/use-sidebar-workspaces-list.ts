@@ -144,7 +144,10 @@ export function useSidebarWorkspacesList(options?: {
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const sortSupport = useHostFeatureMap(directoryServerIds, "workspaceSortTimes");
   const workspaceSortSupported = [...sortSupport.values()].every(Boolean);
-  const sort = workspaceSortSupported && groupMode === "project" ? workspaceSort : undefined;
+  const sort =
+    groupMode === "project" && (workspaceSort === "manual" || workspaceSortSupported)
+      ? workspaceSort
+      : undefined;
   const { projects: hostProjects } = useWorkspaceStructure(directoryServerIds, sort);
 
   const selectPlacements = useMemo(createSidebarWorkspacePlacementSelector, []);
@@ -166,12 +169,16 @@ export function useSidebarWorkspacesList(options?: {
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder,
+      getWorkspaceOrder: sort === "manual" ? orderStore.getWorkspaceOrder : undefined,
     });
 
     if (updates.projectOrder) {
       orderStore.setProjectOrder(updates.projectOrder);
     }
-  }, [persistedProjectOrder, projects]);
+    for (const update of updates.workspaceOrders) {
+      orderStore.setWorkspaceOrder(update.projectViewKey, update.order);
+    }
+  }, [persistedProjectOrder, projects, sort]);
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;

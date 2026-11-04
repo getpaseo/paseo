@@ -25,6 +25,7 @@ interface UsageReportsFixtureOptions {
    * app connects, so a reload can switch it.
    */
   usageSupported?: boolean | (() => boolean);
+  usageSettingSupported?: boolean;
   /** Released hosts expose provider.usage.list with no source icons. */
   providerUsageListOnly?: boolean;
   /** The host daemon's port; defaults to the E2E daemon. */
@@ -63,6 +64,7 @@ function withUsageSupportFeature(
   message: WebSocketMessage,
   enabled: boolean,
   providerUsageListOnly: boolean,
+  usageSettingSupported: boolean,
 ): string | null {
   const envelope = parseJson(message) as {
     type?: unknown;
@@ -86,6 +88,7 @@ function withUsageSupportFeature(
         ...payload,
         features: {
           ...features,
+          usageSetting: usageSettingSupported ? true : undefined,
           usageSources: enabled && !providerUsageListOnly,
           providerUsageList: enabled,
         },
@@ -229,7 +232,12 @@ export async function installUsageReportsFixture(
     server.onMessage((message) => {
       const serverInfo =
         typeof message === "string"
-          ? withUsageSupportFeature(message, isUsageSupported(), providerUsageListOnly)
+          ? withUsageSupportFeature(
+              message,
+              isUsageSupported(),
+              providerUsageListOnly,
+              options.usageSettingSupported ?? true,
+            )
           : null;
       ws.send(serverInfo ?? message);
     });

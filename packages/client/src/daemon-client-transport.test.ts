@@ -175,3 +175,18 @@ describe("daemon-client transport helpers", () => {
     expect(decodeMessageData(bytes)).toBe("hello");
   });
 });
+
+test("native drain capability survives WebSocket and encryption wrappers", async () => {
+  const { nativeWebSocketFactory } = await import("./daemon-client-websocket-transport.js");
+  expect(nativeWebSocketFactory.supportsDrain).toBe(false);
+  const factory = Object.assign(() => ({ readyState: 1, send() {}, close() {} }), {
+    supportsDrain: false,
+  });
+  const base = createWebSocketTransportFactory(factory)({ url: "ws://test" });
+  expect(base.supportsDrain).toBe(false);
+  const encrypted = createEncryptedTransport(base, {
+    daemonPublicKeyB64: "unused-key",
+    logger: { warn() {} },
+  });
+  expect(encrypted.supportsDrain).toBe(false);
+});

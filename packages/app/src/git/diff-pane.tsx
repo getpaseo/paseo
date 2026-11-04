@@ -1134,7 +1134,7 @@ function DiffBodyContent({
         {emptyAction ? (
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             testID="changes-empty-switch-mode"
             onPress={emptyAction.onPress}
           >

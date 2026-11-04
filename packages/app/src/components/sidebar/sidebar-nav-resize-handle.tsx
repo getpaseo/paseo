@@ -4,7 +4,7 @@ import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 
 interface SidebarNavResizeHandleProps {
   height: number;
@@ -29,7 +29,7 @@ export function SidebarNavResizeHandle({
   onCommitHeight,
 }: SidebarNavResizeHandleProps) {
   const { t } = useTranslation();
-  const finePointer = useHasFinePointer();
+  const { finePointer } = usePointerCapabilities();
   const startRef = useRef({ pointerY: 0, height: 0 });
   const pendingRef = useRef<number | null>(null);
   const [dragging, setDragging] = useState(false);

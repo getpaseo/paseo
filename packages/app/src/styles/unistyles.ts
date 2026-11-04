@@ -6,8 +6,7 @@ StyleSheet.configure({
   breakpoints: {
     xs: 0,
     sm: 576,
-    medium: 600,
-    md: 720,
+    md: 600,
     lg: 992,
     xl: 1200,
   },
@@ -22,7 +21,6 @@ type AppThemes = typeof REGISTERED_THEMES;
 interface AppBreakpoints {
   xs: number;
   sm: number;
-  medium: number;
   md: number;
   lg: number;
   xl: number;

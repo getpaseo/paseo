@@ -10,6 +10,7 @@ import {
   selectWorkspaceDirectoryServerIds,
   selectHasWorkspaces,
   selectProjectOrder,
+  selectProjectRootPaths,
   selectRecommendedProjectPaths,
   selectWorkspace,
   selectWorkspaceDirectory,
@@ -117,13 +118,17 @@ export function useWorkspaceStructure(
     (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
+  const workspaceOrderByProject = useSidebarOrderStore((state) =>
+    workspaceSort === "manual" ? state.workspaceOrderByProject : undefined,
+  );
   return useMemo(
     () =>
       composeWorkspaceStructure({
         projects,
         projectOrder,
+        workspaceOrderByProject,
       }),
-    [projectOrder, projects],
+    [projectOrder, projects, workspaceOrderByProject],
   );
 }
 
@@ -139,6 +144,14 @@ export function useRecommendedProjectPaths(serverId: string | null): string[] {
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectRecommendedProjectPaths(state, serverId),
+    workspaceEqualityFns.deep,
+  );
+}
+
+export function useProjectRootPaths(serverId: string | null): string[] {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectProjectRootPaths(state, serverId),
     workspaceEqualityFns.deep,
   );
 }

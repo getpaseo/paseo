@@ -17,6 +17,7 @@ import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
+import { densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -35,6 +36,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { bySizing } from "@/components/ui/control-geometry";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
@@ -70,13 +72,11 @@ const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedCol
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 
+const triggerIconProps = densityIconProps("sm", foregroundMutedColorMapping);
+const triggerIconHoveredProps = densityIconProps("sm", foregroundColorMapping);
+
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
-  return (
-    <ThemedMoreVertical
-      size={14}
-      uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-    />
-  );
+  return <ThemedMoreVertical uniProps={hovered ? triggerIconHoveredProps : triggerIconProps} />;
 }
 
 export interface SidebarWorkspaceMenuProps {
@@ -439,12 +439,18 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    padding: 2,
+    // Larger on touch so the kebab is an easy tap target.
+    width: bySizing({ touch: 32, pointer: 18 }),
+    height: bySizing({ touch: 32, pointer: 18 }),
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 4,
     marginLeft: 2,
+    // Center the touch box on the 20px title line it is anchored to.
+    marginTop: bySizing({ touch: -6, pointer: 0 }),
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
-    marginRight: -7,
+    marginRight: bySizing({ touch: -14, pointer: -7 }),
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

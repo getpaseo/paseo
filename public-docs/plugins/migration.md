@@ -144,8 +144,8 @@ pill.remove();
 ```
 
 Move dynamic text from the former component into updates from your model or SDK subscription.
-Custom icon components may still use hooks. Composer pills always show icon and label and never
-show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
+Custom icon components may still use hooks. Composer pills always show icon and label; menus and
+popovers add a chevron. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
 
 ## 4. Separate imports
 
@@ -176,8 +176,9 @@ its registration; that registration belongs in the client entry.
 
 ### UI imports in v0.13
 
-Use `/client/ui` for all Paseo UI components and UI hooks. The previous entry remains an
-undocumented compatibility alias until 2027-04-20.
+Use `/client/ui` for all Paseo UI components and UI hooks. The deprecated
+`/client/react-native` entry retains `useRevealedText(text, phase): string` for 0.12 plugins
+until removal after 2027-04-20. The hook is deprecated and is not exported from `/client/ui`.
 
 For paced timeline text, replace `useRevealedText(text, phase)` and the surrounding `Text` with
 `<StreamedText text={text} phase={phase} style={style} />` from `/client/ui`.
