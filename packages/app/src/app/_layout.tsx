@@ -896,8 +896,10 @@ function RootOverlayProviders({ children }: { children: ReactNode }) {
   return (
     <ToastProvider>
       <PortalProvider>
-        <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-        <WindowLayoutActionsHost />
+        <BottomSheetModalProvider>
+          {children}
+          <WindowLayoutActionsHost />
+        </BottomSheetModalProvider>
       </PortalProvider>
     </ToastProvider>
   );
