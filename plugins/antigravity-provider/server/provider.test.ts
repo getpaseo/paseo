@@ -1231,36 +1231,87 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     expect(setModelRpcs.at(-1)).toBe("gemini-4-argon-medium");
   });
 
-  it("fails the active turn and stops the driver when stdin breaks while agy stays alive", async () => {
-    const h = await harness({ AGY_TEST_CLOSE_STDIN_AFTER_NEW: "yes" });
-    await h.open();
-    const msgId = await h.message([{ type: "text", text: "Trigger broken pipe" }]);
-    const promptResult = h.events.find(
-      (event) => event.type === "session.prompt_result" && event.clientMessageId === msgId,
+  // Closing fd 0 does not sever the inherited pipe on Windows, so gate this POSIX pipe-break fixture.
+  it.skipIf(process.platform === "win32")(
+    "fails the active turn and stops the driver when stdin breaks while agy stays alive",
+    async () => {
+      const h = await harness({ AGY_TEST_CLOSE_STDIN_AFTER_NEW: "yes" });
+      await h.open();
+      const msgId = await h.message([{ type: "text", text: "Trigger broken pipe" }]);
+      const promptResult = h.events.find(
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === msgId,
+      );
+      expect(promptResult).toMatchObject({ result: { type: "turn" } });
+      if (promptResult?.type === "session.prompt_result" && promptResult.result.type === "turn") {
+        const failedTurn = await h.wait(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === promptResult.result.turnId &&
+            event.state === "failed",
+        );
+        expect(failedTurn).toMatchObject({ state: "failed" });
+      }
+      const records = await h.records();
+      const acpPid = records.find((entry) => entry.args?.includes("acp"))?.pid;
+      expect(typeof acpPid).toBe("number");
+      await expect
+        .poll(() => {
+          try {
+            process.kill(acpPid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+        .toBe(false);
+    },
+  );
+
+  it("preserves a newer configure(model) chosen while a queued model switch is awaiting session/set_model", async () => {
+    const h = await harness({ AGY_TEST_SET_MODEL_DELAY_MS: "80" });
+    await h.open({ model: "gemini-4-argon-medium" });
+
+    // Start turn 1 and queue model B mid-turn so modelDirty=true for turn 2 preparation.
+    const turn1MsgPromise = h.message([{ type: "text", text: "DELAYED_USAGE turn 1" }]);
+    const turn1Started = await h.wait(
+      (event) => event.type === "session.turn" && event.state === "started",
     );
-    expect(promptResult).toMatchObject({ result: { type: "turn" } });
-    if (promptResult?.type === "session.prompt_result" && promptResult.result.type === "turn") {
-      const failedTurn = await h.wait(
+    await h.request({
+      type: "session.configure",
+      requestId: "queue-model-b",
+      sessionId: "s",
+      changes: { model: "gemini-3.1-pro-high" },
+    });
+    await turn1MsgPromise;
+    if (turn1Started.type === "session.turn") {
+      await h.wait(
         (event) =>
           event.type === "session.turn" &&
-          event.turnId === promptResult.result.turnId &&
-          event.state === "failed",
+          event.turnId === turn1Started.turnId &&
+          event.state === "completed",
       );
-      expect(failedTurn).toMatchObject({ state: "failed" });
     }
-    const records = await h.records();
-    const acpPid = records.find((entry) => entry.args?.includes("acp"))?.pid;
-    expect(typeof acpPid).toBe("number");
-    await expect
-      .poll(() => {
-        try {
-          process.kill(acpPid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      })
-      .toBe(false);
+
+    // Start turn 2: preparation awaits session/set_model(B) for 80ms; choose model C during that wait.
+    const turn2Promise = h.message([{ type: "text", text: "Turn 2 during B switch" }]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await h.request({
+      type: "session.configure",
+      requestId: "choose-model-c",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+    const turn2MsgId = await turn2Promise;
+    await h.completed(turn2MsgId);
+
+    // Model C must still be active in config and applied on turn 3.
+    expect(h.events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "gemini-3.8-flash-low" },
+    });
+    await h.completed(await h.message([{ type: "text", text: "Turn 3 must use model C" }]));
+
+    const inputs = (await h.records()).filter((entry) => entry.input).map((entry) => entry.input);
+    expect(inputs.at(-1)?.model).toBe("gemini-3.8-flash-low");
   });
 
   it.skipIf(process.platform === "win32")(

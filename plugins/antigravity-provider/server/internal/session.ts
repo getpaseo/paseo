@@ -97,6 +97,7 @@ export class Session {
   private effectiveModel: string | null;
   private mode: AntigravityModeId;
   private modelDirty = false;
+  private modelRevision = 0;
   private availableCommands: ProviderCommand[] = [];
   private lastUsage: ProviderUsage = {};
   private accumulatedCostUsd = 0;
@@ -363,15 +364,18 @@ export class Session {
   private async applyModelChange(nextModel: string | null): Promise<void> {
     if (nextModel === null) {
       if (this.requestedModel === null && !this.modelDirty) return;
+      const revision = ++this.modelRevision;
       if (this.driver?.isAlive && this.conversationId && !this.turn) {
         if (this.defaultModelId) {
-          await this.setLiveModel(this.driver, this.defaultModelId, null);
+          await this.setLiveModel(this.driver, this.defaultModelId, null, revision);
           return;
         }
         await this.retireDriver();
-        this.requestedModel = null;
-        this.effectiveModel = null;
-        this.modelDirty = false;
+        if (this.modelRevision === revision) {
+          this.requestedModel = null;
+          this.effectiveModel = null;
+          this.modelDirty = false;
+        }
         return;
       }
       this.requestedModel = null;
@@ -386,8 +390,9 @@ export class Session {
     ) {
       return;
     }
+    const revision = ++this.modelRevision;
     if (this.driver?.isAlive && this.conversationId && !this.turn) {
-      await this.setLiveModel(this.driver, nextModel, nextModel);
+      await this.setLiveModel(this.driver, nextModel, nextModel, revision);
       return;
     }
     this.requestedModel = nextModel;
@@ -398,15 +403,18 @@ export class Session {
     driver: DriverProcess,
     targetModel: string,
     requestedModel: string | null,
+    revision: number,
   ): Promise<void> {
     const result = await driver.requestInit(
       "session/set_model",
       { sessionId: this.conversationId, modelId: targetModel },
       acpSessionResultSchema,
     );
-    this.requestedModel = requestedModel;
     this.effectiveModel = result.models?.currentModelId ?? targetModel;
-    this.modelDirty = false;
+    if (this.modelRevision === revision) {
+      this.requestedModel = requestedModel;
+      this.modelDirty = false;
+    }
   }
 
   private async executeTurn(
@@ -510,7 +518,9 @@ export class Session {
 
   private async syncDirtyModel(driver: DriverProcess): Promise<void> {
     if (!this.modelDirty || !this.conversationId) return;
-    const targetModel = this.requestedModel ?? this.defaultModelId;
+    const revision = this.modelRevision;
+    const requested = this.requestedModel;
+    const targetModel = requested ?? this.defaultModelId;
     if (!targetModel) {
       await this.retireDriver();
       const fresh = this.spawnDriver();
@@ -518,7 +528,7 @@ export class Session {
       await this.initializeAcpSession(fresh, "skip");
       return;
     }
-    await this.setLiveModel(driver, targetModel, this.requestedModel);
+    await this.setLiveModel(driver, targetModel, requested, revision);
     this.emitConfig();
   }
 
@@ -549,17 +559,26 @@ export class Session {
         : (catalogDefault ?? reportedModel);
     }
 
-    const targetModel = this.modelDirty
-      ? (this.requestedModel ?? this.defaultModelId)
-      : this.requestedModel;
+    await this.syncInitialModel(driver, reportedModel);
+    return replayEvents;
+  }
+
+  private async syncInitialModel(
+    driver: DriverProcess,
+    reportedModel: string | null,
+  ): Promise<void> {
+    const revision = this.modelRevision;
+    const requested = this.requestedModel;
+    const targetModel = this.modelDirty ? (requested ?? this.defaultModelId) : requested;
     if (targetModel && targetModel !== reportedModel) {
-      await this.setLiveModel(driver, targetModel, this.requestedModel);
+      await this.setLiveModel(driver, targetModel, requested, revision);
       if (this.hasOpened) this.emitConfig();
-    } else {
-      this.effectiveModel = targetModel ?? reportedModel ?? this.effectiveModel;
+      return;
+    }
+    this.effectiveModel = targetModel ?? reportedModel ?? this.effectiveModel;
+    if (this.modelRevision === revision) {
       this.modelDirty = false;
     }
-    return replayEvents;
   }
 
   private async openOrLoadAcpSession(driver: DriverProcess, history: "replay" | "skip") {
