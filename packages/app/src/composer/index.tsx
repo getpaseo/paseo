@@ -37,7 +37,7 @@ import {
   TOOLBAR_CONTROL_HEIGHT,
 } from "@/components/ui/control-geometry";
 import { usePanelStore } from "@/stores/panel-store";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -1312,7 +1312,7 @@ function ComposerContentImpl({
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
   const buttonIconSize = iconSizeFor("md")[controlSizingForLayout(isCompactFormFactor)];
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
-  const hasFinePointer = useHasFinePointer();
+  const { finePointer: hasFinePointer } = usePointerCapabilities();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const hasText = useSyncExternalStore(
