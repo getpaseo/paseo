@@ -150,7 +150,7 @@ function LaunchActionButton({
       <TooltipTrigger asChild triggerRefProp="ref">
         <Button
           variant="ghost"
-          size="xs"
+          size="sm"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
           hitSlop={8}

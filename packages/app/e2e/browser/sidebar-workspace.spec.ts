@@ -13,6 +13,7 @@ import {
   movePointerAwayFromWorkspaceHoverCard,
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
+  scrollWorkspaceList,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -582,6 +583,12 @@ test.describe("Half-screen desktop layout", () => {
       await page.getByTestId("menu-button").click();
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
       await expect(sidebarScroll).toHaveJSProperty("scrollTop", scrollTop);
+
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await focusWorkspaceRowWithKeyboard(page, lastWorkspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await scrollWorkspaceList(page);
+      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }
@@ -645,6 +652,9 @@ test.describe("Half-screen desktop layout", () => {
           .locator('[data-testid^="workspace-pane-"]')
           .getByTestId("workspace-tabs-row")
           .filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true }),
       ).toHaveCount(1);
 
       await explorerToggle.click();

@@ -30,7 +30,7 @@ import type {
   WorkspaceScriptLinkTarget,
 } from "@/utils/workspace-script-links";
 import type { Theme } from "@/styles/theme";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 import {
   WorkspaceLaunchesSection,
@@ -39,14 +39,12 @@ import {
 } from "@/screens/workspace/workspace-launches-button";
 import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
 import { scriptToneColorMapping } from "./script-status";
-import {
-  useWorkspaceScriptActions,
-  type WorkspaceScriptActions,
-} from "./use-workspace-script-actions";
+import type { WorkspaceScriptActions } from "./use-workspace-script-actions";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
 interface WorkspaceScriptsButtonProps {
+  actions: WorkspaceScriptActions;
   serverId: string;
   workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
@@ -527,6 +525,7 @@ function WorkspaceRunMenuContent({
 }
 
 export function WorkspaceScriptsButton({
+  actions,
   serverId,
   workspaceId,
   scripts,
@@ -538,12 +537,6 @@ export function WorkspaceScriptsButton({
   hideLabels,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
-  const actions = useWorkspaceScriptActions({
-    serverId,
-    workspaceId,
-    scripts,
-    onScriptTerminalStarted,
-  });
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
   const { launchErrors, onLaunchError, onClearLaunchError } = useWorkspaceLaunchErrors(workspaceId);
 
@@ -648,10 +641,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
-    height: {
-      xs: buttonControlHeight.xs,
-      md: HEADER_CONTROL_HEIGHT,
-    },
+    height: HEADER_CONTROL_HEIGHT,
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: theme.borderRadius.md,
