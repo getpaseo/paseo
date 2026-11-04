@@ -1,15 +1,21 @@
-import React, { act, useCallback, useEffect, useState } from "react";
+import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { PortalProvider } from "@gorhom/portal";
 import { afterEach, expect, it, vi } from "vitest";
-import { Pressable, StyleSheet } from "react-native";
-import { useRetainedPanelActive } from "@/components/retained-panel";
+import { Text } from "react-native";
+import { page } from "vitest/browser";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import type { WindowLayout } from "./model";
 import { WindowLayoutContext } from "./context";
 import { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 import { WindowLayoutDivisionGap } from "./surface";
 import { lightTheme } from "@/styles/theme";
-import { useIconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
 
 vi.stubGlobal("React", React);
 const layout = { sidebarWidth: 465, gap: 21, contentWidth: 381 };
@@ -38,65 +44,52 @@ it("paints the reserved division with the sidebar surface", () => {
   expect(gap.getBoundingClientRect().width).toBe(21);
 });
 
-it("keeps pending action work alive while the bar is hidden and preserves circular chrome", async () => {
-  let complete: () => void = () => {};
-  let completed = false;
-  const delayed = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  function PendingAction() {
-    const active = useRetainedPanelActive();
-    const [pending, setPending] = useState(false);
-    useEffect(() => {
-      if (!pending) return;
-      let mounted = true;
-      void delayed.then(() => {
-        if (mounted) completed = true;
-        return undefined;
-      });
-      return () => {
-        mounted = false;
-      };
-    }, [pending]);
-    const style = useIconButtonChromeStyle({ size: "small" });
-    const restart = useCallback(() => setPending(true), []);
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={active ? "Restart" : "Inactive restart"}
-        onPress={restart}
-        style={StyleSheet.flatten(style({ open: true }))}
-      />
+const explorerState = { expanded: false };
+const noKeys: [] = [];
+const noop = () => {};
+
+it("preserves circular explorer chrome and closes a portaled menu when actions become inactive", async () => {
+  async function renderActions(active: boolean) {
+    await act(async () =>
+      root.render(
+        <PortalProvider>
+          <WindowLayoutContext.Provider value={geometry}>
+            <WindowLayoutActionsHost />
+            <WindowLayoutActions active={active}>
+              <HeaderToggleButton
+                onPress={noop}
+                accessibilityRole="button"
+                accessibilityLabel="Explorer"
+                tooltipLabel="Explorer"
+                tooltipSide="left"
+                tooltipKeys={noKeys}
+                accessibilityState={explorerState}
+              >
+                <Text>Explorer</Text>
+              </HeaderToggleButton>
+              <DropdownMenu>
+                <DropdownMenuTrigger accessibilityRole="button" accessibilityLabel="Bar menu">
+                  <Text>Menu</Text>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onSelect={noop}>Bar menu item</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </WindowLayoutActions>
+          </WindowLayoutContext.Provider>
+        </PortalProvider>,
+      ),
     );
   }
-  function Scene({ active }: { active: boolean }) {
-    return (
-      <PortalProvider>
-        <WindowLayoutContext.Provider value={geometry}>
-          <WindowLayoutActionsHost />
-          <WindowLayoutActions active={active}>
-            <PendingAction />
-          </WindowLayoutActions>
-        </WindowLayoutContext.Provider>
-      </PortalProvider>
-    );
-  }
-  await act(async () => root.render(<Scene active />));
-  const button = container.querySelector('[aria-label="Restart"]') as HTMLElement;
-  expect(button).not.toBeNull();
-  expect(getComputedStyle(button).borderRadius).toBe(`${lightTheme.borderRadius.full}px`);
-  await act(async () => button.click());
-  await act(async () => root.render(<Scene active={false} />));
-  expect(container.querySelector('[aria-label="Inactive restart"]')).not.toBeNull();
-  await act(async () => {
-    complete();
-    await delayed;
-  });
-  expect(completed).toBe(true);
+  await renderActions(true);
+  const explorer = container.querySelector('[aria-label="Explorer"]') as HTMLElement;
+  expect(getComputedStyle(explorer).borderRadius).toBe(`${lightTheme.borderRadius.full}px`);
+  await page.getByRole("button", { name: "Bar menu", exact: true }).click();
+  await expect.element(page.getByRole("menuitem", { name: "Bar menu item" })).toBeVisible();
+  await renderActions(false);
+  await expect.poll(() => document.querySelectorAll('[role="menuitem"]').length).toBe(0);
   expect(
     container.querySelector('[data-testid="workspace-vertical-actions"]')?.getBoundingClientRect()
       .height,
   ).toBe(0);
-  await act(async () => root.render(<Scene active />));
-  expect(container.querySelector('[aria-label="Restart"]')).not.toBeNull();
 });
