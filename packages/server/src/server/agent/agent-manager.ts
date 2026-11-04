@@ -2065,7 +2065,7 @@ export class AgentManager {
       return;
     }
     const parentAgentId = parent.id;
-    const records = await registry.list();
+    const records = await registry.listActive();
     for (const record of records) {
       if (record.archivedAt) {
         continue;
@@ -2531,7 +2531,8 @@ export class AgentManager {
 
   async unarchiveSnapshotByHandle(handle: AgentPersistenceHandle): Promise<void> {
     const registry = this.requireRegistry();
-    const records = await registry.list();
+    // Restoring an archived provider session is an explicit recovery operation.
+    const records = await registry.listAll();
     const matched = records.find(
       (record) =>
         record.persistence?.provider === handle.provider &&

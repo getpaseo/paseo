@@ -18,7 +18,7 @@ function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
 }
 
-type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
+type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
 interface BuildSessionConfigOptions {

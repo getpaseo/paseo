@@ -50,7 +50,6 @@ beforeEach(async () => {
     manager: { listAgents: () => [] },
     workspaces: {
       get: async (id) => workspaces.find((entry) => entry.workspaceId === id) ?? null,
-      list: async () => workspaces,
     },
     projectLive: () => {
       throw new Error("No live agents in this suite");

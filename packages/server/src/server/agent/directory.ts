@@ -26,8 +26,11 @@ export class AgentDirectory {
   constructor(
     private readonly deps: {
       manager: Pick<AgentManager, "listAgents">;
-      storage: Pick<AgentStorage, "list">;
-      workspaces: Pick<WorkspaceRegistry, "get" | "list">;
+      storage: Pick<
+        AgentStorage,
+        "listActive" | "listByWorkspaces" | "lastUserMessageAtByWorkspace"
+      >;
+      workspaces: Pick<WorkspaceRegistry, "get">;
       projectLive(agent: ManagedAgent): Promise<AgentSnapshotPayload>;
       projectStored(record: StoredAgentRecord): AgentSnapshotPayload;
       isProviderVisible(provider: string): boolean;
@@ -36,22 +39,22 @@ export class AgentDirectory {
   ) {}
 
   /** Human prompt recency includes archived/unavailable agents without projecting their UI payloads. */
-  async workspaceLastUserMessageTimes(): Promise<Map<string, string>> {
+  async workspaceLastUserMessageTimes(
+    workspaceIds?: Iterable<string>,
+  ): Promise<Map<string, string>> {
+    const requested = workspaceIds ? new Set(workspaceIds) : undefined;
     const live = this.deps.manager.listAgents();
-    const liveIds = new Set(live.map((agent) => agent.id));
-    const times = new Map<string, string>();
-    const record = (workspaceId: string | undefined, at: string | null | undefined) => {
-      if (!workspaceId || !at) return;
-      const previous = times.get(workspaceId);
-      if (!previous || at > previous) times.set(workspaceId, at);
-    };
-    for (const agent of await this.deps.storage.list()) {
-      if (!agent.internal && !agent.background && !liveIds.has(agent.id))
-        record(agent.workspaceId, agent.lastUserMessageAt);
-    }
+    const times = new Map(
+      await this.deps.storage.lastUserMessageAtByWorkspace(requested, {
+        excludeAgentIds: live.map((agent) => agent.id),
+      }),
+    );
     for (const agent of live) {
-      if (!agent.internal && !agent.background)
-        record(agent.workspaceId, agent.lastUserMessageAt?.toISOString());
+      if (agent.internal || agent.background || !agent.workspaceId || !agent.lastUserMessageAt)
+        continue;
+      if (requested && !requested.has(agent.workspaceId)) continue;
+      const at = agent.lastUserMessageAt.toISOString();
+      if (at > (times.get(agent.workspaceId) ?? "")) times.set(agent.workspaceId, at);
     }
     return times;
   }
@@ -65,22 +68,29 @@ export class AgentDirectory {
   }
 
   async list(filter?: {
+    workspaceIds?: Iterable<string>;
     labels?: Record<string, string>;
     includeArchived?: boolean;
     includeBackground?: BackgroundVisibility;
     includeUnavailablePersisted?: boolean;
   }): Promise<AgentSnapshotPayload[]> {
+    const requested = filter?.workspaceIds ? new Set(filter.workspaceIds) : null;
     const live = this.deps.manager.listAgents();
     const liveIds = new Set(live.map((agent) => agent.id));
     const labels = Object.entries(filter?.labels ?? {});
     const visibility = filter?.includeBackground ?? false;
-    const backgroundWorkspaceIds = new Set(
-      visibility === true
-        ? []
-        : (await this.deps.workspaces.list())
-            .filter((workspace) => workspace.background)
-            .map((workspace) => workspace.workspaceId),
+    const records = requested
+      ? await this.deps.storage.listByWorkspaces(requested, filter)
+      : await this.deps.storage.listActive(filter);
+    const workspaceIds = new Set(
+      [...live, ...records].flatMap((agent) => (agent.workspaceId ? [agent.workspaceId] : [])),
     );
+    const backgroundWorkspaceIds = new Set<string>();
+    if (visibility !== true) {
+      for (const id of workspaceIds) {
+        if ((await this.deps.workspaces.get(id))?.background) backgroundWorkspaceIds.add(id);
+      }
+    }
     const matches = (
       agent: DiscoverableAgent & { archivedAt?: string | null; labels?: Record<string, string> },
     ) =>
@@ -91,7 +101,7 @@ export class AgentDirectory {
         visibility,
       ) &&
       labels.every(([key, value]) => agent.labels?.[key] === value);
-    const stored = (await this.deps.storage.list())
+    const stored = records
       .filter((record) => !liveIds.has(record.id) && matches(record))
       .filter(
         (record) =>
@@ -99,7 +109,10 @@ export class AgentDirectory {
       )
       .map((record) => this.deps.projectStored(record));
     const active = await Promise.all(
-      live.filter(matches).map((agent) => this.deps.projectLive(agent)),
+      live
+        .filter((agent) => !requested || requested.has(agent.workspaceId ?? ""))
+        .filter(matches)
+        .map((agent) => this.deps.projectLive(agent)),
     );
     return [...active, ...stored]
       .filter(matches)

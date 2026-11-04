@@ -358,7 +358,8 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
   return {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => [],
+    listAll: async () => [],
+    listActive: async () => [],
     get: async () => null,
     update: async () => null,
     upsert: async () => {},
