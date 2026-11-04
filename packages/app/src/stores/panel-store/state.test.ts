@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { usePanelStore } from ".";
 import {
   DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
@@ -121,4 +122,53 @@ it("discards obsolete checkout selection while preserving other panel preference
   expect(state).not.toHaveProperty("explorerTab");
   expect(state).not.toHaveProperty("explorerTabByCheckout");
   expect(state.sidebarWidth).toBe(400);
+});
+
+describe("panel-store wide navigation overlay", () => {
+  beforeEach(() => {
+    const panels = usePanelStore.getState();
+    panels.showMobileAgent();
+    panels.closeDesktopAgentList();
+  });
+
+  it.each([
+    ["openDesktopAgentList", () => usePanelStore.getState().openDesktopAgentList()],
+    ["toggleDesktopAgentList", () => usePanelStore.getState().toggleDesktopAgentList()],
+    [
+      "openAgentListForLayout",
+      () => usePanelStore.getState().openAgentListForLayout({ isCompact: false }),
+    ],
+    [
+      "toggleAgentListForLayout",
+      () => usePanelStore.getState().toggleAgentListForLayout({ isCompact: false }),
+    ],
+  ])("drops the overlay target when %s docks the sidebar", (_name, dock) => {
+    usePanelStore.getState().showMobileAgentList();
+
+    dock();
+
+    expect(usePanelStore.getState().desktop.agentListOpen).toBe(true);
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+  });
+
+  it("drops the overlay target once the sidebar is no longer presented as an overlay", () => {
+    usePanelStore.getState().showMobileAgentList();
+    usePanelStore.getState().applyLeftSidebarPresentation("overlay");
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent-list");
+
+    usePanelStore.getState().applyLeftSidebarPresentation("dock");
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+
+    usePanelStore.getState().showMobileAgentList();
+    usePanelStore.getState().applyLeftSidebarPresentation("hidden");
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+  });
+
+  it("keeps the compact explorer target when the sidebar presentation changes", () => {
+    usePanelStore.getState().showMobileFileExplorer();
+
+    usePanelStore.getState().applyLeftSidebarPresentation("dock");
+
+    expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
+  });
 });

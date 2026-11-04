@@ -68,6 +68,14 @@ export function setMobilePanelTarget(
   return { target, revision: selection.revision + 1 };
 }
 
+/**
+ * Only an overlay sidebar shows the `agent-list` target. A docked or hidden sidebar drops it, so
+ * a stale target cannot resurface the overlay on the next collapse. Other targets are untouched.
+ */
+export function dropOverlayAgentList(selection: MobilePanelSelection): MobilePanelSelection {
+  return selection.target === "agent-list" ? setMobilePanelTarget(selection, "agent") : selection;
+}
+
 const ExplorerTabSchema = z.enum(["changes", "files", "pr"]);
 const DesktopSidebarStorageSchema = z.strictObject({
   agentListOpen: z.boolean().optional(),

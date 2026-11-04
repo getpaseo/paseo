@@ -12,7 +12,7 @@ import {
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
   resolveDesktopSidebarWidth,
-  resolveSidebarPresentation,
+  resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
@@ -111,16 +111,10 @@ describe("desktop sidebar layout", () => {
       isCompactLayout: false,
       isFocusModeEnabled: false,
     };
-    expect(resolveSidebarPresentation({ ...input, desktopSidebarVisible: true })).toEqual({
-      desktopOverlay: false,
-      visible: true,
-      openGesturesEnabled: false,
-    });
-    expect(resolveSidebarPresentation({ ...input, desktopSidebarVisible: false })).toEqual({
-      desktopOverlay: true,
-      visible: true,
-      openGesturesEnabled: true,
-    });
+    expect(resolveLeftSidebarPresentation({ ...input, desktopSidebarVisible: true })).toBe("dock");
+    expect(resolveLeftSidebarPresentation({ ...input, desktopSidebarVisible: false })).toBe(
+      "overlay",
+    );
   });
 
   it("does not reveal navigation over a focused workspace or suppressed chrome", () => {
@@ -130,20 +124,19 @@ describe("desktop sidebar layout", () => {
       isFocusModeEnabled: false,
       desktopSidebarVisible: false,
     };
-    const hidden = { desktopOverlay: false, visible: false, openGesturesEnabled: false };
-    expect(resolveSidebarPresentation({ ...input, isFocusModeEnabled: true })).toEqual(hidden);
-    expect(resolveSidebarPresentation({ ...input, chromeEnabled: false })).toEqual(hidden);
+    expect(resolveLeftSidebarPresentation({ ...input, isFocusModeEnabled: true })).toBe("hidden");
+    expect(resolveLeftSidebarPresentation({ ...input, chromeEnabled: false })).toBe("hidden");
   });
 
   it("keeps phone navigation available independently of saved wide focus mode", () => {
     expect(
-      resolveSidebarPresentation({
+      resolveLeftSidebarPresentation({
         chromeEnabled: true,
         isCompactLayout: true,
         isFocusModeEnabled: true,
         desktopSidebarVisible: false,
       }),
-    ).toEqual({ desktopOverlay: false, visible: true, openGesturesEnabled: true });
+    ).toBe("overlay");
   });
 
   it("keeps the sidebar toggle window-owned beside left window controls", () => {

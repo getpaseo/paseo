@@ -25,6 +25,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -69,7 +70,7 @@ import {
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
   resolveDesktopSidebarWidth,
-  resolveSidebarPresentation,
+  resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
@@ -123,7 +124,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { usePanelStore } from "@/stores/panel-store";
+import { usePanelStore, type LeftSidebarPresentation } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
@@ -443,7 +444,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       viewportWidth,
     }),
   });
-  const sidebarPresentation = resolveSidebarPresentation({
+  const sidebarPresentation = resolveLeftSidebarPresentation({
     chromeEnabled,
     isCompactLayout,
     isFocusModeEnabled: isWorkspaceFocusModeEnabled,
@@ -458,8 +459,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const sidebarChrome = (
     <SidebarChrome
       mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
-      visible={sidebarPresentation.visible}
-      desktopOverlay={sidebarPresentation.desktopOverlay}
+      presentation={sidebarPresentation}
       keyboardShortcutsEnabled={keyboardShortcutsEnabled}
     />
   );
@@ -540,7 +540,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 
   return (
-    <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation.openGesturesEnabled}>
+    <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation === "overlay"}>
       <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
     </AppContainerLifetime>
   );
@@ -566,33 +566,31 @@ function AppContainerLifetime({
 
 function SidebarChrome({
   mounted,
-  visible,
+  presentation,
   keyboardShortcutsEnabled,
-  desktopOverlay,
 }: {
   mounted: boolean;
-  visible: boolean;
+  presentation: LeftSidebarPresentation;
   keyboardShortcutsEnabled: boolean;
-  desktopOverlay: boolean;
 }) {
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
-  const overlay = isCompactLayout || desktopOverlay;
-  const active = resolveSidebarActivity(visible, overlay, isMobileActive);
+  const applyLeftSidebarPresentation = usePanelStore((state) => state.applyLeftSidebarPresentation);
+  const overlay = presentation === "overlay";
+  const active = resolveSidebarActivity(presentation !== "hidden", overlay, isMobileActive);
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
-  const mobilePanelTarget = usePanelStore((state) => state.mobilePanel.target);
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  useEffect(() => {
-    if (!overlay && mobilePanelTarget === "agent-list") {
-      showMobileAgent();
-    }
-  }, [overlay, mobilePanelTarget, showMobileAgent]);
+  // Publishes the layout to the store, which owns what each presentation allows.
+  useLayoutEffect(() => {
+    applyLeftSidebarPresentation(presentation);
+  }, [applyLeftSidebarPresentation, presentation]);
   return (
     <SidebarModelProvider
       active={active}
       keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
     >
-      {mounted ? <LeftSidebar active={active} desktopOverlay={desktopOverlay} /> : null}
+      {mounted ? (
+        <LeftSidebar active={active} desktopOverlay={overlay && !isCompactLayout} />
+      ) : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
   );

@@ -1,6 +1,10 @@
 import { EXPLORER_WORKSPACE_MIN_WIDTH } from "@/components/explorer-sidebar-layout";
 import { SETTINGS_DESKTOP_SPLIT_MIN_WIDTH } from "@/constants/layout";
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from "@/stores/panel-store";
+import {
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  type LeftSidebarPresentation,
+} from "@/stores/panel-store";
 import type { DesktopDivisionLayout } from "@/window-layout";
 
 const MIN_DESKTOP_CENTER_WIDTH = 400;
@@ -21,23 +25,20 @@ export function resolveDesktopSidebarVisibility(input: {
   );
 }
 
-export function resolveSidebarPresentation(input: {
+/**
+ * Compact layouts always present navigation as a drawer overlay. Wide layouts dock it when it is
+ * visible and fall back to an overlay when the dock is collapsed or yields its width.
+ */
+export function resolveLeftSidebarPresentation(input: {
   chromeEnabled: boolean;
   isCompactLayout: boolean;
   isFocusModeEnabled: boolean;
   desktopSidebarVisible: boolean;
-}) {
-  const desktopOverlay =
-    input.chromeEnabled &&
-    !input.isCompactLayout &&
-    !input.isFocusModeEnabled &&
-    !input.desktopSidebarVisible;
-  const usesOverlay = input.isCompactLayout || desktopOverlay;
-  return {
-    desktopOverlay,
-    visible: input.chromeEnabled && (usesOverlay || input.desktopSidebarVisible),
-    openGesturesEnabled: input.chromeEnabled && usesOverlay,
-  };
+}): LeftSidebarPresentation {
+  if (!input.chromeEnabled) return "hidden";
+  if (input.isCompactLayout) return "overlay";
+  if (input.isFocusModeEnabled) return "hidden";
+  return input.desktopSidebarVisible ? "dock" : "overlay";
 }
 
 export function resolveDesktopAppChromeLayout(input: {
