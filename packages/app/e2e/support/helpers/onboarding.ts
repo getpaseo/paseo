@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
+import {
+  addProjectFlow,
+  addProjectFlowInput,
+  chooseAddProjectMethod,
+  confirmAddProjectName,
+} from "./add-project-flow";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
@@ -66,6 +71,7 @@ export async function addProjectFromSetup(page: Page, projectPath: string): Prom
   await chooseAddProjectMethod(page, "directory-search");
   await addProjectFlowInput(page).fill(projectPath);
   await page.keyboard.press("Enter");
+  await confirmAddProjectName(page);
   await expect(addProjectFlow(page)).toHaveCount(0, { timeout: 30_000 });
 }
 
