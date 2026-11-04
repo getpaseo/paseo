@@ -456,6 +456,31 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId, bottomAnchorController, holdRow, viewportRef]);
 
+  // The scroll-to-bottom button shows whenever following would not resume on its own. A detached
+  // list resumes only from the end, so the button shows anywhere short of it. While following, the
+  // offset can trail content growth for a frame, so the controller's wider threshold keeps the
+  // button from flashing.
+  const publishNearBottom = useStableEvent(() => {
+    const metrics = streamViewportMetricsRef.current;
+    onNearBottomChange(
+      bottomAnchorController.mode === "detached"
+        ? distanceFromEnd(metrics) <= AT_END_OFFSET_PX
+        : isNearBottomForStreamRenderStrategy({
+            strategy,
+            offsetY: metrics.offsetY,
+            threshold: 32,
+            contentHeight: metrics.contentHeight,
+            viewportHeight: metrics.viewportHeight,
+          }),
+    );
+  });
+
+  // Following starts and stops without a scroll, for example when a disclosure hold begins short of
+  // the end, and the button follows it.
+  useEffect(() => {
+    publishNearBottom();
+  }, [isFollowingEnd, publishNearBottom]);
+
   const isScrollEventNearBottom = useStableEvent(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -497,7 +522,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
 
     const nearBottom = isScrollEventNearBottom(event);
-    onNearBottomChange(nearBottom);
+    publishNearBottom();
 
     evaluateHistoryStart();
 
@@ -606,17 +631,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
     bottomAnchorController.handleContentSizeChange();
     // Content growing below a detached viewport moves the end away without a scroll event.
-    const metrics = streamViewportMetricsRef.current;
-    if (bottomAnchorController.mode === "detached" && metrics.viewportHeight > 0) {
-      onNearBottomChange(
-        isNearBottomForStreamRenderStrategy({
-          strategy,
-          offsetY: metrics.offsetY,
-          threshold: 32,
-          contentHeight: metrics.contentHeight,
-          viewportHeight: metrics.viewportHeight,
-        }),
-      );
+    if (
+      bottomAnchorController.mode === "detached" &&
+      streamViewportMetricsRef.current.viewportHeight > 0
+    ) {
+      publishNearBottom();
     }
     evaluateHistoryStart();
     if (historyStartPaginationStateRef.current.status === "settling") {
