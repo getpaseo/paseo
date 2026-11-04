@@ -11,7 +11,6 @@ import React, {
   useState,
   type ComponentProps,
   type ReactNode,
-  type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -75,7 +74,7 @@ import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
-import { DisclosureRow } from "./disclosure";
+import { renderStreamRow, type RenderStreamItem } from "./stream-row";
 import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
@@ -230,50 +229,6 @@ function renderListEmptyComponent(input: {
     <View style={input.emptyStateStyle}>
       <Text style={stylesheet.emptyStateText}>{input.emptyText}</Text>
     </View>
-  );
-}
-
-// Live and retained rows use the same boundary so completion preserves the message
-// subtree, including measured diagrams and selections. LegendList renders every mounted row
-// again when `extraData` (the history renderer) changes, and history rows shift index when older
-// history loads. This boundary limits that pass: a row renders again only when its stream item
-// identity, its layout item identity, or the renderer itself changes. Item identity is the revision signal the strategy
-// already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
-const StreamRow = memo(function StreamRow({
-  item,
-  layoutItem,
-  renderStreamItem,
-  viewportRef,
-}: {
-  item: StreamItem;
-  layoutItem: StreamLayoutItem;
-  renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
-  viewportRef: RefObject<StreamViewportHandle | null>;
-}) {
-  return (
-    <DisclosureRow rowId={item.id} viewportRef={viewportRef}>
-      {renderStreamItem(layoutItem)}
-    </DisclosureRow>
-  );
-});
-
-function renderStreamRow(input: {
-  item: StreamItem;
-  layoutItemById: Map<string, StreamLayoutItem>;
-  renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
-  viewportRef: RefObject<StreamViewportHandle | null>;
-}): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
-  if (!layoutItem) {
-    return null;
-  }
-  return (
-    <StreamRow
-      item={input.item}
-      layoutItem={layoutItem}
-      renderStreamItem={input.renderStreamItem}
-      viewportRef={input.viewportRef}
-    />
   );
 }
 
@@ -969,8 +924,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const renderStreamItemContent = useCallback(
-      (layoutItem: StreamLayoutItem) => {
-        const item = layoutItem.item;
+      (item: StreamItem, layoutItem: StreamLayoutItem) => {
         switch (item.kind) {
           case "user_message":
             return renderUserMessageItem(layoutItem, item);
@@ -1031,9 +985,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
 
-    const renderStreamItem = useCallback(
-      (layoutItem: StreamLayoutItem) => {
-        const content = renderStreamItemContent(layoutItem);
+    const renderStreamItem = useCallback<RenderStreamItem>(
+      (item, layoutItem) => {
+        const content = renderStreamItemContent(item, layoutItem);
         return renderStreamItemWithTurnFooter({
           content,
           layoutItem,

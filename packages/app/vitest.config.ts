@@ -39,10 +39,12 @@ export default defineConfig({
       name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
-        // Exercise compiler-sensitive labels and overlay lifetime in the same form as Expo.
+        // Exercise compiler-sensitive labels, overlay lifetime and timeline row revisions in the same
+        // form as Expo.
         const usageComponent = id.includes("/src/usage/") && id.endsWith(".tsx");
         const overlayLayer = id.endsWith("/src/lib/overlay-root.ts");
-        if ((!usageComponent && !overlayLayer) || id.includes(".test.")) return;
+        const streamRow = id.endsWith("/src/agent-stream/stream-row.tsx");
+        if ((!usageComponent && !overlayLayer && !streamRow) || id.includes(".test.")) return;
         const result = transformSync(source, {
           filename: id,
           babelrc: false,
