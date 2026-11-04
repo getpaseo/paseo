@@ -135,3 +135,7 @@ export function selectWorkspaceChrome<Compact, Full>(input: {
   const compact = input.width !== null && shouldUseCompactWorkspaceHeader(input.width);
   return compact ? input.compact : input.full;
 }
+
+// A count badge is only 16pt wide. Native popovers need a content width floor
+// because their scrolling tab list does not contribute an intrinsic width.
+export const workspaceTabSwitcherPopoverLayout = { desktopMinWidth: 320 } as const;

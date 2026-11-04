@@ -1,3 +1,4 @@
+import { workspaceTabSwitcherPopoverLayout } from "../workspace-tab-layout";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { Keyboard, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -456,6 +457,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       </Pressable>
 
       <Combobox
+        {...workspaceTabSwitcherPopoverLayout}
         options={tabSwitcherOptions}
         value={activeTabKey}
         onSelect={onSelectSwitcherTab}
