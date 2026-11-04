@@ -38,9 +38,29 @@ export async function importSessionFromPersistence(input: {
   return {
     session,
     config: storedConfig,
-    persistence,
+    persistence: canonicalImportPersistence(persistence, session),
     timeline: history.timeline,
     providerSubagentEvents: history.providerSubagentEvents,
+  };
+}
+
+/**
+ * Import handles identify a session by whatever the provider lists, which is not
+ * always the session id: OMP lists session files. Persist the resumed session's own
+ * identity instead, so records, dedupe and resume all agree, while the provider's
+ * native handle still resolves the session.
+ */
+function canonicalImportPersistence(
+  requested: AgentPersistenceHandle,
+  session: ImportedProviderSession["session"],
+): AgentPersistenceHandle {
+  const described = session.describePersistence();
+  if (!described?.sessionId) return requested;
+  return {
+    ...described,
+    provider: requested.provider,
+    nativeHandle: described.nativeHandle ?? requested.nativeHandle,
+    metadata: { ...requested.metadata, ...described.metadata },
   };
 }
 
