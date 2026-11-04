@@ -234,6 +234,7 @@ export const persistenceSchema = z
     conversationId: z.string().min(1).optional(),
     sessionId: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
+    accumulatedCostUsd: z.number().nonnegative().optional(),
   })
   .refine((value) => Boolean(value.conversationId || value.sessionId), {
     message: "Expected conversationId or sessionId in Antigravity persistence state",
@@ -317,8 +318,11 @@ export function parseElicitationQuestions(
   return entries.map(([key, prop], index) => {
     const multiSelect = prop.type === "array";
     const rawEnum = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
-    const options = rawEnum.filter((item) => item !== "Other").map((label) => ({ label }));
     const otherFieldKey = `${key}_other` in properties ? `${key}_other` : undefined;
+    const hasCompanionOther = Boolean(otherFieldKey);
+    const options = (hasCompanionOther ? rawEnum.filter((item) => item !== "Other") : rawEnum).map(
+      (label) => ({ label }),
+    );
     const valueType = resolvePropertyValueType(prop.type);
     return {
       id: key,
@@ -329,7 +333,7 @@ export function parseElicitationQuestions(
       rawEnum,
       multiSelect,
       valueType,
-      allowOther: Boolean(otherFieldKey) || rawEnum.includes("Other") || options.length === 0,
+      allowOther: hasCompanionOther || options.length === 0,
       allowEmpty: !required.has(key),
       otherFieldKey,
     };
@@ -409,9 +413,12 @@ function applyMultiSelectAnswer(
   const selected = strValues.filter((v) => knownLabels.has(v));
   const custom = strValues.filter((v) => !knownLabels.has(v));
   if (custom.length > 0) {
-    if (question.rawEnum.includes("Other")) selected.push("Other");
-    if (question.otherFieldKey) content[question.otherFieldKey] = custom.join(", ");
-    else selected.push(...custom);
+    if (question.otherFieldKey) {
+      if (question.rawEnum.includes("Other")) selected.push("Other");
+      content[question.otherFieldKey] = custom.join(", ");
+    } else if (question.rawEnum.length === 0) {
+      selected.push(...custom);
+    }
   }
   content[question.id] = selected;
 }
@@ -464,7 +471,9 @@ function applySingleSelectAnswer(
     content[question.otherFieldKey] = strVal;
     return;
   }
-  content[question.id] = strVal;
+  if (question.rawEnum.length === 0) {
+    content[question.id] = strVal;
+  }
 }
 
 export function classifyFailure(stderr: string, detail?: string): AntigravityError {
