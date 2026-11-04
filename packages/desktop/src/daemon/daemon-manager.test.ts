@@ -4,7 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
-import { createDaemonCommandHandlers } from "./daemon-manager";
+import { ExternalCliCommandError } from "./cli/external";
+import {
+  createDaemonCommandHandlers,
+  keepsTerminalsOnStop,
+  stopCapturedDaemon,
+  type DesktopDaemonStopReason,
+} from "./daemon-manager";
 
 const mocks = vi.hoisted(() => ({
   paseoHome: "",
@@ -73,7 +79,8 @@ vi.mock("./runtime-paths.js", () => ({
   })),
 }));
 
-vi.mock("./cli/external.js", () => ({
+vi.mock("./cli/external.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   runExternalCliJsonCommand: mocks.runExternalCliJsonCommand,
   runExternalCliTextCommand: mocks.runExternalCliTextCommand,
 }));
@@ -174,5 +181,109 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "remote:6799" })).toBeNull();
     writeFileSync(lockPath, JSON.stringify({ ...lock, desktopManaged: false }));
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
+  });
+});
+
+describe("desktop stops and terminals", () => {
+  const reasons: DesktopDaemonStopReason[] = [
+    "manual_ipc",
+    "settings",
+    "host_remove",
+    "quit",
+    "app_update",
+    "version_mismatch",
+    "restart",
+  ];
+
+  it("keeps terminals only for an app update or version-mismatch restart, never on Windows", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      expect(reasons.filter((reason) => keepsTerminalsOnStop(reason, platform))).toEqual([
+        "app_update",
+        "version_mismatch",
+      ]);
+    }
+    expect(reasons.filter((reason) => keepsTerminalsOnStop(reason, "win32"))).toEqual([]);
+  });
+
+  function stopHarness(runCliJson: (args: string[]) => Promise<unknown>) {
+    const stops: Array<{ keepTerminals: boolean | undefined }> = [];
+    const logged: string[] = [];
+    const instance = {
+      pid: 4242,
+      startedAt: "2026-10-21T00:00:00.000Z",
+      hostname: "host",
+      uid: 501,
+      listen: "127.0.0.1:6799",
+    };
+    const stopInstance = (async (
+      _home: string,
+      options: {
+        keepTerminals?: boolean;
+        requestShutdown?: (ready: { listen: string }) => Promise<void>;
+      },
+    ) => {
+      stops.push({ keepTerminals: options.keepTerminals });
+      await options.requestShutdown?.({ listen: instance.listen });
+      return { action: "stopped", pid: instance.pid, forced: false, usedLifecycleRpc: true };
+    }) as unknown as NonNullable<Parameters<typeof stopCapturedDaemon>[0]["stopInstance"]>;
+    return {
+      stops,
+      logged,
+      input: {
+        home: "/tmp/paseo-home",
+        instance,
+        stopInstance,
+        runCliJson,
+        log: (message: string) => logged.push(message),
+      } as Omit<Parameters<typeof stopCapturedDaemon>[0], "reason" | "keepTerminals">,
+    };
+  }
+
+  it("asks the daemon to keep its terminals on an app update", async () => {
+    const calls: string[][] = [];
+    const harness = stopHarness(async (args) => {
+      calls.push(args);
+      return { action: "shutdown_requested" };
+    });
+
+    await stopCapturedDaemon({ ...harness.input, reason: "app_update", keepTerminals: true });
+
+    expect(harness.stops).toEqual([{ keepTerminals: true }]);
+    expect(calls).toEqual([
+      ["daemon", "stop", "--host", "127.0.0.1:6799", "--keep-terminals", "--json"],
+    ]);
+  });
+
+  it("stops a daemon without the capability with its terminals closed, and says so", async () => {
+    const calls: string[][] = [];
+    const harness = stopHarness(async (args) => {
+      calls.push(args);
+      if (args.includes("--keep-terminals")) {
+        throw new ExternalCliCommandError("refused", {
+          code: "TERMINALS_KEEP_UNSUPPORTED",
+          version: "0.11.0",
+        });
+      }
+      return { action: "shutdown_requested" };
+    });
+
+    await stopCapturedDaemon({ ...harness.input, reason: "app_update", keepTerminals: true });
+
+    expect(harness.stops).toEqual([{ keepTerminals: true }, { keepTerminals: false }]);
+    expect(calls[1]).toEqual(["daemon", "stop", "--host", "127.0.0.1:6799", "--json"]);
+    expect(harness.logged).toContain(
+      "daemon v0.11.0 cannot keep terminals; stopping it and closing them",
+    );
+  });
+
+  it("does not retry a keep stop that failed for another reason", async () => {
+    const harness = stopHarness(async () => {
+      throw new ExternalCliCommandError("unreachable", { code: "DAEMON_UNREACHABLE" });
+    });
+
+    await expect(
+      stopCapturedDaemon({ ...harness.input, reason: "app_update", keepTerminals: true }),
+    ).rejects.toThrow("unreachable");
+    expect(harness.stops).toEqual([{ keepTerminals: true }]);
   });
 });

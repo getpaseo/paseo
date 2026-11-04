@@ -35,6 +35,20 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
+For Android background fold recovery, install the release APK on a foldable AVD, open a
+connected workspace, close the keyboard, and run:
+
+```bash
+ANDROID_SERIAL=emulator-5574 node packages/app/e2e/mobile/fold/android.mjs
+```
+
+The AVD must expose `CLOSED` and `OPENED` device states. The test backgrounds the app,
+changes posture, resumes immediately, and asserts compact/wide workspace controls without
+restarting the process. It writes snapshots and native failure state under
+`.dev/agent-device-artifacts/android-fold`. Set `PASEO_MOBILE_APP_ID=sh.paseo` for a
+production package. This needs a native rebuild when the Unistyles patch changes; a Metro
+reload cannot update it.
+
 For Android keyboard continuity, run the current checkout in the app, open an idle terminal
 with an empty prompt, hide its keyboard, and run:
 
@@ -94,6 +108,12 @@ and its Claude provider available. Set `PASEO_COMPOSER_KEYBOARD_SERVER_ID`,
 `_AGENT_ID` (an idle mock chat), and `_WORKSPACE_ID` (its workspace); `_DEVICE`,
 `_SESSION`, and `_DRAFT_ID` are optional. Artifacts go to
 `.dev/agent-device-artifacts/composer-keyboard-ios`.
+With a Codex draft selected, set `_SCENARIO=growth` on a 402pt-wide iPhone to
+check live wrapping, shrinking, the 12pt anchor gap, and command insertion. Set
+`_SCENARIO=previews` on an SE-sized iPhone to check long and short descriptions
+under an eight-line draft, selection with the keyboard shown and hidden, and
+file mentions. These scenarios only need `_SERVER_ID` and `_WORKSPACE_ID`;
+`_UDID` selects an exact simulator and `_ARTIFACTS_DIR` overrides the output path.
 
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and

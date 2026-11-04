@@ -1,3 +1,5 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
+import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
   useEffect,
@@ -12,7 +14,6 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
   ScrollView,
   Platform,
   StatusBar,
@@ -62,12 +63,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -526,7 +522,6 @@ type DesktopKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape";
 
 interface DesktopKeyHandlerInput {
   isOpen: boolean;
-  isMobile: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
@@ -871,11 +866,12 @@ function isDesktopKey(key: string): key is DesktopKey {
 function dispatchDesktopKey(
   input: DesktopKeyHandlerInput,
   key: DesktopKey,
-  event?: KeyboardEvent,
+  event?: KeyboardInputEvent,
 ): boolean {
   if (!input.isOpen) return false;
-  if (!IS_WEB && input.isMobile) return false;
-
+  // A native mobile bail used to live here because native had no key source, so
+  // nothing could call this. It has one now, and the sheet highlights an active
+  // row like the popover does, so a hardware keyboard drives both.
   if (key === "ArrowDown" || key === "ArrowUp") {
     event?.preventDefault();
     handleDesktopArrowKey(input, key);
@@ -912,6 +908,7 @@ function resolveInitialActiveIndex(
 }
 
 interface MobileBodyProps {
+  overlayLayer: number;
   isOpen: boolean;
   snapPoints: string[];
   handleIndicatorStyle: { backgroundColor: string };
@@ -938,7 +935,6 @@ interface MobileBodyProps {
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
   children: ReactNode;
-  safeAreaBottom: number;
 }
 
 function MobileComboboxBody(props: MobileBodyProps): ReactElement | null {
@@ -961,21 +957,6 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
     () => [styles.comboboxTitle, { color: props.titleColor }],
     [props.titleColor],
   );
-  const { footer, safeAreaBottom } = props;
-  const frameStyle = useMemo(
-    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
-    [footer, safeAreaBottom],
-  );
-  const footerStyle = useMemo(
-    () => [styles.footer, { paddingBottom: safeAreaBottom }],
-    [safeAreaBottom],
-  );
-
-  const footerView = useMemo(
-    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
-    [footer, footerStyle],
-  );
-
   const body = props.hasChildren ? (
     props.children
   ) : (
@@ -1006,8 +987,8 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      <SheetVisibleFrame footer={footerView}>
-        <View style={frameStyle}>
+      <OverlayLayerProvider layer={props.overlayLayer}>
+        <ComboboxSheetFrame footer={props.footer}>
           {props.header ? (
             <SheetHeaderView header={props.header} onClose={props.onClose} />
           ) : (
@@ -1045,9 +1026,34 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
               {body}
             </BottomSheetScrollView>
           )}
-        </View>
-      </SheetVisibleFrame>
+        </ComboboxSheetFrame>
+      </OverlayLayerProvider>
     </IsolatedBottomSheetModal>
+  );
+}
+
+/**
+ * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
+ * one left where the combobox was opened: inside a sheet tab, none is.
+ */
+function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children: ReactNode }) {
+  const { bottom: safeAreaBottom } = useSafeAreaInsets();
+  const frameStyle = useMemo(
+    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
+    [footer, safeAreaBottom],
+  );
+  const footerStyle = useMemo(
+    () => [styles.footer, { paddingBottom: safeAreaBottom }],
+    [safeAreaBottom],
+  );
+  const footerView = useMemo(
+    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
+    [footer, footerStyle],
+  );
+  return (
+    <SheetVisibleFrame footer={footerView}>
+      <View style={frameStyle}>{children}</View>
+    </SheetVisibleFrame>
   );
 }
 
@@ -1055,7 +1061,8 @@ interface DesktopBodyProps {
   overlayLayer: number;
   isOpen: boolean;
   handleClose: () => void;
-  handleDesktopKey: (key: DesktopKey, event?: KeyboardEvent) => boolean;
+  setOverlayScope: (node: unknown) => void;
+  handleDesktopKey: (key: DesktopKey, event?: KeyboardInputEvent) => boolean;
   refs: ReturnType<typeof useFloating>["refs"];
   shouldUseDesktopFade: boolean;
   desktopFrameStyle: StyleProp<ViewStyle>;
@@ -1182,25 +1189,13 @@ function DesktopComboboxOptionsBody(props: {
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   const active = useRetainedPanelActive();
-  const handleDesktopKey = props.handleDesktopKey;
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!isDesktopKey(event.key)) return false;
-      return handleDesktopKey(event.key, event);
-    },
-    [handleDesktopKey],
-  );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && props.isOpen,
-    layer: props.overlayLayer,
-    onKeyDown: handleWebOverlayKeyDown,
-  });
+  const setOverlayScope = props.setOverlayScope;
   const setFloatingRef = useCallback(
     (node: View | null) => {
       props.refs.setFloating(node);
-      setWebOverlayScope(node);
+      setOverlayScope(node);
     },
-    [props.refs, setWebOverlayScope],
+    [props.refs, setOverlayScope],
   );
 
   // Remove the portal before a retained chat can freeze its closing update.
@@ -1327,7 +1322,6 @@ export function Combobox({
   const isMobile = useIsCompactFormFactor();
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
-  const safeAreaInsets = useSafeAreaInsets();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
   const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
@@ -1525,11 +1519,10 @@ export function Combobox({
   );
 
   const handleDesktopKey = useCallback(
-    (key: DesktopKey, event?: KeyboardEvent) => {
+    (key: DesktopKey, event?: KeyboardInputEvent) => {
       return dispatchDesktopKey(
         {
           isOpen,
-          isMobile,
           orderedVisibleOptions,
           activeIndex,
           setActiveIndex,
@@ -1540,7 +1533,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
@@ -1577,12 +1570,20 @@ export function Combobox({
     [],
   );
 
+  const setOverlayScope = useOverlayRegistration({
+    active: isOpen,
+    layer: floatingLayer,
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    onKeyDown: (event) => (isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false),
+  });
+
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
   const hasChildren = Boolean(children);
 
   if (isMobile) {
     return (
       <MobileComboboxBody
+        overlayLayer={floatingLayer}
         isOpen={isOpen}
         snapPoints={snapPoints}
         handleIndicatorStyle={handleIndicatorStyle}
@@ -1608,7 +1609,6 @@ export function Combobox({
         emptyText={resolvedEmptyText}
         handleSelect={handleSelect}
         renderOption={renderOption}
-        safeAreaBottom={safeAreaInsets.bottom}
       >
         {children}
       </MobileComboboxBody>
@@ -1623,6 +1623,7 @@ export function Combobox({
       isOpen={isOpen}
       handleClose={handleClose}
       handleDesktopKey={handleDesktopKey}
+      setOverlayScope={setOverlayScope}
       refs={refs}
       shouldUseDesktopFade={shouldUseDesktopFade}
       desktopFrameStyle={desktopFrameStyle}

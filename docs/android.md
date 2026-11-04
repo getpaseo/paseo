@@ -61,6 +61,18 @@ Gradle auto-fetches the platform/build-tools it needs once licenses are accepted
 
 ## Local build + install
 
+The `react-native-svg@15.15.4` patch prevents header fades retaining their old painted size after
+rotation. Rebuild native Android after changing it; Metro reloads cannot update this code. Keep the
+resize hunks until upstream invalidates descendant geometry on canvas resize. Its instrumentation
+regression renders real gradient pixels across growing and shrinking layouts, including a nested
+group. From `packages/app/android`, run it on your selected emulator:
+
+```bash
+ANDROID_SERIAL=emulator-5562 ./gradlew :react-native-svg:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.horcrux.svg.SvgResizeTest \
+  --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
 The locked `expo-modules-core@57.0.23` needs the patch installed by `npm install`.
 It backports
 [Expo's Activity-result launcher fix](https://github.com/expo/expo/pull/49634): changing
@@ -98,7 +110,7 @@ The older `android`, `android:development`, and `ios` commands remain aliases fo
 `android:production` still builds and installs a release through Expo; use `build:apk` when you
 need an artifact. `android:clear` removes the generated Android project.
 
-Run `npm run test:android --workspace=@getpaseo/app` to prebuild Android and run native module unit tests. The app CI job runs this command with the Android toolchain.
+Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
 ### Diagnostic logs without ADB
 
@@ -175,7 +187,7 @@ When validating a font change, compare both `iiiiiiii` and `WWWWWWWW` on the aff
 device, including bold and italic text. Verify the visible command and output alongside measured
 widths; a valid family name alone does not prove monospace rendering.
 
-## Inverted timeline selection
+## Inverted timeline input
 
 Android focus and selection visibility requests must not reposition inverted timelines. The
 `modules/paseo-scroll` package keeps React Native's scroll manager interface and returns zero for
@@ -183,6 +195,10 @@ child-reveal scroll calculations when the view's transform matrix inverts the ve
 Native's Android list uses `scale: -1`, which decomposes into a 180-degree rotation with positive
 `scaleY`; checking the scale property alone misses it. Dragging and explicit scroll
 commands still work; non-inverted scroll views keep Android's default behavior.
+
+Mouse wheel axes also bypass the inversion transform. The same module reverses the vertical
+wheel axis for inverted scroll views before delegating to Android, preserving native scroll
+bounds and React Native's scroll events and disabled-scroll behavior.
 
 Register this package before React Native's core package through its Expo config plugin. Normal
 Android builds use the prebuilt `react-android` library, so patching Java under `node_modules` does
@@ -228,13 +244,16 @@ fastlane/metadata/android/
 │   ├── images/
 │   │   ├── icon.png            (512x512)
 │   │   ├── featureGraphic.png  (1024x500)
-│   │   └── phoneScreenshots/   (1.png, 2.png, ...)
+│   │   ├── phoneScreenshots/   (1.png, 2.png, ... linked to the store renders)
+│   │   └── tenInchScreenshots/ (1.png, 2.png, ... linked to the store renders)
 │   └── changelogs/             (generated — see below)
 ├── ja/
 └── zh-CN/
 ```
 
 Locale directories generally match `packages/app/src/i18n/locales.ts`, but note that `en` becomes `en-US`.
+
+Google Play reads its screenshots from the same folders; see [Store screenshots](release.md#store-screenshots).
 
 F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:changelogs`; `npm run fdroid:changelogs:check` verifies without writing. It is wired into the npm `version` lifecycle, so a release picks it up automatically and `git add -A` stages the result.
 

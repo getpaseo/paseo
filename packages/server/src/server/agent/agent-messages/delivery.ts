@@ -43,6 +43,8 @@ interface Dependencies {
 }
 export interface AgentMessageDelivery {
   enqueue(message: Message): Receipt;
+  /** Queued messages and provider dispatches still owned by this recipient. */
+  hasPending(recipientId: string): boolean;
   /** Stop admission, flush pending messages, and await provider dispatch acknowledgments. */
   close(): Promise<void>;
   /** Existing completion waits include agent messages admitted before the wait. */
@@ -138,6 +140,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   return {
+    hasPending: (recipientId) => pending.has(recipientId) || dispatching.has(recipientId),
     enqueue(message) {
       if (closed) throw new Error("Agent message delivery is closed");
       let resolve!: Admitted["resolve"];

@@ -17,6 +17,7 @@ import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
+import { densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -70,13 +71,11 @@ const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedCol
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 
+const triggerIconProps = densityIconProps("sm", foregroundMutedColorMapping);
+const triggerIconHoveredProps = densityIconProps("sm", foregroundColorMapping);
+
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
-  return (
-    <ThemedMoreVertical
-      size={14}
-      uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-    />
-  );
+  return <ThemedMoreVertical uniProps={hovered ? triggerIconHoveredProps : triggerIconProps} />;
 }
 
 export interface SidebarWorkspaceMenuProps {
@@ -439,12 +438,18 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    padding: 2,
+    // Larger on compact so the kebab is an easy tap target.
+    width: { xs: 32, md: 18 },
+    height: { xs: 32, md: 18 },
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 4,
     marginLeft: 2,
+    // Center the compact box on the 20px title line it is anchored to.
+    marginTop: { xs: -6, md: 0 },
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
-    marginRight: -7,
+    marginRight: { xs: -14, md: -7 },
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
