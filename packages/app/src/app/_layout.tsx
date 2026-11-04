@@ -449,6 +449,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isFocusModeEnabled: isWorkspaceFocusModeEnabled,
     desktopSidebarVisible,
   });
+  const applyPanelLayout = usePanelStore((state) => state.applyPanelLayout);
+  // Publishes the layout to the store, which owns the panel targets each layout allows.
+  useLayoutEffect(() => {
+    applyPanelLayout({ isCompact: isCompactLayout, leftSidebar: sidebarPresentation });
+  }, [applyPanelLayout, isCompactLayout, sidebarPresentation]);
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,
@@ -574,14 +579,9 @@ function SidebarChrome({
 }) {
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
-  const applyLeftSidebarPresentation = usePanelStore((state) => state.applyLeftSidebarPresentation);
   const overlay = presentation === "overlay";
   const active = resolveSidebarActivity(presentation !== "hidden", overlay, isMobileActive);
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
-  // Publishes the layout to the store, which owns what each presentation allows.
-  useLayoutEffect(() => {
-    applyLeftSidebarPresentation(presentation);
-  }, [applyLeftSidebarPresentation, presentation]);
   return (
     <SidebarModelProvider
       active={active}

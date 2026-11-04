@@ -27,10 +27,11 @@ interface MobilePanelSelection {
 Every semantic target change increments `revision`. Repeating the current target is idempotent.
 Compact panel selection is not persisted; a cold start begins at `agent`.
 
-Only an overlay sidebar holds `agent-list`. App chrome publishes the left sidebar presentation
-(`overlay`, `dock`, or `hidden`) to `panel-store`. Docking the sidebar or leaving the overlay
-presentation drops the target in the store; a stale target would reopen the overlay on the next
-collapse.
+Only an overlay sidebar holds `agent-list`, and only a compact layout holds `file-explorer`. App
+chrome publishes the layout (compact or wide, and the left sidebar presentation `overlay`, `dock`, or
+`hidden`) to `panel-store`, which drops any target the layout does not present. A stale
+`agent-list` would reopen the overlay on the next collapse; a stale `file-explorer` after widening
+would block the navigation swipe, which begins only from `agent`.
 
 The UI worklet owns transient motion:
 

@@ -16,9 +16,11 @@ import {
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
   setMobilePanelTarget,
+  reconcileMobilePanel,
   type DesktopSidebarState,
   type MobilePanelView,
   type MobilePanelSelection,
+  type PanelLayout,
   type PanelLayoutInput,
   type SortOption,
 } from "./state";
@@ -26,8 +28,10 @@ import { isWeb } from "@/constants/platform";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 export type {
   DesktopSidebarState,
+  LeftSidebarPresentation,
   MobilePanelView,
   MobilePanelSelection,
+  PanelLayout,
   PanelLayoutInput,
   SortOption,
 } from "./state";
@@ -42,9 +46,6 @@ export {
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
 };
-
-/** How app chrome presents the left sidebar: over the workspace, beside it, or not at all. */
-export type LeftSidebarPresentation = "overlay" | "dock" | "hidden";
 
 export type ExpandedPathsUpdate = string[] | ((currentPaths: string[]) => string[]);
 
@@ -84,7 +85,7 @@ export interface PanelState {
   openAgentListForLayout: (input: PanelLayoutInput) => void;
   closeAgentListForLayout: (input: PanelLayoutInput) => void;
   toggleAgentListForLayout: (input: PanelLayoutInput) => void;
-  applyLeftSidebarPresentation: (presentation: LeftSidebarPresentation) => void;
+  applyPanelLayout: (layout: PanelLayout) => void;
 
   // File explorer settings actions
   setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
@@ -211,12 +212,9 @@ export const usePanelStore = create<PanelState>()(
             : dockAgentListPatch(state);
         }),
 
-      applyLeftSidebarPresentation: (presentation) =>
+      applyPanelLayout: (layout) =>
         set((state) => {
-          if (presentation === "overlay") {
-            return state;
-          }
-          const mobilePanel = dropOverlayAgentList(state.mobilePanel);
+          const mobilePanel = reconcileMobilePanel(state.mobilePanel, layout);
           return mobilePanel === state.mobilePanel ? state : { mobilePanel };
         }),
 

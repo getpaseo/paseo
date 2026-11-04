@@ -26,6 +26,14 @@ export interface PanelLayoutInput {
   isCompact: boolean;
 }
 
+/** How app chrome presents the left sidebar: over the workspace, beside it, or not at all. */
+export type LeftSidebarPresentation = "overlay" | "dock" | "hidden";
+
+/** The panels app chrome presents, which decide the mobile panel targets that can stay selected. */
+export interface PanelLayout extends PanelLayoutInput {
+  leftSidebar: LeftSidebarPresentation;
+}
+
 export interface PanelCoreState {
   mobilePanel: MobilePanelSelection;
   desktop: DesktopSidebarState;
@@ -78,6 +86,23 @@ export function dropOverlayAgentList(selection: MobilePanelSelection): MobilePan
     target: selection.target === "agent-list" ? "agent" : selection.target,
     revision: selection.revision + 1,
   };
+}
+
+/**
+ * Keeps only the targets the layout presents. The `file-explorer` target exists on compact layouts
+ * only; a wide layout docks the Explorer instead, and a stale target there would block the
+ * navigation swipe, which begins only from `agent`.
+ */
+export function reconcileMobilePanel(
+  selection: MobilePanelSelection,
+  layout: PanelLayout,
+): MobilePanelSelection {
+  const sidebarReconciled =
+    layout.leftSidebar === "overlay" ? selection : dropOverlayAgentList(selection);
+  if (!layout.isCompact && sidebarReconciled.target === "file-explorer") {
+    return setMobilePanelTarget(sidebarReconciled, "agent");
+  }
+  return sidebarReconciled;
 }
 
 const ExplorerTabSchema = z.enum(["changes", "files", "pr"]);

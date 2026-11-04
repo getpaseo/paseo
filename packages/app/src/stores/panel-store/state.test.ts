@@ -153,36 +153,52 @@ describe("panel-store wide navigation overlay", () => {
 
   it("drops the overlay target once the sidebar is no longer presented as an overlay", () => {
     usePanelStore.getState().showMobileAgentList();
-    usePanelStore.getState().applyLeftSidebarPresentation("overlay");
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "overlay" });
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent-list");
 
-    usePanelStore.getState().applyLeftSidebarPresentation("dock");
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "dock" });
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
 
     usePanelStore.getState().showMobileAgentList();
-    usePanelStore.getState().applyLeftSidebarPresentation("hidden");
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "hidden" });
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   });
 
   it.each(["dock", "hidden"] as const)(
     "invalidates an opening swipe when presentation becomes %s before its target commits",
     (presentation) => {
-      usePanelStore.getState().applyLeftSidebarPresentation("overlay");
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "overlay" });
       const startedRevision = usePanelStore.getState().mobilePanel.revision;
       expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
 
-      usePanelStore.getState().applyLeftSidebarPresentation(presentation);
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: presentation });
 
       expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
       expect(usePanelStore.getState().mobilePanel.revision).toBeGreaterThan(startedRevision);
     },
   );
 
-  it("keeps the compact explorer target when the sidebar presentation changes", () => {
-    usePanelStore.getState().showMobileFileExplorer();
+  it.each(["overlay", "hidden"] as const)(
+    "keeps the compact explorer target when the compact sidebar becomes %s",
+    (leftSidebar) => {
+      usePanelStore.getState().showMobileFileExplorer();
 
-    usePanelStore.getState().applyLeftSidebarPresentation("dock");
+      usePanelStore.getState().applyPanelLayout({ isCompact: true, leftSidebar });
 
-    expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-  });
+      expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
+    },
+  );
+
+  it.each(["overlay", "dock", "hidden"] as const)(
+    "drops the compact explorer target when the layout widens with a %s sidebar",
+    (leftSidebar) => {
+      usePanelStore.getState().showMobileFileExplorer();
+      const openedRevision = usePanelStore.getState().mobilePanel.revision;
+
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar });
+
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+      expect(usePanelStore.getState().mobilePanel.revision).toBeGreaterThan(openedRevision);
+    },
+  );
 });
