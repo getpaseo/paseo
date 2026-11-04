@@ -8,6 +8,7 @@ const SpawnArgs = z
     subagent_type: z.string().trim().min(1),
     prompt: z.string().trim().min(1),
     description: z.string().optional(),
+    schedule: z.string().optional(),
   })
   .passthrough();
 const FollowupArgs = z.object({ agent_id: z.string().trim().min(1) }).passthrough();
@@ -34,6 +35,15 @@ const Notification = NotificationEntry.extend({
 });
 // get_subagent_result returns only text, opening with this header, and cancels the completion
 // notification. For a collected child it is the only record of the outcome.
+// A `schedule` spawn's text when its job was registered; refusals return other text.
+const SCHEDULED = /Scheduled ".*" \(id: \S+, type: \w+\)/;
+// A `schedule` spawn registers a job and returns only text, so no child runs under its row.
+const scheduledStatus = (call: PiExtensionToolCall, schedule: string | undefined) => {
+  if (!schedule?.trim() || call.status !== "completed") return undefined;
+  return SCHEDULED.test(extractTextFromToolResult(call.result) ?? "")
+    ? ("completed" as const)
+    : ("failed" as const);
+};
 const RESULT_HEADER = /^Agent: (\S+)\nType: .*?\| Status: (\w+)/;
 // The `<status>` label of a `<task-notification>`, mapped back to the record status it reports.
 const statusFromLabel = (label: string): string => {
@@ -120,6 +130,12 @@ export const tintinwebPiSubagents: PiExtension = {
               status: "running" as const,
             },
           ],
+        };
+      const scheduled = details.success ? undefined : scheduledStatus(call, args.data.schedule);
+      if (scheduled)
+        return {
+          detail,
+          subagents: [{ type: "upsert" as const, id: call.callId, status: scheduled }],
         };
       if (!details.success)
         return call.status === "failed"
