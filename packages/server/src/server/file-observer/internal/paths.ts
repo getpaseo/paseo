@@ -1,9 +1,11 @@
 import { posix, win32 } from "node:path";
+import { createPathContainmentMatcher } from "../../../utils/path.js";
 
 export interface ObserverPaths {
   isInside(root: string, path: string): boolean;
   normalizeIgnoredRoots(root: string, paths: string[]): string[];
   collapse(paths: string[]): string[];
+  createIgnoreMatcher(roots: string[]): (path: string) => boolean;
   isExpectedWatchDisappearance(error: unknown): boolean;
 }
 
@@ -50,6 +52,9 @@ export function createObserverPaths(platform: NodeJS.Platform): ObserverPaths {
   return {
     isInside,
     collapse,
+    createIgnoreMatcher(roots) {
+      return createPathContainmentMatcher(roots, platform === "win32");
+    },
     normalizeIgnoredRoots(root, paths) {
       const inside = paths
         .map((path) => pathApi.resolve(path))

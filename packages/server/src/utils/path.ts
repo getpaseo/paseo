@@ -72,6 +72,26 @@ export function stopPathContainmentMetrics(): number {
   return checks;
 }
 
+/** Compile lexical subtree membership without scanning unrelated roots per candidate. */
+export function createPathContainmentMatcher(
+  roots: Iterable<string>,
+  compareAsWindows: boolean,
+): (candidate: string) => boolean {
+  const pathApi = compareAsWindows ? nodePath.win32 : nodePath.posix;
+  const indexed = new Set(
+    Array.from(roots, (root) => normalizePathForComparison(root, compareAsWindows)),
+  );
+  return (candidate) => {
+    let current = normalizePathForComparison(candidate, compareAsWindows);
+    for (;;) {
+      if (indexed.has(current)) return true;
+      const parent = pathApi.dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+  };
+}
+
 export function isPathInsideRoot(root: string, candidate: string): boolean {
   if (pathContainmentChecks !== null) pathContainmentChecks += 1;
   return getRelativePathInsideRoot(root, candidate) !== null;

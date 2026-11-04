@@ -42,7 +42,11 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { isPathInsideRoot, looksLikeDefiniteWindowsPath } from "../utils/path.js";
+import {
+  createPathContainmentMatcher,
+  isPathInsideRoot,
+  looksLikeDefiniteWindowsPath,
+} from "../utils/path.js";
 import {
   createRunGitCommand,
   runGitCommand,
@@ -1939,7 +1943,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (target.knownDirectories.has(directory) || matchesWatchPath(directory)) {
         continue;
       }
-      // `directory` and `gitDir`/`ignoredDirectory` all derive from the same
+      // `directory` and `gitDir` derive from the same
       // `target.watchPath` used to build this subscription, and `directory`
       // itself is the same `dirname(event.path)` value already trusted as a
       // plain string key by `target.knownDirectories.has()` above — no realpath
@@ -1950,14 +1954,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (isPathInsideRoot(gitDir, directory)) {
         continue;
       }
-      let ignored = false;
-      for (const ignoredDirectory of target.ignoredDirectories) {
-        if (isPathInsideRoot(ignoredDirectory, directory)) {
-          ignored = true;
-          break;
-        }
-      }
-      if (ignored) {
+      if (!target.acceptsEvent(directory)) {
         continue;
       }
       target.knownDirectories.add(directory);
@@ -2047,47 +2044,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }, delayMs);
   }
 
-  /**
-   * String-prefix containment, not `isRealpathInsideRoot`: every entry on
-   * both sides is a plain path built from `target.watchPath` by this same
-   * class (`dirname(event.path)` for `knownDirectories`, `resolve(watchPath,
-   * ...)` for `ignoredDirectories` in `loadIgnoredDirs`) — no realpath
-   * divergence to reconcile, per the same reasoning as
-   * `noteWorkingTreeDirectories`. Normalizing each ignored root once up front
-   * instead of recomputing per pair turns a 30k-known x 40-ignored scan from
-   * ~26s of synchronous realpath syscalls into a bounded number of cheap
-   * string comparisons.
-   *
-   * Case-folding still needs to happen for a Windows-looking root, same as
-   * `isPathInsideRoot`/`isRealpathInsideRoot` in `../utils/path.js` — a
-   * case-insensitive filesystem can report a known directory whose case
-   * diverges from the git-reported ignored root. Since both sides derive
-   * from the single `target.watchPath` for this target, whether to fold is
-   * one decision for the whole call (`looksLikeDefiniteWindowsPath`
-   * reused from `../utils/path.js`, not reimplemented here), not a per-pair
-   * one — so it costs nothing beyond the already-precomputed prefixes.
-   */
   private pruneKnownDirectories(target: WorkingTreeWatchTarget): void {
-    if (target.ignoredDirectories.size === 0) {
-      return;
-    }
-    const foldCase = looksLikeDefiniteWindowsPath(target.watchPath);
-    const comparable = (path: string) =>
-      foldCase ? path.replaceAll("\\", "/").toLowerCase() : path;
-    const ignoredPrefixes: string[] = [];
-    const foldedIgnoredExact = foldCase ? new Set<string>() : null;
-    for (const ignoredDirectory of target.ignoredDirectories) {
-      const ignored = comparable(ignoredDirectory);
-      ignoredPrefixes.push(`${ignored}/`);
-      foldedIgnoredExact?.add(ignored);
-    }
+    const isIgnored = createPathContainmentMatcher(
+      target.ignoredDirectories,
+      looksLikeDefiniteWindowsPath(target.watchPath),
+    );
     for (const directory of target.knownDirectories) {
-      const comparableDirectory = comparable(directory);
-      const comparableDirectoryWithSep = `${comparableDirectory}/`;
-      const isIgnored =
-        (foldedIgnoredExact ?? target.ignoredDirectories).has(comparableDirectory) ||
-        ignoredPrefixes.some((prefix) => comparableDirectoryWithSep.startsWith(prefix));
-      if (isIgnored) {
+      if (isIgnored(directory)) {
         target.knownDirectories.delete(directory);
       }
     }
