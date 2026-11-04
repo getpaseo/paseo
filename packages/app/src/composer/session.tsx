@@ -12,6 +12,11 @@ export interface ComposerInput {
   locked: boolean;
   /** `locked` as it is now. A command a plugin kept from an earlier render asks this. */
   isLocked: () => boolean;
+  /**
+   * The input is on screen. A retained composer in a workspace that is not shown has none, so it
+   * cannot take the cursor-aware commands below.
+   */
+  isLive: () => boolean;
   textSource: ComposerTextSource;
   setText: (text: string) => void;
   /** Inserts at the cursor, replacing the selection. */

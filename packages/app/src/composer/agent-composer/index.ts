@@ -18,6 +18,8 @@ import type { UserComposerAttachment } from "@/attachments/types";
 
 /** The mounted composer's input. While attached, prompt commands go through it. */
 export interface MountedComposerInput {
+  /** False while the composer is retained but its input is not on screen. */
+  isLive(): boolean;
   setText(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
@@ -115,16 +117,19 @@ export function createAgentComposer(
     if (!session.client) return { status: "loading" };
     if (!catalogRequests.has(key)) {
       catalogRequests.add(key);
-      void loadCatalog(query, key);
+      // Creating the query tells every query-cache subscriber. A read can run in another
+      // component's render, so the load starts after it.
+      queueMicrotask(() => void loadCatalog(query, key));
     }
     return { status: "loading" };
   }
 
   function selectModel(agent: Agent, catalog: Catalog) {
-    if (catalog.status !== "ready") return null;
+    // Until the catalog lands there are no models, which is what the picker resolves with too.
+    const entries = catalog.status === "ready" ? catalog.entries : null;
     return resolveAgentModelSelection({
       models: filterSelectableModels(
-        resolveProviderSnapshotEntry(catalog.entries ?? undefined, agent.provider)?.models ?? null,
+        resolveProviderSnapshotEntry(entries ?? undefined, agent.provider)?.models ?? null,
       ),
       runtimeModelId: agent.runtimeInfo?.model ?? null,
       configuredModelId: agent.model,
@@ -145,8 +150,6 @@ export function createAgentComposer(
       prompt: draft?.text ?? "",
       attachments: draft?.attachments ?? NO_ATTACHMENTS,
       provider: agent?.provider ?? null,
-      // Null until the catalog lands, so a read never changes from the configured id to the
-      // catalog's canonical one.
       model: selection?.activeModelId ?? null,
       mode: agent?.currentModeId ?? null,
       thinking: selection?.selectedThinkingId ?? null,
@@ -184,7 +187,11 @@ export function createAgentComposer(
       const stops = [
         useSessionStore.subscribe(notify),
         useDraftStore.subscribe(notify),
-        deps.queryClient.getQueryCache().subscribe(notify),
+        // Only a query's update changes the catalog. A query another component creates while it
+        // renders is announced too, and a subscriber that updates then makes React warn.
+        deps.queryClient.getQueryCache().subscribe((event) => {
+          if (event.type === "updated") notify();
+        }),
       ];
       return () => {
         listeners.delete(listener);
@@ -198,14 +205,14 @@ export function createAgentComposer(
       };
     },
     setPrompt(text) {
-      if (mounted) mounted.setText(text);
-      else useDraftStore.getState().editDraftText({ draftKey, text });
+      if (mounted?.isLive()) mounted.setText(text);
+      else useDraftStore.getState().replaceDraftText({ draftKey, text });
     },
     insertText(text) {
-      if (mounted) mounted.insertText(text);
+      if (mounted?.isLive()) mounted.insertText(text);
       else {
         const current = useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
-        useDraftStore.getState().editDraftText({ draftKey, text: current + text });
+        useDraftStore.getState().replaceDraftText({ draftKey, text: current + text });
       }
     },
     changeAttachments(updater) {

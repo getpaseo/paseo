@@ -679,10 +679,16 @@ implementations provide it:
   without a mounted tab: the prompt and attachments are the agent's draft in the draft store, the
   settings are the session store's agent, and `model` and `thinking` resolve through the provider
   catalog with `resolveAgentModelSelection`, the picker's own function, so a read equals what the
-  picker shows. The model loads the catalog itself and reads `null` meanwhile. The mounted
-  `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor;
-  without it the model edits the stored prompt. The daemon is the authority for `setModel` and
-  `setThinking`.
+  picker shows. The model loads the catalog itself and resolves with no models until it lands, as the picker does,
+  so a read never differs from what the picker shows. The mounted
+  `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor.
+  Without a live input the model writes the stored prompt with `replaceDraftText`, which also asks
+  a mounted input to show it. A workspace the user left stays mounted, display none, with no
+  input ref: `ComposerInput.isLive()` is how the model tells. Closing a root agent's tab archives
+  it, so a running agent with no mounted composer at all only exists as a subagent whose tab was
+  closed. The daemon is the authority for `setModel` and `setThinking`, and validates a thinking
+  option against the model the agent runs: the runtime model when the catalog lists it, else the
+  configured one.
 - A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
@@ -692,8 +698,14 @@ implementations and `toPluginComposer`; never branch on `context` in the host.
 
 `useComposers` and `composers()` reach an agent's model by reference (`plugins/composer-items/source.ts`):
 `PluginInstallationProvider` provides the plugin's source to every surface, and
-`createPluginCapabilities` puts `composers` on every command context. `{ focused: true }` resolves
-from the last viewed workspace on the plugin's host and its layout's focused tab.
+`createPluginCapabilities` puts `composers` on every command context. `{ focused: true }` is the
+agent Command Center registration hands to agent items, published through `plugins/focused-agent.ts`
+(null outside a workspace route). The source reads that module, not the navigation or layout
+stores, so the plugin runtime does not import them. The remembered workspace selection is
+navigation restore state and is not the focused agent. The query-cache subscriptions react to
+`updated` events only: a `useQuery` in another component's render announces `added`, and a
+subscriber that updates then triggers React's "update a component while rendering a different one"
+warning.
 
 Plugin `Toggle`, `Select` and `Action`, the thinking select and provider option controls all
 render through `ComposerControl` (`packages/app/src/composer/agent-controls/composer-control.tsx`),

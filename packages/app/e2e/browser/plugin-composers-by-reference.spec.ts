@@ -2,7 +2,7 @@ import { test } from "../support/fixtures";
 import {
   CHECKLIST,
   withComposerToolsExample,
-  withPluginWritingToAnotherAgent,
+  withPluginWritingToAnotherWorkspace,
 } from "../support/helpers/plugin-composers-by-reference";
 
 test("a panel in the Explorer inserts at the cursor of the focused agent's composer", async ({
@@ -39,12 +39,15 @@ test("the panel follows which agent is focused", async ({ page }) => {
   });
 });
 
-test("a plugin writes to another agent's composer before its tab is opened", async ({ page }) => {
+test("a plugin writes to an agent's composer while its workspace is not on screen", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
-  await withPluginWritingToAnotherAgent(page, async (author) => {
-    await author.openTheOtherAgent();
-    await author.insertFromCommandCenter();
+  await withPluginWritingToAnotherWorkspace(page, async (author) => {
     await author.openTargetAgent();
+    await author.goToAnotherWorkspace();
+    await author.insertFromCommandCenter();
+    await author.returnToTargetWorkspace();
     await author.expectComposerText("A note from a plugin");
   });
 });

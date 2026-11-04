@@ -1704,19 +1704,19 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-| 选择器              | 结果                                                                                                                              |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `{ agentId }`       | 此主机上该 Agent 的 composer。Agent 未知或已归档时为空。                                                                          |
-| `{ focused: true }` | 你在此主机上最近查看的工作区中，标签页处于聚焦状态的 Agent 的 composer。聚焦的标签页不是 Agent 时为空，并随用户切换标签页而变化。 |
+| 选择器              | 结果                                                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | 此主机上该 Agent 的 composer。Agent 未知或已归档时为空。                                                                                                                                             |
+| `{ focused: true }` | Command Center 交给 Agent 项的那个 Agent 的 composer：屏幕上工作区中聚焦的 Agent 标签页。当前界面不是工作区（例如插件界面或新建工作区），或聚焦的标签页不是 Agent 时为空，并随用户切换标签页而变化。 |
 
 结果始终是数组，为空或只含一个 composer，所以同一段代码可以读取任一选择器。composer 变化时 `useComposers` 会重新渲染。`composers()` 返回的 composer 是调用时的状态，要获取下一个状态请再次调用 `composers()`。
 
 命令与 [`useComposer()`](#composer-items) 相同，从外部访问时有以下差异：
 
-- Agent 的标签页打开时，`insertText` 在光标处插入。标签页关闭时，它会追加到该 Agent 已保存的提示词，标签页打开时文本就在那里。
+- Agent 的 composer 在屏幕上时，`insertText` 在光标处插入。不在屏幕上时（例如用户在另一个工作区），它会追加到该 Agent 已保存的提示词，用户回来时文本就在输入框里。`setPrompt` 以同样的方式替换已保存的提示词。
 - 运行中 Agent 的 composer 从不锁定。
 - `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
-- 对于 Provider 未列出的值，`setModel` 和 `setThinking` 会以 daemon 的消息拒绝。在 Provider 的模型目录加载完成之前，`model` 和 `thinking` 读取为 `null`，之后是模型选择器显示的值。请传入目录中列出的 id。
+- 对于 Provider 未列出的值，`setModel` 和 `setThinking` 会以 daemon 的消息拒绝。请传入 Provider 目录中列出的 id。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
 - 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
 
 ## 新建工作区项 {#new-workspace-items}

@@ -154,6 +154,20 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
+  // Text another module put in the draft (a plugin writing to a composer that is not on screen)
+  // reaches the input the way a rewind restore does.
+  const replacementRequest = useDraftStore(
+    (state) => state.textReplacementRequestByDraftKey[draftKey] ?? 0,
+  );
+  const shownReplacementRequestRef = useRef({ draftKey, request: replacementRequest });
+  useEffect(() => {
+    const shown = shownReplacementRequestRef.current;
+    if (shown.draftKey === draftKey && shown.request === replacementRequest) return;
+    shownReplacementRequestRef.current = { draftKey, request: replacementRequest };
+    textPublication.cancel();
+    publishTextReplacement("replace", textSource.getSnapshot());
+  }, [draftKey, publishTextReplacement, replacementRequest, textPublication, textSource]);
+
   const editText = useCallback(
     (nextText: string) => {
       if (isWeb) {

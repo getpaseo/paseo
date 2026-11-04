@@ -4,13 +4,8 @@ import { agentComposer } from "@/composer/agent-composer";
 import type { ComposerState } from "@/composer/model";
 import { queryClient } from "@/data/query-client";
 import { useDraftStore } from "@/stores/draft-store";
-import {
-  getLastWorkspaceSelection,
-  subscribeLastWorkspaceSelection,
-} from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { getFocusedAgentId } from "../command-center/context";
+import { getFocusedAgent, subscribeFocusedAgent } from "../focused-agent";
 import type { InstalledPlugin } from "../types";
 import { toPluginComposer } from "./model";
 
@@ -44,13 +39,8 @@ function createSource(plugin: InstalledPlugin): PluginComposersSource {
   }
 
   function focusedAgentId(): string | null {
-    const selection = getLastWorkspaceSelection();
-    if (selection?.serverId !== serverId) return null;
-    const layout =
-      useWorkspaceLayoutStore.getState().layoutByWorkspace[
-        `${selection.serverId}:${selection.workspaceId}`
-      ] ?? null;
-    return getFocusedAgentId(layout);
+    const focused = getFocusedAgent();
+    return focused?.serverId === serverId ? focused.agentId : null;
   }
 
   return {
@@ -58,9 +48,12 @@ function createSource(plugin: InstalledPlugin): PluginComposersSource {
       const stops = [
         useSessionStore.subscribe(listener),
         useDraftStore.subscribe(listener),
-        useWorkspaceLayoutStore.subscribe(listener),
-        subscribeLastWorkspaceSelection(listener),
-        queryClient.getQueryCache().subscribe(listener),
+        subscribeFocusedAgent(listener),
+        // The model catalog arrives as an update. A query another component creates while it
+        // renders is announced too, and a subscriber that updates then makes React warn.
+        queryClient.getQueryCache().subscribe((event) => {
+          if (event.type === "updated") listener();
+        }),
       ];
       return () => {
         for (const stop of stops) stop();

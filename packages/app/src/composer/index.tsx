@@ -1439,6 +1439,7 @@ function ComposerContentImpl({
     () => ({
       locked: isComposerLocked,
       isLocked: () => isComposerLockedRef.current,
+      isLive: () => messageInputRef.current !== null,
       textSource,
       setText: replaceUserInput,
       insertText: insertUserInput,

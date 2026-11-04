@@ -96,10 +96,6 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
   return selection;
 }
 
-export function subscribeLastWorkspaceSelection(listener: () => void): () => void {
-  return lastWorkspaceSelectionStore.subscribe(listener);
-}
-
 export function useLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
   return useSyncExternalStore(
     lastWorkspaceSelectionStore.subscribe,

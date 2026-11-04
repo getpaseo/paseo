@@ -5436,6 +5436,81 @@ test("a running agent rejects a model or thinking option its provider does not l
   expect(manager.getAgent(snapshot.id)?.config.model).toBeUndefined();
 });
 
+test("a thinking option is checked against the model the agent runs, as the picker chooses it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-thinking-runtime-model-"));
+  const provider: ProviderSnapshotEntry = {
+    provider: "codex",
+    status: "ready",
+    enabled: true,
+    models: [
+      {
+        provider: "codex",
+        id: "configured",
+        label: "Configured",
+        isDefault: true,
+        thinkingOptions: [{ id: "configured-only", label: "Configured only" }],
+      },
+      {
+        provider: "codex",
+        id: "runtime",
+        label: "Runtime",
+        thinkingOptions: [{ id: "runtime-only", label: "Runtime only" }],
+      },
+    ],
+    modes: [],
+  };
+  class RuntimeModelSession extends TestAgentSession {
+    constructor(
+      config: AgentSessionConfig,
+      private readonly runtimeModel: string,
+    ) {
+      super(config);
+    }
+    override async getRuntimeInfo() {
+      return { ...(await super.getRuntimeInfo()), model: this.runtimeModel };
+    }
+  }
+  class RuntimeModelClient extends TestAgentClient {
+    constructor(private readonly runtimeModel: string) {
+      super();
+    }
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RuntimeModelSession(config, this.runtimeModel);
+    }
+  }
+  async function agentRunning(runtimeModel: string) {
+    const manager = new AgentManager({
+      clients: { codex: new RuntimeModelClient(runtimeModel) },
+      registry: new AgentStorage(join(workdir, `agents-${runtimeModel}`), logger),
+      validateAgentSelection: async (input) =>
+        validateAgentConfigurationAgainstProvider({ input, provider }),
+      logger,
+      idFactory: () =>
+        `00000000-0000-4000-8000-${runtimeModel === "runtime" ? "000000000137" : "000000000138"}`,
+    });
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "configured" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    return { manager, id: snapshot.id };
+  }
+
+  // The session runs a listed model other than the configured one: its options are the ones shown.
+  const listed = await agentRunning("runtime");
+  await expect(listed.manager.setAgentThinkingOption(listed.id, "configured-only")).rejects.toThrow(
+    "Thinking option 'configured-only' is not available",
+  );
+  await listed.manager.setAgentThinkingOption(listed.id, "runtime-only");
+
+  // The session reports a model the catalog does not list: the picker falls back to the configured one.
+  const unlisted = await agentRunning("unlisted");
+  await unlisted.manager.setAgentThinkingOption(unlisted.id, "configured-only");
+  await expect(
+    unlisted.manager.setAgentThinkingOption(unlisted.id, "runtime-only"),
+  ).rejects.toThrow("Thinking option 'runtime-only' is not available");
+});
+
 test("setAgentThinkingOption adopts the session's effective clamped level", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-thinking-clamp-"));
   class ClampingSession extends TestAgentSession {

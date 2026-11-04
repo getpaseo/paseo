@@ -2026,10 +2026,10 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-| Selector            | Result                                                                                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{ agentId }`       | The composer of that agent on this host. Empty for an agent that is unknown or archived.                                                                                                 |
-| `{ focused: true }` | The composer of the agent whose tab is focused in the workspace you last viewed on this host. Empty when the focused tab is not an agent, and it follows focus as the user changes tabs. |
+| Selector            | Result                                                                                                                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | The composer of that agent on this host. Empty for an agent that is unknown or archived.                                                                                                                                                                                                     |
+| `{ focused: true }` | The composer of the agent the Command Center hands to agent items: the focused agent tab of the workspace on screen. Empty when the screen is not a workspace, such as a plugin screen or New workspace, or when the focused tab is not an agent. It follows focus as the user changes tabs. |
 
 The result is always an array, empty or with one composer, so the same code reads either selector.
 `useComposers` re-renders when a composer changes. A composer from `composers()` is the state at the
@@ -2038,13 +2038,15 @@ call; call `composers()` again for the next state.
 The commands are those of [`useComposer()`](#composer-items), with these differences for a composer
 you reach from outside:
 
-- `insertText` inserts at the cursor while the agent's tab is open. With the tab closed it appends to
-  the agent's saved prompt, and the text is there when the tab opens.
+- `insertText` inserts at the cursor while the agent's composer is on screen. While it is not, for
+  example when the user is in another workspace, it appends to the agent's saved prompt, and the text
+  is in the input when the user returns. `setPrompt` replaces the saved prompt the same way.
 - A running agent's composer is never locked.
 - `setProvider` rejects, as it does inside the agent's own composer.
 - `setModel` and `setThinking` reject, with the daemon's message, for a value the provider does not
-  list. `model` and `thinking` read `null` until the provider's catalog has loaded, then the value
-  the model picker shows. Pass an id the catalog lists.
+  list. Pass an id the provider's catalog lists. `model` and `thinking` read what the model picker
+  shows at that moment: until the provider's catalog loads that is the id the agent reports or was
+  created with, which may be an alias, and once it loads the catalog's own id.
 - Drafts and the New workspace screen are not addressable by reference. Only an item inside one
   reaches its composer, through `useComposer()`.
 

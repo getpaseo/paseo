@@ -52,6 +52,11 @@ interface DraftStoreActions {
     update: (current: DraftInput) => DraftInput;
   }) => void;
   editDraftText: (input: { draftKey: string; text: string }) => void;
+  /**
+   * Sets the text on behalf of something other than the input, which then shows it. Use
+   * `editDraftText` for the input's own edits.
+   */
+  replaceDraftText: (input: { draftKey: string; text: string }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
     draftKey: string;
@@ -71,6 +76,8 @@ interface DraftStoreActions {
 
 interface DraftStoreRuntimeState {
   attachmentFocusRequestByDraftKey: Record<string, number>;
+  /** Counts `replaceDraftText`, so a mounted input knows to show text it did not type. */
+  textReplacementRequestByDraftKey: Record<string, number>;
   /**
    * Kept beside the prompt so a composer that remounts finds it. Not persisted, and not cleared
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
@@ -272,6 +279,7 @@ export const useDraftStore = create<DraftStore>()(
       drafts: {},
       createModalDraft: null,
       attachmentFocusRequestByDraftKey: {},
+      textReplacementRequestByDraftKey: {},
       metadataByDraftKey: {},
 
       getDraftInput: (draftKey) => {
@@ -347,6 +355,16 @@ export const useDraftStore = create<DraftStore>()(
           const next = editDraftRecordText(previous, text, Date.now());
           return next === previous ? state : { drafts: { ...state.drafts, [draftKey]: next } };
         });
+      },
+
+      replaceDraftText: ({ draftKey, text }) => {
+        get().editDraftText({ draftKey, text });
+        set((state) => ({
+          textReplacementRequestByDraftKey: {
+            ...state.textReplacementRequestByDraftKey,
+            [draftKey]: (state.textReplacementRequestByDraftKey[draftKey] ?? 0) + 1,
+          },
+        }));
       },
 
       markDraftLifecycle: ({ draftKey, lifecycle }) => {

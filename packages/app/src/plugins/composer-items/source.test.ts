@@ -1,0 +1,264 @@
+import { defineRpc } from "@getpaseo/plugin";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PluginAgentSnapshot, PluginWorkspaceSnapshot } from "@getpaseo/plugin";
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
+import { QueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { queryClient } from "@/data/query-client";
+import { useDraftStore } from "@/stores/draft-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
+import { buildPluginCommandCenterContributions } from "../command-center/contributions";
+import { publishFocusedAgent } from "../focused-agent";
+import type { InstalledPlugin } from "../types";
+import { pluginComposersSource } from "./source";
+
+const serverId = "host-1";
+
+function plugin(): InstalledPlugin {
+  return {
+    id: "review",
+    serverId,
+    clientBundle: "bundle",
+    lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
+    queryClient: new QueryClient(),
+    paseo: {} as InstalledPlugin["paseo"],
+    invoke: async () => undefined,
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
+    cleanup: () => {},
+    settingsScreens: [],
+    surfaces: [],
+    sidebarItems: { header: [], footer: [] },
+    legacySidebarItems: [],
+    filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
+    workspacePanels: [],
+    commandCenterItems: [],
+    clientSlashCommands: [],
+    attachmentSources: [
+      {
+        id: "issues",
+        title: "Issues",
+        pickerTitle: "Issues",
+        searchPlaceholder: "Search",
+        icon: "Bug",
+        search: defineRpc({
+          name: "issues.search",
+          input: z.object({}),
+          output: z.array(z.object({})),
+        }),
+      },
+    ],
+    themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
+  };
+}
+
+function agent(id: string, archivedAt: Date | null = null): Agent {
+  return {
+    serverId,
+    id,
+    provider: "claude",
+    status: "idle",
+    turn: { phase: "idle", cancellationRequestId: null },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastUserMessageAt: null,
+    lastActivityAt: new Date(),
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: "default",
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo",
+    workspaceId: "workspace-1",
+    model: null,
+    parentAgentId: null,
+    labels: {},
+    archivedAt,
+  };
+}
+
+beforeEach(() => {
+  useDraftStore.setState({ drafts: {}, textReplacementRequestByDraftKey: {} });
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, {} as never);
+  store.setAgents(
+    serverId,
+    new Map([
+      ["agent-1", agent("agent-1")],
+      ["agent-2", agent("agent-2", new Date())],
+    ]),
+  );
+});
+
+afterEach(() => {
+  publishFocusedAgent(null);
+  useSessionStore.getState().clearSession(serverId);
+});
+
+describe("a plugin's composers by reference", () => {
+  it("names a running agent by id, and nothing for an unknown or archived one", () => {
+    const source = pluginComposersSource(plugin());
+    expect(source.resolve({ agentId: "agent-1" })).toHaveLength(1);
+    expect(source.resolve({ agentId: "nope" })).toEqual([]);
+    expect(source.resolve({ agentId: "agent-2" })).toEqual([]);
+  });
+
+  it("follows the agent the Command Center hands out, and is empty when there is none", () => {
+    const source = pluginComposersSource(plugin());
+    let notified = 0;
+    const stop = source.subscribe(() => {
+      notified += 1;
+    });
+    expect(source.resolve({ focused: true })).toEqual([]);
+
+    publishFocusedAgent({ serverId, agentId: "agent-1" });
+    const [focused] = source.resolve({ focused: true });
+    expect(focused?.context).toBe("agent");
+    expect(notified).toBeGreaterThan(0);
+
+    // Leaving the workspace for a plugin screen or New workspace publishes no agent.
+    publishFocusedAgent(null);
+    expect(source.resolve({ focused: true })).toEqual([]);
+
+    // Another host's focused agent is not this plugin's.
+    publishFocusedAgent({ serverId: "host-2", agentId: "agent-1" });
+    expect(source.resolve({ focused: true })).toEqual([]);
+    stop();
+  });
+
+  it("is not told when another component creates a query while it renders", () => {
+    const source = pluginComposersSource(plugin());
+    let notified = 0;
+    const stop = source.subscribe(() => {
+      notified += 1;
+    });
+    // `useQuery` does this during a render, and a subscriber that updates then makes React warn
+    // that one component updated another while rendering.
+    queryClient.getQueryCache().build(queryClient, { queryKey: ["created-during-a-render"] });
+    expect(notified).toBe(0);
+    stop();
+  });
+
+  it("returns the same array until a composer changes", () => {
+    const source = pluginComposersSource(plugin());
+    const first = source.resolve({ agentId: "agent-1" });
+    expect(source.resolve({ agentId: "agent-1" })).toBe(first);
+    first[0]?.insertText("hello");
+    const next = source.resolve({ agentId: "agent-1" });
+    expect(next).not.toBe(first);
+    expect(next[0]?.prompt).toBe("hello");
+  });
+});
+
+describe("a Command Center item reaching an agent's composer by id", () => {
+  const snapshot: PluginAgentSnapshot = {
+    id: "agent-1",
+    workspaceId: "workspace-1",
+    provider: "claude",
+    status: "idle",
+    createdAt: "2026-08-16T10:00:00.000Z",
+    updatedAt: "2026-08-16T10:00:00.000Z",
+    lastActivityAt: "2026-08-16T10:00:00.000Z",
+    title: null,
+    cwd: "/repo",
+    model: null,
+    currentModeId: null,
+    thinkingOptionId: null,
+    requiresAttention: false,
+    attentionReason: null,
+    parentAgentId: null,
+    labels: {},
+    metadata: {},
+  };
+
+  const workspace: PluginWorkspaceSnapshot = {
+    id: "workspace-1",
+    projectId: "project-1",
+    projectDisplayName: "Repo",
+    projectRootPath: "/repo",
+    directory: "/repo",
+    projectKind: "git",
+    kind: "checkout",
+    name: "Repo",
+    title: null,
+    status: "running",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+  };
+
+  function markForReview(rejection?: Error) {
+    const patches: unknown[] = [];
+    const client = {
+      async setAgentMetadata(_agentId: string, patch: unknown) {
+        patches.push(patch);
+        if (rejection) throw rejection;
+      },
+    } as unknown as DaemonClient;
+    useSessionStore.getState().clearSession(serverId);
+    useSessionStore.getState().initializeSession(serverId, client);
+    useSessionStore.getState().setAgents(serverId, new Map([["agent-1", agent("agent-1")]]));
+    const installed = plugin();
+    installed.commandCenterItems = [
+      {
+        id: "mark",
+        title: "Mark for review",
+        icon: "Flag",
+        context: "agent",
+        async onSelect({ agent: handed, composers }) {
+          for (const composer of composers({ agentId: handed.id })) {
+            await composer.setMetadata({ needsReview: true });
+          }
+        },
+      },
+    ];
+    const reported: unknown[] = [];
+    const [item] = buildPluginCommandCenterContributions({
+      plugins: [installed],
+      state: {
+        subscribe: () => () => {},
+        getWorkspace: () => workspace,
+        getAgent: () => snapshot,
+      },
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      navigation: {
+        openSettings() {},
+        openSurface() {},
+        openWorkspacePanel() {},
+        openAgentPanel() {},
+      },
+      reportError: (error) => reported.push(error),
+    });
+    return { run: item?.run, patches, reported };
+  }
+
+  it("changes the agent's metadata through the daemon", async () => {
+    const { run, patches, reported } = markForReview();
+    await run?.();
+    expect(patches).toEqual([{ needsReview: true }]);
+    expect(reported).toEqual([]);
+  });
+
+  it("reports what the daemon rejected", async () => {
+    const { run, reported } = markForReview(new Error("metadata refused"));
+    await run?.();
+    expect(reported).toEqual([new Error("metadata refused")]);
+  });
+});

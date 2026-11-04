@@ -4,10 +4,11 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { openCommandCenter } from "./command-center";
-import { buildAgentRoute, openAgentRoute } from "./mock-agent";
+import { openAgentRoute } from "./mock-agent";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
+import { getServerId } from "./server-id";
 import { createAgentTabFromMenu, ensureExplorerSidebar } from "./workspace-tabs";
 
 const WIDE = { width: 1440, height: 900 };
@@ -125,21 +126,22 @@ export async function withComposerToolsExample(
 }
 
 /**
- * A plugin that names an agent by id from a Command Center item, while another agent is open: the
- * target's tab is not what the plugin acts on.
+ * A plugin that names an agent by id from a Command Center item while the user is in another
+ * workspace: the target's workspace is not on screen, so its composer is not mounted.
  */
-export async function withPluginWritingToAnotherAgent(
+export async function withPluginWritingToAnotherWorkspace(
   page: Page,
   run: (author: {
-    openTheOtherAgent(): Promise<void>;
-    insertFromCommandCenter(): Promise<void>;
     openTargetAgent(): Promise<void>;
+    goToAnotherWorkspace(): Promise<void>;
+    insertFromCommandCenter(): Promise<void>;
+    returnToTargetWorkspace(): Promise<void>;
     expectComposerText(text: string): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedWorkspace({ repoPrefix: "composer-ref-", title: "Composer ref" });
+  const elsewhere = await seedWorkspace({ repoPrefix: "composer-away-", title: "Composer away" });
   const target = await createMockAgent(workspace, "Target agent");
-  const other = await createMockAgent(workspace, "Other agent");
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await client.getDaemonConfig();
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-composer-ref-"));
@@ -162,22 +164,33 @@ export async function withPluginWritingToAnotherAgent(
   return () => {};
 }`,
   );
+  const targetTab = () => page.getByTestId(`workspace-tab-agent_${target.id}`);
+  const workspaceRow = (id: string) =>
+    page.getByTestId(`sidebar-workspace-row-${getServerId()}:${id}`);
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     await page.setViewportSize(WIDE);
     await gotoAppShell(page);
     await run({
-      openTheOtherAgent: () =>
-        test.step("open a different agent", () =>
-          openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: other.id })),
+      openTargetAgent: () =>
+        test.step("open the agent the plugin will write to", async () => {
+          await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: target.id });
+          await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
+        }),
+      goToAnotherWorkspace: () =>
+        test.step("go to another workspace, so the agent's composer is not on screen", async () => {
+          await workspaceRow(elsewhere.workspaceId).click();
+          // The app keeps the workspace it left mounted, out of sight.
+          await expect(targetTab().first()).toBeHidden();
+        }),
       insertFromCommandCenter: () =>
         test.step("run the plugin's Command Center item", () =>
           runCommand(page, "Composer ref: add a note")),
-      openTargetAgent: () =>
-        test.step("open the agent the plugin wrote to", async () => {
-          await page.goto(buildAgentRoute(workspace.workspaceId, target.id));
-          await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
+      returnToTargetWorkspace: () =>
+        test.step("return to the agent's workspace without reloading the app", async () => {
+          await workspaceRow(workspace.workspaceId).click();
+          await expect(targetTab().first()).toBeVisible({ timeout: 30_000 });
         }),
       expectComposerText: (text) =>
         test.step("its composer holds the text", () => expect(prompt(page)).toHaveValue(text)),
@@ -187,6 +200,7 @@ export async function withPluginWritingToAnotherAgent(
     await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
     await client.close();
     await rm(directory, { recursive: true, force: true });
+    await elsewhere.cleanup();
     await workspace.cleanup();
   }
 }

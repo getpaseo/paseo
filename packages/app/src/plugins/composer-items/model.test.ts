@@ -96,6 +96,7 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
   const input: ComposerInput = {
     locked,
     isLocked: () => locked,
+    isLive: () => true,
     textSource: { getSnapshot: () => state.text, subscribe: () => () => {} },
     setText: (text) => {
       state.text = text;

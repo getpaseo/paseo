@@ -1135,6 +1135,7 @@ export const AgentControls = memo(function AgentControls({
     () =>
       composerInput
         ? composer.attachInput({
+            isLive: composerInput.isLive,
             setText: composerInput.setText,
             insertText: composerInput.insertText,
           })

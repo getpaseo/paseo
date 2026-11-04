@@ -129,7 +129,7 @@ function composer() {
 }
 
 beforeEach(() => {
-  useDraftStore.setState({ drafts: {} });
+  useDraftStore.setState({ drafts: {}, textReplacementRequestByDraftKey: {} });
 });
 
 afterEach(() => {
@@ -137,6 +137,31 @@ afterEach(() => {
 });
 
 describe("agent composer", () => {
+  it("reads without notifying anyone, so a read during a render updates no other component", () => {
+    const running = agent();
+    const other = agent({ id: "agent-2", cwd: "/other-repo" });
+    openSession(running);
+    useSessionStore.getState().setAgents(
+      serverId,
+      new Map([
+        [running.id, running],
+        [other.id, other],
+      ]),
+    );
+    const queryClient = new QueryClient();
+    const watched = createAgentComposer(serverId, running.id, { queryClient });
+    const reader = createAgentComposer(serverId, other.id, { queryClient });
+    let notifications = 0;
+    const stop = watched.subscribe(() => {
+      notifications += 1;
+    });
+    const before = notifications;
+    // The first read of another catalog creates its query in the shared cache.
+    reader.getState();
+    expect(notifications).toBe(before);
+    stop();
+  });
+
   it("keeps the prompt in the stored draft while no composer is mounted", () => {
     openSession(agent());
     const model = composer();
@@ -153,6 +178,7 @@ describe("agent composer", () => {
     const model = composer();
     const mounted: string[] = [];
     const detach = model.attachInput({
+      isLive: () => true,
       setText: (text) => mounted.push(`set:${text}`),
       insertText: (text) => mounted.push(`insert:${text}`),
     });
@@ -163,6 +189,24 @@ describe("agent composer", () => {
     detach();
     model.insertText("stored");
     expect(model.getState().prompt).toBe("stored");
+  });
+
+  it("stores the prompt and asks the draft's input to show it while the composer is mounted off screen", () => {
+    openSession(agent());
+    const model = composer();
+    const mounted: string[] = [];
+    model.attachInput({
+      isLive: () => false,
+      setText: (text) => mounted.push(`set:${text}`),
+      insertText: (text) => mounted.push(`insert:${text}`),
+    });
+    model.insertText("while away");
+    expect(mounted).toEqual([]);
+    expect(model.getState().prompt).toBe("while away");
+    expect(useDraftStore.getState().textReplacementRequestByDraftKey[draftKey]).toBe(1);
+    model.setPrompt("replaced");
+    expect(model.getState().prompt).toBe("replaced");
+    expect(useDraftStore.getState().textReplacementRequestByDraftKey[draftKey]).toBe(2);
   });
 
   it("notifies subscribers of a stored prompt and returns the same state until something changes", () => {
@@ -237,31 +281,40 @@ describe("agent composer", () => {
     );
   });
 
+  function pickerShows(running: Agent, catalog: ProviderSnapshotEntry[] | null) {
+    const picker = resolveAgentModelSelection({
+      models: filterSelectableModels(catalog?.[0]?.models ?? null),
+      runtimeModelId: running.runtimeInfo?.model ?? null,
+      configuredModelId: running.model,
+      runtimeThinkingOptionId: running.runtimeInfo?.thinkingOptionId ?? null,
+      explicitThinkingOptionId: running.thinkingOptionId,
+    });
+    return { model: picker.activeModelId, thinking: picker.selectedThinkingId };
+  }
+
   it.each([
-    ["an alias of a listed model", { runtimeInfo: { model: "sonnet" } }, "claude-sonnet-4", "low"],
-    ["no reported model", { model: null }, "opus", "high"],
-    ["the configured model", { model: "opus", thinkingOptionId: "low" }, "opus", "low"],
+    [
+      "an alias of a listed model",
+      { runtimeInfo: { model: "sonnet" } },
+      "sonnet",
+      "claude-sonnet-4",
+      "low",
+    ],
+    ["no reported model", { model: null }, null, "opus", "high"],
+    ["the configured model", { model: "opus", thinkingOptionId: "low" }, "opus", "opus", "low"],
   ] as const)(
-    "reads the model and thinking the picker shows for %s, once the catalog loads",
-    async (_name, overrides, expectedModel, expectedThinking) => {
+    "shows what the picker shows for %s, before the catalog and after it loads",
+    async (_name, overrides, modelBefore, modelAfter, thinkingAfter) => {
       const running = agent(overrides as unknown as Partial<Agent>);
       openSession(running);
       const model = composer();
-      expect(model.getState()).toMatchObject({ model: null, thinking: null });
+      // No catalog yet: the picker resolves with no models.
+      expect(model.getState()).toMatchObject(pickerShows(running, null));
+      expect(model.getState().model).toBe(modelBefore);
       const stop = model.subscribe(() => {});
-      await until(() => model.getState().model, expectedModel);
-      const picker = resolveAgentModelSelection({
-        models: filterSelectableModels(entries[0]?.models ?? null),
-        runtimeModelId: running.runtimeInfo?.model ?? null,
-        configuredModelId: running.model,
-        runtimeThinkingOptionId: running.runtimeInfo?.thinkingOptionId ?? null,
-        explicitThinkingOptionId: running.thinkingOptionId,
-      });
-      expect(model.getState()).toMatchObject({
-        model: picker.activeModelId,
-        thinking: picker.selectedThinkingId,
-      });
-      expect(model.getState().thinking).toBe(expectedThinking);
+      await until(() => model.getState().model, modelAfter);
+      expect(model.getState()).toMatchObject(pickerShows(running, entries));
+      expect(model.getState().thinking).toBe(thinkingAfter);
       stop();
     },
   );

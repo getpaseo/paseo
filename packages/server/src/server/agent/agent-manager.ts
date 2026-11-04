@@ -2302,6 +2302,35 @@ export class AgentManager {
     if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join("; "));
   }
 
+  /**
+   * Checks the option against the model the agent runs, chosen as the model picker chooses it: the
+   * model the session reports when the provider lists it, otherwise the configured model, otherwise
+   * the provider's default.
+   */
+  private async assertThinkingOptionListed(
+    agent: ActiveManagedAgent,
+    thinkingOptionId: string,
+  ): Promise<void> {
+    const reported = agent.runtimeInfo?.model;
+    const candidates = [reported, agent.config.model].filter(
+      (model): model is string => typeof model === "string" && model.length > 0,
+    );
+    for (const model of candidates) {
+      const issues =
+        (await this.validateAgentSelection?.({
+          provider: agent.provider,
+          model,
+          thinkingOptionId,
+        })) ?? [];
+      const modelListed = !issues.some((issue) => issue.path[0] === "model");
+      if (modelListed) {
+        if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join("; "));
+        return;
+      }
+    }
+    await this.assertSelectionListed({ provider: agent.provider, thinkingOptionId });
+  }
+
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
     const agent = await this.ensureInteractiveSession(agentId);
     const normalizedModelId =
@@ -2337,11 +2366,7 @@ export class AgentManager {
         ? thinkingOptionId
         : null;
     if (normalizedThinkingOptionId) {
-      await this.assertSelectionListed({
-        provider: agent.provider,
-        model: agent.config.model,
-        thinkingOptionId: normalizedThinkingOptionId,
-      });
+      await this.assertThinkingOptionListed(agent, normalizedThinkingOptionId);
     }
 
     let notice: AgentProviderNotice | null = null;
