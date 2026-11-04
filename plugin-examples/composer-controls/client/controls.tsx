@@ -10,7 +10,7 @@ const CONTEXT_OPTIONS = [
 ] as const;
 
 const CONTEXT_KEY = "composer-controls.contextLength";
-const REVIEW_KEY = "composer-controls.needsReview";
+export const REVIEW_KEY = "composer-controls.needsReview";
 
 /** Reads and writes agent metadata, so the choice is saved with the agent. */
 export function ContextLength() {

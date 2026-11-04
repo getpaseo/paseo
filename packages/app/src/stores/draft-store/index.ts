@@ -38,6 +38,7 @@ import { createDraftPersistStorage } from "./persistence";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
+import { hasDraftContent } from "@/composer/draft/input-draft-core";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -45,6 +46,11 @@ interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
   hydrateDraftInput: (input: { draftKey: string }) => Promise<DraftInput | undefined>;
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
+  /** Saves what `update` makes of the current input; an emptied input abandons the draft. */
+  updateDraftInput: (input: {
+    draftKey: string;
+    update: (current: DraftInput) => DraftInput;
+  }) => void;
   editDraftText: (input: { draftKey: string; text: string }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
@@ -327,6 +333,12 @@ export const useDraftStore = create<DraftStore>()(
           };
         });
         scheduleAttachmentGc();
+      },
+
+      updateDraftInput: ({ draftKey, update }) => {
+        const next = update(get().getDraftInput(draftKey) ?? { text: "", attachments: [] });
+        if (hasDraftContent(next)) get().saveDraftInput({ draftKey, draft: next });
+        else get().clearDraftInput({ draftKey, lifecycle: "abandoned" });
       },
 
       editDraftText: ({ draftKey, text }) => {

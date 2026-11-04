@@ -1,6 +1,11 @@
 import { PluginTranslationProvider, usePluginTranslationRuntime } from "./translations.js";
 import { useCallback, type ReactNode } from "react";
-import { PluginComposerProvider, usePluginComposerValue } from "./composer.js";
+import {
+  PluginComposerProvider,
+  PluginComposersProvider,
+  usePluginComposerValue,
+  usePluginComposersSource,
+} from "./composer.js";
 import { PluginClientStateProvider, usePluginClientStateSource } from "./client-state.js";
 import { PaseoApiProvider, usePaseoContextValue } from "./paseo-context.js";
 import { PluginRpcProvider, usePluginRpcContextValue } from "./rpc-context.js";
@@ -14,6 +19,7 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
   const rpc = usePluginRpcContextValue();
   const state = usePluginClientStateSource();
   const composer = usePluginComposerValue();
+  const composers = usePluginComposersSource();
 
   if (!paseo || !rpc) {
     throw new Error("Plugin UI must run inside a contributed plugin surface");
@@ -26,10 +32,15 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
       ) : (
         children
       );
-      const content = composer ? (
-        <PluginComposerProvider composer={composer}>{withState}</PluginComposerProvider>
+      const withComposers = composers ? (
+        <PluginComposersProvider source={composers}>{withState}</PluginComposersProvider>
       ) : (
         withState
+      );
+      const content = composer ? (
+        <PluginComposerProvider composer={composer}>{withComposers}</PluginComposerProvider>
+      ) : (
+        withComposers
       );
       return (
         <PaseoApiProvider paseo={paseo}>
@@ -39,6 +50,6 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
         </PaseoApiProvider>
       );
     },
-    [composer, paseo, rpc, state, translations],
+    [composer, composers, paseo, rpc, state, translations],
   );
 }

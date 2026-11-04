@@ -20,6 +20,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { validateAgentConfigurationAgainstProvider } from "./agent-configuration-validator.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
@@ -54,6 +55,7 @@ import type {
   AgentTimelineItem,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
+  ProviderSnapshotEntry,
   ResolveAgentDefaultModeInput,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
@@ -5387,6 +5389,51 @@ test("later explicit config mutations win over events emitted by earlier mutatio
   await manager.flush();
 
   expect(manager.getAgent(snapshot.id)?.config.thinkingOptionId).toBe("high");
+});
+
+test("a running agent rejects a model or thinking option its provider does not list", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-selection-validation-"));
+  const provider: ProviderSnapshotEntry = {
+    provider: "codex",
+    status: "ready",
+    enabled: true,
+    models: [
+      {
+        provider: "codex",
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+        isDefault: true,
+        thinkingOptions: [{ id: "low", label: "Low" }],
+      },
+    ],
+    modes: [],
+  };
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    validateAgentSelection: async (input) =>
+      validateAgentConfigurationAgainstProvider({ input, provider }),
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.4" },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await expect(manager.setAgentModel(snapshot.id, "nope")).rejects.toThrow(
+    "Model 'nope' is not available for provider 'codex'",
+  );
+  await expect(manager.setAgentThinkingOption(snapshot.id, "extreme")).rejects.toThrow(
+    "Thinking option 'extreme' is not available for provider 'codex'",
+  );
+  expect(manager.getAgent(snapshot.id)?.config.model).toBe("gpt-5.4");
+
+  await manager.setAgentThinkingOption(snapshot.id, "low");
+  await manager.setAgentModel(snapshot.id, null);
+  expect(manager.getAgent(snapshot.id)?.config.thinkingOptionId).toBe("low");
+  expect(manager.getAgent(snapshot.id)?.config.model).toBeUndefined();
 });
 
 test("setAgentThinkingOption adopts the session's effective clamped level", async () => {

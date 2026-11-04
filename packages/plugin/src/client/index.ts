@@ -71,12 +71,13 @@ export {
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
-export { useComposer } from "./composer.js";
+export { useComposer, useComposers } from "./composer.js";
 export type {
   PluginComposer,
   PluginComposerAttachment,
   PluginComposerItemContribution,
   PluginComposerItemProps,
+  PluginComposerSelector,
 } from "./composer.js";
 export { useNewWorkspace } from "./new-workspace.js";
 export type {

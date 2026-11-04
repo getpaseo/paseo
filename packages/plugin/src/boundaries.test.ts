@@ -250,6 +250,51 @@ describe("plugin composer SDK boundary", () => {
   });
 });
 
+describe("plugin composers by reference SDK boundary", () => {
+  it("reaches a running agent's composer from any component and from every command context", () => {
+    expect(
+      typeErrors(`
+      import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+      function Button() {
+        const [focused] = useComposers({ focused: true });
+        const byId = useComposers({ agentId: "agent-1" });
+        if (!focused) return null;
+        const first: string = byId[0]?.prompt ?? "";
+        focused.insertText("text");
+        focused.setMetadata({ flag: true });
+        // @ts-expect-error a selector names an agent or the focused agent
+        useComposers({ active: true });
+        // @ts-expect-error focused is true or absent
+        useComposers({ focused: false });
+        return null;
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addWorkspacePanel({ id: "panel", title: "P", icon: "File", context: "workspace", Component: Button });
+        client.addCommandCenterItem({
+          id: "mark",
+          title: "Mark",
+          icon: "Flag",
+          context: "agent",
+          async onSelect(context) {
+            for (const composer of context.composers({ agentId: context.agent.id })) {
+              await composer.setMetadata({ review: true });
+            }
+          },
+        });
+        client.addCommandCenterItem({
+          id: "global",
+          title: "Global",
+          icon: "Flag",
+          context: "global",
+          onSelect: ({ composers }) => composers({ focused: true })[0]?.insertText("x"),
+        });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
 describe("plugin New workspace SDK boundary", () => {
   it("lets a New workspace item read the setup and change it through typed commands and a Combobox", () => {
     expect(

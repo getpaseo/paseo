@@ -12,7 +12,6 @@ import {
 import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
 import {
   buildDraftAgentControls,
-  hasDraftContent,
   resolveDraftKey,
   type DraftKeyInput,
 } from "@/composer/draft/input-draft-core";
@@ -23,7 +22,7 @@ import {
   resolveEffectiveComposerThinkingOptionId,
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
-import { useDraftStore } from "@/stores/draft-store";
+import { useDraftStore, type DraftInput } from "@/stores/draft-store";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
@@ -142,21 +141,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
 
   const saveDraft = useCallback(
-    (
-      update: (draft: { text: string; attachments: UserComposerAttachment[] }) => {
-        text: string;
-        attachments: UserComposerAttachment[];
-      },
-    ) => {
-      const store = useDraftStore.getState();
-      const current = store.getDraftInput(draftKey) ?? { text: "", attachments: [] };
-      const next = update(current);
-      if (!hasDraftContent(next)) {
-        store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
-        return;
-      }
-      store.saveDraftInput({ draftKey, draft: next });
-    },
+    (update: (draft: DraftInput) => DraftInput) =>
+      useDraftStore.getState().updateDraftInput({ draftKey, update }),
     [draftKey],
   );
 

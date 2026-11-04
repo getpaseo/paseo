@@ -63,7 +63,7 @@ export function useFetchQueries<TData>(
   return useQueries({ queries: inputs.map((input) => fetchQueryOptions(input)) });
 }
 
-function replicaQueryOptions<
+export function replicaQueryOptions<
   TQueryFnData,
   TError = Error,
   TData = TQueryFnData,

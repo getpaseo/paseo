@@ -21,7 +21,6 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { isUnlistedModel } from "@/provider-selection/resolve-agent-form";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -45,6 +44,7 @@ import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manife
 import {
   getAgentControlHintKey,
   resolveAgentModelSelection,
+  resolveProviderSnapshotEntry,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
@@ -74,7 +74,10 @@ import { useAgentControlItems } from "@/composer/agent-controls/control-items";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
 import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
 import { draftComposerAgent } from "@/composer/draft/composer-agent";
-import { ComposerAgentProvider, type ComposerAgent } from "@/composer/session";
+import { agentComposer } from "@/composer/agent-composer";
+import { composerModelFromHalves } from "@/composer/halves-model";
+import { ComposerModelProvider } from "@/composer/model";
+import { ComposerAgentProvider, useComposerInput } from "@/composer/session";
 import { PluginComposerItems, usePluginComposerItemCount } from "@/plugins/composer-items";
 import {
   useAgentProfileEditor,
@@ -94,8 +97,6 @@ interface AgentControlOption {
 
 const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 const EMPTY_OPTIONS: ProviderOptions = {};
-const EMPTY_METADATA: Record<string, JsonValue> = {};
-const neverLocked = () => false;
 
 interface ControlledAgentControlsProps {
   provider: string;
@@ -375,18 +376,8 @@ function selectAgentControlsSlice(
   };
 }
 
-function resolveSnapshotSelectedEntry(
-  snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"],
-  agentProvider: string | undefined,
-) {
-  if (!snapshotEntries || !agentProvider) {
-    return null;
-  }
-  return snapshotEntries.find((e) => e.provider === agentProvider) ?? null;
-}
-
 function resolveSnapshotModeIds(
-  entry: ReturnType<typeof resolveSnapshotSelectedEntry>,
+  entry: ReturnType<typeof resolveProviderSnapshotEntry>,
 ): string[] | null {
   if (entry?.status !== "ready" || !entry.modes) {
     return null;
@@ -982,7 +973,7 @@ export const AgentControls = memo(function AgentControls({
   } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
 
   const snapshotSelectedEntry = useMemo(
-    () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),
+    () => resolveProviderSnapshotEntry(snapshotEntries, agent?.provider),
     [snapshotEntries, agent?.provider],
   );
 
@@ -1136,45 +1127,20 @@ export const AgentControls = memo(function AgentControls({
 
   const agentOptionControls = useAgentOptionControls(agent, handleSetOption);
 
-  const composerAgent = useMemo<ComposerAgent | null>(() => {
-    if (!agent || !client) return null;
-    return {
-      context: "agent",
-      locked: false,
-      isLocked: neverLocked,
-      provider: agent.provider,
-      model: activeModelId,
-      mode: modeControl?.selectedModeId ?? null,
-      thinking: modelSelection.selectedThinkingId,
-      options: agent.options ?? EMPTY_OPTIONS,
-      metadata: agent.metadata ?? EMPTY_METADATA,
-      setProvider: () => Promise.reject(new Error("A running agent cannot change provider.")),
-      setModel: async (modelId) => {
-        if (isUnlistedModel(models, modelId)) throw new Error(`Unknown model: ${modelId}`);
-        await client.setAgentModel(agentId, modelId);
-      },
-      setMode: async (modeId) => {
-        await client.setAgentMode(agentId, modeId);
-      },
-      setThinking: async (thinkingOptionId) => {
-        await client.setAgentThinkingOption(agentId, thinkingOptionId);
-      },
-      setOptions: async (patch) => {
-        await client.setAgentOptions(agentId, patch);
-      },
-      setMetadata: async (patch) => {
-        await client.setAgentMetadata(agentId, patch);
-      },
-    };
-  }, [
-    activeModelId,
-    agent,
-    agentId,
-    client,
-    modeControl?.selectedModeId,
-    modelSelection.selectedThinkingId,
-    models,
-  ]);
+  // The agent's composer exists apart from this component; while this is mounted, prompt
+  // commands go through the input the user is typing in.
+  const composer = useMemo(() => agentComposer(serverId, agentId), [agentId, serverId]);
+  const composerInput = useComposerInput();
+  useEffect(
+    () =>
+      composerInput
+        ? composer.attachInput({
+            setText: composerInput.setText,
+            insertText: composerInput.insertText,
+          })
+        : undefined,
+    [composer, composerInput],
+  );
 
   const commandCenterControls = useMemo<AgentControlCommandCenterSource>(
     () => ({
@@ -1237,7 +1203,7 @@ export const AgentControls = memo(function AgentControls({
   }
 
   return (
-    <ComposerAgentProvider value={composerAgent}>
+    <ComposerModelProvider value={composer}>
       {commandCenterRegistration}
       {profileEditor.element}
       <ControlledAgentControls
@@ -1265,7 +1231,7 @@ export const AgentControls = memo(function AgentControls({
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
       />
-    </ComposerAgentProvider>
+    </ComposerModelProvider>
   );
 });
 
@@ -1399,35 +1365,46 @@ export function DraftAgentControls({
     ],
   );
 
+  const composerInput = useComposerInput();
+  const composerModel = useMemo(
+    () =>
+      composerInput
+        ? composerModelFromHalves({ agent: composerAgent, input: composerInput })
+        : null,
+    [composerAgent, composerInput],
+  );
+
   return (
     <ComposerAgentProvider value={composerAgent}>
-      {profileEditor.element}
-      <ControlledAgentControls
-        provider={selectedProvider ?? ""}
-        modelSelectorProviders={modelSelectorProviders}
-        modelOptions={modelOptions}
-        selectedModelId={selectedModel}
-        onSelectModel={onSelectModel}
-        onSelectProviderAndModel={onSelectProviderAndModel}
-        isModelLoading={isAllModelsLoading}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
-        thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-        selectedThinkingOptionId={effectiveSelectedThinkingOption}
-        onSelectThinkingOption={onSelectThinkingOption}
-        optionControls={optionControls}
-        onDropdownClose={onDropdownClose}
-        onModelSelectorOpen={onModelSelectorOpen}
-        onRetryModelProvider={onRetryModelProvider}
-        isRetryingModelProvider={isRetryingModelProvider}
-        disabled={disabled}
-        modeControl={modeControl}
-        modelSelectorServerId={modelSelectorServerId}
-        isCompactLayout={isCompactLayout}
-      />
+      <ComposerModelProvider value={composerModel}>
+        {profileEditor.element}
+        <ControlledAgentControls
+          provider={selectedProvider ?? ""}
+          modelSelectorProviders={modelSelectorProviders}
+          modelOptions={modelOptions}
+          selectedModelId={selectedModel}
+          onSelectModel={onSelectModel}
+          onSelectProviderAndModel={onSelectProviderAndModel}
+          isModelLoading={isAllModelsLoading}
+          agentProfiles={agentProfiles}
+          onApplyAgentProfile={agentProfiles?.applyProfile}
+          onEditAgentProfiles={handleEditAgentProfiles}
+          onCreateAgentProfile={profileActions.create}
+          onEditAgentProfile={profileActions.edit}
+          thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
+          selectedThinkingOptionId={effectiveSelectedThinkingOption}
+          onSelectThinkingOption={onSelectThinkingOption}
+          optionControls={optionControls}
+          onDropdownClose={onDropdownClose}
+          onModelSelectorOpen={onModelSelectorOpen}
+          onRetryModelProvider={onRetryModelProvider}
+          isRetryingModelProvider={isRetryingModelProvider}
+          disabled={disabled}
+          modeControl={modeControl}
+          modelSelectorServerId={modelSelectorServerId}
+          isCompactLayout={isCompactLayout}
+        />
+      </ComposerModelProvider>
     </ComposerAgentProvider>
   );
 }

@@ -1,4 +1,10 @@
-import { createContext, useContext, type ComponentType, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginAttachmentItem } from "../attachments.js";
 import type { PluginHostProps } from "./contracts.js";
@@ -75,4 +81,49 @@ export function useComposer(): PluginComposer {
   const composer = usePluginComposerValue();
   if (!composer) throw new Error("useComposer must run inside a composer item");
   return composer;
+}
+
+/**
+ * Names the running agent whose composer a plugin wants. Both forms resolve to the same
+ * `PluginComposer` an item of that agent's composer gets from `useComposer()`.
+ */
+export type PluginComposerSelector = { agentId: string } | { focused: true };
+
+/** What `useComposers` and `composers(selector)` read. Paseo implements it per installed plugin. */
+export interface PluginComposersSource {
+  subscribe(listener: () => void): () => void;
+  /** The composers `selector` names now: one for a known running agent, none otherwise. */
+  resolve(selector: PluginComposerSelector): readonly PluginComposer[];
+}
+
+const PluginComposersContext = createContext<PluginComposersSource | null>(null);
+
+export function PluginComposersProvider({
+  source,
+  children,
+}: {
+  source: PluginComposersSource;
+  children: ReactNode;
+}) {
+  return (
+    <PluginComposersContext.Provider value={source}>{children}</PluginComposersContext.Provider>
+  );
+}
+
+export function usePluginComposersSource(): PluginComposersSource | null {
+  return useContext(PluginComposersContext);
+}
+
+/**
+ * The composers `selector` names, whether or not their tabs are open. Runs in any plugin
+ * component. Empty for an unknown agent, or for `{ focused: true }` when no agent is focused.
+ */
+export function useComposers(selector: PluginComposerSelector): readonly PluginComposer[] {
+  const source = useContext(PluginComposersContext);
+  if (!source) throw new Error("useComposers must run inside a plugin component");
+  return useSyncExternalStore(
+    source.subscribe,
+    () => source.resolve(selector),
+    () => source.resolve(selector),
+  );
 }

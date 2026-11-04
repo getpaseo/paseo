@@ -670,12 +670,30 @@ work inside it. See the maintained [composer pill example](../plugin-examples/lo
 `addComposerItem` mounts a plugin component in the agent, draft and New workspace composers. The
 public contract is the [composer items reference](../public-docs/plugins/reference.md#composer-items).
 
-The composer is two contexts, provided by two owners (`packages/app/src/composer/session.tsx`).
-`Composer` provides `ComposerInput` (prompt and attachments). `AgentControls` and
-`DraftAgentControls` provide `ComposerAgent` (provider, model, mode, thinking, options, metadata and
-their commands). `toPluginComposer` (`packages/app/src/plugins/composer-items/`) joins them into the
-`PluginComposer` an item reads, so a plugin cannot tell which composer a command reaches. Add a
-capability to `ComposerAgent` and both implementations; never branch on `context` in the model.
+A plugin reads one `ComposerModel` (`packages/app/src/composer/model.ts`): state, subscribe and
+commands. `toPluginComposer` (`packages/app/src/plugins/composer-items/`) turns its state into the
+`PluginComposer` an item reads, and the host never learns which kind of composer it got. Two
+implementations provide it:
+
+- A running agent's `agentComposer(serverId, agentId)` (`composer/agent-composer/`). It exists
+  without a mounted tab: the prompt and attachments are the agent's draft in the draft store, the
+  settings are the session store's agent, and `model` and `thinking` resolve through the provider
+  catalog with `resolveAgentModelSelection`, the picker's own function, so a read equals what the
+  picker shows. The model loads the catalog itself and reads `null` meanwhile. The mounted
+  `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor;
+  without it the model edits the stored prompt. The daemon is the authority for `setModel` and
+  `setThinking`.
+- A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
+  in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
+  `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
+
+`ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
+implementations and `toPluginComposer`; never branch on `context` in the host.
+
+`useComposers` and `composers()` reach an agent's model by reference (`plugins/composer-items/source.ts`):
+`PluginInstallationProvider` provides the plugin's source to every surface, and
+`createPluginCapabilities` puts `composers` on every command context. `{ focused: true }` resolves
+from the last viewed workspace on the plugin's host and its layout's focused tab.
 
 Plugin `Toggle`, `Select` and `Action`, the thinking select and provider option controls all
 render through `ComposerControl` (`packages/app/src/composer/agent-controls/composer-control.tsx`),
@@ -687,7 +705,7 @@ item that renders nothing still counts for density; there is no registration for
 A command runs against the owner's current state, not the render that built the callback. The
 draft's form (`openAgentForm`) and options (`openDraftOptions`) are plain stores for that reason,
 and `draftComposerAgent` rejects a provider the host does not offer or a model its loaded catalog
-does not list. `ComposerControl` owns the pending state and the error toast for callbacks that
+does not list; for a running agent the daemon rejects it. `ComposerControl` owns the pending state and the error toast for callbacks that
 return a promise.
 
 The overflow sheet's content portals to the app root, away from the composer. Pass

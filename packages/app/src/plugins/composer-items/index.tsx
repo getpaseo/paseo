@@ -6,7 +6,7 @@ import {
   ComposerControlSurfaceProvider,
   type ComposerControlSurface,
 } from "@/composer/agent-controls/composer-control";
-import { useComposerAgent, useComposerInput } from "@/composer/session";
+import { useComposerModel } from "@/composer/model";
 import { PluginItemList, pluginThemeMapping, usePluginItemHost } from "../item-host";
 import { PluginEnvironmentProvider } from "../popover";
 import { useInstalledPlugins } from "../registry";
@@ -61,19 +61,16 @@ function PluginComposerItemsHost({
   plugin: InstalledPlugin;
   theme: PluginHostProps["theme"];
 }) {
-  const agent = useComposerAgent();
-  const composerInput = useComposerInput();
+  const model = useComposerModel();
   const { environment, props } = usePluginItemHost(plugin, theme);
-  const textSource = composerInput?.textSource;
-  const prompt = useSyncExternalStore(
-    textSource?.subscribe ?? subscribeNothing,
-    textSource?.getSnapshot ?? emptyText,
-    textSource?.getSnapshot ?? emptyText,
+  const state = useSyncExternalStore(
+    model?.subscribe ?? subscribeNothing,
+    model ? model.getState : noState,
+    model ? model.getState : noState,
   );
   const composer = useMemo(
-    () =>
-      agent && composerInput ? toPluginComposer({ plugin, agent, composerInput, prompt }) : null,
-    [agent, composerInput, plugin, prompt],
+    () => (model && state ? toPluginComposer({ plugin, model, state }) : null),
+    [model, plugin, state],
   );
   if (!composer) return null;
   return (
@@ -91,6 +88,6 @@ function subscribeNothing() {
   return () => undefined;
 }
 
-function emptyText() {
-  return "";
+function noState(): null {
+  return null;
 }

@@ -5,6 +5,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
+import { composerModelFromHalves } from "@/composer/halves-model";
 import type { ComposerAgent, ComposerInput } from "@/composer/session";
 import type { InstalledPlugin } from "../types";
 import { toPluginComposer } from "./model";
@@ -112,16 +113,17 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
   return { input, state };
 }
 
+function compose(agent: ComposerAgent, input: ComposerInput) {
+  const model = composerModelFromHalves({ agent, input });
+  return toPluginComposer({ plugin: installed(), model, state: model.getState() });
+}
+
 describe("toPluginComposer", () => {
   it("reads the agent the composer configures and the context it sits in", () => {
     const { agent } = fakeAgent("new-workspace");
-    const { input } = fakeInput();
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "hello",
-    });
+    const { input, state } = fakeInput();
+    state.text = "hello";
+    const composer = compose(agent, input);
     expect(composer.context).toBe("new-workspace");
     expect(composer.prompt).toBe("hello");
     expect(composer.agent).toEqual({
@@ -139,12 +141,7 @@ describe("toPluginComposer", () => {
     async (context) => {
       const { agent, calls } = fakeAgent(context);
       const { input } = fakeInput();
-      const composer = toPluginComposer({
-        plugin: installed(),
-        agent,
-        composerInput: input,
-        prompt: "",
-      });
+      const composer = compose(agent, input);
       await composer.setModel("gpt");
       await composer.setMode("plan");
       await composer.setThinking("high");
@@ -163,35 +160,20 @@ describe("toPluginComposer", () => {
   it("lets a draft change provider and tells a running agent it cannot", async () => {
     const { input } = fakeInput();
     const draft = fakeAgent("draft");
-    await toPluginComposer({
-      plugin: installed(),
-      agent: draft.agent,
-      composerInput: input,
-      prompt: "",
-    }).setProvider("codex");
+    await compose(draft.agent, input).setProvider("codex");
     expect(draft.calls).toEqual(["provider:codex"]);
 
     const running = fakeAgent("agent");
-    await expect(
-      toPluginComposer({
-        plugin: installed(),
-        agent: running.agent,
-        composerInput: input,
-        prompt: "",
-      }).setProvider("codex"),
-    ).rejects.toThrow("A running agent cannot change provider.");
+    await expect(compose(running.agent, input).setProvider("codex")).rejects.toThrow(
+      "A running agent cannot change provider.",
+    );
     expect(running.calls).toEqual([]);
   });
 
   it("changes the prompt and inserts at the cursor", () => {
     const { agent } = fakeAgent("draft");
     const { input, state } = fakeInput();
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
     composer.setPrompt("a");
     composer.insertText("b");
     expect(state.text).toBe("ab");
@@ -200,12 +182,7 @@ describe("toPluginComposer", () => {
   it("refuses every prompt and agent command while the composer is locked", async () => {
     const { agent, calls } = fakeAgent("new-workspace", true);
     const { input, state } = fakeInput([], true);
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
 
     expect(() => composer.setPrompt("a")).toThrow("The composer is locked");
     expect(() => composer.insertText("b")).toThrow("The composer is locked");
@@ -225,12 +202,7 @@ describe("toPluginComposer", () => {
   it("refuses a command a plugin kept from before the composer locked", async () => {
     const { agent } = fakeAgent("new-workspace");
     const { input } = fakeInput();
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
 
     // The plugin's action was awaiting an RPC when the user submitted.
     const lock = { locked: true };
@@ -251,12 +223,7 @@ describe("toPluginComposer", () => {
     const { agent } = fakeAgent("draft");
     agent.metadata = { nested: { list: [1] } };
     const { input } = fakeInput();
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
 
     expect(Object.isFrozen(composer.agent.options)).toBe(true);
     expect(Object.isFrozen(composer.agent.metadata)).toBe(true);
@@ -276,23 +243,13 @@ describe("toPluginComposer", () => {
       item: issue,
     };
     const { input, state } = fakeInput([other]);
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
 
     composer.addAttachment({ sourceId: "issues", item: issue });
     composer.addAttachment({ sourceId: "issues", item: issue });
     expect(state.attachments).toHaveLength(2);
 
-    const next = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const next = compose(agent, input);
     expect(next.attachments).toEqual([{ sourceId: "issues", item: issue }]);
 
     composer.removeAttachment({ sourceId: "issues", itemId: "ISS-1" });
@@ -302,12 +259,7 @@ describe("toPluginComposer", () => {
   it("rejects an attachment from a source the plugin did not register", () => {
     const { agent } = fakeAgent("agent");
     const { input } = fakeInput();
-    const composer = toPluginComposer({
-      plugin: installed(),
-      agent,
-      composerInput: input,
-      prompt: "",
-    });
+    const composer = compose(agent, input);
     expect(() => composer.addAttachment({ sourceId: "nope", item: issue })).toThrow(
       "Unknown attachment source: nope",
     );

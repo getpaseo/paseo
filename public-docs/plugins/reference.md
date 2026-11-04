@@ -1982,7 +1982,71 @@ renders nothing can still leave an empty overflow sheet on a narrow composer, so
 control.
 
 The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
-registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`.
+registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`, plus an
+Explorer panel and a Command Center item that reach a composer by reference.
+
+### Reach a composer by reference
+
+A running agent has a composer whether or not its tab is open. `useComposers(selector)` in any plugin
+component, and `composers(selector)` on every command context, return the same `PluginComposer` that
+`useComposer()` gives an item, for an agent you name or for the focused one:
+
+```tsx
+import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+
+function InsertChecklist() {
+  const [focused] = useComposers({ focused: true });
+  return (
+    <Pressable disabled={!focused} onPress={() => focused?.insertText("- [ ] Tests\n")}>
+      <Text>Insert checklist</Text>
+    </Pressable>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addWorkspacePanel({
+    id: "tools",
+    title: "Tools",
+    icon: "ListChecks",
+    locations: ["explorer"],
+    Component: InsertChecklist,
+  });
+  client.addCommandCenterItem({
+    id: "mark-for-review",
+    title: "Mark for review",
+    icon: "Flag",
+    context: "agent",
+    async onSelect({ agent, composers }) {
+      for (const composer of composers({ agentId: agent.id })) {
+        await composer.setMetadata({ "review.needsReview": true });
+      }
+    },
+  });
+  return () => {};
+}
+```
+
+| Selector            | Result                                                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | The composer of that agent on this host. Empty for an agent that is unknown or archived.                                                                                                 |
+| `{ focused: true }` | The composer of the agent whose tab is focused in the workspace you last viewed on this host. Empty when the focused tab is not an agent, and it follows focus as the user changes tabs. |
+
+The result is always an array, empty or with one composer, so the same code reads either selector.
+`useComposers` re-renders when a composer changes. A composer from `composers()` is the state at the
+call; call `composers()` again for the next state.
+
+The commands are those of [`useComposer()`](#composer-items), with these differences for a composer
+you reach from outside:
+
+- `insertText` inserts at the cursor while the agent's tab is open. With the tab closed it appends to
+  the agent's saved prompt, and the text is there when the tab opens.
+- A running agent's composer is never locked.
+- `setProvider` rejects, as it does inside the agent's own composer.
+- `setModel` and `setThinking` reject, with the daemon's message, for a value the provider does not
+  list. `model` and `thinking` read `null` until the provider's catalog has loaded, then the value
+  the model picker shows. Pass an id the catalog lists.
+- Drafts and the New workspace screen are not addressable by reference. Only an item inside one
+  reaches its composer, through `useComposer()`.
 
 ## New workspace items
 

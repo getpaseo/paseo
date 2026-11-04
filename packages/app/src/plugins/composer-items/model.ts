@@ -1,7 +1,7 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginComposer } from "@getpaseo/plugin/client";
 import type { UserComposerAttachment } from "@/attachments/types";
-import type { ComposerAgent, ComposerInput } from "@/composer/session";
+import type { ComposerModel, ComposerState } from "@/composer/model";
 import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment } from "../attachments/model";
 import { cloneAndFreeze } from "../freeze";
@@ -20,55 +20,36 @@ function isPluginAttachment(
   );
 }
 
-const LOCKED_MESSAGE = "The composer is locked while the agent is being created.";
-
-function assertUnlocked(isLocked: () => boolean): void {
-  if (isLocked()) throw new Error(LOCKED_MESSAGE);
-}
-
-async function whenUnlocked(agent: ComposerAgent, command: () => Promise<void>): Promise<void> {
-  assertUnlocked(agent.isLocked);
-  await command();
-}
-
 /**
- * What a plugin sees of the composer it sits in. `agent` and `input` are the composer's own
- * halves, so the plugin's commands reach the same models the built-in controls use.
+ * What a plugin sees of a composer. Reads are `state`; every command goes to the model, so the
+ * mounted composer, a panel's handle and a Command Center item all reach the same one.
  */
 export function toPluginComposer(input: {
   plugin: InstalledPlugin;
-  agent: ComposerAgent;
-  composerInput: ComposerInput;
-  prompt: string;
+  model: ComposerModel;
+  state: ComposerState;
 }): PluginComposer {
-  const { plugin, agent, composerInput, prompt } = input;
+  const { plugin, model, state } = input;
   return {
-    context: agent.context,
-    prompt,
-    attachments: composerInput.attachments.flatMap((attachment) =>
+    context: state.context,
+    prompt: state.prompt,
+    attachments: state.attachments.flatMap((attachment) =>
       attachment.kind === "plugin_resource" && attachment.pluginId === plugin.id
         ? [{ sourceId: attachment.sourceId, item: attachment.item }]
         : [],
     ),
     // Provider options are JSON on the wire.
     agent: {
-      provider: agent.provider,
-      model: agent.model,
-      mode: agent.mode,
-      thinking: agent.thinking,
-      options: cloneAndFreeze(agent.options as Record<string, JsonValue>),
-      metadata: cloneAndFreeze(agent.metadata),
+      provider: state.provider,
+      model: state.model,
+      mode: state.mode,
+      thinking: state.thinking,
+      options: cloneAndFreeze(state.options as Record<string, JsonValue>),
+      metadata: cloneAndFreeze(state.metadata),
     },
-    setPrompt: (text) => {
-      assertUnlocked(composerInput.isLocked);
-      composerInput.setText(text);
-    },
-    insertText: (text) => {
-      assertUnlocked(composerInput.isLocked);
-      composerInput.insertText(text);
-    },
+    setPrompt: (text) => model.setPrompt(text),
+    insertText: (text) => model.insertText(text),
     addAttachment({ sourceId, item }) {
-      assertUnlocked(composerInput.isLocked);
       const source = plugin.attachmentSources.find((candidate) => candidate.id === sourceId);
       if (!source) throw new Error(`Unknown attachment source: ${sourceId}`);
       const attachment = createPluginResourceAttachment(
@@ -80,24 +61,22 @@ export function toPluginComposer(input: {
         },
         item,
       );
-      composerInput.changeAttachments((current) =>
+      model.changeAttachments((current) =>
         current.some((candidate) => isPluginAttachment(candidate, plugin.id, sourceId, item.id))
           ? current
           : [...current, attachment],
       );
     },
     removeAttachment({ sourceId, itemId }) {
-      assertUnlocked(composerInput.isLocked);
-      composerInput.changeAttachments((current) =>
+      model.changeAttachments((current) =>
         current.filter((candidate) => !isPluginAttachment(candidate, plugin.id, sourceId, itemId)),
       );
     },
-    setProvider: (provider) => whenUnlocked(agent, () => agent.setProvider(provider)),
-    setModel: (modelId) => whenUnlocked(agent, () => agent.setModel(modelId)),
-    setMode: (modeId) => whenUnlocked(agent, () => agent.setMode(modeId)),
-    setThinking: (thinkingOptionId) =>
-      whenUnlocked(agent, () => agent.setThinking(thinkingOptionId)),
-    setOptions: (patch) => whenUnlocked(agent, () => agent.setOptions(patch)),
-    setMetadata: (patch) => whenUnlocked(agent, () => agent.setMetadata(patch)),
+    setProvider: (provider) => model.setProvider(provider),
+    setModel: (modelId) => model.setModel(modelId),
+    setMode: (modeId) => model.setMode(modeId),
+    setThinking: (thinkingOptionId) => model.setThinking(thinkingOptionId),
+    setOptions: (patch) => model.setOptions(patch),
+    setMetadata: (patch) => model.setMetadata(patch),
   };
 }

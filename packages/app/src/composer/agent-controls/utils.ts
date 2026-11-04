@@ -1,4 +1,4 @@
-import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -47,6 +47,14 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
     default:
       return "default";
   }
+}
+
+export function resolveProviderSnapshotEntry(
+  entries: readonly ProviderSnapshotEntry[] | null | undefined,
+  provider: string | null | undefined,
+): ProviderSnapshotEntry | null {
+  if (!entries || !provider) return null;
+  return entries.find((entry) => entry.provider === provider) ?? null;
 }
 
 function findModelById(

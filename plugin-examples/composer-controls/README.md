@@ -14,5 +14,16 @@ Each component calls `useComposer()` and uses the same commands in every compose
 controls inline when the composer has room and as rows in the composer's overflow sheet when it
 does not, including on a phone.
 
-[client/controls.tsx](client/controls.tsx) holds the four components; [index.client.tsx](index.client.tsx)
-registers them with `addComposerItem`.
+## Reaching a composer from outside it
+
+Two more contributions use a composer without sitting in one. Both name the agent instead of
+reading the composer they are mounted in, and neither needs the agent's tab to be open.
+
+| Contribution                         | What it does                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| **Composer tools** (Explorer panel)  | `useComposers({ focused: true })` inserts the checklist into the focused agent's prompt.                 |
+| **Mark for review** (Command Center) | `composers({ agentId })` sets the same `needsReview` metadata as the toggle, for the agent you selected. |
+
+[client/controls.tsx](client/controls.tsx) holds the four composer components,
+[client/panel.tsx](client/panel.tsx) the panel, and [index.client.tsx](index.client.tsx) registers
+everything.
