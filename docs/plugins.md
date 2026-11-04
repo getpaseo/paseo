@@ -684,9 +684,13 @@ implementations provide it:
   `QueryObserver` on the agent's catalog: that is what lets reconnect repair, which refetches only
   active queries, refresh a catalog nobody has a picker open for, and retry one that failed.
   `PluginComposersSource.subscribe(selector, listener)` is what holds it for `useComposers`, so
-  the subscription must go through the model's own `subscribe`. The model is shared for as long as
-  its agent is in the session, so a command a plugin saved keeps reaching the composer a later tab
-  mounts; it is dropped once the agent is gone and nothing watches it or has one mounted. The mounted
+  the subscription must go through the model's own `subscribe`. Watching again after the catalog
+  was invalidated or failed refetches it, and a read with no watcher starts one deduplicated
+  refresh and shows the cached catalog until it lands. The model keeps one pair of store
+  subscriptions however many components watch it. It is shared for as long as its agent is in the
+  session and not archived, so a command a plugin saved keeps reaching the composer a later tab
+  mounts; it is dropped when the agent is gone or archived and nothing watches it or has one
+  mounted, checked on session changes and when the last holder lets go. The mounted
   `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor.
   Without a live input the model writes the stored prompt with `replaceDraftText`, which also asks
   a mounted input to show it. A workspace the user left stays mounted, display none, with no

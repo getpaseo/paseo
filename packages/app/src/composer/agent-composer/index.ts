@@ -39,6 +39,8 @@ export interface AgentComposer extends ComposerModel {
 interface AgentComposerDeps {
   queryClient: QueryClient;
   cache?: ProviderSnapshotCache;
+  /** The last watcher or mounted composer let go, so the composer may be releasable. */
+  onUnheld?: () => void;
 }
 
 type Catalog = { status: "loading" } | { status: "ready"; entries: ProviderSnapshotEntry[] | null };
@@ -47,7 +49,7 @@ const NO_VALUES = Object.freeze({});
 const NO_ATTACHMENTS: readonly UserComposerAttachment[] = Object.freeze([]);
 
 interface ManagedAgentComposer extends AgentComposer {
-  /** The agent left the session and nothing watches the composer or has one mounted. */
+  /** The agent is gone or archived, and nothing watches the composer or has one mounted. */
   isReleasable(): boolean;
 }
 
@@ -61,6 +63,8 @@ export function createAgentComposer(
   // While something watches, the catalog has an observer: it fetches the catalog, and it is what
   // makes the catalog an active query that reconnect repair refetches, a failed one included.
   let observing: { cwd: string; stop: () => void } | null = null;
+  // One pair of store subscriptions serves every listener, from the first to the last.
+  let stopWatchingStores: (() => void) | null = null;
   let mounted: MountedComposerInput | null = null;
   let last: {
     agent: Agent | null;
@@ -107,9 +111,23 @@ export function createAgentComposer(
     observing?.stop();
     observing = null;
     if (cwd === null) return;
-    observing = {
-      cwd,
-      stop: new QueryObserver(deps.queryClient, catalogQuery(cwd)).subscribe(notify),
+    // Watching again after the catalog was invalidated or failed while nothing watched refreshes it.
+    const options = { ...catalogQuery(cwd), refetchOnMount: true };
+    observing = { cwd, stop: new QueryObserver(deps.queryClient, options).subscribe(notify) };
+  }
+
+  function watchStores() {
+    const stops = [
+      useSessionStore.subscribe(() => {
+        observeCatalog();
+        notify();
+      }),
+      useDraftStore.subscribe((state, previous) => {
+        if (state.drafts[draftKey] !== previous.drafts[draftKey]) notify();
+      }),
+    ];
+    return () => {
+      for (const stop of stops) stop();
     };
   }
 
@@ -120,18 +138,19 @@ export function createAgentComposer(
       return { status: "ready", entries: null };
     }
     const query = catalogQuery(agent.cwd);
-    const data = deps.queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(
+    const state = deps.queryClient.getQueryState<{ entries: ProviderSnapshotEntry[] }>(
       query.queryKey,
     );
-    if (data) return { status: "ready", entries: data.entries };
-    if (deps.queryClient.getQueryState(query.queryKey)?.status === "error") {
-      return { status: "ready", entries: null };
+    // Nothing observes while nothing watches, so a read starts the one deduplicated load or
+    // refresh it needs and shows the cached catalog meanwhile. A read can run in another
+    // component's render and creating the query tells every query-cache subscriber, so it starts
+    // after the render.
+    const loads = state?.isInvalidated === true || (!state?.data && state?.status !== "error");
+    if (loads && !observing && session.client) {
+      queueMicrotask(() => void deps.queryClient.prefetchQuery(query));
     }
-    if (!session.client) return { status: "loading" };
-    // Nothing watches, so nothing observes: a command reads once and the load starts after it.
-    // Creating the query tells every query-cache subscriber, and a read can run in another
-    // component's render.
-    if (!observing) queueMicrotask(() => void deps.queryClient.prefetchQuery(query));
+    if (state?.data) return { status: "ready", entries: state.data.entries };
+    if (state?.status === "error") return { status: "ready", entries: null };
     return { status: "loading" };
   }
 
@@ -190,30 +209,37 @@ export function createAgentComposer(
     return last.state;
   }
 
+  function unheld() {
+    if (listeners.size === 0 && mounted === null) deps.onUnheld?.();
+  }
+
   return {
-    isReleasable: () => listeners.size === 0 && mounted === null && readAgent() === null,
+    isReleasable() {
+      if (listeners.size > 0 || mounted !== null) return false;
+      const agent = readAgent();
+      return agent === null || agent.archivedAt != null;
+    },
     getState,
     subscribe(listener) {
       listeners.add(listener);
+      stopWatchingStores ??= watchStores();
       observeCatalog();
       getState();
-      const stops = [
-        useSessionStore.subscribe(() => {
-          observeCatalog();
-          notify();
-        }),
-        useDraftStore.subscribe(notify),
-      ];
       return () => {
         listeners.delete(listener);
-        for (const stop of stops) stop();
+        if (listeners.size === 0) {
+          stopWatchingStores?.();
+          stopWatchingStores = null;
+        }
         observeCatalog();
+        unheld();
       };
     },
     attachInput(input) {
       mounted = input;
       return () => {
         if (mounted === input) mounted = null;
+        unheld();
       };
     },
     setPrompt(text) {
@@ -266,20 +292,25 @@ let stopReleasing: (() => void) | null = null;
 
 /**
  * The composer of a running agent; the same one for every caller for as long as the agent is in the
- * session, so a command a plugin saved keeps reaching the composer a later tab mounts.
+ * session and not archived, so a command a plugin saved keeps reaching the composer a later tab
+ * mounts. It is released when the agent is gone or archived and nothing holds it, checked when the
+ * session changes and when the last holder lets go.
  */
 export function agentComposer(serverId: string, agentId: string): AgentComposer {
-  stopReleasing ??= useSessionStore.subscribe(releaseComposersOfRemovedAgents);
+  stopReleasing ??= useSessionStore.subscribe(releaseReleasableComposers);
   const key = `${serverId}:${agentId}`;
   let composer = composers.get(key);
   if (!composer) {
-    composer = createAgentComposer(serverId, agentId, { queryClient: singletonQueryClient });
+    composer = createAgentComposer(serverId, agentId, {
+      queryClient: singletonQueryClient,
+      onUnheld: releaseReleasableComposers,
+    });
     composers.set(key, composer);
   }
   return composer;
 }
 
-function releaseComposersOfRemovedAgents() {
+function releaseReleasableComposers() {
   for (const [key, composer] of composers) {
     if (composer.isReleasable()) composers.delete(key);
   }

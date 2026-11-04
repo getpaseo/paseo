@@ -157,6 +157,19 @@ describe("a plugin's composers by reference", () => {
     stop();
   });
 
+  it("delivers a draft change once to each of several components watching the same agent", () => {
+    const source = pluginComposersSource(plugin());
+    const delivered = [0, 0, 0];
+    const stops: Array<() => void> = [];
+    for (const index of delivered.keys()) {
+      stops.push(source.subscribe({ agentId: "agent-1" }, () => void (delivered[index] += 1)));
+    }
+    const before = [...delivered];
+    source.resolve({ agentId: "agent-1" })[0]?.insertText("typed");
+    expect(delivered.map((count, index) => count - before[index])).toEqual([1, 1, 1]);
+    for (const stop of stops) stop();
+  });
+
   it("returns the same array until a composer changes", () => {
     const source = pluginComposersSource(plugin());
     const first = source.resolve({ agentId: "agent-1" });
@@ -201,6 +214,60 @@ describe("a plugin component watching a composer by reference", () => {
     }
     expect(read()).toBe(expected);
   }
+
+  function hostWithDefaultThinking(initial: string) {
+    const host = { defaultThinking: initial };
+    const client = {
+      async getProvidersSnapshot() {
+        return {
+          entries: catalog(host.defaultThinking),
+          generatedAt: "2026-11-04T10:00:00.000Z",
+          requestId: "snapshot",
+        };
+      },
+    } as unknown as DaemonClient;
+    const store = useSessionStore.getState();
+    store.clearSession(serverId);
+    store.initializeSession(serverId, client);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: null,
+      features: { providersSnapshot: true },
+    } as never);
+    store.setAgents(serverId, new Map([["agent-1", agent("agent-1")]]));
+    return host;
+  }
+
+  it("refreshes a catalog that was invalidated while nothing watched, when watching resumes", async () => {
+    const host = hostWithDefaultThinking("high");
+    const source = pluginComposersSource(plugin());
+    const stopFirst = source.subscribe({ agentId: "agent-1" }, () => {});
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "high");
+    stopFirst();
+
+    // Reconnect repair only refetches what is watched, so this catalog is invalidated and kept.
+    host.defaultThinking = "low";
+    await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+
+    const stopAgain = source.subscribe({ agentId: "agent-1" }, () => {});
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "low");
+    stopAgain();
+  });
+
+  it("refreshes an invalidated catalog for a command that reads once", async () => {
+    const host = hostWithDefaultThinking("high");
+    const source = pluginComposersSource(plugin());
+    const stopFirst = source.subscribe({ agentId: "agent-1" }, () => {});
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "high");
+    stopFirst();
+    host.defaultThinking = "low";
+    await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+
+    // A command cannot wait, so this read still shows the old catalog and starts the refresh.
+    source.resolve({ agentId: "agent-1" });
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "low");
+  });
 
   it("sees the catalog the host changed while away once the host reconnects, with no picker open", async () => {
     let hostDefault = "high";

@@ -336,6 +336,27 @@ describe("agent composer", () => {
     stop();
   });
 
+  it("watches the stores once however many components watch the composer, and only for its own draft", () => {
+    openSession(agent());
+    const model = composer();
+    const calls = [0, 0, 0];
+    const stops: Array<() => void> = [];
+    for (const index of calls.keys()) {
+      stops.push(model.subscribe(() => void (calls[index] += 1)));
+    }
+    const before = [...calls];
+    model.insertText("typed");
+    expect(calls.map((count, index) => count - before[index])).toEqual([1, 1, 1]);
+
+    const unrelated = [...calls];
+    useDraftStore.getState().replaceDraftText({
+      draftKey: buildDraftStoreKey({ serverId, agentId: "agent-2" }),
+      text: "elsewhere",
+    });
+    expect(calls).toEqual(unrelated);
+    for (const stop of stops) stop();
+  });
+
   function pickerShows(running: Agent, catalog: ProviderSnapshotEntry[] | null) {
     const picker = resolveAgentModelSelection({
       models: filterSelectableModels(catalog?.[0]?.models ?? null),
@@ -374,17 +395,42 @@ describe("agent composer", () => {
     },
   );
 
-  it("is shared while its agent is in the session, and released once the agent is gone and nothing holds it", () => {
+  it("is shared while its agent is in the session, across closing and reopening its tab", () => {
     openSession(agent());
     const shared = agentComposer(serverId, agentId);
-    expect(agentComposer(serverId, agentId)).toBe(shared);
-
-    // A mounted composer or a watcher keeps it, even if the agent is briefly missing.
     const detach = shared.attachInput({ isLive: () => true, setText() {}, insertText() {} });
-    useSessionStore.getState().setAgents(serverId, new Map());
-    expect(agentComposer(serverId, agentId)).toBe(shared);
     detach();
+    expect(agentComposer(serverId, agentId)).toBe(shared);
+    const stop = shared.subscribe(() => {});
+    stop();
+    expect(agentComposer(serverId, agentId)).toBe(shared);
+  });
+
+  it("is released when the last holder lets go of a composer whose agent was removed meanwhile", () => {
+    openSession(agent());
+    const mounted = agentComposer(serverId, agentId);
+    const detach = mounted.attachInput({ isLive: () => true, setText() {}, insertText() {} });
     useSessionStore.getState().setAgents(serverId, new Map());
-    expect(agentComposer(serverId, agentId)).not.toBe(shared);
+    // Held, so the session change did not release it, and nothing changes in the session after.
+    expect(agentComposer(serverId, agentId)).toBe(mounted);
+    detach();
+    expect(agentComposer(serverId, agentId)).not.toBe(mounted);
+
+    useSessionStore.getState().setAgents(serverId, new Map([[agentId, agent()]]));
+    const watched = agentComposer(serverId, agentId);
+    const stop = watched.subscribe(() => {});
+    useSessionStore.getState().clearSession(serverId);
+    expect(agentComposer(serverId, agentId)).toBe(watched);
+    stop();
+    expect(agentComposer(serverId, agentId)).not.toBe(watched);
+  });
+
+  it("is released when its agent is archived and nothing holds it", () => {
+    openSession(agent());
+    const idle = agentComposer(serverId, agentId);
+    useSessionStore
+      .getState()
+      .setAgents(serverId, new Map([[agentId, agent({ archivedAt: new Date() })]]));
+    expect(agentComposer(serverId, agentId)).not.toBe(idle);
   });
 });
