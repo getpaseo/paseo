@@ -1,3 +1,7 @@
+import {
+  AdaptiveWorkspaceChrome,
+  type WorkspaceCompactHeaderActions,
+} from "./adaptive-workspace-chrome";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -148,6 +152,7 @@ import {
 } from "@/screens/workspace/use-workspace-tab-rename";
 import {
   WorkspaceDesktopTabsRow,
+  useWorkspaceNewTabKeyboardAction,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
@@ -1808,8 +1813,8 @@ function WorkspaceScreenContent({
   });
 
   const handleCreateTerminalWithProfile = useCallback(
-    (profile: TerminalProfile) => {
-      createTerminal({ profile, destination: { kind: "open" } });
+    (profile: TerminalProfile, paneId?: string) => {
+      createTerminal({ profile, destination: { kind: "open", paneId } });
     },
     [createTerminal],
   );
@@ -3372,85 +3377,100 @@ function WorkspaceScreenContent({
       handleOpenUrlInBrowserTab,
     ],
   );
-  const workspaceTabSwitcher = useMemo(
-    () => (
-      <MobileWorkspaceTabSwitcher
-        tabs={tabs}
-        activeTabKey={activeTabKey}
-        normalizedServerId={normalizedServerId}
-        normalizedWorkspaceId={normalizedWorkspaceId}
-        onSelectSwitcherTab={handleSelectSwitcherTab}
-        createTerminalDisabled={createTerminalDisabled}
-        onCreateDraftTab={handleCreateDraftTab}
-        onCreateTerminal={handleCreateTerminal}
-        onCopyResumeCommand={handleCopyResumeCommand}
-        onCopyAgentId={handleCopyAgentId}
-        onCopyTerminalId={handleCopyTerminalId}
-        onCopyFilePath={handleCopyFilePath}
-        onReloadAgent={handleReloadAgent}
-        onRenameTab={handleRenameTab}
-        onCloseTab={handleCloseTabById}
-        onCloseTabsAbove={handleCloseTabsToLeft}
-        onCloseTabsBelow={handleCloseTabsToRight}
-        onCloseOtherTabs={handleCloseOtherTabs}
-      />
-    ),
-    [
-      activeTabKey,
-      createTerminalDisabled,
-      handleCloseOtherTabs,
-      handleCloseTabById,
-      handleCloseTabsToLeft,
-      handleCloseTabsToRight,
-      handleCopyAgentId,
-      handleCopyFilePath,
-      handleCopyResumeCommand,
-      handleCopyTerminalId,
-      handleCreateDraftTab,
-      handleCreateTerminal,
-      handleReloadAgent,
-      handleRenameTab,
-      handleSelectSwitcherTab,
-      normalizedServerId,
-      normalizedWorkspaceId,
-      tabs,
-    ],
-  );
-  const compactWorkspaceHeader = useMemo(
-    () => (
-      <CompactWorkspaceHeader
-        headerVariant={isMobile ? "compact" : "full"}
-        actionsActive={isRouteFocused && (!isMobile || workspacePanelActive)}
-        isLoading={isWorkspaceHeaderLoading}
-        title={workspaceHeaderTitle}
-        subtitle={workspaceHeaderSubtitle}
-        isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
-        serverId={normalizedServerId}
-        onToggleExplorer={handleToggleExplorerSidebar}
-        explorerToggleLabel={explorerSidebarToggleLabel}
-        explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
-        tabSwitcher={workspaceTabSwitcher}
-      >
-        <WorkspaceHeaderMenuMobile
+  const renderWorkspaceTabSwitcher = useCallback(
+    (
+      headerTabs: WorkspaceTabDescriptor[],
+      headerActiveTabKey: string,
+      actions: WorkspaceCompactHeaderActions,
+    ) => {
+      return (
+        <MobileWorkspaceTabSwitcher
+          paneId={actions.pane?.id}
+          tabs={headerTabs}
+          activeTabKey={headerActiveTabKey}
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
-          scripts={compactHeaderScripts}
-          currentBranchName={currentBranchName}
-          showWorkspaceSetup={showWorkspaceSetup}
-          showCreateBrowserTab={showCreateBrowserTab}
+          onSelectSwitcherTab={handleSelectSwitcherTab}
           createTerminalDisabled={createTerminalDisabled}
-          importAgentDisabled={!canOpenImportSheet}
-          copyPathDisabled={!workspaceDirectory}
-          onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-          onCreateBrowser={handleCreateBrowserTab}
-          onOpenImportSheet={openImportSheet}
-          onCopyWorkspacePath={handleCopyWorkspacePath}
-          onCopyBranchName={handleCopyBranchName}
-          onOpenSetupTab={handleOpenSetupTab}
+          onCreateDraftTab={handleCreateDraftTab}
+          onCreateTerminal={handleCreateTerminal}
+          onCopyResumeCommand={handleCopyResumeCommand}
+          onCopyAgentId={handleCopyAgentId}
+          onCopyTerminalId={handleCopyTerminalId}
+          onCopyFilePath={handleCopyFilePath}
+          onReloadAgent={handleReloadAgent}
+          onRenameTab={handleRenameTab}
+          onCloseTab={handleCloseTabById}
+          onCloseTabsAbove={actions.closeAbove}
+          onCloseTabsBelow={actions.closeBelow}
+          onCloseOtherTabs={actions.closeOthers}
         />
-      </CompactWorkspaceHeader>
-    ),
+      );
+    },
     [
+      normalizedServerId,
+      normalizedWorkspaceId,
+      handleSelectSwitcherTab,
+      createTerminalDisabled,
+      handleCreateDraftTab,
+      handleCreateTerminal,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabById,
+    ],
+  );
+  const renderCompactWorkspaceHeader = useCallback(
+    (
+      headerTabs: WorkspaceTabDescriptor[],
+      headerActiveTabKey: string,
+      actions: WorkspaceCompactHeaderActions,
+      actionsOnly = false,
+    ) => {
+      const tabSwitcher = renderWorkspaceTabSwitcher(headerTabs, headerActiveTabKey, actions);
+      return (
+        <CompactWorkspaceHeader
+          headerVariant={actionsOnly ? "full" : "compact"}
+          actionsActive={isRouteFocused && (!isMobile || workspacePanelActive)}
+          tabSwitcher={tabSwitcher}
+          isLoading={isWorkspaceHeaderLoading}
+          title={workspaceHeaderTitle}
+          subtitle={workspaceHeaderSubtitle}
+          isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
+          serverId={normalizedServerId}
+          onToggleExplorer={handleToggleExplorerSidebar}
+          explorerToggleLabel={explorerSidebarToggleLabel}
+          explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
+        >
+          <WorkspaceHeaderMenuMobile
+            pane={actions.pane}
+            onExitFocusMode={isFocusModeEnabled ? toggleFocusMode : undefined}
+            normalizedServerId={normalizedServerId}
+            normalizedWorkspaceId={normalizedWorkspaceId}
+            scripts={compactHeaderScripts}
+            currentBranchName={currentBranchName}
+            showWorkspaceSetup={showWorkspaceSetup}
+            showCreateBrowserTab={showCreateBrowserTab}
+            createTerminalDisabled={createTerminalDisabled}
+            importAgentDisabled={!canOpenImportSheet}
+            copyPathDisabled={!workspaceDirectory}
+            onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+            onCreateBrowser={handleCreateBrowserTab}
+            onOpenImportSheet={openImportSheet}
+            onCopyWorkspacePath={handleCopyWorkspacePath}
+            onCopyBranchName={handleCopyBranchName}
+            onOpenSetupTab={handleOpenSetupTab}
+          />
+        </CompactWorkspaceHeader>
+      );
+    },
+    [
+      renderWorkspaceTabSwitcher,
+      isFocusModeEnabled,
+      toggleFocusMode,
       canOpenImportSheet,
       compactHeaderScripts,
       createTerminalDisabled,
@@ -3476,8 +3496,22 @@ function WorkspaceScreenContent({
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
       workspacePanelActive,
-      workspaceTabSwitcher,
     ],
+  );
+  const compactWorkspaceHeader = renderCompactWorkspaceHeader(tabs, activeTabKey, {
+    closeAbove: handleCloseTabsToLeft,
+    closeBelow: handleCloseTabsToRight,
+    closeOthers: handleCloseOtherTabs,
+  });
+  const fullWorkspaceActions = renderCompactWorkspaceHeader(
+    tabs,
+    activeTabKey,
+    {
+      closeAbove: handleCloseTabsToLeft,
+      closeBelow: handleCloseTabsToRight,
+      closeOthers: handleCloseOtherTabs,
+    },
+    true,
   );
   const desktopSplitContent = useMemo(() => {
     if (!canRenderDesktopPaneSplits || !workspaceLayout || !persistenceKey) {
@@ -3487,6 +3521,7 @@ function WorkspaceScreenContent({
       <SplitContainer
         layout={workspaceLayout}
         renderMainHeader={renderWorkspaceScreenHeader}
+        renderCompactHeader={renderCompactWorkspaceHeader}
         focusModeEnabled={desktopFocusModeEnabled}
         onExitFocusMode={toggleFocusMode}
         workspaceKey={persistenceKey}
@@ -3523,6 +3558,7 @@ function WorkspaceScreenContent({
     canRenderDesktopPaneSplits,
     workspaceLayout,
     renderWorkspaceScreenHeader,
+    renderCompactWorkspaceHeader,
     persistenceKey,
     desktopFocusModeEnabled,
     toggleFocusMode,
@@ -3561,6 +3597,22 @@ function WorkspaceScreenContent({
     [uiTabs, sheets],
   );
   const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
+  const createFallbackTab = useCallback(
+    () => handleCreateNewTab({ paneId: focusedPaneIdOrUndefined }),
+    [handleCreateNewTab, focusedPaneIdOrUndefined],
+  );
+  const ownsFallbackKeyboardShortcuts = useMemo(
+    () => shouldRenderDesktopPaneFallback && isRouteFocused,
+    [shouldRenderDesktopPaneFallback, isRouteFocused],
+  );
+  useWorkspaceNewTabKeyboardAction({
+    handlerName: "workspace-chrome-new-tab",
+    ownsKeyboardShortcuts: ownsFallbackKeyboardShortcuts,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    paneId: focusedPaneIdOrUndefined,
+    createNewTab: createFallbackTab,
+  });
   const compactHeaderLayout = resolveCompactHeaderLayout({
     header: compactWorkspaceHeader,
     activeTab: activeTabDescriptor,
@@ -3584,37 +3636,41 @@ function WorkspaceScreenContent({
     </View>
   ) : (
     <View style={styles.centerColumn}>
-      {compactWorkspaceHeader}
-      {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
+      {rendersDesktopSplitContent ? null : (
+        <AdaptiveWorkspaceChrome compactHeader={compactWorkspaceHeader}>
+          {fullWorkspaceActions}
+          {renderWorkspaceScreenHeader()}
 
-      {shouldRenderDesktopPaneFallback ? (
-        <NewTabLauncherProvider value={newTabLauncher}>
-          <WorkspaceDesktopTabsRow
-            paneId={focusedPaneIdOrUndefined}
-            isFocused={isRouteFocused}
-            tabs={desktopTabRowItems}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            setHoveredCloseTabKey={setHoveredCloseTabKey}
-            onNavigateTab={navigateToTabId}
-            onCloseTab={handleCloseTabById}
-            onCopyResumeCommand={handleCopyResumeCommand}
-            onCopyAgentId={handleCopyAgentId}
-            onCopyTerminalId={handleCopyTerminalId}
-            onCopyFilePath={handleCopyFilePath}
-            onReloadAgent={handleReloadAgent}
-            onRenameTab={handleRenameTab}
-            onCloseTabsToLeft={handleCloseTabsToLeft}
-            onCloseTabsToRight={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-            onCreateNewTab={handleCreateNewTab}
-            onReorderTabs={handleReorderTabsInFocusedPane}
-            focusModeEnabled={desktopFocusModeEnabled}
-            onExitFocusMode={toggleFocusMode}
-          />
-        </NewTabLauncherProvider>
-      ) : null}
-
+          {shouldRenderDesktopPaneFallback ? (
+            <NewTabLauncherProvider value={newTabLauncher}>
+              <WorkspaceDesktopTabsRow
+                paneId={focusedPaneIdOrUndefined}
+                ownsKeyboardShortcuts={false}
+                isFocused={isRouteFocused}
+                tabs={desktopTabRowItems}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                setHoveredCloseTabKey={setHoveredCloseTabKey}
+                onNavigateTab={navigateToTabId}
+                onCloseTab={handleCloseTabById}
+                onCopyResumeCommand={handleCopyResumeCommand}
+                onCopyAgentId={handleCopyAgentId}
+                onCopyTerminalId={handleCopyTerminalId}
+                onCopyFilePath={handleCopyFilePath}
+                onReloadAgent={handleReloadAgent}
+                onRenameTab={handleRenameTab}
+                onCloseTabsToLeft={handleCloseTabsToLeft}
+                onCloseTabsToRight={handleCloseTabsToRight}
+                onCloseOtherTabs={handleCloseOtherTabs}
+                onCreateNewTab={handleCreateNewTab}
+                onReorderTabs={handleReorderTabsInFocusedPane}
+                focusModeEnabled={desktopFocusModeEnabled}
+                onExitFocusMode={toggleFocusMode}
+              />
+            </NewTabLauncherProvider>
+          ) : null}
+        </AdaptiveWorkspaceChrome>
+      )}
       <View style={styles.centerContent}>
         <View style={styles.content}>{desktopContent}</View>
       </View>

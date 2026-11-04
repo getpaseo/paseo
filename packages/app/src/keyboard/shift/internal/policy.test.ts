@@ -29,6 +29,21 @@ describe("keyboard layout reservation", () => {
 });
 
 describe("resolveKeyboardShift", () => {
+  it.each([0, -1])(
+    "ignores a rotation report with height %s and progress one",
+    (rawKeyboardHeight) => {
+      expect(
+        resolveKeyboardShift({
+          rawKeyboardHeight,
+          keyboardProgress: 1,
+          bottomInset: 24,
+          isIos: true,
+          iosMinHeight: 120,
+        }),
+      ).toBe(0);
+    },
+  );
+
   it("keeps the existing open-keyboard offset behavior", () => {
     expect(
       resolveKeyboardShift({

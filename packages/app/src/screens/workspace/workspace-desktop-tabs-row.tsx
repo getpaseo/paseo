@@ -1,6 +1,8 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
+  createContext,
+  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -488,6 +490,13 @@ interface WorkspaceTabLabelMeasurement {
   width: number;
 }
 
+const TabMeasurementCache = createContext<Map<string, WorkspaceTabLabelMeasurement> | null>(null);
+
+export function WorkspaceTabMeasurementScope({ children }: { children: React.ReactNode }) {
+  const cache = useMemo(() => new Map<string, WorkspaceTabLabelMeasurement>(), []);
+  return <TabMeasurementCache.Provider value={cache}>{children}</TabMeasurementCache.Provider>;
+}
+
 interface WorkspaceTabTrackSnapshot {
   signature: string;
   tabs: ResolvedWorkspaceDesktopTabRowItem[];
@@ -961,6 +970,47 @@ function TabChip({
   );
 }
 
+export function useWorkspaceNewTabKeyboardAction({
+  handlerName = "workspace-new-tab",
+  ownsKeyboardShortcuts,
+  normalizedServerId,
+  normalizedWorkspaceId,
+  paneId,
+  createNewTab,
+}: {
+  handlerName?: string;
+  ownsKeyboardShortcuts: boolean;
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
+  paneId?: string;
+  createNewTab: () => void;
+}) {
+  const handleNewTabKeyboardAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      if (!ownsKeyboardShortcuts) return false;
+      if (action.id === "workspace.tab.menu.open") {
+        createNewTab();
+        return true;
+      }
+      return false;
+    },
+    [createNewTab, ownsKeyboardShortcuts],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: buildWorkspaceKeyboardHandlerId({
+      name: handlerName,
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      paneId,
+    }),
+    actions: ["workspace.tab.menu.open"],
+    enabled: ownsKeyboardShortcuts,
+    priority: 200,
+    handle: handleNewTabKeyboardAction,
+  });
+}
+
 export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   const [presentations, setPresentations] = useState(
     () => new Map<string, WorkspaceTabPresentation>(),
@@ -1062,9 +1112,13 @@ function ResolvedWorkspaceDesktopTabsRow({
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
-  const [labelMeasurements, setLabelMeasurements] = useState(
-    () => new Map<string, WorkspaceTabLabelMeasurement>(),
-  );
+  const measurementCache = useContext(TabMeasurementCache);
+  const [labelMeasurements, setLabelMeasurements] = useState(() => new Map(measurementCache ?? []));
+  useLayoutEffect(() => {
+    if (!measurementCache) return;
+    measurementCache.clear();
+    for (const [key, value] of labelMeasurements) measurementCache.set(key, value);
+  }, [measurementCache, labelMeasurements]);
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1249,29 +1303,12 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
 
-  const handleNewTabKeyboardAction = useCallback(
-    (action: KeyboardActionDefinition): boolean => {
-      if (!ownsKeyboardShortcuts) return false;
-      if (action.id === "workspace.tab.menu.open") {
-        createNewTab();
-        return true;
-      }
-      return false;
-    },
-    [createNewTab, ownsKeyboardShortcuts],
-  );
-
-  useKeyboardActionHandler({
-    handlerId: buildWorkspaceKeyboardHandlerId({
-      name: "workspace-new-tab",
-      serverId: normalizedServerId,
-      workspaceId: normalizedWorkspaceId,
-      paneId,
-    }),
-    actions: ["workspace.tab.menu.open"],
-    enabled: ownsKeyboardShortcuts,
-    priority: 200,
-    handle: handleNewTabKeyboardAction,
+  useWorkspaceNewTabKeyboardAction({
+    ownsKeyboardShortcuts,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    paneId,
+    createNewTab,
   });
 
   const rail: WorkspaceTabRailSurface = host === "explorer" ? "sidebar" : "surface";
