@@ -166,6 +166,7 @@ export default defineConfig({
       "@testing-library/react",
       "@tanstack/react-query",
       "@tanstack/react-virtual",
+      "@legendapp/list/react-native",
       "react-i18next",
       "i18next",
       "@marijn/find-cluster-break",
@@ -231,6 +232,12 @@ export default defineConfig({
           rootNodeModules,
           "react-native-gesture-handler/lib/module/index.js",
         ),
+      },
+      // The app renders LegendList on native only, from the patched native build. Tests render
+      // that build too, instead of the package's separate web build.
+      {
+        find: /^@legendapp\/list\/react-native$/,
+        replacement: path.resolve(rootNodeModules, "@legendapp/list/react-native.mjs"),
       },
       // Must precede the `react-native` alias: a string `find` matches by prefix, so this subpath
       // would otherwise resolve inside a react-native-web *file* and break the dependency scan.
