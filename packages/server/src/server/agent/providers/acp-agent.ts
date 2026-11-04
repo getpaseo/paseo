@@ -2476,10 +2476,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         for (const [id, value] of Object.entries(options)) {
           const featureOption = this.configFeatureOptions.find((candidate) => candidate.id === id);
           if (!featureOption) continue;
-          // A removal asks for the select's empty choice; a provider without one rejects it.
-          requested[id] = value ?? "";
+          // A removal asks for the select's empty choice; a provider without one rejects it. The
+          // choice it lands on is reported against the `null` that was asked, so the options
+          // hold the value the session runs with.
+          requested[id] = value;
           const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
-          if (!option || requested[id] !== option.currentValue) {
+          if (!option || (value ?? "") !== option.currentValue) {
             await this.setConfigFeature(id, value);
           }
         }

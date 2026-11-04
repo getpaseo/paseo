@@ -1959,11 +1959,17 @@ describe("ACPAgentSession options against an ACP agent", () => {
     ]);
   });
 
-  test("a removal writes the select's empty choice and returns nothing when that took", async () => {
+  test("a removal writes the select's empty choice and returns it, since the options hold what the session runs", async () => {
     const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
 
-    await expect(session.applyOptions({ agent: null })).resolves.toEqual({});
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({ agent: "" });
     expect(optionEvents).toEqual([]);
+  });
+
+  test("a removal of a select already on its empty choice returns that choice too", async () => {
+    const { session } = await openSession({ agent: "" });
+
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({ agent: "" });
   });
 
   test("rejects a live auto_accept the creation schema would reject, and writes nothing", async () => {

@@ -186,8 +186,8 @@ function createRecordingAgentClients(): Record<AgentProvider, AgentClient> {
     if (client.listCommands) {
       wrappedClient.listCommands = async (config) => await client.listCommands!(config);
     }
-    if (client.listFeatures) {
-      wrappedClient.listFeatures = async (config) => await client.listFeatures!(config);
+    if (client.listControls) {
+      wrappedClient.listControls = async (config) => await client.listControls!(config);
     }
     if (client.listImportableSessions) {
       wrappedClient.listImportableSessions = async (options) =>
