@@ -171,7 +171,8 @@ export class Session {
 
   private async applyModelChange(nextModel: string | null): Promise<void> {
     const targetModel = nextModel ?? this.resolveDefaultModel();
-    if (nextModel === this.model && !this.modelDirty) return;
+    if (targetModel !== null && targetModel === this.model && !this.modelDirty) return;
+    if (nextModel === null && this.model === null && !this.modelDirty) return;
 
     if (this.driver?.isAlive && this.conversationId && !this.turn) {
       if (targetModel) {
@@ -180,7 +181,7 @@ export class Session {
           { sessionId: this.conversationId, modelId: targetModel },
           acpSessionResultSchema,
         );
-        this.model = nextModel === null ? null : (result.models?.currentModelId ?? targetModel);
+        this.model = result.models?.currentModelId ?? targetModel;
         this.modelDirty = false;
         return;
       }
@@ -190,7 +191,7 @@ export class Session {
       return;
     }
 
-    this.model = nextModel;
+    this.model = targetModel;
     this.modelDirty = true;
   }
 
@@ -449,9 +450,7 @@ export class Session {
       { sessionId: this.conversationId, modelId: targetModel },
       acpSessionResultSchema,
     );
-    if (this.model !== null) {
-      this.model = result.models?.currentModelId ?? targetModel;
-    }
+    this.model = result.models?.currentModelId ?? targetModel;
     this.modelDirty = false;
     this.emitConfig();
   }
@@ -474,17 +473,21 @@ export class Session {
 
     const sessionResult = await this.openOrLoadAcpSession(driver);
     const reportedModel = sessionResult.models?.currentModelId ?? null;
-    if (reportedModel && !this.defaultModel) {
-      this.defaultModel = reportedModel;
+    if (!this.defaultModel) {
+      this.defaultModel =
+        (this.options.config.model ? null : reportedModel) ??
+        this.options.catalog().models[0]?.id ??
+        reportedModel;
     }
-    if (this.model && this.model !== reportedModel) {
+    const targetModel = this.model ?? (this.modelDirty ? this.resolveDefaultModel() : null);
+    if (targetModel && targetModel !== reportedModel) {
       const modelResult = await driver.requestInit(
         "session/set_model",
-        { sessionId: this.conversationId, modelId: this.model },
+        { sessionId: this.conversationId, modelId: targetModel },
         acpSessionResultSchema,
       );
-      this.model = modelResult.models?.currentModelId ?? this.model;
-    } else if (!this.model && !this.modelDirty && reportedModel) {
+      this.model = modelResult.models?.currentModelId ?? targetModel;
+    } else if (reportedModel) {
       this.model = reportedModel;
     }
     this.modelDirty = false;

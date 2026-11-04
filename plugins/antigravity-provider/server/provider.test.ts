@@ -574,6 +574,13 @@ it("keeps the previous model when session/set_model fails so a retry succeeds", 
       requestId: "set-model-retry",
     }),
   );
+  const records = await h.records();
+  expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(1);
+  expect(
+    records
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params.modelId),
+  ).toEqual(["gemini-3.8-flash-low", "gemini-3.8-flash-low"]);
 });
 
 it("prompts for external MCP tools with a query field in accept-edits mode and prefers allow_once", async () => {
