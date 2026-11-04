@@ -1,5 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import React, { act } from "react";
+import React, { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -30,6 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  grownHeights.clear();
   host.remove();
 });
 
@@ -49,8 +50,30 @@ function rowStyle(height: number) {
   return style;
 }
 
+// A row that changes its own height without a data change, like a todo card toggling its details.
+const grownHeights = new Map<string, number>();
+const heightListeners = new Set<() => void>();
+
+function subscribeToHeights(listener: () => void) {
+  heightListeners.add(listener);
+  return () => heightListeners.delete(listener);
+}
+
+function growRow(id: string, height: number) {
+  grownHeights.set(id, height);
+  for (const listener of heightListeners) listener();
+}
+
+function RowView({ row }: { row: Row }) {
+  const height = useSyncExternalStore(
+    subscribeToHeights,
+    () => grownHeights.get(row.id) ?? row.height,
+  );
+  return <View style={rowStyle(height)} />;
+}
+
 function renderRow({ item }: { item: Row }) {
-  return <View style={rowStyle(item.height)} />;
+  return <RowView row={item} />;
 }
 
 function holdOnly(heldRowId: string) {
@@ -124,6 +147,24 @@ it("anchors a data change on a held row whose top is above the viewport", async 
 
   const inserted: Row = { id: "inserted", height: 30 };
   list.render([...rows.slice(0, 2), inserted, ...rows.slice(2)]);
+  await wait(150);
+
+  expect(list.heldRowTop()).toBe(-20);
+});
+
+it("anchors a size change on a held row whose top is above the viewport", async () => {
+  // The same cut-off row grows from its own state, so LegendList sees a size change only.
+  const rows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+    id: `row-${index}`,
+    height: index === 3 ? 60 : 40,
+  }));
+  const list = mountList("row-3");
+  list.render(rows);
+  await wait(150);
+  await list.scrollTo(140);
+  expect(list.heldRowTop()).toBe(-20);
+
+  act(() => growRow("row-3", 260));
   await wait(150);
 
   expect(list.heldRowTop()).toBe(-20);

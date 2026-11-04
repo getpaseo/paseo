@@ -83,9 +83,10 @@ jumps by the keyboard height after the keyboard settles.
 1. Mark the row held and detach the controller (`holdForDisclosure`). The pin goes away and
    LegendList's `maintainVisibleContentPosition` takes over, restoring only the held row
    (`shouldRestorePosition`). Upstream LegendList anchors only rows from the first fully visible
-   one down, so a turn host whose prompt is cut off at the top would find no anchor and the row
-   below it would hold instead, moving the trigger by the host's size change. The LegendList
-   patch counts rows cut off at the top as in view.
+   one down, and a size change with no data change keeps the first row in view whatever
+   `shouldRestorePosition` says. A row cut off at the top would then let the row below it hold
+   instead, moving the trigger by the row's size change. The LegendList patch counts rows cut off
+   at the top as in view and applies `shouldRestorePosition` to size changes too.
 2. Run `apply`.
 3. Call the row's `useSyncLayout` trigger. The toggle changes the row from its own state, so
    LegendList's container does not re-render and would learn the new height from `onLayout` a task
@@ -129,7 +130,7 @@ With every turn collapsed, flinging from a cold open into history did not blank 
 
 ### LegendList patch
 
-`patches/@legendapp+list+3.7.1.patch` carries nine changes for the timeline. Its header lists
+`patches/@legendapp+list+3.7.1.patch` carries ten changes for the timeline. Its header lists
 them by purpose, and
 [legend-list #593](https://github.com/LegendApp/legend-list/issues/593) reports each upstream.
 Drop a hunk when the installed LegendList ships its fix.
