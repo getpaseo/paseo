@@ -352,7 +352,7 @@ export class ManagedPluginSources {
       throw new Error("Preparation changed the reviewed Git commit");
     if (target?.kind === "npm" && location.identity.kind === "npm") {
       const artifact = await readNpmArtifact(location.versionRoot, location.identity.packageName);
-      if (!isSameNpmArtifact(artifact, target))
+      if (!isSameNpmArtifact({ installed: artifact, target }))
         throw new Error("Preparation changed the reviewed npm artifact");
     }
   }

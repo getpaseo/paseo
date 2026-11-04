@@ -70,14 +70,14 @@ export async function acquireNpm(source: string, installRoot: string, target?: N
     { cwd: installRoot, timeout: 120_000, maxBuffer: 1024 * 1024 },
   );
   const installed = await readNpmArtifact(installRoot, packageName);
-  if (target && !isSameNpmArtifact(installed, target)) {
+  if (target && !isSameNpmArtifact({ installed, target })) {
     throw new Error(`npm artifact changed since review for ${packageName}`);
   }
   return { packageName, ...installed };
 }
 
 // Mirrors serve the reviewed tarball from their own URL, so the content hash identifies it.
-export function isSameNpmArtifact(installed: NpmArtifact, target: NpmArtifact): boolean {
+export function isSameNpmArtifact({ installed, target }: NpmArtifactComparison): boolean {
   return installed.version === target.version && installed.integrity === target.integrity;
 }
 
@@ -85,6 +85,11 @@ export interface NpmArtifact {
   version: string;
   resolved: string;
   integrity: string;
+}
+
+export interface NpmArtifactComparison {
+  installed: NpmArtifact;
+  target: NpmArtifact;
 }
 
 export async function readNpmArtifact(

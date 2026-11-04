@@ -583,14 +583,11 @@ it("installs a registry npm pin through the configured npm mirror", async () => 
   const mirror = await startNpmRegistry(npmPluginPackages());
   const previous = process.env.npm_config_userconfig;
   process.env.npm_config_userconfig = mirror.userconfig;
-  const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-npm-mirror-"));
-  roots.push(home);
-  const { integrity } = await resolveNpm("paseo-fixture-plugin", "1.0.0", home);
   // The public registry pins npmjs.org tarball URLs, which a mirror does not serve at the same path.
   const pin = {
     version: "1.0.0",
     resolved: "https://registry.npmjs.org/paseo-fixture-plugin/-/paseo-fixture-plugin-1.0.0.tgz",
-    integrity,
+    integrity: "",
   };
   const server = createServer((_request, response) => {
     response.end(
@@ -600,10 +597,13 @@ it("installs a registry npm pin through the configured npm mirror", async () => 
       }),
     );
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Missing registry address");
   try {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-npm-mirror-"));
+    roots.push(home);
+    pin.integrity = (await resolveNpm("paseo-fixture-plugin", "1.0.0", home)).integrity;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
     const sources = new ManagedPluginSources(home, {
       defaultUrl: `http://127.0.0.1:${address.port}`,
     });
