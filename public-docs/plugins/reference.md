@@ -1897,7 +1897,10 @@ decisions.
 `client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)
 and returns the same registration. It targets one agent's composer track alongside Tasks and
 Subagents. Composer pills always show the icon and `label` (or `title` when `label` is omitted).
-They never show a chevron, including for menus and popovers.
+Menus and popovers add an upward chevron on every layout, because their surface opens above the
+pill; actions show none, so a pill that runs on tap reads differently from one that opens something.
+The track keeps its space above the composer whether or not it has pills, so adding and removing
+pills does not move the transcript.
 
 ```tsx
 const pill = client.addComposerPill({
