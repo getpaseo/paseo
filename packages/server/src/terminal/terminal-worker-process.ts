@@ -169,6 +169,9 @@ function runLauncher(argv: string[]): void {
 type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTerminal" }>;
 
 function runWorker(argv: string[]): void {
+  const startupPhase = (phase: string) =>
+    console.error(JSON.stringify({ phase, uptimeMs: Math.round(process.uptime() * 1000) }));
+  startupPhase("worker-modules-loaded");
   const args = parseWorkerArgs(argv, TERMINAL_WORKER_MARKER_ARG);
   const protocolVersion = reportedProtocolVersion();
   const manager = createTerminalManager();
@@ -686,6 +689,7 @@ function runWorker(argv: string[]): void {
       writeSync(READY_FD, `${line}\n`);
       closeSync(READY_FD);
     } catch {
+      startupPhase("ready-write-failed");
       // Started without a launcher pipe (tests that spawn the worker directly).
     }
   }
@@ -707,11 +711,14 @@ function runWorker(argv: string[]): void {
       });
     });
     server = listening;
+    startupPhase("socket-listening");
     if (process.platform !== "win32") {
       chmodSync(socketPath, PRIVATE_FILE_MODE);
     }
 
+    startupPhase("identity-start");
     const self = await inspector.inspect(process.pid);
+    startupPhase("identity-finished");
     if (
       self.status !== "alive" ||
       !self.snapshot.startedAt ||
@@ -734,7 +741,9 @@ function runWorker(argv: string[]): void {
       terminals: [],
     };
     writeTerminalWorkerRecord(args.paseoHome, record);
+    startupPhase("record-written");
     reportReady(`ready ${socketPath}`);
+    startupPhase("ready-reported");
 
     setTimeout(() => {
       if (!everControlled && sessionsById.size === 0) exitWorker(0);
