@@ -39,13 +39,18 @@ function waitForAgentUpdate(
   });
 }
 
-function pickModelSwitchPair(provider: string, models: Array<{ id: string }>): [string, string] {
+// The daemon only switches to a model the provider lists, so a provider that lists one model has
+// nothing to switch to.
+function pickModelSwitchPair(
+  provider: string,
+  models: Array<{ id: string }>,
+): [string, string] | null {
   const ids = Array.from(new Set(models.map((m) => m.id))).filter(Boolean);
-  const first = ids[0];
+  const [first, second] = ids;
   if (!first) {
     throw new Error(`No models returned for provider ${provider}`);
   }
-  return [first, ids[1] ?? `${first}-switch-target`];
+  return second ? [first, second] : null;
 }
 
 function pickThinkingSwitchOption(
@@ -54,15 +59,13 @@ function pickThinkingSwitchOption(
     thinkingOptions?: Array<{ id: string }>;
     defaultThinkingOptionId?: string;
   }>,
-): { model: (typeof models)[number]; thinkingOptionId: string } {
-  const modelWithOptions = models.find((m) => (m.thinkingOptions?.length ?? 0) > 0);
-  if (!modelWithOptions) {
-    const first = models[0];
-    if (!first) {
-      throw new Error(`No ${provider} models returned`);
-    }
-    return { model: first, thinkingOptionId: "test-thinking-option" };
+): { model: (typeof models)[number]; thinkingOptionId: string } | null {
+  if (models.length === 0) {
+    throw new Error(`No ${provider} models returned`);
   }
+  // The daemon only switches to a thinking option the model lists.
+  const modelWithOptions = models.find((m) => (m.thinkingOptions?.length ?? 0) > 0);
+  if (!modelWithOptions) return null;
 
   const defaultThinkingId = modelWithOptions.defaultThinkingOptionId ?? "default";
   const thinkingOptionId =
@@ -112,14 +115,16 @@ describe.each(["claude", "codex", "opencode"] as const)("live model switching (%
 
   test.runIf(shouldRun)(
     "updates agent model without restarting",
-    async () => {
+    async ({ skip }) => {
       const cwd = tmpCwd();
       try {
         const modelList = await ctx.client.listProviderModels(provider);
         if (!modelList.models || modelList.models.length === 0) {
           throw new Error(`No models returned for provider ${provider}`);
         }
-        const [modelA, modelB] = pickModelSwitchPair(provider, modelList.models);
+        const pair = pickModelSwitchPair(provider, modelList.models);
+        if (!pair) skip(`${provider} lists one model, so there is nothing to switch to`);
+        const [modelA, modelB] = pair;
 
         const agent = await ctx.client.createAgent({
           provider,
@@ -147,33 +152,35 @@ describe.each(["claude", "codex", "opencode"] as const)("live model switching (%
   );
 });
 
-test("live thinking switching works for Claude (off -> on)", async () => {
+test("live thinking switching works for Claude (default -> non-default)", async ({ skip }) => {
   const cwd = tmpCwd();
   try {
     const modelList = await ctx.client.listProviderModels("claude");
     if (!modelList.models || modelList.models.length === 0) {
       throw new Error("No Claude models returned");
     }
-    const modelId = modelList.models[0].id;
+    const pick = pickThinkingSwitchOption("Claude", modelList.models);
+    if (!pick) skip("No Claude model lists thinking options");
+    const { model, thinkingOptionId } = pick;
 
     const agent = await ctx.client.createAgent({
       provider: "claude",
       cwd,
       title: "Claude Thinking Switch",
-      model: modelId,
+      model: model.id,
     });
 
     const startIndex = messages.length;
-    await ctx.client.setAgentThinkingOption(agent.id, "on");
+    await ctx.client.setAgentThinkingOption(agent.id, thinkingOptionId);
 
     const updated = await waitForAgentUpdate(
       messages,
       startIndex,
-      (a) => a.id === agent.id && a.thinkingOptionId === "on",
+      (a) => a.id === agent.id && a.thinkingOptionId === thinkingOptionId,
       { timeoutMs: 20000 },
     );
 
-    expect(updated.thinkingOptionId).toBe("on");
+    expect(updated.thinkingOptionId).toBe(thinkingOptionId);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -181,7 +188,7 @@ test("live thinking switching works for Claude (off -> on)", async () => {
 
 test.runIf(hasCodex)(
   "live thinking switching works for Codex (default -> non-default)",
-  async () => {
+  async ({ skip }) => {
     const cwd = tmpCwd();
     try {
       const modelList = await ctx.client.listProviderModels("codex");
@@ -189,10 +196,9 @@ test.runIf(hasCodex)(
         throw new Error("No Codex models returned");
       }
 
-      const { model: modelWithOptions, thinkingOptionId } = pickThinkingSwitchOption(
-        "Codex",
-        modelList.models,
-      );
+      const pick = pickThinkingSwitchOption("Codex", modelList.models);
+      if (!pick) skip("No Codex model lists thinking options");
+      const { model: modelWithOptions, thinkingOptionId } = pick;
 
       const agent = await ctx.client.createAgent({
         provider: "codex",
@@ -221,7 +227,7 @@ test.runIf(hasCodex)(
 
 test.runIf(hasOpenCode)(
   "live thinking switching works for OpenCode",
-  async () => {
+  async ({ skip }) => {
     const cwd = tmpCwd();
     try {
       const modelList = await ctx.client.listProviderModels("opencode");
@@ -229,10 +235,9 @@ test.runIf(hasOpenCode)(
         throw new Error("No OpenCode models returned");
       }
 
-      const { model: modelWithThinkingOptions, thinkingOptionId } = pickThinkingSwitchOption(
-        "OpenCode",
-        modelList.models,
-      );
+      const pick = pickThinkingSwitchOption("OpenCode", modelList.models);
+      if (!pick) skip("No OpenCode model lists thinking options");
+      const { model: modelWithThinkingOptions, thinkingOptionId } = pick;
 
       const agent = await ctx.client.createAgent({
         provider: "opencode",
