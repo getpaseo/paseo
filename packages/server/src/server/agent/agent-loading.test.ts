@@ -280,7 +280,7 @@ test("timeline reads keep runnable unarchived agents interactive for the next pr
   }
 }, 30000);
 
-test.each(["mode", "thinking"])(
+test.each(["mode", "thinking", "rewind"])(
   "restored OMP history accepts %s before starting an interactive turn",
   async (setting) => {
     const { OmpAgentClient } = await import("./providers/omp/agent.js");
@@ -291,7 +291,17 @@ test.each(["mode", "thinking"])(
     const sessionFile = path.join(root, "session.jsonl");
     await writeFile(
       sessionFile,
-      JSON.stringify({ type: "session", id: "root", parentId: null }) + "\n",
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "user-1",
+          parentId: "root",
+          message: { role: "user", content: "saved question" },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
     );
     const logger = createTestLogger();
     const storage = new AgentStorage(path.join(root, "agents"), logger);
@@ -336,6 +346,10 @@ test.each(["mode", "thinking"])(
         runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
       ).toHaveLength(0);
       await mkdir(cwd);
+      if (setting === "rewind") {
+        await manager.rewind(agentId, "user-1", "conversation");
+        expect(runtime.latestSession().branchRequests).toEqual(["user-1"]);
+      }
       if (setting === "thinking") {
         await manager.setAgentThinkingOption(agentId, "high");
         expect(manager.getAgent(agentId)?.config.thinkingOptionId).toBe("high");
