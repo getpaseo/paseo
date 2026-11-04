@@ -1,3 +1,9 @@
+import { COMPACT_CONTENT_WIDTH } from "@/constants/layout";
+
+export function shouldUseCompactWorkspaceHeader(width: number): boolean {
+  return width < COMPACT_CONTENT_WIDTH;
+}
+
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
 
 export interface WorkspaceTabLayoutMetrics {

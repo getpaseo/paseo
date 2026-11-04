@@ -256,3 +256,13 @@ describe("resolveWorkspaceTabChipBackdrop", () => {
     ).toBe("surface0");
   });
 });
+
+import { shouldUseCompactWorkspaceHeader } from "./workspace-tab-layout";
+it.each([
+  [349, true],
+  [499, true],
+  [500, false],
+  [800, false],
+])("workspace width %s selects compact=%s", (width, compact) => {
+  expect(shouldUseCompactWorkspaceHeader(width)).toBe(compact);
+});
