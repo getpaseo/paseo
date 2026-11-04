@@ -117,6 +117,7 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "Оставить открытым под чатом", collapse: "Свернуть панель" },
     placeholders: {
       desktop: "Напишите агенту сообщение, отметьте @files или используйте /commands и /skills.",
       mobile: "Сообщение,@files,/commands",

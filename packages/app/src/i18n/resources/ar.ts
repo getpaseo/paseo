@@ -116,6 +116,7 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "إبقاء اللوحة مفتوحة أسفل المحادثة", collapse: "طي اللوحة" },
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",

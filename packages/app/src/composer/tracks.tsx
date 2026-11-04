@@ -13,6 +13,7 @@ import {
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
+import { KeepPanelContent } from "./kept-panel";
 import { bySizing } from "@/components/ui/control-geometry";
 import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
 import { isWeb } from "@/constants/platform";
@@ -67,6 +68,7 @@ export interface ComposerTrackPillProps {
   children: ReactNode;
   /** Pages a row can open in place of the list (`ComposerTrackRow` `opensPage`). */
   pages?: readonly MenuPageDefinition[];
+  keepOpen?: boolean;
 }
 
 /**
@@ -92,14 +94,10 @@ export function ComposerTrackPill({
   accessibilityLabel,
   children,
   pages,
+  keepOpen = false,
 }: ComposerTrackPillProps): ReactElement {
-  return (
-    <MenuRoot compactMode="sheet">
-      <ComposerTrackPillTrigger
-        segments={segments}
-        testID={testID}
-        accessibilityLabel={accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")}
-      />
+  const surface = useCallback(
+    (content: ReactNode) => (
       <MenuSurface
         side="top"
         align="start"
@@ -112,8 +110,25 @@ export function ComposerTrackPill({
         scrollable
         testID={`${testID}-panel`}
       >
-        {children}
+        {content}
       </MenuSurface>
+    ),
+    [panelTitle, pages, testID],
+  );
+  return (
+    <MenuRoot compactMode="sheet">
+      <ComposerTrackPillTrigger
+        segments={segments}
+        testID={testID}
+        accessibilityLabel={accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")}
+      />
+      {keepOpen ? (
+        <KeepPanelContent id={testID} title={panelTitle} renderSurface={surface}>
+          {children}
+        </KeepPanelContent>
+      ) : (
+        surface(children)
+      )}
     </MenuRoot>
   );
 }
