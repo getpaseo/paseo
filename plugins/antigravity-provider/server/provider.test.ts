@@ -1319,6 +1319,58 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     expect(inputs.at(-1)?.model).toBe("gemini-3.8-flash-low");
   });
 
+  it("serializes overlapping idle model changes so failure of a later switch preserves default model reset", async () => {
+    const h = await harness({
+      AGY_TEST_SET_MODEL_DELAY_MS: "60",
+      AGY_TEST_FAIL_SET_MODEL_TARGET: "gemini-3.1-pro-high",
+    });
+    await h.open();
+
+    const reqBPromise = h.request({
+      type: "session.configure",
+      requestId: "switch-to-b",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+    const reqCPromise = h.request({
+      type: "session.configure",
+      requestId: "switch-to-c",
+      sessionId: "s",
+      changes: { model: "gemini-3.1-pro-high" },
+    });
+
+    await reqBPromise;
+    await reqCPromise;
+
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "request.failed",
+        requestId: "switch-to-c",
+      }),
+    );
+
+    await h.request({
+      type: "session.configure",
+      requestId: "reset-to-default",
+      sessionId: "s",
+      changes: { model: null },
+    });
+
+    expect(h.events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "gemini-4-argon-medium" },
+    });
+
+    const setModelCalls = (await h.records())
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params.modelId);
+
+    expect(setModelCalls).toEqual([
+      "gemini-3.8-flash-low",
+      "gemini-3.1-pro-high",
+      "gemini-4-argon-medium",
+    ]);
+  });
+
   it.skipIf(process.platform === "win32")(
     "reaps surviving tool subprocesses in the POSIX group when the ACP leader crashes",
     async () => {
