@@ -5,6 +5,7 @@ import {
   createFixedBrowserViewport,
   createBrowserRecord,
   normalizeBrowserIndexState,
+  normalizeBrowserHomeUrl,
   normalizeBrowserUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
@@ -39,6 +40,20 @@ describe("normalizeBrowserUrl", () => {
   it("falls back to a default URL when input is blank", () => {
     expect(normalizeBrowserUrl(null)).toBe("https://example.com");
     expect(normalizeBrowserUrl("   ")).toBe("https://example.com");
+  });
+});
+
+describe("normalizeBrowserHomeUrl", () => {
+  it("keeps blank input blank so new tabs use the default page", () => {
+    expect(normalizeBrowserHomeUrl("")).toBe("");
+    expect(normalizeBrowserHomeUrl("   ")).toBe("");
+    expect(normalizeBrowserHomeUrl(null)).toBe("");
+  });
+
+  it("normalizes typed hosts like the address bar does", () => {
+    expect(normalizeBrowserHomeUrl(" google.com ")).toBe("https://google.com");
+    expect(normalizeBrowserHomeUrl("localhost:3000")).toBe("http://localhost:3000");
+    expect(normalizeBrowserHomeUrl("http://intranet/start")).toBe("http://intranet/start");
   });
 });
 

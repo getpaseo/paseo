@@ -20,6 +20,8 @@ import {
 
 export {
   createFixedBrowserViewport,
+  DEFAULT_BROWSER_URL,
+  normalizeBrowserHomeUrl,
   RESPONSIVE_BROWSER_VIEWPORT,
   type BrowserRecord,
   type BrowserViewport,

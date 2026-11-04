@@ -2409,6 +2409,13 @@ export const ja: TranslationResources = {
           "外観、プロバイダー、プロジェクト、スマートフォンのペアリングをもう一度設定します",
         action: "セットアップを再表示",
       },
+      browserHomePage: {
+        title: "ホームページ",
+        label: "新しいタブのページ",
+        description:
+          "空のブラウザタブはこの URL を開きます。空欄にするとデフォルトのページを使用します。",
+        accessibilityLabel: "ブラウザのホームページ URL",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
