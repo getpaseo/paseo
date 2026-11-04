@@ -22,6 +22,8 @@ import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { UsageSourceRegistry } from "../plugins/usage-sources/index.js";
+import contributeAntigravity from "../../../../../plugins/antigravity-provider/index.server.js";
 import {
   isStaleProviderSessionError,
   StaleProviderSessionError,
@@ -2610,5 +2612,104 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await imported.session.close();
   } finally {
     await registry.shutdown();
+  }
+});
+
+test("plugin sessions expose resolved launch usage descriptors so agent-scoped Antigravity usage queries succeed", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-agent-usage-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const fakeAgy = fileURLToPath(
+    new URL("../../../../../plugins/antigravity-provider/test/agy.mjs", import.meta.url),
+  );
+
+  let providerReg: ProviderRegistration | undefined;
+  let rawUsageReg:
+    | Parameters<Parameters<typeof contributeAntigravity>[0]["registerUsageSource"]>[0]
+    | undefined;
+  contributeAntigravity({
+    registerProvider(reg) {
+      providerReg = reg;
+    },
+    registerUsageSource(source) {
+      rawUsageReg = source;
+    },
+  });
+  expect(providerReg).toBeDefined();
+  expect(rawUsageReg).toBeDefined();
+
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([providerReg!]);
+  const definitions = buildProviderRegistry(logger, {
+    pluginProviders: plugins.definitions(),
+    providerOverrides: {
+      antigravity: {
+        command: [process.execPath, fakeAgy],
+        env: { AGY_PROFILE_TAG: "from-settings" },
+      },
+    },
+  });
+  const client = definitions.antigravity!.createClient(logger, {
+    command: { mode: "replace", argv: [process.execPath, fakeAgy] },
+    env: { AGY_PROFILE_TAG: "from-settings", CLAUDECODE: "leaked" },
+  });
+  const manager = new AgentManager({
+    clients: { antigravity: client },
+    registry: storage,
+    logger,
+  });
+  const usageRegistry = new UsageSourceRegistry(Date.now, 300_000, logger, {
+    hasAgent: (id) => manager.getAgent(id) !== null,
+    usageSession: (id) => manager.usageSession(id),
+  });
+  usageRegistry.register({
+    id: rawUsageReg!.id,
+    label: rawUsageReg!.label,
+    icon: rawUsageReg!.icon,
+    discover: (scope) => rawUsageReg!.discover(scope),
+    fetch: (input) => rawUsageReg!.fetch(rawUsageReg!.input.parse(input)),
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "antigravity", cwd: home }, undefined, {
+      env: { HOME: home, AGY_AGENT_OVERLAY: "from-agent" },
+    });
+    const descriptor = manager.usageSession(agent.id);
+    expect(descriptor).toMatchObject({
+      provider: "antigravity",
+      model: "gemini-3.8-flash-high",
+      env: {
+        HOME: home,
+        AGY_PROFILE_TAG: "from-settings",
+        AGY_AGENT_OVERLAY: "from-agent",
+      },
+    });
+    expect(descriptor?.env).not.toHaveProperty("CLAUDECODE");
+
+    await manager.setAgentModel(agent.id, "gemini-3.1-pro-high");
+    expect(manager.usageSession(agent.id)).toMatchObject({
+      sessionKey: descriptor?.sessionKey,
+      model: "gemini-3.1-pro-high",
+    });
+
+    const reports = await usageRegistry.listReports({ agentId: agent.id });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      sourceId: "antigravity",
+      sourceLabel: "Antigravity",
+      report: {
+        status: "available",
+        planLabel: "Google AI Pro",
+      },
+    });
+
+    await manager.closeAgent(agent.id);
+    expect(manager.usageSession(agent.id)).toBeNull();
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await client.shutdown?.();
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
   }
 });

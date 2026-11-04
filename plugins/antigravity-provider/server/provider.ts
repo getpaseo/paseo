@@ -144,6 +144,9 @@ function createConnection(
           );
         }
         await ensureCatalog(input.config.cwd);
+        if (closed) {
+          throw new AntigravityError("Antigravity connection is closed", "CLOSED");
+        }
         const sessionLaunch: ProviderLaunch = {
           ...launch,
           env: { ...launch.env, ...input.config.env },
@@ -160,6 +163,9 @@ function createConnection(
         sessions.set(input.sessionId, opened);
         try {
           await opened.open(input.requestId, negotiated, input.history);
+          if (closed) {
+            throw new AntigravityError("Antigravity connection is closed", "CLOSED");
+          }
           usage.remember(sessionLaunch);
         } catch (error) {
           sessions.delete(input.sessionId);
@@ -246,6 +252,10 @@ function createConnection(
         imports.close(),
         ...[...sessions.values()].map((opened) => opened.close()),
         Promise.allSettled(inFlight),
+      ]);
+      await Promise.all([
+        imports.close(),
+        ...[...sessions.values()].map((opened) => opened.close()),
       ]);
       sessions.clear();
       listeners.clear();

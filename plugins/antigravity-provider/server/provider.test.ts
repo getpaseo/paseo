@@ -1075,6 +1075,270 @@ describe("image and rich attachment prompts", () => {
   });
 });
 
+describe("lifecycle, cancellation, and recovery edge cases", () => {
+  it("does not leak an ACP process when connection closes during initial catalog lookup", async () => {
+    const h = await harness({ AGY_TEST_MODELS_DELAY_MS: "120" });
+    await h.connection.send({
+      type: "session.open",
+      requestId: "open-during-close",
+      sessionId: "s",
+      history: "skip",
+      config: { cwd: h.cwd, env: {}, settings: {}, mcpServers: {}, persist: true },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await h.connection.close();
+
+    const records = await h.records().catch(() => []);
+    expect(records.filter((entry) => entry.args?.includes("acp"))).toEqual([]);
+  });
+
+  it("cancels prompt preparation before sending session/prompt when interrupted during reload", async () => {
+    const h = await harness({ AGY_TEST_LOAD_DELAY_MS: "150" });
+    await h.open();
+    const png = await readFile(
+      new URL("../test/fixtures/image-file-external.png", import.meta.url),
+    );
+
+    const clientMessageId = "prompt-cancel-prep";
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId,
+        delivery: "auto",
+        input: {
+          type: "message",
+          content: [
+            { type: "text", text: "Should never reach session/prompt" },
+            { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+          ],
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await h.request({ type: "session.interrupt", requestId: "stop-prep", sessionId: "s" });
+
+    const promptResult = h.events.find(
+      (event) =>
+        event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
+    );
+    expect(promptResult).toMatchObject({ result: { type: "turn" } });
+    expect(h.events).toContainEqual(
+      expect.objectContaining({ type: "session.turn", state: "canceled" }),
+    );
+    const interruptCompletedIdx = h.events.findIndex(
+      (event) => event.type === "request.completed" && event.requestId === "stop-prep",
+    );
+    const turnCanceledIdx = h.events.findIndex(
+      (event) => event.type === "session.turn" && event.state === "canceled",
+    );
+    expect(turnCanceledIdx).toBeGreaterThan(-1);
+    expect(turnCanceledIdx).toBeLessThan(interruptCompletedIdx);
+    expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
+  });
+
+  it("preserves running model accounting during mid-turn switch and applies pending model: null reset on reload", async () => {
+    const h = await harness({ AGY_TEST_LOAD_MODEL: "gemini-3.8-flash-high" });
+    await h.open({ config: { model: "gemini-3.1-pro-high" } });
+
+    const turn1MsgId = "prompt-pro-turn";
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId: turn1MsgId,
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "DELAYED_USAGE" }] },
+      },
+    });
+    const turnResult = await h.wait(
+      (event) => event.type === "session.prompt_result" && event.clientMessageId === turn1MsgId,
+    );
+    if (turnResult.type !== "session.prompt_result" || turnResult.result.type !== "turn") {
+      throw new Error("Expected turn result");
+    }
+    const turn1Id = turnResult.result.turnId;
+
+    // Queue a switch to gemini-3.8-flash-high while the Pro turn is still running.
+    await h.request({
+      type: "session.configure",
+      requestId: "cfg-mid-flash",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-high" },
+    });
+    await h.wait(
+      (event) =>
+        event.type === "session.turn" && event.turnId === turn1Id && event.state === "completed",
+    );
+
+    const turn1Usage = h.events.find(
+      (event) => event.type === "session.usage" && event.turnId === turn1Id,
+    );
+    // Gemini 3.1 Pro pricing (100k input @ $1.25/M = $0.125 + 10k output @ $5/M = $0.05 => $0.175) & 2M context window
+    expect(turn1Usage).toMatchObject({
+      type: "session.usage",
+      usage: {
+        contextWindowMaxTokens: 2_097_152,
+        totalCostUsd: 0.175,
+      },
+    });
+
+    // Start a second turn (switches to gemini-3.8-flash-high), and mid-turn queue model: null reset,
+    // followed by an image prompt that reloads the driver via session/load.
+    const turn2MsgId = "prompt-flash-turn";
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId: turn2MsgId,
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "DELAYED_USAGE" }] },
+      },
+    });
+    const turn2Result = await h.wait(
+      (event) => event.type === "session.prompt_result" && event.clientMessageId === turn2MsgId,
+    );
+    if (turn2Result.type !== "session.prompt_result" || turn2Result.result.type !== "turn") {
+      throw new Error("Expected turn 2 result");
+    }
+    await h.request({
+      type: "session.configure",
+      requestId: "cfg-mid-reset",
+      sessionId: "s",
+      changes: { model: null },
+    });
+    await h.wait(
+      (event) =>
+        event.type === "session.turn" &&
+        event.turnId === turn2Result.result.turnId &&
+        event.state === "completed",
+    );
+
+    const png = await readFile(
+      new URL("../test/fixtures/image-file-external.png", import.meta.url),
+    );
+    await h.completed(
+      await h.message([
+        { type: "text", text: "Image after model reset" },
+        { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+      ]),
+    );
+
+    const records = await h.records();
+    const setModelRpcs = records
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params.modelId);
+    expect(setModelRpcs.at(-1)).toBe("gemini-4-argon-medium");
+  });
+
+  it("fails the active turn and stops the driver when stdin breaks while agy stays alive", async () => {
+    const h = await harness({ AGY_TEST_CLOSE_STDIN_AFTER_NEW: "yes" });
+    await h.open();
+    const msgId = await h.message([{ type: "text", text: "Trigger broken pipe" }]);
+    const promptResult = h.events.find(
+      (event) => event.type === "session.prompt_result" && event.clientMessageId === msgId,
+    );
+    expect(promptResult).toMatchObject({ result: { type: "turn" } });
+    if (promptResult?.type === "session.prompt_result" && promptResult.result.type === "turn") {
+      const failedTurn = await h.wait(
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === promptResult.result.turnId &&
+          event.state === "failed",
+      );
+      expect(failedTurn).toMatchObject({ state: "failed" });
+    }
+    const records = await h.records();
+    const acpPid = records.find((entry) => entry.args?.includes("acp"))?.pid;
+    expect(typeof acpPid).toBe("number");
+    await expect
+      .poll(() => {
+        try {
+          process.kill(acpPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reaps surviving tool subprocesses in the POSIX group when the ACP leader crashes",
+    async () => {
+      const h = await harness();
+      await h.open();
+      const msgId = await h.message([{ type: "text", text: "CRASH_WITH_ORPHAN" }]);
+      const promptResult = h.events.find(
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === msgId,
+      );
+      if (promptResult?.type === "session.prompt_result" && promptResult.result.type === "turn") {
+        await h.wait(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === promptResult.result.turnId &&
+            event.state === "failed",
+        );
+      }
+      const orphanPid = (await h.records()).find((entry) => entry.orphanPid)?.orphanPid;
+      expect(typeof orphanPid).toBe("number");
+      await expect
+        .poll(() => {
+          try {
+            process.kill(orphanPid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+        .toBe(false);
+    },
+  );
+
+  it("replays hundreds of chunked history updates in order using indexed lookup", async () => {
+    const h = await harness({ AGY_TEST_REPLAY_CHUNKS: "250" });
+    await h.open({
+      restored: { version: 1, data: { conversationId: "conv-bulk-1" } },
+      history: "replay",
+    });
+    const assistantItems = h.events.flatMap((event) =>
+      event.type === "timeline.item" && event.item.type === "assistant_message" ? [event.item] : [],
+    );
+    expect(assistantItems).toHaveLength(51);
+    expect(assistantItems[0]).toMatchObject({
+      id: "agent_message_chunk:bulk-0",
+      text: "c0c1c2c3c4",
+    });
+    expect(assistantItems[49]).toMatchObject({
+      id: "agent_message_chunk:bulk-49",
+      text: "c0c1c2c3c4",
+    });
+    expect(assistantItems[50]).toMatchObject({
+      id: "agent_message_chunk:replay-a1",
+      text: "REPLAYED_ASSISTANT",
+    });
+  });
+
+  it("matches session-scoped usage accounts when custom --app-data-dir launch args are used", async () => {
+    const customHome = await mkdtemp(path.join(os.tmpdir(), "agy-custom-home-"));
+    temporary.push(customHome);
+    const customStore = path.join(customHome, "custom-store");
+    const usage = new Usage({ home: customHome });
+    usage.remember({
+      command: process.execPath,
+      args: [fake, "--app-data-dir", customStore],
+      env: { HOME: customHome },
+    });
+    const discovered = await usage.registration().discover({
+      kind: "session",
+      provider: "antigravity",
+      env: { HOME: customHome },
+    });
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]?.key).toBe(usage.accountKey(["--app-data-dir", customStore], {}));
+  });
+});
+
 it.runIf(process.platform === "win32")(
   "launches an Antigravity command shim for probes and conversation startup",
   async () => {

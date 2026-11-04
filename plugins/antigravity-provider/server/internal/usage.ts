@@ -94,6 +94,11 @@ export class Usage {
             ];
           }
           for (const [key, launch] of this.launches) {
+            if (this.accountKey(launch.args, scope.env) === key) {
+              return [{ key, label: "Antigravity", input: { account: key } }];
+            }
+          }
+          for (const [key, launch] of this.launches) {
             if (
               (launch.env.HOME ?? this.defaultHome) === (scope.env.HOME ?? this.defaultHome) &&
               (launch.env.USERPROFILE ?? "") === (scope.env.USERPROFILE ?? "")

@@ -55,6 +55,8 @@ const INTERRUPT_GRACE_MS = 350;
 
 interface ActiveTurn {
   id: string;
+  model: string | null;
+  started: boolean;
   interrupted: boolean;
   settled: Promise<void>;
   resolveSettled: () => void;
@@ -101,6 +103,7 @@ export class Session {
   private turn: ActiveTurn | null = null;
   private replayMode: "live" | "replay" | "skip" = "live";
   private replayBuffer: ProviderEvent[] | null = null;
+  private readonly replayIndexById = new Map<string, number>();
   private hasOpened = false;
   private itemSeq = 0;
   private permissionSeq = 0;
@@ -197,22 +200,53 @@ export class Session {
       throw new AntigravityError("Antigravity already has an active turn", "TURN_ACTIVE");
     }
     if (prompt.clearPendingPermissions) this.cancelAllPermissions();
-    const encoded = await this.files.encode(prompt);
-    const driver = await this.ensureLiveDriver();
-    if (!this.conversationId) {
-      throw new AntigravityError(
-        "Antigravity ACP session has no active conversation ID",
-        "PROCESS_FAILED",
-      );
-    }
 
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => {
       resolveSettled = resolve;
     });
     const turnId = `turn-${randomUUID()}`;
-    const turn: ActiveTurn = { id: turnId, interrupted: false, settled, resolveSettled };
+    const turn: ActiveTurn = {
+      id: turnId,
+      model: this.effectiveModel,
+      started: false,
+      interrupted: false,
+      settled,
+      resolveSettled,
+    };
     this.turn = turn;
+
+    let encoded: Awaited<ReturnType<PromptFiles["encode"]>> | undefined;
+    let driver: DriverProcess;
+    try {
+      encoded = await this.files.encode(prompt);
+      if (turn.interrupted || this.closed) {
+        this.finishCanceledPreparation(turn, prompt.clientMessageId, encoded.text);
+        return;
+      }
+      driver = await this.ensureLiveDriver();
+      if (turn.interrupted || this.closed) {
+        this.finishCanceledPreparation(turn, prompt.clientMessageId, encoded.text);
+        return;
+      }
+      if (!this.conversationId) {
+        throw new AntigravityError(
+          "Antigravity ACP session has no active conversation ID",
+          "PROCESS_FAILED",
+        );
+      }
+    } catch (error) {
+      if (turn.interrupted || this.closed) {
+        this.finishCanceledPreparation(turn, prompt.clientMessageId, encoded?.text);
+        return;
+      }
+      if (this.turn === turn) this.turn = null;
+      turn.resolveSettled();
+      throw error;
+    }
+
+    turn.model = this.effectiveModel;
+    turn.started = true;
     this.resetStreamReducers();
 
     this.options.emit({
@@ -235,6 +269,45 @@ export class Session {
     void this.executeTurn(driver, turn, encoded.nativeText);
   }
 
+  private finishCanceledPreparation(
+    turn: ActiveTurn,
+    clientMessageId: string,
+    text?: string,
+  ): void {
+    if (this.turn === turn) this.turn = null;
+    if (text !== undefined) {
+      this.options.emit({
+        type: "timeline.item",
+        sessionId: this.id,
+        item: {
+          type: "user_message",
+          id: clientMessageId,
+          text,
+          clientMessageId,
+        },
+      });
+    }
+    this.options.emit({
+      type: "session.prompt_result",
+      sessionId: this.id,
+      clientMessageId,
+      result: { type: "turn", turnId: turn.id },
+    });
+    this.options.emit({
+      type: "session.turn",
+      sessionId: this.id,
+      turnId: turn.id,
+      state: "started",
+    });
+    this.options.emit({
+      type: "session.turn",
+      sessionId: this.id,
+      turnId: turn.id,
+      state: "canceled",
+    });
+    turn.resolveSettled();
+  }
+
   respondToPermission(permissionId: string, response: ProviderPermissionResponse): void {
     const pending = this.pendingPermissions.get(permissionId);
     if (!pending) return;
@@ -250,10 +323,23 @@ export class Session {
 
   async interrupt(): Promise<void> {
     const activeTurn = this.turn;
-    const driver = this.driver;
-    if (!activeTurn || !driver) return;
+    if (!activeTurn) return;
     activeTurn.interrupted = true;
     this.cancelAllPermissions();
+
+    if (!activeTurn.started) {
+      if ((await waitForTurnOrTimeout(activeTurn.settled)) === "timeout") {
+        await this.retireDriver();
+      }
+      await activeTurn.settled;
+      return;
+    }
+
+    const driver = this.driver;
+    if (!driver) {
+      await activeTurn.settled;
+      return;
+    }
     if (this.conversationId) {
       driver.notify("session/cancel", { sessionId: this.conversationId });
     }
@@ -289,7 +375,6 @@ export class Session {
         return;
       }
       this.requestedModel = null;
-      this.effectiveModel = this.defaultModelId;
       this.modelDirty = true;
       return;
     }
@@ -306,7 +391,6 @@ export class Session {
       return;
     }
     this.requestedModel = nextModel;
-    this.effectiveModel = nextModel;
     this.modelDirty = true;
   }
 
@@ -417,6 +501,7 @@ export class Session {
         onRequest: (id, method, params) => this.handleServerRequest(driver, id, method, params),
         onExit: () => {
           if (this.driver === driver) this.driver = null;
+          void driver.stop();
         },
       },
     );
@@ -464,10 +549,14 @@ export class Session {
         : (catalogDefault ?? reportedModel);
     }
 
-    if (this.requestedModel && this.requestedModel !== reportedModel) {
-      await this.setLiveModel(driver, this.requestedModel, this.requestedModel);
+    const targetModel = this.modelDirty
+      ? (this.requestedModel ?? this.defaultModelId)
+      : this.requestedModel;
+    if (targetModel && targetModel !== reportedModel) {
+      await this.setLiveModel(driver, targetModel, this.requestedModel);
+      if (this.hasOpened) this.emitConfig();
     } else {
-      this.effectiveModel = this.requestedModel ?? reportedModel ?? this.effectiveModel;
+      this.effectiveModel = targetModel ?? reportedModel ?? this.effectiveModel;
       this.modelDirty = false;
     }
     return replayEvents;
@@ -489,6 +578,7 @@ export class Session {
       const buffered: ProviderEvent[] = [];
       this.replayMode = history;
       this.replayBuffer = history === "replay" ? buffered : null;
+      this.replayIndexById.clear();
       this.resetStreamReducers();
       try {
         const sessionResult = await driver.requestInit(
@@ -500,6 +590,7 @@ export class Session {
       } finally {
         this.replayMode = "live";
         this.replayBuffer = null;
+        this.replayIndexById.clear();
         this.resetStreamReducers();
       }
     }
@@ -592,6 +683,7 @@ export class Session {
     update: Extract<AcpSessionUpdate, { sessionUpdate: "usage_update" }>,
   ): void {
     recordTurnUsageUpdate(this.turn, update);
+    const activeModel = this.turn ? this.turn.model : this.effectiveModel;
     const usage = mergeUsageSnapshot(this.lastUsage, {
       inputTokens: update.inputTokens,
       outputTokens: update.outputTokens,
@@ -600,7 +692,7 @@ export class Session {
       contextWindowMaxTokens:
         positiveNumber(update.size) ??
         this.turn?.contextMax ??
-        inferModelContextWindow(this.effectiveModel),
+        inferModelContextWindow(activeModel),
       totalCostUsd: update.cost?.amount,
     });
     if (Object.keys(usage).length === 0) return;
@@ -619,7 +711,7 @@ export class Session {
   ): void {
     const contextWindowMaxTokens =
       turn.contextMax ??
-      inferModelContextWindow(this.effectiveModel) ??
+      inferModelContextWindow(turn.model) ??
       this.lastUsage.contextWindowMaxTokens;
     const summedTokens =
       (raw.inputTokens ?? 0) + (raw.cachedInputTokens ?? 0) + (raw.outputTokens ?? 0);
@@ -652,7 +744,7 @@ export class Session {
       this.accumulatedCostUsd = turn.updateCostUsd;
       return turn.updateCostUsd;
     }
-    const estimated = estimateModelCostUsd(this.effectiveModel, raw);
+    const estimated = estimateModelCostUsd(turn.model, raw);
     if (estimated !== undefined) {
       this.accumulatedCostUsd += estimated;
       return Math.round(this.accumulatedCostUsd * 1_000_000) / 1_000_000;
@@ -707,14 +799,17 @@ export class Session {
 
   private publishStreamEvent(event: ProviderEvent): void {
     if (this.replayBuffer) {
-      const idx =
-        event.type === "timeline.item"
-          ? this.replayBuffer.findIndex(
-              (queued) => queued.type === "timeline.item" && queued.item.id === event.item.id,
-            )
-          : -1;
-      if (idx >= 0) this.replayBuffer[idx] = event;
-      else this.replayBuffer.push(event);
+      if (event.type === "timeline.item") {
+        const existingIdx = this.replayIndexById.get(event.item.id);
+        if (existingIdx !== undefined) {
+          this.replayBuffer[existingIdx] = event;
+        } else {
+          this.replayIndexById.set(event.item.id, this.replayBuffer.length);
+          this.replayBuffer.push(event);
+        }
+      } else {
+        this.replayBuffer.push(event);
+      }
       return;
     }
     if (this.hasOpened) this.options.emit(event);
@@ -943,7 +1038,9 @@ export class Session {
 
   private emitConfig(): void {
     const catalog = this.options.catalog();
-    const model = this.effectiveModel ?? this.requestedModel;
+    const model = this.modelDirty
+      ? (this.requestedModel ?? this.defaultModelId ?? catalog.defaultModel)
+      : (this.effectiveModel ?? this.requestedModel);
     this.options.emit({
       type: "session.config",
       sessionId: this.id,

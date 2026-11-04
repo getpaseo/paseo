@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, closeSync, readFileSync, realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
@@ -28,6 +28,11 @@ if (args.includes("--version")) {
 }
 
 if (args.includes("models")) {
+  if (process.env.AGY_TEST_MODELS_DELAY_MS) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, Number(process.env.AGY_TEST_MODELS_DELAY_MS)),
+    );
+  }
   if (process.env.AGY_TEST_AUTH === "missing") {
     process.stderr.write(fixture("models-unauthenticated", "stderr").join("\n"));
     process.exit(1);
@@ -131,6 +136,29 @@ async function handlePrompt(id, params) {
 
   if (text.includes("HANG") || text.includes("TOOL_HANG")) {
     handleHangPrompt(id, text);
+    return;
+  }
+  if (text.includes("CRASH_WITH_ORPHAN")) {
+    const orphan = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    orphan.unref();
+    record({ orphanPid: orphan.pid });
+    process.exit(1);
+  }
+  if (text.includes("DELAYED_USAGE")) {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: `MODEL_USED:${currentModel}\n` },
+    });
+    respond(id, {
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 100_000,
+        outputTokens: 10_000,
+      },
+    });
     return;
   }
   if (text.includes("SPAWN_ORPHAN")) {
@@ -556,8 +584,22 @@ function handleSessionList(id, params) {
   });
 }
 
-function handleSessionLoad(id, params) {
+async function handleSessionLoad(id, params) {
   sessionId = params.sessionId || DEFAULT_SESSION_ID;
+  if (process.env.AGY_TEST_LOAD_MODEL) {
+    currentModel = process.env.AGY_TEST_LOAD_MODEL;
+  }
+  if (process.env.AGY_TEST_LOAD_DELAY_MS) {
+    await new Promise((resolve) => setTimeout(resolve, Number(process.env.AGY_TEST_LOAD_DELAY_MS)));
+  }
+  const extraChunks = Number(process.env.AGY_TEST_REPLAY_CHUNKS || "0");
+  for (let i = 0; i < extraChunks; i += 1) {
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      messageId: `bulk-${Math.floor(i / 5)}`,
+      content: { type: "text", text: `c${i % 5}` },
+    });
+  }
   notifyUpdate({
     sessionUpdate: "user_message_chunk",
     messageId: "replay-u1",
@@ -642,9 +684,17 @@ lines.on("line", async (line) => {
           { name: "compact", description: "Compact conversation context" },
         ],
       });
+      if (process.env.AGY_TEST_CLOSE_STDIN_AFTER_NEW === "yes") {
+        setInterval(() => {}, 1000);
+        try {
+          closeSync(0);
+        } catch {
+          // ignore
+        }
+      }
       return;
     case "session/load":
-      handleSessionLoad(id, params);
+      await handleSessionLoad(id, params);
       return;
     case "session/set_model":
       if (failSetModelOnce) {
@@ -681,5 +731,10 @@ process.on("SIGTERM", () => {
 });
 
 lines.on("close", () => {
-  if (process.env.AGY_TEST_IGNORE_SIGNALS !== "yes") process.exit(0);
+  if (
+    process.env.AGY_TEST_IGNORE_SIGNALS !== "yes" &&
+    process.env.AGY_TEST_CLOSE_STDIN_AFTER_NEW !== "yes"
+  ) {
+    process.exit(0);
+  }
 });
