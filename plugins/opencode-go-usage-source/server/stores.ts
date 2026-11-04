@@ -58,7 +58,8 @@ export function readDatabaseLogin(path: string): DatabaseLogin | null {
     if (!tables.length) return null;
     const [value] = db
       .prepare(
-        "SELECT value FROM credential WHERE integration_id = ? AND active = 1 ORDER BY time_updated DESC, id DESC LIMIT 1",
+        // OpenCode also selects migrated rows with no active flag, ordered by creation time.
+        "SELECT value FROM credential WHERE integration_id = ? ORDER BY active DESC, time_created DESC, id DESC LIMIT 1",
       )
       .all("opencode-go");
     const row = rowSchema.safeParse(value);

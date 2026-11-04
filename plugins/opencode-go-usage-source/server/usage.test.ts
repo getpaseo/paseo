@@ -16,7 +16,7 @@ async function database() {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(join(fixtureDirectory, "opencode.db"));
   db.exec(
-    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER)",
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER, time_created INTEGER DEFAULT 0)",
   );
   return db;
 }
@@ -51,7 +51,9 @@ const upstreamResponse = {
 test("uses the active v2 Go key instead of a stale legacy key without writing either store", async () => {
   const databasePath = join(fixtureDirectory, "opencode.db");
   const db = await database();
-  const insert = db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)");
+  const insert = db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  );
   insert.run("inactive", "opencode-go", JSON.stringify({ type: "key", key: "inactive-key" }), 0, 3);
   insert.run("active", "opencode-go", JSON.stringify({ type: "key", key: "active-key" }), 1, 1);
   insert.run("zen", "opencode", JSON.stringify({ type: "key", key: "zen-key" }), 1, 4);
@@ -78,13 +80,9 @@ test("uses the active v2 Go key instead of a stale legacy key without writing ei
 
 test("discovers v2 Go usage without a legacy auth.json", async () => {
   const db = await database();
-  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)").run(
-    "go",
-    "opencode-go",
-    JSON.stringify({ type: "key", key: "database-key" }),
-    1,
-    1,
-  );
+  db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  ).run("go", "opencode-go", JSON.stringify({ type: "key", key: "database-key" }), 1, 1);
   db.close();
   await rm(fixturePath);
   const accounts = await discover(stores(fixturePath));
@@ -99,7 +97,9 @@ test("discovers v2 Go usage without a legacy auth.json", async () => {
 
 test("refresh follows the active Go account and re-reads its rotated key", async () => {
   const db = await database();
-  const insert = db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)");
+  const insert = db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  );
   insert.run("first", "opencode-go", JSON.stringify({ type: "key", key: "first-key" }), 1, 1);
   insert.run("second", "opencode-go", JSON.stringify({ type: "key", key: "second-key" }), 0, 2);
   db.close();
@@ -125,7 +125,56 @@ test("refresh follows the active Go account and re-reads its rotated key", async
 });
 
 test.each([
-  ["inactive Go key", "opencode-go", 0, JSON.stringify({ type: "key", key: "inactive-key" })],
+  [null, false],
+  [null, true],
+  [0, false],
+  [0, true],
+])("discovers a selected Go key with active=%s and legacy file=%s", async (active, legacy) => {
+  const db = await database();
+  db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  ).run("migrated", "opencode-go", JSON.stringify({ type: "key", key: "migrated-key" }), active, 1);
+  db.close();
+  if (!legacy) await rm(fixturePath);
+  const accounts = await discover(stores(fixturePath));
+  expect(accounts).toEqual([
+    {
+      key: expect.stringMatching(/^[a-f0-9]{64}$/),
+      input: { store: "database", path: join(fixtureDirectory, "opencode.db") },
+    },
+  ]);
+  const report = await fetchUsage(inputSchema.parse(accounts[0]!.input), async (_url, init) => {
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer migrated-key");
+    return Response.json(upstreamResponse);
+  });
+  expect(report.status).toBe("available");
+});
+
+test("selects the newest created Go key when no explicit active key exists", async () => {
+  const db = await database();
+  const insert = db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?)",
+  );
+  insert.run("older", "opencode-go", JSON.stringify({ type: "key", key: "older-key" }), null, 1, 9);
+  insert.run("newer-a", "opencode-go", JSON.stringify({ type: "key", key: "tie-key" }), null, 2, 8);
+  insert.run(
+    "newer-b",
+    "opencode-go",
+    JSON.stringify({ type: "key", key: "selected-key" }),
+    null,
+    2,
+    1,
+  );
+  db.close();
+  const accounts = await discover(stores(fixturePath));
+  expect(accounts).toHaveLength(1);
+  await fetchUsage(inputSchema.parse(accounts[0]!.input), async (_url, init) => {
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer selected-key");
+    return Response.json(upstreamResponse);
+  });
+});
+
+test.each([
   ["other provider", "opencode", 1, JSON.stringify({ type: "key", key: "zen-key" })],
   ["Console OAuth", "opencode-go", 1, JSON.stringify({ type: "oauth", access: "oauth-token" })],
   ["malformed credential", "opencode-go", 1, "invalid JSON"],
@@ -134,13 +183,9 @@ test.each([
   "does not revive a legacy key for a v2 store with %s",
   async (_name, provider, active, value) => {
     const db = await database();
-    db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)").run(
-      "credential",
-      provider,
-      value,
-      active,
-      1,
-    );
+    db.prepare(
+      "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+    ).run("credential", provider, value, active, 1);
     db.close();
     expect(await discover(stores(fixturePath))).toEqual([]);
   },
@@ -191,15 +236,11 @@ test("discovers a relative OPENCODE_DB under the OpenCode data directory", async
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(databasePath);
   db.exec(
-    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER)",
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER, time_created INTEGER DEFAULT 0)",
   );
-  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)").run(
-    "go",
-    "opencode-go",
-    JSON.stringify({ type: "key", key: "relative-key" }),
-    1,
-    1,
-  );
+  db.prepare(
+    "INSERT INTO credential (id, integration_id, value, active, time_updated) VALUES (?, ?, ?, ?, ?)",
+  ).run("go", "opencode-go", JSON.stringify({ type: "key", key: "relative-key" }), 1, 1);
   db.close();
   expect(await discover(paths)).toEqual([
     {
