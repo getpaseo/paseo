@@ -97,6 +97,17 @@ export default defineConfig({
       },
       {
         extends: true,
+        resolve: {
+          alias: [
+            // The app renders LegendList on native only, from the patched native build. Browser
+            // tests render that build too, instead of the package's separate web build. Unit tests
+            // load it outside Vite, where its react-native import would miss the web alias.
+            {
+              find: /^@legendapp\/list\/react-native$/,
+              replacement: path.resolve(rootNodeModules, "@legendapp/list/react-native.mjs"),
+            },
+          ],
+        },
         test: {
           name: "browser",
           fileParallelism: false,
@@ -234,12 +245,6 @@ export default defineConfig({
           rootNodeModules,
           "react-native-gesture-handler/lib/module/index.js",
         ),
-      },
-      // The app renders LegendList on native only, from the patched native build. Tests render
-      // that build too, instead of the package's separate web build.
-      {
-        find: /^@legendapp\/list\/react-native$/,
-        replacement: path.resolve(rootNodeModules, "@legendapp/list/react-native.mjs"),
       },
       // Must precede the `react-native` alias: a string `find` matches by prefix, so this subpath
       // would otherwise resolve inside a react-native-web *file* and break the dependency scan.
