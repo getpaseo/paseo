@@ -34,6 +34,12 @@ const Details = z
     completions: z.array(Completion).optional(),
   })
   .passthrough();
+/** Progress updates of a running call; pi-rust's subagent extension sends each run's session file. */
+const Progress = z
+  .object({
+    runs: z.array(z.object({ sessionFile: z.string().trim().min(1).optional() }).passthrough()),
+  })
+  .passthrough();
 const AsyncStatus = z
   .object({
     state: z.string(),
@@ -48,6 +54,16 @@ const AsyncStatus = z
     ),
   })
   .passthrough();
+
+/** The child session file of a running single-run call, from its progress update. */
+function runningSessionFile(call: PiExtensionToolCall) {
+  const progress = Progress.safeParse(
+    typeof call.result === "object" ? call.result?.details : null,
+  );
+  return progress.success && progress.data.runs.length === 1
+    ? progress.data.runs[0]?.sessionFile
+    : undefined;
+}
 
 function asyncChildStatus(runState: string, stepStatus?: string) {
   if (!["complete", "failed", "stopped"].includes(runState)) return "running";
@@ -141,8 +157,13 @@ export const piSubagents: PiExtension = {
         description: args.data.task,
         toolCallId: call.callId,
       };
-      if (call.status === "running")
-        return { detail, subagents: [{ ...base, status: "running" as const }] };
+      if (call.status === "running") {
+        const subagents = [{ ...base, status: "running" as const }];
+        const file = runningSessionFile(call);
+        if (!file || readSessions.has(file)) return { detail, subagents };
+        readSessions.add(file);
+        return { detail, subagents, childSessions: [{ id: call.callId, file }] };
+      }
       const details = Details.safeParse(
         typeof call.result === "object" ? call.result?.details : null,
       );

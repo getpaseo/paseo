@@ -87,6 +87,57 @@ describe("pi-subagents adapter", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("follows a foreground transcript from progress updates while the call runs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-pi-foreground-"));
+    const file = join(dir, "child.jsonl");
+    const received: AgentStreamEvent[] = [];
+    const host = createPiExtensionHost();
+    const line = (text: string) =>
+      `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text }] } })}\n`;
+    const childText = (text: string) =>
+      received.some(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          JSON.stringify(event.event).includes(text),
+      );
+    const call = {
+      callId: "call-1",
+      toolName: "subagent",
+      args: { agent: "scout", task: "Inspect" },
+    };
+    try {
+      host.follow((event) => received.push(event));
+      const running = host.mapToolCall({
+        ...call,
+        status: "running",
+        result: { details: { runs: [{ agent: "scout", status: "running", sessionFile: file }] } },
+      });
+      expect(running?.childSessions).toEqual([{ id: "call-1", file }]);
+      await writeFile(file, line("WORKING"));
+      await expect.poll(() => childText("WORKING")).toBe(true);
+
+      await writeFile(file, line("WORKING") + line("FINISHED"));
+      const completed = host.mapToolCall({
+        ...call,
+        status: "completed",
+        result: {
+          details: {
+            mode: "single",
+            runId: "run-1",
+            results: [{ index: 0, agent: "scout", success: true, exitCode: 0, sessionFile: file }],
+          },
+        },
+      });
+      expect(completed?.childSessions).toEqual([]);
+      expect(hasCompletedChild(completed!.events)).toBe(true);
+      await completed!.hydration;
+      expect(childText("FINISHED")).toBe(true);
+    } finally {
+      host.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("settles an async run and reads its transcript from the completion notice on replay", async () => {
     const dir = await mkdtemp(join(tmpdir(), "paseo-pi-async-"));
     const file = join(dir, "child.jsonl");
