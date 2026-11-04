@@ -3,6 +3,7 @@ import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/util
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
 import { matchCommandLink } from "@/agent-commands";
+import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
@@ -108,6 +109,37 @@ describe("shared Markdown source adaptation", () => {
       ["https://x/a.png", false],
       ["https://x/i.png", true],
       ["https://x/q.png", false],
+    ]);
+  });
+  it("renders linked images that share a line with text inline", async () => {
+    // A review bot's summary header: linked badges inside a heading with the score text.
+    const reviewHeader =
+      '<h2><a href="https://x/retrigger"><picture><source media="(prefers-color-scheme: dark)" srcset="https://x/r-dark.svg"><img alt="Retrigger" src="https://x/r.svg" align="right"></picture></a>Confidence Score: 5/5</h2>';
+    const source = [
+      reviewHeader,
+      "[![Alone](https://x/alone.png)](https://x)",
+      "[![a](https://x/a.png)](https://x) [![b](https://x/b.png)](https://x)",
+      "See [![gh](https://x/gh.png) GitHub](https://x) for more.",
+    ].join("\n\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    markInlineImages(tree);
+    const images: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Image") images.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(
+      images.map((image) => [image.attributes?.url, image.attributes?.isInline === true]),
+    ).toEqual([
+      ["https://x/r.svg", true],
+      ["https://x/alone.png", false],
+      ["https://x/a.png", true],
+      ["https://x/b.png", true],
+      ["https://x/gh.png", true],
     ]);
   });
   it("escapes spoiler delimiters only in prose", () => {
@@ -410,6 +442,47 @@ it("lets the engine own code boundaries while classifying candidate values", asy
     "src/final.ts",
     "src/newline.ts",
   ]);
+});
+
+it("recognizes forge references in prose but not in code, links or paths", async () => {
+  const shorthand = createForgeShorthand({
+    forge: "gitlab",
+    remoteUrl: "git@gitlab.com:g/p.git",
+  })!;
+  const source = [
+    "Fixed in #12 and !13, see g/sub/q#14 and https://example.com/a#15.",
+    "`#16` and [#17](https://example.com) and src/app/index.ts and src/a/b/c#18",
+    "```\n#19\n```",
+  ].join("\n\n");
+  const prepared = prepareMarkdownSource(source, "/repo", {
+    forgeReferencePattern: shorthand.pattern,
+  });
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const recognized: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link" && node.attributes?.recognizedLink === "true") {
+      recognized.push(String(node.attributes.url));
+    }
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(recognized).toEqual(["#12", "!13", "g/sub/q#14", "src/app/index.ts", "src/a/b/c#18"]);
+  expect(recognized.map((url) => shorthand.resolve(url))).toEqual([
+    "https://gitlab.com/g/p/-/issues/12",
+    "https://gitlab.com/g/p/-/merge_requests/13",
+    "https://gitlab.com/g/sub/q/-/issues/14",
+    null,
+    "https://gitlab.com/src/a/b/c/-/issues/18",
+  ]);
+  // A rejected native regex silently falls back to no recognition at all.
+  expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+    isDisabled: false,
+    isDefault: false,
+  });
 });
 
 describe("bare URL sentence punctuation", () => {

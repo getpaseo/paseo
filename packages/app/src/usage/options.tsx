@@ -79,7 +79,6 @@ export function UsageOptions({ serverId }: { serverId: string | null }) {
                 options={displayAsOptions}
                 value={display.displayAs}
                 onValueChange={display.setDisplayAs}
-                size="sm"
                 testID="usage-display-as"
               />
             </SettingsRow>

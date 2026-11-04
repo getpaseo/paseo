@@ -7,6 +7,7 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
+import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
@@ -32,7 +33,13 @@ function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
 const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
 
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
-  const { tooltipPath, onHoverIn } = useFileLink(markdownLinkSource(link.url, link.sourceType));
+  const forgeShorthand = useForgeShorthand();
+  // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
+  const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
+  const { tooltipPath, onHoverIn } = useFileLink(
+    forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
+  );
+  const tooltip = forgeUrl ?? tooltipPath;
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
@@ -48,6 +55,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     <a
       {...anchorProps}
       data-focus-ring={OUTER_FOCUS_RING_DATASET.focusRing}
+      href={forgeUrl ?? anchorProps.href}
       style={anchorStyle}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -60,10 +68,10 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
         <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
       </TooltipTrigger>
-      {tooltipPath ? (
+      {tooltip ? (
         <TooltipContent side="top" align="start" maxWidth={520}>
           <Text selectable={false} style={styles.tooltipPath}>
-            {tooltipPath}
+            {tooltip}
           </Text>
         </TooltipContent>
       ) : null}
