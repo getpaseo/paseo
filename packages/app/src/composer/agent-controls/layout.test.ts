@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  COMPOSER_TOOLBAR_GEOMETRY,
+  composerToolbarGeometry,
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
-  resolveComposerToolbarGlyphSize,
 } from "./layout";
+
+const POINTER = composerToolbarGeometry("pointer");
+const TOUCH = composerToolbarGeometry("touch");
 
 describe("composer control layout", () => {
   it("removes labels in priority order as the toolbar narrows", () => {
@@ -41,6 +43,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 420,
         currentDensity: "full",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("full");
@@ -48,6 +51,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 380,
         currentDensity: "full",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("condensed");
@@ -55,6 +59,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 290,
         currentDensity: "condensed",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("condensed");
@@ -62,6 +67,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 280,
         currentDensity: "condensed",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("tight");
@@ -69,6 +75,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 300,
         currentDensity: "tight",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("tight");
@@ -76,6 +83,7 @@ describe("composer control layout", () => {
       resolveComposerControlDensity({
         availableWidth: 312,
         currentDensity: "tight",
+        geometry: POINTER,
         controls,
       }),
     ).toBe("condensed");
@@ -85,6 +93,7 @@ describe("composer control layout", () => {
     const base = {
       availableWidth: 430,
       currentDensity: "condensed" as const,
+      geometry: POINTER,
     };
 
     expect(
@@ -129,6 +138,7 @@ describe("composer control layout", () => {
     const base = {
       availableWidth: 430,
       currentDensity: "full" as const,
+      geometry: POINTER,
       controls: {
         hasModel: true,
         hasThinking: true,
@@ -154,15 +164,32 @@ describe("composer control layout", () => {
     ).toBe("condensed");
   });
 
-  it("gives every toolbar control one shell and one platform glyph envelope", () => {
-    expect(COMPOSER_TOOLBAR_GEOMETRY).toEqual({
+  it("gives every toolbar control one shell and one glyph per control sizing", () => {
+    expect(POINTER).toEqual({
       controlSize: 28,
+      glyphSize: 16,
       controlGap: 4,
       iconLabelGap: 4,
       labelPadding: 8,
       caretSize: 14,
     });
-    expect(resolveComposerToolbarGlyphSize("web")).toBe(16);
-    expect(resolveComposerToolbarGlyphSize("native")).toBe(20);
+    expect(TOUCH).toMatchObject({ controlSize: 44, glyphSize: 20 });
+  });
+
+  it("budgets touch-sized controls, so a touch toolbar condenses at a width a pointer one fits", () => {
+    const input = {
+      availableWidth: 420,
+      currentDensity: "full" as const,
+      controls: {
+        hasModel: true,
+        hasThinking: true,
+        hasMode: true,
+        features: [{ type: "toggle" as const }],
+        fontScale: 1,
+      },
+    };
+
+    expect(resolveComposerControlDensity({ ...input, geometry: POINTER })).toBe("full");
+    expect(resolveComposerControlDensity({ ...input, geometry: TOUCH })).toBe("condensed");
   });
 });

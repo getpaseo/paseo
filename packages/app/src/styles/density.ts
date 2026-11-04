@@ -1,6 +1,7 @@
 import {
   bySizing,
   iconSizeFor,
+  TOOLBAR_CONTROL_HEIGHT,
   TOUCH_TARGET,
   type IconSize,
 } from "@/components/ui/control-geometry";
@@ -24,7 +25,7 @@ export const density = {
   /** A row in a tight group, such as the sidebar's navigation rows. Touch-sized it is a full row. */
   tightRowHeight: bySizing({ touch: TOUCH_TARGET, pointer: 28 }),
   /** A square icon-only button that sits in a row or toolbar. */
-  iconButton: bySizing({ touch: TOUCH_TARGET, pointer: 28 }),
+  iconButton: TOOLBAR_CONTROL_HEIGHT,
   /**
    * The space between two blocks of rich text, such as Markdown paragraphs, code and images.
    * Reading rhythm, not a touch target, so it follows the layout alone.

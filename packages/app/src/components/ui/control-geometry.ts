@@ -90,7 +90,7 @@ export function mapLayout(value: LayoutValue, map: (height: number) => number): 
 /** The smallest touch target, and the size of every touch-sized icon button, row, and bar. */
 export const TOUCH_TARGET = 44;
 
-// The button ladder: Mini 28, Small 32, Regular 44. Pointer sizes sit one step below touch.
+// Touch `md` is the iOS HIG's 44pt default control; touch `sm` stays above its 28pt minimum.
 const CONTROL_SIZES = {
   sm: { touch: 32, pointer: 28 },
   md: { touch: TOUCH_TARGET, pointer: 32 },
@@ -128,6 +128,13 @@ export const ICON_BUTTON_SIZES = {
   large: { touch: TOUCH_TARGET, pointer: POINTER_HEADER_CONTROL_HEIGHT },
   small: { touch: TOUCH_TARGET, pointer: 20 },
 } satisfies Record<"large" | "small", SizingValue>;
+
+/**
+ * A control in a dense toolbar row, such as the composer's: an icon-only square or a labelled
+ * pill. Touch-sized it is one touch target.
+ */
+export const TOOLBAR_CONTROL_SIZES = { touch: TOUCH_TARGET, pointer: 28 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_HEIGHT = bySizing(TOOLBAR_CONTROL_SIZES);
 
 /**
  * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body

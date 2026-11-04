@@ -64,6 +64,7 @@ import {
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
+import { densityIconBox } from "@/styles/density";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -1733,7 +1734,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   comboboxItemLeadingSlot: {
-    width: 16,
+    width: densityIconBox("md"),
     alignItems: "center",
     justifyContent: "center",
   },

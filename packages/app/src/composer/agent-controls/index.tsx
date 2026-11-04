@@ -61,6 +61,8 @@ import {
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { controlSizingForLayout, TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -70,11 +72,10 @@ import {
   type AgentControlCommandCenterSource,
 } from "@/command-center/agent-control-registration";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { isNative } from "@/constants/platform";
 import {
+  composerToolbarGeometry,
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
-  resolveComposerToolbarGlyphSize,
   type ComposerControlDensity,
   type ComposerControlPresentation,
 } from "@/composer/agent-controls/layout";
@@ -503,10 +504,13 @@ function ControlledAgentControls({
   modelSelectorServerId = null,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
+  // Control sizes follow the window layout, as the toolbar's stylesheet does. A narrow pane in a
+  // wide window (`isCompactLayout`) changes which labels show, never how large a control is.
+  const toolbarSizing = controlSizingForLayout(isCompactFormFactor);
+  const toolbarGeometry = useMemo(() => composerToolbarGeometry(toolbarSizing), [toolbarSizing]);
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
@@ -574,10 +578,10 @@ function ControlledAgentControls({
   const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
   const layoutContextValue = useMemo(
     () => ({
-      glyphSize: resolveComposerToolbarGlyphSize(isNative ? "native" : "web"),
+      glyphSize: toolbarGeometry.glyphSize,
       presentation,
     }),
-    [presentation],
+    [presentation, toolbarGeometry],
   );
 
   const updateDensityForWidth = useCallback(
@@ -586,12 +590,13 @@ function ControlledAgentControls({
         availableWidth,
         currentDensity: densityRef.current,
         controls: controlPresence,
+        geometry: toolbarGeometry,
       });
       if (nextDensity === densityRef.current) return;
       densityRef.current = nextDensity;
       setDensity(nextDensity);
     },
-    [controlPresence],
+    [controlPresence, toolbarGeometry],
   );
 
   const handleLayout = useCallback(
@@ -633,10 +638,9 @@ function ControlledAgentControls({
         selected={args.selected}
         active={args.active}
         onPress={args.onPress}
-        iconColor={theme.colors.foreground}
       />
     ),
-    [theme.colors.foreground],
+    [],
   );
 
   const handleOpenChange = useCallback(
@@ -1529,15 +1533,16 @@ function ThinkingComboboxOption({
   selected,
   active,
   onPress,
-  iconColor,
 }: {
   option: ComboboxOption;
   selected: boolean;
   active: boolean;
   onPress: () => void;
-  iconColor: string;
 }) {
-  const leadingSlot = useMemo(() => <ThinkingIcon size={16} color={iconColor} />, [iconColor]);
+  const leadingSlot = useMemo(
+    () => <DensityIcon icon={ThinkingIcon} size="md" color="foreground" />,
+    [],
+  );
   return (
     <ComboboxItem
       label={option.label}
@@ -1953,7 +1958,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   modeBadge: {
-    height: 28,
+    height: TOOLBAR_CONTROL_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
@@ -1971,8 +1976,8 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   modeIconBadge: {
-    width: 28,
-    height: 28,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,

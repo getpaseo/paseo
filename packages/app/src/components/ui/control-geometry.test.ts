@@ -12,6 +12,8 @@ import {
   resolveControlSizing,
   switchGeometryForLayout,
   getControlInteractionPhase,
+  TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_CONTROL_SIZES,
   TOUCH_TARGET,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -85,6 +87,9 @@ describe("control sizing gate", () => {
     expect(controlHeightForLayout("md", true)).toBe(TOUCH_TARGET);
     expect(ICON_BUTTON_SIZES.large.touch).toBe(TOUCH_TARGET);
     expect(ICON_BUTTON_SIZES.small.touch).toBe(TOUCH_TARGET);
+    // Composer toolbar controls: a full target on touch, unchanged 28 on pointer.
+    expect(TOOLBAR_CONTROL_SIZES).toEqual({ touch: TOUCH_TARGET, pointer: 28 });
+    expect(TOOLBAR_CONTROL_HEIGHT).toEqual({ xs: TOUCH_TARGET, md: 28 });
     for (const size of ["sm", "md"] as const) {
       expect(controlHeightForLayout(size, true)).toBeGreaterThan(
         controlHeightForLayout(size, false),

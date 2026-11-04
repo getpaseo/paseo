@@ -15,6 +15,7 @@ import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -374,7 +375,7 @@ export function CompactModelSheet({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    height: 28,
+    height: TOOLBAR_CONTROL_HEIGHT,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
