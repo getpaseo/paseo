@@ -117,6 +117,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { useIsInputLive } from "./input/use-input-live";
 import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -1433,13 +1434,14 @@ function ComposerContentImpl({
     },
     [onChangeText, textSource],
   );
+  const isInputLive = useIsInputLive(messageInputRef);
   const isComposerLockedRef = useRef(isComposerLocked);
   isComposerLockedRef.current = isComposerLocked;
   const composerInput = useMemo<ComposerInput>(
     () => ({
       locked: isComposerLocked,
       isLocked: () => isComposerLockedRef.current,
-      isLive: () => messageInputRef.current !== null,
+      isLive: isInputLive,
       textSource,
       setText: replaceUserInput,
       insertText: insertUserInput,
@@ -1450,6 +1452,7 @@ function ComposerContentImpl({
       attachments,
       insertUserInput,
       isComposerLocked,
+      isInputLive,
       replaceUserInput,
       setSelectedAttachments,
       textSource,

@@ -693,8 +693,10 @@ implementations provide it:
   mounted, checked on session changes and when the last holder lets go. The mounted
   `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor.
   Without a live input the model writes the stored prompt with `replaceDraftText`, which also asks
-  a mounted input to show it. A workspace the user left stays mounted, display none, with no
-  input ref: `ComposerInput.isLive()` is how the model tells. Closing a root agent's tab archives
+  a mounted input to show it. A workspace the user left stays mounted, display none. Web
+  drops the input ref there; native keeps the input, with a stale cursor and selection.
+  `ComposerInput.isLive()` is how the model tells: it needs the ref and a retained panel that is
+  showing (`useRetainedPanelActive`). Closing a root agent's tab archives
   it, so a running agent with no mounted composer at all only exists as a subagent whose tab was
   closed. The daemon is the authority for `setModel` and `setThinking`. It validates against the
   catalog of the agent's directory, the one the picker reads, and checks a thinking option against
