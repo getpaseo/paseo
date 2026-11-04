@@ -39,10 +39,6 @@ export interface AgentComposer extends ComposerModel {
 interface AgentComposerDeps {
   queryClient: QueryClient;
   cache?: ProviderSnapshotCache;
-  /** Something watches the composer or a composer is mounted. */
-  onHeld?: () => void;
-  /** Nothing watches the composer and no composer is mounted, so it can be dropped. */
-  onIdle?: () => void;
 }
 
 type Catalog = { status: "loading" } | { status: "ready"; entries: ProviderSnapshotEntry[] | null };
@@ -50,11 +46,16 @@ type Catalog = { status: "loading" } | { status: "ready"; entries: ProviderSnaps
 const NO_VALUES = Object.freeze({});
 const NO_ATTACHMENTS: readonly UserComposerAttachment[] = Object.freeze([]);
 
+interface ManagedAgentComposer extends AgentComposer {
+  /** The agent left the session and nothing watches the composer or has one mounted. */
+  isReleasable(): boolean;
+}
+
 export function createAgentComposer(
   serverId: string,
   agentId: string,
   deps: AgentComposerDeps,
-): AgentComposer {
+): ManagedAgentComposer {
   const draftKey = buildDraftStoreKey({ serverId, agentId });
   const listeners = new Set<() => void>();
   // While something watches, the catalog has an observer: it fetches the catalog, and it is what
@@ -189,15 +190,11 @@ export function createAgentComposer(
     return last.state;
   }
 
-  function releaseWhenIdle() {
-    if (listeners.size === 0 && mounted === null) deps.onIdle?.();
-  }
-
   return {
+    isReleasable: () => listeners.size === 0 && mounted === null && readAgent() === null,
     getState,
     subscribe(listener) {
       listeners.add(listener);
-      deps.onHeld?.();
       observeCatalog();
       getState();
       const stops = [
@@ -211,15 +208,12 @@ export function createAgentComposer(
         listeners.delete(listener);
         for (const stop of stops) stop();
         observeCatalog();
-        releaseWhenIdle();
       };
     },
     attachInput(input) {
       mounted = input;
-      deps.onHeld?.();
       return () => {
         if (mounted === input) mounted = null;
-        releaseWhenIdle();
       };
     },
     setPrompt(text) {
@@ -267,24 +261,26 @@ function sameCatalog(left: Catalog, right: Catalog): boolean {
   );
 }
 
-const composers = new Map<string, AgentComposer>();
+const composers = new Map<string, ManagedAgentComposer>();
+let stopReleasing: (() => void) | null = null;
 
-/** The composer of a running agent; the same one for every caller while something holds it. */
+/**
+ * The composer of a running agent; the same one for every caller for as long as the agent is in the
+ * session, so a command a plugin saved keeps reaching the composer a later tab mounts.
+ */
 export function agentComposer(serverId: string, agentId: string): AgentComposer {
+  stopReleasing ??= useSessionStore.subscribe(releaseComposersOfRemovedAgents);
   const key = `${serverId}:${agentId}`;
   let composer = composers.get(key);
   if (!composer) {
-    composer = createAgentComposer(serverId, agentId, {
-      queryClient: singletonQueryClient,
-      // A holder that outlives a release, such as a remounting tab, puts its composer back.
-      onHeld: () => {
-        if (composer && !composers.has(key)) composers.set(key, composer);
-      },
-      onIdle: () => {
-        if (composers.get(key) === composer) composers.delete(key);
-      },
-    });
+    composer = createAgentComposer(serverId, agentId, { queryClient: singletonQueryClient });
     composers.set(key, composer);
   }
   return composer;
+}
+
+function releaseComposersOfRemovedAgents() {
+  for (const [key, composer] of composers) {
+    if (composer.isReleasable()) composers.delete(key);
+  }
 }

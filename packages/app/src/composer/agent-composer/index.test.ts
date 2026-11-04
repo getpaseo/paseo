@@ -374,23 +374,17 @@ describe("agent composer", () => {
     },
   );
 
-  it("is released when nothing watches it and no composer is mounted, and shared while something does", () => {
+  it("is shared while its agent is in the session, and released once the agent is gone and nothing holds it", () => {
     openSession(agent());
-    const held = agentComposer(serverId, agentId);
-    const stop = held.subscribe(() => {});
-    expect(agentComposer(serverId, agentId)).toBe(held);
-    stop();
+    const shared = agentComposer(serverId, agentId);
+    expect(agentComposer(serverId, agentId)).toBe(shared);
 
-    // A tab that remounts holds the composer it rendered with, which is shared again.
-    const stopAgain = held.subscribe(() => {});
-    expect(agentComposer(serverId, agentId)).toBe(held);
-    stopAgain();
-    expect(agentComposer(serverId, agentId)).not.toBe(held);
-
-    const mounted = agentComposer(serverId, agentId);
-    const detach = mounted.attachInput({ isLive: () => true, setText() {}, insertText() {} });
-    expect(agentComposer(serverId, agentId)).toBe(mounted);
+    // A mounted composer or a watcher keeps it, even if the agent is briefly missing.
+    const detach = shared.attachInput({ isLive: () => true, setText() {}, insertText() {} });
+    useSessionStore.getState().setAgents(serverId, new Map());
+    expect(agentComposer(serverId, agentId)).toBe(shared);
     detach();
-    expect(agentComposer(serverId, agentId)).not.toBe(mounted);
+    useSessionStore.getState().setAgents(serverId, new Map());
+    expect(agentComposer(serverId, agentId)).not.toBe(shared);
   });
 });

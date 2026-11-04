@@ -2,8 +2,6 @@ import type { PluginComposer, PluginComposerSelector } from "@getpaseo/plugin/cl
 import type { PluginComposersSource } from "@getpaseo/plugin/client/host";
 import { agentComposer } from "@/composer/agent-composer";
 import type { ComposerState } from "@/composer/model";
-import { queryClient } from "@/data/query-client";
-import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore } from "@/stores/session-store";
 import { getFocusedAgent, subscribeFocusedAgent } from "../focused-agent";
 import type { InstalledPlugin } from "../types";
@@ -43,25 +41,44 @@ function createSource(plugin: InstalledPlugin): PluginComposersSource {
     return focused?.serverId === serverId ? focused.agentId : null;
   }
 
+  /** The running agent a selector names now, or null. */
+  function namedAgentId(selector: PluginComposerSelector): string | null {
+    const requested = "agentId" in selector ? selector.agentId : focusedAgentId();
+    return requested === null ? null : runningAgentId(requested);
+  }
+
   return {
-    subscribe(listener) {
+    subscribe(selector, listener) {
+      // Watching a composer is what keeps its model catalog current, so the subscription holds
+      // the model the selector names now and moves with it as focus and agents change.
+      let held: { agentId: string; stop: () => void } | null = null;
+      function hold() {
+        const agentId = namedAgentId(selector);
+        if (held?.agentId === agentId) return;
+        held?.stop();
+        held = agentId
+          ? { agentId, stop: agentComposer(serverId, agentId).subscribe(listener) }
+          : null;
+      }
+      hold();
       const stops = [
-        useSessionStore.subscribe(listener),
-        useDraftStore.subscribe(listener),
-        subscribeFocusedAgent(listener),
-        // The model catalog arrives as an update. A query another component creates while it
-        // renders is announced too, and a subscriber that updates then makes React warn.
-        queryClient.getQueryCache().subscribe((event) => {
-          if (event.type === "updated") listener();
+        useSessionStore.subscribe(() => {
+          hold();
+          listener();
+        }),
+        subscribeFocusedAgent(() => {
+          hold();
+          listener();
         }),
       ];
       return () => {
         for (const stop of stops) stop();
+        held?.stop();
+        held = null;
       };
     },
     resolve(selector: PluginComposerSelector) {
-      const requested = "agentId" in selector ? selector.agentId : focusedAgentId();
-      const agentId = requested === null ? null : runningAgentId(requested);
+      const agentId = namedAgentId(selector);
       if (agentId === null) return NO_COMPOSERS;
       const model = agentComposer(serverId, agentId);
       const state = model.getState();

@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   useSyncExternalStore,
   type ComponentType,
   type ReactNode,
@@ -91,7 +92,8 @@ export type PluginComposerSelector = { agentId: string } | { focused: true };
 
 /** What `useComposers` and `composers(selector)` read. Paseo implements it per installed plugin. */
 export interface PluginComposersSource {
-  subscribe(listener: () => void): () => void;
+  /** Tells `listener` when the composers `selector` names change, and keeps them live meanwhile. */
+  subscribe(selector: PluginComposerSelector, listener: () => void): () => void;
   /** The composers `selector` names now: one for a known running agent, none otherwise. */
   resolve(selector: PluginComposerSelector): readonly PluginComposer[];
 }
@@ -121,8 +123,15 @@ export function usePluginComposersSource(): PluginComposersSource | null {
 export function useComposers(selector: PluginComposerSelector): readonly PluginComposer[] {
   const source = useContext(PluginComposersContext);
   if (!source) throw new Error("useComposers must run inside a plugin component");
+  // The selector is usually an inline literal; its content is what the subscription depends on.
+  const selection = "agentId" in selector ? selector.agentId : null;
+  const subscribe = useMemo(
+    () => (listener: () => void) =>
+      source.subscribe(selection === null ? { focused: true } : { agentId: selection }, listener),
+    [source, selection],
+  );
   return useSyncExternalStore(
-    source.subscribe,
+    subscribe,
     () => source.resolve(selector),
     () => source.resolve(selector),
   );

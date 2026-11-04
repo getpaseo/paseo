@@ -4,7 +4,9 @@ import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { providersSnapshotQueryRoot } from "@/data/providers-snapshot";
 import { queryClient } from "@/data/query-client";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { createPluginClientStateSource } from "../client-state/source";
@@ -122,7 +124,7 @@ describe("a plugin's composers by reference", () => {
   it("follows the agent the Command Center hands out, and is empty when there is none", () => {
     const source = pluginComposersSource(plugin());
     let notified = 0;
-    const stop = source.subscribe(() => {
+    const stop = source.subscribe({ focused: true }, () => {
       notified += 1;
     });
     expect(source.resolve({ focused: true })).toEqual([]);
@@ -145,7 +147,7 @@ describe("a plugin's composers by reference", () => {
   it("is not told when another component creates a query while it renders", () => {
     const source = pluginComposersSource(plugin());
     let notified = 0;
-    const stop = source.subscribe(() => {
+    const stop = source.subscribe({ agentId: "agent-1" }, () => {
       notified += 1;
     });
     // `useQuery` does this during a render, and a subscriber that updates then makes React warn
@@ -163,6 +165,75 @@ describe("a plugin's composers by reference", () => {
     const next = source.resolve({ agentId: "agent-1" });
     expect(next).not.toBe(first);
     expect(next[0]?.prompt).toBe("hello");
+  });
+});
+
+describe("a plugin component watching a composer by reference", () => {
+  const catalog = (defaultThinkingOptionId: string): ProviderSnapshotEntry[] => [
+    {
+      provider: "claude",
+      status: "ready",
+      enabled: true,
+      models: [
+        {
+          provider: "claude",
+          id: "opus",
+          label: "Opus",
+          isDefault: true,
+          defaultThinkingOptionId,
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    },
+  ];
+
+  afterEach(() => {
+    queryClient.clear();
+  });
+
+  async function until(read: () => unknown, expected: unknown) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (Object.is(read(), expected)) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(read()).toBe(expected);
+  }
+
+  it("sees the catalog the host changed while away once the host reconnects, with no picker open", async () => {
+    let hostDefault = "high";
+    const client = {
+      async getProvidersSnapshot() {
+        return {
+          entries: catalog(hostDefault),
+          generatedAt: "2026-11-04T10:00:00.000Z",
+          requestId: "snapshot",
+        };
+      },
+    } as unknown as DaemonClient;
+    const store = useSessionStore.getState();
+    store.clearSession(serverId);
+    store.initializeSession(serverId, client);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: null,
+      features: { providersSnapshot: true },
+    } as never);
+    store.setAgents(serverId, new Map([["agent-1", agent("agent-1")]]));
+
+    const source = pluginComposersSource(plugin());
+    const stop = source.subscribe({ agentId: "agent-1" }, () => {});
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "high");
+
+    // Reconnecting invalidates the provider catalogs, which refetches the ones something watches.
+    hostDefault = "low";
+    await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+
+    await until(() => source.resolve({ agentId: "agent-1" })[0]?.agent.thinking, "low");
+    stop();
   });
 });
 
