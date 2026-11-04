@@ -697,6 +697,11 @@ lines.on("line", async (line) => {
       await handleSessionLoad(id, params);
       return;
     case "session/set_model":
+      if (Number(process.env.AGY_TEST_SET_MODEL_DELAY_MS) > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Number(process.env.AGY_TEST_SET_MODEL_DELAY_MS)),
+        );
+      }
       if (failSetModelOnce) {
         failSetModelOnce = false;
         respondError(id, -32603, "Transient model switch error");
