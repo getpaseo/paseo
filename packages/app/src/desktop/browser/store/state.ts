@@ -106,9 +106,37 @@ export function normalizeBrowserUrl(value: string | null | undefined): string {
   return `https://${trimmed}`;
 }
 
-/** Normalizes a typed home URL for storage; blank keeps the built-in default page. */
-export function normalizeBrowserHomeUrl(value: string | null | undefined): string {
-  return trimNonEmpty(value) ? normalizeBrowserUrl(value) : "";
+/** Whether a browser tab will load the URL; matches the pane's navigation guard. */
+export function isLoadableBrowserUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalizes a typed home URL. Blank returns "" (the built-in default page); a URL a tab
+ * could not load returns null so it is never saved.
+ */
+export function parseBrowserHomeUrl(value: string | null | undefined): string | null {
+  const trimmed = trimNonEmpty(value);
+  if (!trimmed) {
+    return "";
+  }
+  // Chromium's URL parser percent-encodes a space in the host instead of throwing like Node's,
+  // so "exa mple.com" would parse in the app and fail only when a tab loads it.
+  if (/\s/.test(trimmed)) {
+    return null;
+  }
+  const url = normalizeBrowserUrl(trimmed);
+  if (!isLoadableBrowserUrl(url)) {
+    return null;
+  }
+  return new URL(url).hostname.includes("%") ? null : url;
 }
 
 export function createBrowserRecord(input: {

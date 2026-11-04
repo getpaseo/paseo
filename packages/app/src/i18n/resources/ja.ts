@@ -2415,6 +2415,7 @@ export const ja: TranslationResources = {
         description:
           "空のブラウザタブはこの URL を開きます。空欄にするとデフォルトのページを使用します。",
         accessibilityLabel: "ブラウザのホームページ URL",
+        invalid: "有効な http または https の URL を入力してください。",
       },
       browserData: {
         title: "ブラウザーデータ",

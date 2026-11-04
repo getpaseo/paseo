@@ -5,8 +5,8 @@ import {
   createFixedBrowserViewport,
   createBrowserRecord,
   normalizeBrowserIndexState,
-  normalizeBrowserHomeUrl,
   normalizeBrowserUrl,
+  parseBrowserHomeUrl,
   removeBrowserFromIndex,
   sanitizeBrowsersForPersist,
 } from "./state";
@@ -43,17 +43,25 @@ describe("normalizeBrowserUrl", () => {
   });
 });
 
-describe("normalizeBrowserHomeUrl", () => {
+describe("parseBrowserHomeUrl", () => {
   it("keeps blank input blank so new tabs use the default page", () => {
-    expect(normalizeBrowserHomeUrl("")).toBe("");
-    expect(normalizeBrowserHomeUrl("   ")).toBe("");
-    expect(normalizeBrowserHomeUrl(null)).toBe("");
+    expect(parseBrowserHomeUrl("")).toBe("");
+    expect(parseBrowserHomeUrl("   ")).toBe("");
+    expect(parseBrowserHomeUrl(null)).toBe("");
   });
 
   it("normalizes typed hosts like the address bar does", () => {
-    expect(normalizeBrowserHomeUrl(" google.com ")).toBe("https://google.com");
-    expect(normalizeBrowserHomeUrl("localhost:3000")).toBe("http://localhost:3000");
-    expect(normalizeBrowserHomeUrl("http://intranet/start")).toBe("http://intranet/start");
+    expect(parseBrowserHomeUrl(" google.com ")).toBe("https://google.com");
+    expect(parseBrowserHomeUrl("localhost:3000")).toBe("http://localhost:3000");
+    expect(parseBrowserHomeUrl("http://intranet/start")).toBe("http://intranet/start");
+  });
+
+  it("rejects URLs a browser tab would not load", () => {
+    expect(parseBrowserHomeUrl("https://exa mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("exa mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("https://exa%20mple.com")).toBeNull();
+    expect(parseBrowserHomeUrl("file:///tmp/index.html")).toBeNull();
+    expect(parseBrowserHomeUrl("javascript:alert(1)")).toBeNull();
   });
 });
 

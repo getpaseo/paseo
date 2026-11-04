@@ -2442,6 +2442,7 @@ export const fr: TranslationResources = {
         description:
           "Les onglets de navigateur vides ouvrent cette URL. Laissez vide pour utiliser la page par défaut.",
         accessibilityLabel: "URL de la page d’accueil du navigateur",
+        invalid: "Saisissez une URL http ou https valide.",
       },
       browserData: {
         title: "Données du navigateur",

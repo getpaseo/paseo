@@ -2401,6 +2401,7 @@ export const ko: TranslationResources = {
         label: "새 탭 페이지",
         description: "빈 브라우저 탭이 이 URL을 엽니다. 비워 두면 기본 페이지를 사용합니다.",
         accessibilityLabel: "브라우저 홈페이지 URL",
+        invalid: "올바른 http 또는 https URL을 입력하세요.",
       },
       browserData: {
         title: "브라우저 데이터",

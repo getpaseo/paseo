@@ -2425,6 +2425,7 @@ export const ptBR: TranslationResources = {
         description:
           "Abas vazias do navegador abrem esta URL. Deixe em branco para usar a página padrão.",
         accessibilityLabel: "URL da página inicial do navegador",
+        invalid: "Digite uma URL http ou https válida.",
       },
       browserData: {
         title: "Dados do navegador",

@@ -2517,6 +2517,7 @@ export const en = {
         label: "New tab page",
         description: "Blank browser tabs open this URL. Leave empty to use the default page.",
         accessibilityLabel: "Browser home page URL",
+        invalid: "Enter a valid http or https URL.",
       },
       browserData: {
         title: "Browser data",

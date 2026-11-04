@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -6,7 +6,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { FormTextInput } from "@/components/ui/form-field";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
-import { DEFAULT_BROWSER_URL, normalizeBrowserHomeUrl } from "@/desktop/browser/store";
+import { DEFAULT_BROWSER_URL, parseBrowserHomeUrl } from "@/desktop/browser/store";
 import { useAppSettings } from "@/hooks/use-settings";
 import { settingsStyles } from "@/styles/settings";
 
@@ -25,13 +25,24 @@ function BrowserHomePageSection() {
   const homeUrl = settings.browserHomeUrl;
   // The field is uncontrolled, so a saved URL is written into it directly.
   const input = useRef<EditingTextInputHandle>(null);
+  const [isInvalid, setIsInvalid] = useState(false);
 
   useEffect(() => {
     input.current?.replaceText(homeUrl);
   }, [homeUrl]);
 
+  const clearError = useCallback(() => {
+    setIsInvalid(false);
+  }, []);
+
   const commit = useCallback(() => {
-    const next = normalizeBrowserHomeUrl(input.current?.getText());
+    const next = parseBrowserHomeUrl(input.current?.getText());
+    // Keep the typed text so it can be corrected; the saved URL stays in effect.
+    if (next === null) {
+      setIsInvalid(true);
+      return;
+    }
+    setIsInvalid(false);
     input.current?.replaceText(next);
     if (next !== homeUrl) {
       void updateSettings({ browserHomeUrl: next });
@@ -49,10 +60,16 @@ function BrowserHomePageSection() {
             <Text style={settingsStyles.rowHint}>
               {t("settings.general.browserHomePage.description")}
             </Text>
+            {isInvalid ? (
+              <Text style={settingsStyles.rowError}>
+                {t("settings.general.browserHomePage.invalid")}
+              </Text>
+            ) : null}
           </View>
           <FormTextInput
             ref={input}
             initialValue={homeUrl}
+            onChangeText={clearError}
             onBlur={commit}
             onSubmitEditing={commit}
             placeholder={DEFAULT_BROWSER_URL}

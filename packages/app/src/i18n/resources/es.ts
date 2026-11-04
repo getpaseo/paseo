@@ -2441,6 +2441,7 @@ export const es: TranslationResources = {
         description:
           "Las pestañas vacías del navegador abren esta URL. Déjala vacía para usar la página predeterminada.",
         accessibilityLabel: "URL de la página de inicio del navegador",
+        invalid: "Introduce una URL http o https válida.",
       },
       browserData: {
         title: "Datos del navegador",

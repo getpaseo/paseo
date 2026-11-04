@@ -248,6 +248,18 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("");
   });
 
+  it("falls back to the default page when the stored home URL would not load", async () => {
+    for (const browserHomeUrl of ["https://exa mple.com", "file:///tmp/index.html", "paseo.sh"]) {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ browserHomeUrl }),
+        }),
+      });
+
+      expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("");
+    }
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 

@@ -2366,6 +2366,7 @@ export const zhCN: TranslationResources = {
         label: "新标签页",
         description: "空白浏览器标签页会打开此 URL。留空则使用默认页面。",
         accessibilityLabel: "浏览器主页 URL",
+        invalid: "请输入有效的 http 或 https URL。",
       },
       browserData: {
         title: "浏览器数据",

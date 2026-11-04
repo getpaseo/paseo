@@ -2427,6 +2427,7 @@ export const ar: TranslationResources = {
         description:
           "تفتح علامات تبويب المتصفح الفارغة هذا العنوان. اتركه فارغًا لاستخدام الصفحة الافتراضية.",
         accessibilityLabel: "عنوان الصفحة الرئيسية للمتصفح",
+        invalid: "أدخل عنوان http أو https صالحًا.",
       },
       browserData: {
         title: "بيانات المتصفح",

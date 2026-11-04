@@ -2428,6 +2428,7 @@ export const ru: TranslationResources = {
         description:
           "Пустые вкладки браузера открывают этот URL. Оставьте поле пустым, чтобы использовать страницу по умолчанию.",
         accessibilityLabel: "URL домашней страницы браузера",
+        invalid: "Введите корректный URL с http или https.",
       },
       browserData: {
         title: "Данные браузера",
