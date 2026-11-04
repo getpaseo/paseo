@@ -22,6 +22,10 @@ export class SessionChildren {
   private readonly childStates = new Map<string, string>();
   constructor(private readonly options: ChildrenOptions) {}
   async observe(event: import("@opencode/client").OpenCodeEvent) {
+    if (event.type === "session.deleted") {
+      this.remove(event.data.sessionID);
+      return;
+    }
     if (
       event.type === "session.created" &&
       event.data.parentID &&
@@ -52,6 +56,15 @@ export class SessionChildren {
       }
       cursor = page.cursor.next ?? undefined;
     } while (cursor);
+  }
+  private remove(id: string) {
+    if (!this.children.delete(id)) return;
+    this.childStates.delete(id);
+    this.options.emit({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: { type: "remove", id },
+    });
   }
   private async reconcileChild(info: SessionInfo) {
     await this.options.reconcilePermissions(info.id);

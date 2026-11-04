@@ -323,6 +323,57 @@ test("v2 rewinds conversation and files and reports autonomous subagents", async
   }
 }, 180_000);
 
+test("v2 removes a subagent whose child session is deleted", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-deleted-child-"));
+  const runtime = new V2Runtime({ logger: createTestLogger() });
+  let api: V2Api | undefined;
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: {
+      acquire: async (input) => {
+        const connection = await runtime.acquire(input);
+        api = connection.client;
+        return connection;
+      },
+      shutdown: () => runtime.shutdown(),
+    },
+  });
+  let session: Awaited<ReturnType<typeof client.createSession>> | undefined;
+  try {
+    session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: root,
+        model: process.env.OPENCODE_TEST_MODEL ?? "openai/gpt-6-astra",
+      },
+      undefined,
+      { persistSession: false },
+    );
+    const completed: string[] = [];
+    const removed: string[] = [];
+    session.subscribe((event) => {
+      if (event.type !== "provider_subagent") return;
+      if (event.event.type === "upsert" && event.event.status === "completed")
+        completed.push(event.event.id);
+      if (event.event.type === "remove") removed.push(event.event.id);
+    });
+    await session.run(
+      "Use the subagent tool to delegate to a general subagent. Tell it to reply with exactly CHILD_OK without using tools. Wait for it, then report CHILD_OK.",
+    );
+    await expect.poll(() => completed.length, { timeout: 10_000 }).toBeGreaterThan(0);
+    const childId = completed[0];
+    await api!.session.remove({ sessionID: childId });
+    await expect.poll(() => removed, { timeout: 10_000 }).toEqual([childId]);
+    const after = await session.run("Reply with exactly AFTER_DELETE, without using tools.");
+    expect(after.finalText).toContain("AFTER_DELETE");
+  } finally {
+    await session?.interrupt();
+    await session?.close();
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 180_000);
+
 test("v2 executes commands and retains context after compaction", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-commands-"));
   const commandDir = path.join(root, ".opencode", "command");
