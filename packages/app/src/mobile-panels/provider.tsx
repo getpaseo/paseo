@@ -1,3 +1,4 @@
+import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
 import {
   createContext,
   useCallback,
@@ -20,7 +21,10 @@ import {
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
+import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
   usePanelStore,
@@ -45,6 +49,7 @@ interface MobilePanelsRuntime {
   beginGesture: (input: BeginGestureInput) => number;
   finishGesture: (input: FinishGestureInput) => MobilePanelCommit | null;
   leftCloseGestureRef: RefObject<GestureType | undefined>;
+  leftPanelWidth: number;
   leftOpenGestureRef: RefObject<GestureType | undefined>;
   motionState: SharedValue<MobilePanelMotionState>;
   openGesturesBlocked: SharedValue<boolean>;
@@ -68,8 +73,30 @@ interface FinishGestureInput {
 const MobilePanelsContext = createContext<MobilePanelsRuntime | null>(null);
 const MobilePanelActiveContext = createContext<MobilePanelView>("agent");
 
+/**
+ * The left sidebar's width: the full window for the compact drawer, the saved sidebar width
+ * clamped to the safe viewport on wide layouts. The wide dock, its overlay, and the gestures that
+ * drag it all read this one value.
+ */
+function useResolvedLeftPanelWidth(windowWidth: number): number {
+  const isCompact = useIsCompactFormFactor();
+  const insets = useSafeAreaInsets();
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const { height: windowHeight } = useWindowDimensions();
+  const divisionLayout = resolveDesktopDivisionLayout({
+    geometry: useWindowLayout(), windowWidth, windowHeight,
+    leftInset: insets.left, rightInset: insets.right,
+  });
+  if (isCompact) return windowWidth;
+  return divisionLayout?.sidebarWidth ?? resolveDesktopSidebarWidth({
+    requestedWidth: sidebarWidth,
+    viewportWidth: windowWidth - insets.left - insets.right,
+  });
+}
+
 export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
+  const leftPanelWidth = useResolvedLeftPanelWidth(windowWidth);
   const initialSelection = useRef(usePanelStore.getState().mobilePanel).current;
   const position = useSharedValue(getMobilePanelAnchor(initialSelection.target));
   const motionState = useSharedValue(createMobilePanelMotionState(initialSelection));
@@ -217,6 +244,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       finishGesture,
       leftCloseGestureRef,
       leftOpenGestureRef,
+      leftPanelWidth,
       motionState,
       openGesturesBlocked,
       position,
@@ -228,6 +256,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
     [
       beginGesture,
       finishGesture,
+      leftPanelWidth,
       motionState,
       openGesturesBlocked,
       position,
@@ -253,6 +282,11 @@ export function useMobilePanelsRuntime(): MobilePanelsRuntime {
     throw new Error("useMobilePanelsRuntime must be used within MobilePanelsProvider");
   }
   return context;
+}
+
+/** The resolved left sidebar width shared by the dock, the overlay, and their gestures. */
+export function useLeftPanelWidth(): number {
+  return useMobilePanelsRuntime().leftPanelWidth;
 }
 
 export function useIsMobilePanelActive(panel: MobilePanelView): boolean {

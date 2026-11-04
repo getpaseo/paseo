@@ -34,24 +34,18 @@ function useRevisionCommit(action: () => void) {
   );
 }
 
-export function useOpenAgentListGesture({
-  enabled,
-  panelWidth,
-}: {
-  enabled: boolean;
-  panelWidth?: number;
-}) {
+export function useOpenAgentListGesture(enabled: boolean) {
   const {
     beginGesture,
     finishGesture,
     leftOpenGestureRef,
+    leftPanelWidth: width,
     motionState,
     openGesturesBlocked,
     position,
     updateGesture,
     windowWidth,
   } = useMobilePanelsRuntime();
-  const width = panelWidth ?? windowWidth;
   const { touchScreen: hasTouchScreen } = usePointerCapabilities();
   // Phone web keeps interior swipes for the page's horizontal scrollers; the wide overlay opens
   // from anywhere in the workspace.
@@ -149,20 +143,16 @@ export function useOpenAgentListGesture({
   );
 }
 
-export function useCloseAgentListGesture({
-  enabled = true,
-  panelWidth,
-}: { enabled?: boolean; panelWidth?: number } = {}) {
+export function useCloseAgentListGesture(enabled = true) {
   const {
     beginGesture,
     finishGesture,
     leftCloseGestureRef,
+    leftPanelWidth: width,
     motionState,
     position,
     updateGesture,
-    windowWidth,
   } = useMobilePanelsRuntime();
-  const width = panelWidth ?? windowWidth;
   const { touchScreen: hasTouchScreen } = usePointerCapabilities();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);

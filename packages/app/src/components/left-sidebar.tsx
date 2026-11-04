@@ -65,6 +65,7 @@ import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
+import { useLeftPanelWidth } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
@@ -653,7 +654,6 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
-  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -665,17 +665,10 @@ function DesktopSidebar({
     leftInset: insets.left,
     rightInset: insets.right,
   });
-  const visibleSidebarWidth =
-    divisionLayout?.sidebarWidth ??
-    resolveDesktopSidebarWidth({
-      requestedWidth: sidebarWidth,
-      viewportWidth,
-    });
+  const visibleSidebarWidth = useLeftPanelWidth();
+
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
-  const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture({
-    enabled: overlay,
-    panelWidth: visibleSidebarWidth,
-  });
+  const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
 
 
   const startWidth = useSharedValue(visibleSidebarWidth);
@@ -761,7 +754,6 @@ function DesktopSidebar({
       presentation={overlay ? "overlay" : "dock"}
       dockVisible={active}
       closeGesture={closeGesture}
-      width={visibleSidebarWidth}
       frameStyle={frameAnimatedStyle}
     >
       <Animated.View style={desktopSidebarStyle}>

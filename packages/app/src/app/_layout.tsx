@@ -69,7 +69,6 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
-  resolveDesktopSidebarWidth,
   resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -604,19 +603,7 @@ function MobileGestureWrapper({
   chromeEnabled: boolean;
 }) {
   const isCompactLayout = useIsCompactFormFactor();
-  const { width: windowWidth } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const panelWidth = isCompactLayout
-    ? windowWidth
-    : resolveDesktopSidebarWidth({
-        requestedWidth: sidebarWidth,
-        viewportWidth: windowWidth - insets.left - insets.right,
-      });
-  const openGesture = useOpenAgentListGesture({
-    enabled: chromeEnabled,
-    panelWidth,
-  });
+  const openGesture = useOpenAgentListGesture(chromeEnabled);
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
