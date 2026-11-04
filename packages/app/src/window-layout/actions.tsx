@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Portal, PortalHost } from "@gorhom/portal";
 import { StyleSheet, View } from "react-native";
+import { RetainedPanelActivity } from "@/components/retained-panel";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
 import { useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement } from "./model";
@@ -35,7 +36,9 @@ export function WindowLayoutActions({
         ]}
         pointerEvents="box-none"
       >
-        <IconButtonChromeProvider value="header-island">{children}</IconButtonChromeProvider>
+        <RetainedPanelActivity active={active}>
+          <IconButtonChromeProvider value="header-island">{children}</IconButtonChromeProvider>
+        </RetainedPanelActivity>
       </View>
     </Portal>
   );

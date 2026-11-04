@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { PortalProvider } from "@gorhom/portal";
 import { afterEach, expect, it, vi } from "vitest";
 import { Pressable, StyleSheet } from "react-native";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import type { WindowLayout } from "./model";
 import { WindowLayoutContext } from "./context";
 import { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
@@ -44,6 +45,7 @@ it("keeps pending action work alive while the bar is hidden and preserves circul
     complete = resolve;
   });
   function PendingAction() {
+    const active = useRetainedPanelActive();
     const [pending, setPending] = useState(false);
     useEffect(() => {
       if (!pending) return;
@@ -61,7 +63,7 @@ it("keeps pending action work alive while the bar is hidden and preserves circul
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Restart"
+        accessibilityLabel={active ? "Restart" : "Inactive restart"}
         onPress={restart}
         style={StyleSheet.flatten(style({ open: true }))}
       />
@@ -85,6 +87,7 @@ it("keeps pending action work alive while the bar is hidden and preserves circul
   expect(getComputedStyle(button).borderRadius).toBe(`${lightTheme.borderRadius.full}px`);
   await act(async () => button.click());
   await act(async () => root.render(<Scene active={false} />));
+  expect(container.querySelector('[aria-label="Inactive restart"]')).not.toBeNull();
   await act(async () => {
     complete();
     await delayed;
