@@ -280,87 +280,96 @@ test("timeline reads keep runnable unarchived agents interactive for the next pr
   }
 }, 30000);
 
-test("restored OMP history accepts prompt mode before starting an interactive turn", async () => {
-  const { OmpAgentClient } = await import("./providers/omp/agent.js");
-  const { FakeOmp } = await import("./providers/omp/test-utils/fake-omp.js");
-  const { sendPreparedPromptToAgent } = await import("./agent-prompt.js");
-  const root = await mkdtemp(path.join(tmpdir(), "history-mode-"));
-  const cwd = path.join(root, "removed-worktree");
-  const sessionFile = path.join(root, "session.jsonl");
-  await writeFile(
-    sessionFile,
-    JSON.stringify({ type: "session", id: "root", parentId: null }) + "\n",
-  );
-  const logger = createTestLogger();
-  const storage = new AgentStorage(path.join(root, "agents"), logger);
-  const runtime = new FakeOmp();
-  const manager = new AgentManager({
-    clients: {
-      omp: new OmpAgentClient({
-        logger,
-        runtime,
-        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
-      }),
-    },
-    registry: storage,
-    logger,
-  });
-  const agentId = "00000000-0000-4000-8000-000000000601";
-  const now = new Date().toISOString();
-  try {
-    await storage.upsert({
-      id: agentId,
-      provider: "omp",
-      cwd,
-      createdAt: now,
-      updatedAt: now,
-      labels: {},
-      lastStatus: "closed",
-      archivedAt: null,
-      persistence: {
-        provider: "omp",
-        sessionId: "history-mode",
-        nativeHandle: sessionFile,
-        metadata: { cwd },
+test.each(["mode", "thinking"])(
+  "restored OMP history accepts %s before starting an interactive turn",
+  async (setting) => {
+    const { OmpAgentClient } = await import("./providers/omp/agent.js");
+    const { FakeOmp } = await import("./providers/omp/test-utils/fake-omp.js");
+    const { sendPreparedPromptToAgent } = await import("./agent-prompt.js");
+    const root = await mkdtemp(path.join(tmpdir(), "history-mode-"));
+    const cwd = path.join(root, "removed-worktree");
+    const sessionFile = path.join(root, "session.jsonl");
+    await writeFile(
+      sessionFile,
+      JSON.stringify({ type: "session", id: "root", parentId: null }) + "\n",
+    );
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const runtime = new FakeOmp();
+    const manager = new AgentManager({
+      clients: {
+        omp: new OmpAgentClient({
+          logger,
+          runtime,
+          runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+        }),
       },
-    });
-    await ensureAgentLoaded(agentId, {
-      agentManager: manager,
-      agentStorage: storage,
+      registry: storage,
       logger,
-      purpose: "history",
     });
-    expect(
-      runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
-    ).toHaveLength(0);
-    await mkdir(cwd);
-    await sendPreparedPromptToAgent({
-      agentManager: manager,
-      agentStorage: storage,
-      agentId,
-      logger,
-      prompt: "continue",
-      sessionMode: "full",
-    });
-    expect(
-      runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
-    ).toHaveLength(1);
-    expect(manager.getAgent(agentId)?.currentModeId).toBe("full");
-    expect(runtime.latestSession().prompts).toEqual([
-      expect.objectContaining({ message: "continue" }),
-    ]);
-    runtime.latestSession().finishTurn();
-    await manager.waitForAgentEvent(agentId);
-    await manager.archiveAgent(agentId);
-    await manager.closeAgent(agentId);
-    await ensureAgentLoaded(agentId, { agentManager: manager, agentStorage: storage, logger });
-    const launchesBeforeModeChange = runtime.recordedLaunches.length;
-    await expect(manager.setAgentMode(agentId, "full")).rejects.toThrow("Agent is archived");
-    expect(runtime.recordedLaunches).toHaveLength(launchesBeforeModeChange);
-  } finally {
-    await manager.closeAgent(agentId).catch(() => undefined);
-    await manager.flush();
-    await storage.flush();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 30000);
+    const agentId = "00000000-0000-4000-8000-000000000601";
+    const now = new Date().toISOString();
+    try {
+      await storage.upsert({
+        id: agentId,
+        provider: "omp",
+        cwd,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: null,
+        persistence: {
+          provider: "omp",
+          sessionId: "history-mode",
+          nativeHandle: sessionFile,
+          metadata: { cwd },
+        },
+      });
+      await ensureAgentLoaded(agentId, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+        purpose: "history",
+      });
+      expect(
+        runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
+      ).toHaveLength(0);
+      await mkdir(cwd);
+      if (setting === "thinking") {
+        await manager.setAgentThinkingOption(agentId, "high");
+        expect(manager.getAgent(agentId)?.config.thinkingOptionId).toBe("high");
+        expect(runtime.latestSession().setThinkingLevelRequests).toContain("high");
+      }
+      await sendPreparedPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId,
+        logger,
+        prompt: "continue",
+        sessionMode: "full",
+      });
+      expect(
+        runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
+      ).toHaveLength(1);
+      expect(manager.getAgent(agentId)?.currentModeId).toBe("full");
+      expect(runtime.latestSession().prompts).toEqual([
+        expect.objectContaining({ message: "continue" }),
+      ]);
+      runtime.latestSession().finishTurn();
+      await manager.waitForAgentEvent(agentId);
+      await manager.archiveAgent(agentId);
+      await manager.closeAgent(agentId);
+      await ensureAgentLoaded(agentId, { agentManager: manager, agentStorage: storage, logger });
+      const launchesBeforeModeChange = runtime.recordedLaunches.length;
+      await expect(manager.setAgentMode(agentId, "full")).rejects.toThrow("Agent is archived");
+      expect(runtime.recordedLaunches).toHaveLength(launchesBeforeModeChange);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush();
+      await storage.flush();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  30000,
+);
