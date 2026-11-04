@@ -18,7 +18,13 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import contribute from "../index.server.js";
 import { signalPlan } from "./internal/signals.js";
+import { matchesPreapprovedMcpTool } from "./internal/timeline.js";
 import { Usage, parseResetTimestamp } from "./internal/usage.js";
+import {
+  acpPromptResultSchema,
+  buildElicitationResponse,
+  parseElicitationQuestions,
+} from "./internal/wire.js";
 
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
@@ -1535,6 +1541,81 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
         })
         .toBe(false);
     }
+  });
+
+  it("rejects wrapper arguments for authorization when tool name is not a verified wrapper", () => {
+    const policy = {
+      preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],
+    };
+    // Attack scenario: tool is named mcp__other__destructive_action, but arguments contain serverName/toolName of preapproved tool.
+    const fakeTool = {
+      toolCallId: "call-1",
+      name: "mcp__other__destructive_action",
+      rawInput: { serverName: "hub", toolName: "finish_execution" },
+    };
+    expect(matchesPreapprovedMcpTool(fakeTool, "mcp__other__destructive_action", policy)).toBe(
+      false,
+    );
+
+    // Verified wrapper scenario: tool name is call_mcp_tool
+    const wrapperTool = {
+      toolCallId: "call-2",
+      name: "call_mcp_tool",
+      rawInput: { serverName: "hub", toolName: "finish_execution" },
+    };
+    expect(matchesPreapprovedMcpTool(wrapperTool, "call_mcp_tool", policy)).toBe(true);
+  });
+
+  it("normalizes ACP cachedReadTokens into cachedInputTokens at the wire boundary", () => {
+    const parsed = acpPromptResultSchema.parse({
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        cachedReadTokens: 500,
+      },
+    });
+    expect(parsed.usage?.cachedInputTokens).toBe(500);
+  });
+
+  it("omits unanswered optional enum properties from elicitation responses", () => {
+    const questions = parseElicitationQuestions({
+      message: "Please choose",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          requiredEnum: { type: "string", enum: ["Yes", "No"], title: "Required" },
+          optionalEnum: { type: "string", enum: ["Fast", "Slow", "Other"], title: "Optional" },
+        },
+        required: ["requiredEnum"],
+      },
+    });
+    const result = buildElicitationResponse(questions, {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          requiredEnum: "Yes",
+          // optionalEnum omitted
+        },
+      },
+    });
+    expect(result.action).toBe("accept");
+    expect(result.content).toEqual({ requiredEnum: "Yes" });
+    expect(result.content).not.toHaveProperty("optionalEnum");
+  });
+
+  it("allocates distinct plan identities across replayed turn boundaries", async () => {
+    const h = await harness({ AGY_TEST_REPLAY_SUCCESSIVE_PLANS: "1" });
+    await h.open({
+      restored: { version: 1, data: { conversationId: "conv-alpha-1" } },
+      history: "replay",
+    });
+    const todos = h.events.filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item"; item: { type: "todo" } }> =>
+        event.type === "timeline.item" && event.item.type === "todo",
+    );
+    expect(todos.length).toBe(2);
+    expect(todos[0]!.item.id).not.toBe(todos[1]!.item.id);
   });
 });
 

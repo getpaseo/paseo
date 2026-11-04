@@ -109,15 +109,21 @@ const acpAvailableCommandsUpdateSchema = z.object({
   ),
 });
 
-const acpUsageUpdateSchema = z.object({
-  sessionUpdate: z.literal("usage_update"),
-  used: z.number().optional(),
-  size: z.number().optional(),
-  inputTokens: z.number().optional(),
-  outputTokens: z.number().optional(),
-  cachedInputTokens: z.number().optional(),
-  cost: z.object({ amount: z.number(), currency: z.string().optional() }).nullable().optional(),
-});
+const acpUsageUpdateSchema = z
+  .object({
+    sessionUpdate: z.literal("usage_update"),
+    used: z.number().optional(),
+    size: z.number().optional(),
+    inputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    cachedInputTokens: z.number().optional(),
+    cachedReadTokens: z.number().optional(),
+    cost: z.object({ amount: z.number(), currency: z.string().optional() }).nullable().optional(),
+  })
+  .transform((u) => ({
+    ...u,
+    cachedInputTokens: u.cachedInputTokens ?? u.cachedReadTokens,
+  }));
 
 const acpPlanUpdateSchema = z.object({
   sessionUpdate: z.literal("plan"),
@@ -203,8 +209,15 @@ export const acpPromptResultSchema = z.object({
       inputTokens: z.number().optional(),
       outputTokens: z.number().optional(),
       cachedInputTokens: z.number().optional(),
+      cachedReadTokens: z.number().optional(),
       totalCostUsd: z.number().optional(),
     })
+    .transform((u) => ({
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      cachedInputTokens: u.cachedInputTokens ?? u.cachedReadTokens,
+      totalCostUsd: u.totalCostUsd,
+    }))
     .optional(),
 });
 
@@ -293,9 +306,10 @@ export function buildElicitationResponse(
   const content: Record<string, unknown> = {};
 
   for (const question of questions) {
-    const rawValue =
-      answers[question.header] ?? answers[question.id] ?? answers[question.question] ?? "";
-    const values = normalizeAnswerValues(rawValue, question.multiSelect);
+    const rawValue = answers[question.header] ?? answers[question.id] ?? answers[question.question];
+    if (rawValue === undefined && question.allowEmpty) continue;
+    const values = normalizeAnswerValues(rawValue ?? "", question.multiSelect);
+    if (values.length === 0 && question.allowEmpty) continue;
     const knownLabels = new Set(question.options.map((option) => option.label));
     if (question.multiSelect) {
       applyMultiSelectAnswer(content, question, values, knownLabels);
@@ -340,7 +354,12 @@ function applySingleSelectAnswer(
   single: string,
   knownLabels: Set<string>,
 ): void {
-  if (!single || knownLabels.has(single) || question.options.length === 0) {
+  if (!single) {
+    if (question.allowEmpty) return;
+    content[question.id] = single;
+    return;
+  }
+  if (knownLabels.has(single) || question.options.length === 0) {
     content[question.id] = single;
     return;
   }

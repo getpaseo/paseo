@@ -165,11 +165,6 @@ function extractMcpIdentity(
   tool: AcpToolCallPayload,
   name: string,
 ): { server: string; tool: string } | null {
-  const rawInput = asRecord(tool.rawInput);
-  const wrapperServer = stringField(rawInput, "ServerName") ?? stringField(rawInput, "serverName");
-  const wrapperTool = stringField(rawInput, "ToolName") ?? stringField(rawInput, "toolName");
-  if (wrapperServer && wrapperTool) return { server: wrapperServer, tool: wrapperTool };
-
   for (const candidate of [tool.name, name, tool.title]) {
     const trimmed = candidate?.trim();
     if (!trimmed) continue;
@@ -180,6 +175,20 @@ function extractMcpIdentity(
     const colon = /^mcp:([A-Za-z0-9._-]+):([A-Za-z0-9._-]+)$/.exec(trimmed);
     if (colon) return { server: colon[1]!, tool: colon[2]! };
   }
+
+  const isWrapper =
+    name === "call_mcp_tool" ||
+    tool.name === "call_mcp_tool" ||
+    name === "call_mcp" ||
+    tool.name === "call_mcp";
+  if (isWrapper) {
+    const rawInput = asRecord(tool.rawInput);
+    const wrapperServer =
+      stringField(rawInput, "ServerName") ?? stringField(rawInput, "serverName");
+    const wrapperTool = stringField(rawInput, "ToolName") ?? stringField(rawInput, "toolName");
+    if (wrapperServer && wrapperTool) return { server: wrapperServer, tool: wrapperTool };
+  }
+
   return null;
 }
 
