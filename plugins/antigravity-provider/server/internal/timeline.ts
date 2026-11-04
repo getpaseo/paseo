@@ -20,6 +20,16 @@ const NATIVE_ACCEPT_EDITS_TOOLS = new Set([
   "write_file",
 ]);
 
+const NATIVE_READ_TOOLS = new Set([
+  "view_file",
+  "read_file",
+  "view_file_outline",
+  "view_code_item",
+  "list_dir",
+  "find_by_name",
+  "grep_search",
+]);
+
 const INPUT_FIELD_TOOL_NAMES: ReadonlyArray<[string, string]> = [
   ["CommandLine", "run_command"],
   ["CommandId", "send_command_input"],
@@ -146,6 +156,12 @@ export function isSafeAcceptEditsTool(
     return hasNativeFileEvidence(tool);
   }
   return false;
+}
+
+export function isNativeReadTool(tool: AcpToolCallPayload, name = inferToolName(tool)): boolean {
+  if (isExternalOrMcpTool(tool, name)) return false;
+  if (NATIVE_READ_TOOLS.has(name)) return true;
+  return tool.kind === "read" && hasNativeFileEvidence(tool);
 }
 
 export function matchesPreapprovedMcpTool(

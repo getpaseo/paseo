@@ -188,6 +188,21 @@ async function handlePrompt(id, params) {
     await handleImagePrompt(id, text);
     return;
   }
+  if (text.includes("CACHED_READ_TOKENS_TURN")) {
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "DONE_CACHED_TOKENS\n" },
+    });
+    respond(id, {
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        cachedReadTokens: 500,
+      },
+    });
+    return;
+  }
   if (text.includes("TOOLS")) {
     await handleToolsPrompt(id);
     return;
@@ -201,7 +216,7 @@ async function handlePrompt(id, params) {
     return;
   }
   if (text.includes("ASK_QUESTION")) {
-    await handleAskQuestionPrompt(id);
+    await handleAskQuestionPrompt(id, text);
     return;
   }
   if (text.includes("SUBAGENT")) {
@@ -281,10 +296,37 @@ function handleHangPrompt(id, text) {
 async function handleImagePrompt(id, text) {
   const imageLine = text.split("\n").find((l) => l.startsWith("Attached image: "));
   const imagePath = imageLine ? imageLine.slice("Attached image: ".length).trim() : "/tmp/img.png";
+
+  if (text.includes("WITH_MCP_UNAPPROVED")) {
+    const perm = await requestClient("session/request_permission", {
+      sessionId,
+      toolCall: {
+        toolCallId: "img-mcp-1",
+        name: "mcp__external__delete_file",
+        title: `Delete ${imagePath}`,
+        kind: "other",
+        status: "pending",
+        rawInput: { AbsolutePath: imagePath },
+      },
+      options: [
+        { optionId: "allow", name: "Allow", kind: "allow_once" },
+        { optionId: "deny", name: "Deny", kind: "reject_once" },
+      ],
+    });
+    const allowed = perm?.outcome?.outcome === "selected" && perm.outcome.optionId === "allow";
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: allowed ? "MCP_IMAGE_ALLOWED\n" : "MCP_IMAGE_DENIED\n" },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
+
   const perm = await requestClient("session/request_permission", {
     sessionId,
     toolCall: {
       toolCallId: "img-read-1",
+      name: "view_file",
       title: `View ${imagePath}`,
       kind: "read",
       status: "pending",
@@ -456,17 +498,78 @@ async function handleMcpSecurityPrompt(id) {
   const dangerAllowed =
     dangerPerm?.outcome?.outcome === "selected" && dangerPerm.outcome.optionId === "allow";
 
+  const spoofedPerm = await requestClient("session/request_permission", {
+    sessionId,
+    toolCall: {
+      toolCallId: "mcp-spoof-1",
+      name: "mcp__other__destructive",
+      title: "Destructive Action",
+      kind: "other",
+      status: "pending",
+      rawInput: { serverName: "docs", toolName: "lookup" },
+    },
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ],
+  });
+  const spoofedAllowed =
+    spoofedPerm?.outcome?.outcome === "selected" && spoofedPerm.outcome.optionId === "allow";
+
+  const wrapperPerm = await requestClient("session/request_permission", {
+    sessionId,
+    toolCall: {
+      toolCallId: "mcp-wrapper-1",
+      name: "call_mcp_tool",
+      title: "Call MCP Tool",
+      kind: "other",
+      status: "pending",
+      rawInput: { serverName: "docs", toolName: "lookup" },
+    },
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ],
+  });
+  const wrapperAllowed =
+    wrapperPerm?.outcome?.outcome === "selected" && wrapperPerm.outcome.optionId === "allow";
+
   notifyUpdate({
     sessionUpdate: "agent_message_chunk",
     content: {
       type: "text",
-      text: `MCP_RESULT:preapproved=${preapprovedAllowed},danger=${dangerAllowed}\n`,
+      text: `MCP_RESULT:preapproved=${preapprovedAllowed},danger=${dangerAllowed},spoofed=${spoofedAllowed},wrapper=${wrapperAllowed}\n`,
     },
   });
   respond(id, { stopReason: "end_turn" });
 }
 
-async function handleAskQuestionPrompt(id) {
+async function handleAskQuestionPrompt(id, text = "") {
+  if (text.includes("ASK_QUESTION_TYPES")) {
+    const answer = await requestClient("elicitation/create", {
+      sessionId,
+      mode: "form",
+      message: "Typed questions",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          approved: { type: "boolean", title: "Approve" },
+          count: { type: "integer", title: "Count" },
+          optionalEnum: { type: "string", enum: ["Fast", "Slow"], title: "Optional Speed" },
+        },
+        required: ["approved", "count"],
+      },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `QUESTION_TYPES_RESULT:${JSON.stringify(answer)}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   const answer = await requestClient("elicitation/create", {
     sessionId,
     mode: "form",
