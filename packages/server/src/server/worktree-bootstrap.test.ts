@@ -290,6 +290,7 @@ describe("runWorktreeAutoTerminals", () => {
           id: terminalId,
           name: options.name ?? "Terminal",
           cwd: options.cwd,
+          workspacePortBlock: options.workspacePortBlock,
           send: (message) => {
             if (message.type === "input") {
               sentInputs.push(message.data);
@@ -820,6 +821,51 @@ describe("runWorktreeAutoTerminals", () => {
       exitCode: 7,
     });
     expect(terminalRecords[0]?.sentInputs).toEqual(['node -e "process.exit(7)"\r']);
+  });
+
+  it.each([
+    { portBlockSize: 4, servicePorts: { range: "42000-42003" } },
+    { servicePorts: { range: "42000-42003", blockSize: 4 } },
+  ])("recreates a stopped shell when its workspace block is enabled: %j", async (worktree) => {
+    commitPaseoConfig({ scripts: { check: { command: "./bin/check" } } });
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+    const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const input = {
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: null,
+      scriptName: "check",
+      daemonPort: null,
+      serviceProxy: new ScriptRouteStore(),
+      runtimeStore: new WorkspaceScriptRuntimeStore(),
+      terminalManager,
+      workspaceRuntimeEnvironment,
+    };
+    const first = await spawnWorkspaceScript(input);
+    terminalRecords[0]!.triggerCommandFinished(0);
+    expect(createTerminalCalls[0]?.env).toBeUndefined();
+    commitPaseoConfig({ worktree, scripts: { check: { command: "./bin/check" } } });
+    const second = await spawnWorkspaceScript(input);
+    expect(second.terminalId).not.toBe(first.terminalId);
+    expect(createTerminalCalls).toHaveLength(2);
+    expect(createTerminalCalls[1]?.env).toMatchObject({
+      PASEO_PORT_BASE: "42000",
+      PASEO_PORT_END: "42003",
+      PASEO_PORT_COUNT: "4",
+      COMPOSE_PROJECT_NAME: workspaceRuntimeEnvironment.get(repoDir)!.composeProjectName,
+      PASEO_COMPOSE_PROJECT_NAME: workspaceRuntimeEnvironment.get(repoDir)!.composeProjectName,
+    });
+    expect(createTerminalCalls[1]?.workspacePortBlock).toEqual({ portBase: 42000, portCount: 4 });
+    terminalRecords[1]!.triggerCommandFinished(0);
+    const third = await spawnWorkspaceScript(input);
+    expect(third.terminalId).toBe(second.terminalId);
+    expect(createTerminalCalls).toHaveLength(2);
   });
 
   it("reuses a live terminal when rerunning after plain script completion", async () => {

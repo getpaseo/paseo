@@ -520,6 +520,16 @@ async function acquireWorkspaceScriptTerminal(params: {
   if (!serviceScript && existingRuntimeEntry?.terminalId) {
     reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
   }
+  if (
+    reusableTerminal &&
+    (reusableTerminal.workspacePortBlock?.portBase !== workspacePortBlock?.portBase ||
+      reusableTerminal.workspacePortBlock?.portCount !== workspacePortBlock?.portCount)
+  ) {
+    // A persistent shell cannot receive create-time environment updates. Recreate
+    // it when its lease changes so its environment and worker metadata agree.
+    await terminalManager.killTerminalAndWait(reusableTerminal.id);
+    reusableTerminal = null;
+  }
   const terminal =
     reusableTerminal ??
     (await terminalManager.createTerminal({
