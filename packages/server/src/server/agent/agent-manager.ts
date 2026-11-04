@@ -2805,6 +2805,8 @@ export class AgentManager {
     if (this.historySessions.has(agent.session)) {
       await this.trackAgentRegistrationOperation(
         this.runLifecycleMutation(agentId, async () => {
+          const record = await this.registry?.get(agentId);
+          if (record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
           const current = this.requireSessionAgent(agentId);
           if (this.historySessions.has(current.session)) {
             // Recheck inside the lane: another prompt may already have upgraded it.

@@ -17,6 +17,7 @@ import type {
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { createDaemonTestContext } from "../test-utils/daemon-test-context.js";
 
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));
@@ -205,7 +206,6 @@ test.each([false, true])(
 );
 
 test("timeline requests read unarchived stored history with a deleted cwd", async () => {
-  const { createDaemonTestContext } = await import("../test-utils/daemon-test-context.js");
   const ctx = await createDaemonTestContext();
   const cwd = await mkdtemp(path.join(tmpdir(), "timeline-deleted-cwd-"));
   try {
@@ -235,7 +235,6 @@ test("timeline requests read unarchived stored history with a deleted cwd", asyn
 }, 30000);
 
 test("timeline reads keep runnable unarchived agents interactive for the next prompt", async () => {
-  const { createDaemonTestContext } = await import("../test-utils/daemon-test-context.js");
   const clients = createTestAgentClients();
   const base = clients.codex!;
   const purposes: Array<AgentResumeSessionOptions | undefined> = [];
@@ -350,6 +349,14 @@ test("restored OMP history accepts prompt mode before starting an interactive tu
     expect(runtime.latestSession().prompts).toEqual([
       expect.objectContaining({ message: "continue" }),
     ]);
+    runtime.latestSession().finishTurn();
+    await manager.waitForAgentEvent(agentId);
+    await manager.archiveAgent(agentId);
+    await manager.closeAgent(agentId);
+    await ensureAgentLoaded(agentId, { agentManager: manager, agentStorage: storage, logger });
+    const launchesBeforeModeChange = runtime.recordedLaunches.length;
+    await expect(manager.setAgentMode(agentId, "full")).rejects.toThrow("Agent is archived");
+    expect(runtime.recordedLaunches).toHaveLength(launchesBeforeModeChange);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush();
