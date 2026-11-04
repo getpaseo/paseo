@@ -353,9 +353,16 @@ export function buildElicitationResponse(
   const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
   const answers = parsed.success ? (parsed.data?.answers ?? {}) : {};
   const content: Record<string, unknown> = {};
+  const allHeaders = new Set(questions.map((q) => q.header));
 
   for (const question of questions) {
-    const rawValue = answers[question.header] ?? answers[question.id] ?? answers[question.question];
+    let rawValue = answers[question.header];
+    if (rawValue === undefined && !allHeaders.has(question.id)) {
+      rawValue = answers[question.id];
+    }
+    if (rawValue === undefined && !allHeaders.has(question.question)) {
+      rawValue = answers[question.question];
+    }
     if (rawValue === undefined && question.allowEmpty) continue;
     const values = normalizeAnswerValues(rawValue, question.multiSelect);
     if (values.length === 0 && question.allowEmpty) continue;

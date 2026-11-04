@@ -322,6 +322,10 @@ export class Session {
       this.driver?.respond(pending.rpcId, buildElicitationResponse(pending.questions, response));
     }
     this.options.emit({ type: "session.permission_resolved", sessionId: this.id, permissionId });
+
+    if (response.behavior === "deny" && response.interrupt) {
+      void this.interrupt();
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -529,8 +533,18 @@ export class Session {
         onNotification: (method, params) => this.handleNotification(driver, method, params),
         onRequest: (id, method, params) => this.handleServerRequest(driver, id, method, params),
         onExit: () => {
-          if (this.driver === driver) this.driver = null;
+          const wasCurrent = this.driver === driver;
+          if (wasCurrent) this.driver = null;
           void driver.stop();
+          if (wasCurrent && !this.closed && !this.turn && this.hasOpened) {
+            this.options.emit({
+              type: "session.runtime_failed",
+              sessionId: this.id,
+              error: toProviderError(
+                new AntigravityError("Antigravity runtime exited unexpectedly", "PROCESS_FAILED"),
+              ),
+            });
+          }
         },
       },
     );

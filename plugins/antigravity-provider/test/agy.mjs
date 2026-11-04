@@ -203,29 +203,15 @@ async function handlePrompt(id, params) {
     });
     return;
   }
-  if (text.includes("PLAN_ACROSS_TOOL_CALL")) {
-    notifyUpdate({
-      sessionUpdate: "plan",
-      entries: [{ content: "Plan task 1", status: "in_progress" }],
-    });
-    notifyUpdate({
-      sessionUpdate: "tool_call",
-      toolCallId: "plan-tool-1",
-      name: "view_file",
-      title: "View file",
-      kind: "read",
-      status: "completed",
-      rawInput: { AbsolutePath: "/tmp/sample.txt" },
-    });
-    notifyUpdate({
-      sessionUpdate: "plan",
-      entries: [{ content: "Plan task 1", status: "completed" }],
-    });
-    notifyUpdate({
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "PLAN_TOOL_DONE\n" },
-    });
+  if (text.includes("EXIT_IDLE_AFTER_TURN")) {
     respond(id, { stopReason: "end_turn" });
+    setTimeout(() => {
+      process.exit(1);
+    }, 50);
+    return;
+  }
+  if (text.includes("PLAN_ACROSS_TOOL_CALL")) {
+    handlePlanAndToolPrompt(id);
     return;
   }
   if (text.includes("TOOLS")) {
@@ -256,32 +242,7 @@ async function handlePrompt(id, params) {
     handleTransientRetryPrompt(id);
     return;
   }
-  if (text.includes("NOTIFICATION_COST_TURN_1")) {
-    notifyUpdate({
-      sessionUpdate: "usage_update",
-      used: 50_000,
-      size: 1_048_576,
-      cost: { amount: 1.0, currency: "USD" },
-    });
-    notifyUpdate({
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "DONE_TURN_1\n" },
-    });
-    respond(id, { stopReason: "end_turn" });
-    return;
-  }
-  if (text.includes("ESTIMATED_TOKENS_TURN_2")) {
-    notifyUpdate({
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "DONE_TURN_2\n" },
-    });
-    respond(id, {
-      stopReason: "end_turn",
-      usage: {
-        inputTokens: 1_000,
-        outputTokens: 200,
-      },
-    });
+  if (handleCostPrompt(id, text)) {
     return;
   }
 
@@ -296,6 +257,63 @@ async function handlePrompt(id, params) {
     content: { type: "text", text: "\n" },
   });
   respond(id, { stopReason: "end_turn" });
+}
+
+function handlePlanAndToolPrompt(id) {
+  notifyUpdate({
+    sessionUpdate: "plan",
+    entries: [{ content: "Plan task 1", status: "in_progress" }],
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "plan-tool-1",
+    name: "view_file",
+    title: "View file",
+    kind: "read",
+    status: "completed",
+    rawInput: { AbsolutePath: "/tmp/sample.txt" },
+  });
+  notifyUpdate({
+    sessionUpdate: "plan",
+    entries: [{ content: "Plan task 1", status: "completed" }],
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "PLAN_TOOL_DONE\n" },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleCostPrompt(id, text) {
+  if (text.includes("NOTIFICATION_COST_TURN_1")) {
+    notifyUpdate({
+      sessionUpdate: "usage_update",
+      used: 50_000,
+      size: 1_048_576,
+      cost: { amount: 1.0, currency: "USD" },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "DONE_TURN_1\n" },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return true;
+  }
+  if (text.includes("ESTIMATED_TOKENS_TURN_2")) {
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "DONE_TURN_2\n" },
+    });
+    respond(id, {
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+      },
+    });
+    return true;
+  }
+  return false;
 }
 
 function handleHangPrompt(id, text) {
@@ -589,6 +607,30 @@ async function handleMcpSecurityPrompt(id) {
 }
 
 async function handleAskQuestionPrompt(id, text = "") {
+  if (text.includes("ASK_QUESTION_FALLBACK_COLLISION")) {
+    const answer = await requestClient("elicitation/create", {
+      sessionId,
+      mode: "form",
+      message: "Fallback collision test",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          first: { type: "string", title: "First", enum: ["A", "Other"] },
+          x: { type: "string", title: "first", enum: ["Yes", "No"] },
+        },
+        required: ["x"],
+      },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `FALLBACK_COLLISION_RESULT:${JSON.stringify(answer)}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   if (text.includes("ASK_QUESTION_DUPLICATE_TITLES")) {
     const answer = await requestClient("elicitation/create", {
       sessionId,

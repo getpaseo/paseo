@@ -1720,6 +1720,74 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
       },
     });
   });
+
+  it("cancels and settles the active turn on interrupting permission denial", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("TOOLS");
+    const perm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.name === "run_command",
+    );
+    if (perm.type !== "session.permission") throw new Error("Expected tool permission");
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: perm.request.id,
+      response: { behavior: "deny", interrupt: true },
+    });
+
+    expect(await h.completed(turn)).toMatchObject({ state: "canceled" });
+  });
+
+  it("emits session.runtime_failed when ACP process exits unexpectedly between turns", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("EXIT_IDLE_AFTER_TURN");
+    await h.completed(turn);
+
+    const runtimeFailed = await h.wait((event) => event.type === "session.runtime_failed");
+    expect(runtimeFailed).toMatchObject({
+      type: "session.runtime_failed",
+      sessionId: "s",
+    });
+  });
+
+  it("rejects answer-key fallbacks belonging to another question's header", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("ASK_QUESTION_FALLBACK_COLLISION");
+    const questionPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "question",
+    );
+    if (questionPerm.type !== "session.permission") throw new Error("Expected question permission");
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: questionPerm.request.id,
+      response: {
+        behavior: "allow",
+        updatedInput: {
+          answers: {
+            first: "No",
+          },
+        },
+      },
+    });
+    await h.completed(turn);
+
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: 'FALLBACK_COLLISION_RESULT:{"action":"accept","content":{"x":"No"}}\n',
+      },
+    });
+  });
 });
 
 it.runIf(process.platform === "win32")(
