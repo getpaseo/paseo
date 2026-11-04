@@ -6699,10 +6699,12 @@ describe("agent snapshot MCP serialization", () => {
         currentModeId: "default",
       }),
     );
-    expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
+    expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
       "archived-activity-agent",
-      { broadcast: expect.any(Function) },
+      expect.objectContaining({ hydrateTimeline: { broadcast: expect.any(Function) } }),
+      { purpose: "history" },
     );
   });
 

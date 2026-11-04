@@ -1434,8 +1434,8 @@ export class AgentManager {
       : { persistSession: options.persistSession };
   }
 
-  // Reconstruct an agent from provider persistence. Callers should explicitly
-  // hydrate timeline history after resume.
+  // Reconstruct an agent from provider persistence. Pass hydrateTimeline to replay
+  // provider history in the same lifecycle step; otherwise hydrate explicitly after resume.
   resumeAgentFromPersistence(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1449,6 +1449,7 @@ export class AgentManager {
       owner?: AgentOwner;
       background?: boolean;
       attention?: AttentionState;
+      hydrateTimeline?: HydrateTimelineOptions;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1456,16 +1457,22 @@ export class AgentManager {
       agentId ?? this.idFactory(),
       "resumeAgentFromPersistence",
     );
+    const { hydrateTimeline, ...registerOptions } = options ?? {};
     return this.trackAgentRegistrationOperation(
-      this.runLifecycleMutation(resolvedAgentId, () =>
-        this.resumeAgentFromPersistenceInternal(
+      this.runLifecycleMutation(resolvedAgentId, async () => {
+        const snapshot = await this.resumeAgentFromPersistenceInternal(
           handle,
           overrides,
           resolvedAgentId,
-          options,
+          registerOptions,
           resumeOptions,
-        ),
-      ),
+        );
+        if (!hydrateTimeline) return snapshot;
+        // Replay inside the lane. A queued unarchive or archive closes this runtime,
+        // and closing it mid-replay fails the history read.
+        await this.hydrateTimelineFromProvider(resolvedAgentId, hydrateTimeline);
+        return this.getAgent(resolvedAgentId) ?? snapshot;
+      }),
     );
   }
 
