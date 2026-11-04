@@ -1743,6 +1743,58 @@ describe("WorkspaceGitServiceImpl", () => {
     },
   );
 
+  test("metadata recovery reconciles exclusions changed during the outage", async () => {
+    let ignoredDirectories = "generated/\n";
+    let attempts = 0;
+    let workingTreeCallback!: (
+      error: Error | null,
+      events: Array<{ path: string; type: "delete" }>,
+    ) => void;
+    const workingTreeSubscription = createAsyncSubscription();
+    const subscribe = vi.fn(async (directory: string, callback: typeof workingTreeCallback) => {
+      if (directory === join(REPO_CWD, ".git") && ++attempts === 1) {
+        return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+      }
+      if (directory === REPO_CWD) {
+        workingTreeCallback = callback;
+        return workingTreeSubscription;
+      }
+      return createAsyncSubscription();
+    });
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({ subscribe, runGitCommand, getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    try {
+      await settle(() => expect(attempts).toBe(1));
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+      await waitForObservationToSettle(service, 1);
+      expect(subscribe.mock.calls.find(([directory]) => directory === REPO_CWD)).toBeDefined();
+      ignoredDirectories = ""; // info/exclude changed while metadata observation was unavailable.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle(() => expect(attempts).toBe(2));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waitForRefreshesToSettle(service);
+      const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+      workingTreeCallback(null, [
+        { path: join(REPO_CWD, "generated", "output.ts"), type: "delete" },
+      ]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waitForRefreshesToSettle(service);
+      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsAfterRecovery);
+      expect(workingTreeSubscription.updateIgnore).toHaveBeenCalledWith([join(REPO_CWD, ".git")]);
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+    }
+  });
+
   test("sets a bounded polling fallback when recursive observation is unavailable", async () => {
     const subscribe = vi.fn(async () => {
       throw new Error("watcher unavailable");
