@@ -1,6 +1,7 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
@@ -51,8 +52,12 @@ export interface ScrollToMessageOccurrence {
 }
 
 export interface StreamViewportHandle {
+  /** Give keyboard navigation back to the scrolling surface on web. */
+  focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  /** Stop following output so the rows on screen stay put while rows below them open or close. */
+  holdReadingPosition: () => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
@@ -74,6 +79,8 @@ export interface StreamRenderInput {
   segments: StreamRenderSegments;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
+  /** Presentation rows replaced by another row after history is folded. */
+  readingRowReplacements?: ReadingRowReplacements;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;

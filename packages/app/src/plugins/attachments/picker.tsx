@@ -2,16 +2,16 @@ import { useCallback, useMemo, useState, type ReactElement, type RefObject } fro
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginAttachmentItem, PluginAttachmentSourceContribution } from "@getpaseo/plugin";
+import type { PluginAttachmentItem, PluginSerializableIcon } from "@getpaseo/plugin";
+import type { PluginAttachmentSourceContribution } from "../types";
 import { searchPluginAttachments } from "@getpaseo/plugin/client/host";
-import type { LucideIcon } from "lucide-react-native";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useFetchQuery } from "@/data/query";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { resolvePluginIcon } from "../icons";
+import { PluginIconView } from "../icons";
 import { useInstalledPlugins } from "../registry";
 import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment, togglePluginResourceAttachment } from "./model";
@@ -20,8 +20,8 @@ const SEARCH_STALE_TIME_MS = 30_000;
 const EMPTY_ATTACHMENT_ITEMS: PluginAttachmentItem[] = [];
 const iconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function SourceIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
-  return <Icon size={ICON_SIZE.md} color={color} />;
+function SourceIcon({ icon, color = "" }: { icon: PluginSerializableIcon; color?: string }) {
+  return <PluginIconView icon={icon} size={ICON_SIZE.md} color={color} />;
 }
 
 const ThemedSourceIcon = withUnistyles(SourceIcon);
@@ -155,8 +155,8 @@ export function usePluginAttachmentPicker(
           pluginId: active.plugin.id,
           sourceId: active.source.id,
           sourceTitle: active.remote
-            ? `${active.source.title} · ${active.hostLabel}`
-            : active.source.title,
+            ? `${active.plugin.i18n.resolve(active.source.title, active.plugin.locale)} · ${active.hostLabel}`
+            : active.plugin.i18n.resolve(active.source.title, active.plugin.locale),
           sourceIcon: active.source.icon,
           ...(active.remote ? { sourceServerId: active.plugin.serverId } : {}),
         },
@@ -169,12 +169,12 @@ export function usePluginAttachmentPicker(
   );
   const menuItems = useMemo(
     () =>
-      sources.map(({ key, source, remote, hostLabel }) => {
-        const Icon = resolvePluginIcon(source.icon);
+      sources.map(({ key, source, plugin, remote, hostLabel }) => {
+        const title = plugin.i18n.resolve(source.title, plugin.locale);
         return {
           id: `plugin:${key}`,
-          label: remote ? `Attach ${source.title} from ${hostLabel}` : `Attach ${source.title}`,
-          icon: <ThemedSourceIcon Icon={Icon} uniProps={iconColorMapping} />,
+          label: remote ? `Attach ${title} from ${hostLabel}` : `Attach ${title}`,
+          icon: <ThemedSourceIcon icon={source.icon} uniProps={iconColorMapping} />,
           onSelect: () => setActiveKey(key),
         };
       }),
@@ -198,7 +198,7 @@ export function usePluginAttachmentPicker(
           options={[
             {
               id: "browse",
-              label: `Search ${active.source.title} on ${active.hostLabel}`,
+              label: `Search ${active.plugin.i18n.resolve(active.source.title, active.plugin.locale)} on ${active.hostLabel}`,
               description:
                 "Readable results will be copied to this app. Your selected snapshot goes to the destination host when you send.",
             },
@@ -224,11 +224,14 @@ export function usePluginAttachmentPicker(
         value=""
         onSelect={handleSelect}
         searchable
-        searchPlaceholder={active.source.searchPlaceholder}
+        searchPlaceholder={active.plugin.i18n.resolve(
+          active.source.searchPlaceholder,
+          active.plugin.locale,
+        )}
         title={
           active.remote
-            ? `${active.source.pickerTitle} from ${active.hostLabel}`
-            : active.source.pickerTitle
+            ? `${active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)} from ${active.hostLabel}`
+            : active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)
         }
         open
         onOpenChange={handleOpenChange}

@@ -407,6 +407,17 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("carries a stored lastError onto the payload", () => {
+    const record = toStoredAgentRecord(
+      createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
+    );
+
+    expect(buildStoredAgentPayload(record, ["codex"]).lastError).toBe("boom");
+    expect(buildStoredAgentPayload({ ...record, lastError: null }, ["codex"])).not.toHaveProperty(
+      "lastError",
+    );
+  });
+
   it("omits lastUsage when not available", () => {
     const agent = createManagedAgent({ lastUsage: undefined });
     const payload = toAgentPayload(agent);

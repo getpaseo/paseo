@@ -54,7 +54,13 @@ export function SidebarFilterEmptyState() {
       title={t("sidebar.filterEmpty.title")}
       description={t("sidebar.filterEmpty.description")}
     >
-      <Button variant="secondary" size="xs" onPress={clearFilters}>
+      <Button
+        variant="secondary"
+        size="xs"
+        style={styles.action}
+        textStyle={styles.actionText}
+        onPress={clearFilters}
+      >
         {t("sidebar.filterEmpty.clear")}
       </Button>
     </SidebarEmptyStateCard>
@@ -76,10 +82,24 @@ export function SidebarProjectEmptyState({
       title={t("sidebar.project.empty.title")}
       description={t("sidebar.project.empty.description")}
     >
-      <Button variant="secondary" size="xs" leftIcon={Plus} onPress={onAddProject}>
+      <Button
+        variant="secondary"
+        size="xs"
+        leftIcon={Plus}
+        style={styles.action}
+        textStyle={styles.actionText}
+        onPress={onAddProject}
+      >
         {t("sidebar.actions.addProject")}
       </Button>
-      <Button variant="outline" size="xs" leftIcon={Import} onPress={onImportSession}>
+      <Button
+        variant="outline"
+        size="xs"
+        leftIcon={Import}
+        style={styles.action}
+        textStyle={styles.actionText}
+        onPress={onImportSession}
+      >
         {t("importSession.title")}
       </Button>
     </SidebarEmptyStateCard>
@@ -99,8 +119,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   actions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
+  },
+  action: {
+    maxWidth: "100%",
+  },
+  actionText: {
+    flexShrink: 1,
   },
   title: {
     color: theme.colors.foreground,

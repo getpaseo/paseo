@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { configDefaults, defineConfig } from "vitest/config";
 
+// React's test APIs require its development build, even in a production shell.
+process.env.NODE_ENV = "test";
+
 const appDir = path.resolve(__dirname, "packages/app");
 const appNodeModules = path.resolve(appDir, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "node_modules");
@@ -39,6 +42,8 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "packages/relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(appDir, "src") },
+      // The website's `~/` path alias, as in packages/website/tsconfig.json.
+      { find: /^~\/(.*)$/, replacement: path.resolve(__dirname, "packages/website/src/$1") },
       { find: "@server", replacement: path.resolve(__dirname, "packages/server/src") },
       {
         find: "react-native",
@@ -62,5 +67,8 @@ export default defineConfig({
       PASEO_GIT_MAX_PROCESSES_PER_SECOND: "10000",
     },
     exclude: [...configDefaults.exclude, "**/.claude/**", "**/.dev/**"],
+    // The website installs its own React; bundling its router lets tests render website components
+    // that use router hooks against the one React the tests use.
+    server: { deps: { inline: [/packages\/website\/node_modules\/@tanstack\/(react-)?router/] } },
   },
 });

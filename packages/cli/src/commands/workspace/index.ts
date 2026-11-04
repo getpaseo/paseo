@@ -34,12 +34,17 @@ export function createWorkspaceCommand(): Command {
       .option("--base <ref>", "Base ref (--mode branch-off)")
       .option("--branch <name>", "Existing branch (--mode checkout-branch)")
       .option("--pr-number <n>", "Pull request or change request number (--mode checkout-pr)")
-      .option("--forge <forge>", "Forge for --mode checkout-pr (default: source checkout)"),
+      .option("--forge <forge>", "Forge for --mode checkout-pr (default: source checkout)")
+      .option("--background", "Create a background workspace")
+      .option("--no-background", "Create a visible workspace instead of inheriting background"),
   ).action(withOutput(runCreateCommand));
 
-  addJsonAndDaemonHostOptions(workspace.command("ls").description("List active workspaces")).action(
-    withOutput(runLsCommand),
-  );
+  addJsonAndDaemonHostOptions(
+    workspace
+      .command("ls")
+      .description("List active workspaces")
+      .option("--background", "Include background workspaces"),
+  ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
     workspace

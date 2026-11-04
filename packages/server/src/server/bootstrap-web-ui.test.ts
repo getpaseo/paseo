@@ -2,9 +2,16 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+
+const expectedHostName =
+  process.platform === "darwin"
+    ? execFileSync("/usr/sbin/scutil", ["--get", "ComputerName"], { encoding: "utf8" }).trim()
+    : os.hostname();
 
 interface InitialDaemonConnectionHint {
   listen: string;
@@ -77,6 +84,23 @@ describe("daemon web UI bootstrap", () => {
     }
   });
 
+  test("advertises ComputerName as the hostname over HTTP and WebSocket", async () => {
+    daemonHandle = await createTestPaseoDaemon({ mcpEnabled: false });
+    const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
+    expect(await response.json()).toMatchObject({ hostname: expectedHostName });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      clientId: "host-name-test",
+      clientType: "mobile",
+    });
+    try {
+      await client.connect();
+      expect(client.getLastServerInfoMessage()?.hostname).toBe(expectedHostName);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("injects a TLS initial connection hint only for HTTPS forwarded by a trusted proxy", async () => {
     const distDir = await createWebUiDist();
 
@@ -101,13 +125,51 @@ describe("daemon web UI bootstrap", () => {
     expect(httpHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
       useTls: false,
-      label: os.hostname(),
+      label: expectedHostName,
     });
     expect(httpsHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
       useTls: true,
-      label: os.hostname(),
+      label: expectedHostName,
     });
+  });
+
+  test("spells out the scheme default port when the Host header omits it", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    // A browser reaching a proxy that terminates TLS on 443 sends a Host header
+    // with no port at all. The app rejects a portless `listen`, so the daemon
+    // has to supply the default itself.
+    const httpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "paseo.example.test", "x-forwarded-proto": "https" },
+      }),
+    );
+    const httpHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "paseo.example.test" },
+      }),
+    );
+    const ipv6Hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "[::1]", "x-forwarded-proto": "https" },
+      }),
+    );
+
+    expect(httpsHint.listen).toBe("paseo.example.test:443");
+    expect(httpHint.listen).toBe("paseo.example.test:80");
+    expect(ipv6Hint.listen).toBe("[::1]:443");
   });
 
   test("ignores forwarded HTTPS when proxy trust is disabled", async () => {
@@ -132,7 +194,7 @@ describe("daemon web UI bootstrap", () => {
     expect(httpsHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
       useTls: false,
-      label: os.hostname(),
+      label: expectedHostName,
     });
   });
 });

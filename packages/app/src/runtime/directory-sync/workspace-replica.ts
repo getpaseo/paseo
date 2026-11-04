@@ -82,7 +82,12 @@ export class WorkspaceDirectoryReplica {
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): DirectoryReplicaMutation[] {
-    return workspaces.flatMap((workspace) => this.upsertWorkspace(workspace));
+    // Creation responses and progress snapshots can arrive after live updates.
+    // They seed missing rows; the directory owns rows it has already received.
+    return workspaces.flatMap((workspace) => {
+      if (this.workspaces.has(workspace.id)) return [];
+      return this.upsertWorkspace(workspace);
+    });
   }
 
   acceptProject(project: ProjectDescriptor): DirectoryReplicaMutation[] {
@@ -102,6 +107,7 @@ export class WorkspaceDirectoryReplica {
         workspaces.set(workspaceId, workspace);
       }
     }
+    for (const workspace of workspaces.values()) this.applySetupStatus(workspace);
     this.workspaces = workspaces;
     this.projects = new Map(snapshot.projects);
     this.rebuildProjectIndex();
@@ -198,7 +204,16 @@ export class WorkspaceDirectoryReplica {
     return [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }];
   }
 
+  private applySetupStatus(workspace: WorkspaceDescriptor): void {
+    useWorkspaceSetupStore.getState().applySetupStatus({
+      serverId: this.serverId,
+      workspaceId: workspace.id,
+      status: workspace.setupStatus ?? null,
+    });
+  }
+
   private setWorkspace(workspace: WorkspaceDescriptor): void {
+    this.applySetupStatus(workspace);
     const previous = this.workspaces.get(workspace.id);
     if (previous?.projectId !== workspace.projectId) {
       this.workspaceIdsByProject.get(previous?.projectId ?? "")?.delete(workspace.id);

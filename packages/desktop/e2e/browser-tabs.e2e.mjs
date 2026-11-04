@@ -12,7 +12,11 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
+import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
+import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -195,6 +199,20 @@ async function waitForDesktopStatus(page) {
   );
 }
 
+async function settleDesktopStartup(page) {
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
+  // The dev launcher supplies its package directory as an open-project request.
+  // Before the local host connects, that request opens the connection prompt.
+  // Finish startup before exercising the unrelated Settings/browser workflows.
+  const connectionPrompt = page.getByTestId("add-host-method-modal");
+  if (await connectionPrompt.isVisible()) {
+    await connectionPrompt.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(connectionPrompt).toBeHidden();
+  }
+}
+
 async function startTargetPage() {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -272,7 +290,7 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
   return false;
 }
 
-async function createCallerAgent(daemonPort) {
+async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${daemonPort}/mcp/agents`),
   );
@@ -282,12 +300,11 @@ async function createCallerAgent(daemonPort) {
       name: "create_agent",
       args: {
         relationship: { kind: "detached" },
-        workspace: { kind: "existing", workspaceId: workspaceIds[0] },
+        workspace: { kind: "existing", workspaceId },
         title: "Browser desktop browser E2E caller",
         provider: "mock/ten-second-stream",
         settings: { modeId: "load-test" },
         initialPrompt: "Remain available while the browser bridge regression runs.",
-        background: true,
       },
     });
     const result = response.structuredContent;
@@ -297,7 +314,7 @@ async function createCallerAgent(daemonPort) {
     );
     assert(typeof result.agentId === "string", "create_agent returned no caller agent id");
     assert(
-      result.workspaceId === workspaceIds[0],
+      result.workspaceId === workspaceId,
       `MCP caller attached to unexpected workspace ${result.workspaceId}`,
     );
     return result.agentId;
@@ -455,17 +472,17 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
-async function setWindowHidden(inspectorPort, hidden) {
+async function evaluateDesktopWindow(inspectorPort, expression) {
   const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   try {
-    await new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       socket.addEventListener("error", reject, { once: true });
       socket.addEventListener("message", ({ data }) => {
         const response = JSON.parse(data);
         if (response.id !== 1) return;
         if (response.error || response.result?.exceptionDetails) reject(new Error(data));
-        else resolve();
+        else resolve(response.result.result.value);
       });
       socket.addEventListener(
         "open",
@@ -475,7 +492,8 @@ async function setWindowHidden(inspectorPort, hidden) {
               id: 1,
               method: "Runtime.evaluate",
               params: {
-                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
+                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${expression} })()`,
+                returnByValue: true,
               },
             }),
           ),
@@ -485,6 +503,20 @@ async function setWindowHidden(inspectorPort, hidden) {
   } finally {
     socket.close();
   }
+}
+
+async function setWindowHidden(inspectorPort, hidden) {
+  await evaluateDesktopWindow(
+    inspectorPort,
+    `win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change');`,
+  );
+}
+
+async function resizeDesktopWindow(inspectorPort, { width, height }) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
+  );
 }
 
 async function verifyHiddenBrowserScreenshots({
@@ -562,12 +594,66 @@ async function verifyHiddenBrowserScreenshots({
   await expectAnimation();
 }
 
+async function verifyBackgroundTypingStaysInGuest({ page, client, serverId, browserId, agent }) {
+  await page
+    .getByTestId(`workspace-deck-entry-${serverId}:${agent.workspaceId}`)
+    .getByTestId(`workspace-tab-agent_${agent.agentId}`)
+    .click({ timeout: timeoutMs });
+  const composer = page
+    .getByRole("textbox", { name: "Message agent..." })
+    .filter({ visible: true })
+    .first();
+  const draft = "draft the user is typing";
+  await composer.click();
+  await composer.pressSequentially(draft);
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not keep focus while the user typed",
+  );
+
+  const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
+  const ref = snapshot.snapshot.match(/textbox "Typing target" \[ref=(@e\d+)\]/)?.[1];
+  assert(ref, `browser_snapshot did not expose the typing target: ${snapshot.snapshot}`);
+  await callBrowserTool(client, "browser_type", { browserId, ref, text: "agent text" });
+  await callBrowserTool(client, "browser_keypress", { browserId, ref, key: "!" });
+
+  // The user keeps typing in the composer while the agent types into the tab's focused field.
+  await composer.click();
+  await composer.press("End");
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not take focus back from the browser tab",
+  );
+  await callBrowserTool(client, "browser_type", { browserId, text: " more" });
+  await callBrowserTool(client, "browser_keypress", { browserId, key: "?" });
+
+  const guestValue = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId,
+        function: "() => document.getElementById('typing-target').value",
+      })
+    ).resultJson,
+  );
+  const composerValue = await composer.inputValue();
+  assert(
+    composerValue === draft,
+    `browser_type and browser_keypress in a background tab changed the focused composer: ${JSON.stringify(composerValue)}`,
+  );
+  assert(
+    guestValue === "agent text! more?",
+    `browser_type and browser_keypress did not reach the browser tab: ${JSON.stringify(guestValue)}`,
+  );
+  await composer.fill("");
+}
+
 async function runRegression({
   page,
   client,
   serverId,
   targetUrl,
   callerAgentId,
+  typingAgent,
   artifactDir,
   inspectorPort,
 }) {
@@ -857,6 +943,13 @@ async function runRegression({
     text: "Clicked",
     timeoutMs: 5_000,
   });
+  await verifyBackgroundTypingStaysInGuest({
+    page,
+    client,
+    serverId,
+    browserId,
+    agent: typingAgent,
+  });
 
   await originalWorkspaceRow.click();
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
@@ -1113,6 +1206,7 @@ async function main() {
         cwd: rootDir,
         env: {
           ...commonEnv,
+          EXPO_UNSTABLE_HEADLESS: "1",
           EXPO_PORT: String(expoPort),
           EXPO_DEV_URL: `http://localhost:${expoPort}`,
           PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
@@ -1127,7 +1221,9 @@ async function main() {
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     const page = await waitForAppPage(browser, expoPort);
+    await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
+    await settleDesktopStartup(page);
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({
@@ -1145,6 +1241,14 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
+    const settingsScroll = await runSettingsScrollRegression(page, (size) =>
+      resizeDesktopWindow(inspectorPort, size),
+    );
+    if (process.env.PASEO_DESKTOP_SETTINGS_SCROLL_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsScroll });
+      console.log("Desktop Settings scroll regression passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1154,9 +1258,14 @@ async function main() {
       return;
     }
 
+    const adaptiveTheme = await runAdaptiveThemeRegression(artifactDir);
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
+    const typingAgent = {
+      workspaceId: workspaceIds.at(-1),
+      agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
+    };
     const transport = new StreamableHTTPClientTransport(
       new URL(
         `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
@@ -1170,10 +1279,16 @@ async function main() {
       targetUrl: target.url,
       inspectorPort,
       callerAgentId,
+      typingAgent,
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
+    writeJson(path.join(artifactDir, "result.json"), {
+      ...report,
+      settingsMemory,
+      pluginLinks,
+      adaptiveTheme,
+    });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );

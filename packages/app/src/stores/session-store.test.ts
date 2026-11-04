@@ -5,6 +5,7 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
+  selectAgentSentMessages,
   selectAgentTurnPresentation,
   selectAgentTimelineState,
   useSessionStore,
@@ -64,6 +65,8 @@ function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
 ): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
@@ -231,6 +234,25 @@ describe("agent timeline state", () => {
     expect(
       selectAgentTimelineState(useSessionStore.getState().sessions["test-server"], "agent-1"),
     ).toEqual({ status: "synced", items: [], range: null, older: "none", newer: "none" });
+  });
+
+  it("lists sent messages newest first, including the live head", () => {
+    initializeTestSession();
+    const sent = (id: string, text: string) => ({ ...submittedMessage(id), text });
+    useSessionStore.getState().applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [sent("m1", "fix the auth bug"), sent("m2", "add tests"), sent("m3", "add tests")],
+      head: [sent("m4", "  "), sent("m5", "refactor the wrong module")],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 5 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    expect(
+      selectAgentSentMessages(useSessionStore.getState().sessions["test-server"], "agent-1"),
+    ).toEqual(["refactor the wrong module", "add tests", "fix the auth bug"]);
+    expect(selectAgentSentMessages(undefined, "agent-1")).toEqual([]);
   });
 
   it("preserves older availability when an applied response leaves it unchanged", () => {

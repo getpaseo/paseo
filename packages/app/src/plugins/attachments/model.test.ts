@@ -60,6 +60,20 @@ describe("plugin resource attachments", () => {
     });
   });
 
+  it("keeps a remote attachment with a serializable SVG icon", () => {
+    const attachment = createPluginResourceAttachment(
+      {
+        ...source,
+        sourceIcon: { svg: '<svg xmlns="http://www.w3.org/2000/svg" />' },
+        sourceServerId: "remote-host",
+      },
+      item,
+    );
+
+    expect(PluginResourceComposerAttachmentSchema.parse(attachment)).toEqual(attachment);
+    expect(getPluginResourceAttachmentKey(attachment)).toBe("remote-host:linear:issues:issue-uuid");
+  });
+
   it("submits through the backward-compatible text attachment", () => {
     const attachment = createPluginResourceAttachment(source, item);
 

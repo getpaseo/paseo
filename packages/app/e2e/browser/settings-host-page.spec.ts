@@ -1,3 +1,12 @@
+import {
+  openGlobalNewWorkspaceComposer,
+  fillNewWorkspaceDraft,
+  expectNewWorkspaceDraft,
+} from "../support/helpers/new-workspace";
+import { readFile, mkdir, rename, rm } from "node:fs/promises";
+import path from "node:path";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
@@ -25,6 +34,12 @@ import {
   removeHostFromHostPage,
   addDirectHostFromSettings,
   expectHostOnlineWithoutError,
+  expectIdleAgentRelease,
+  editRestartRecoveryPrompt,
+  expectRestartRecoveryEnabled,
+  expectRestartRecoveryPrompt,
+  setRestartRecoveryEnabled,
+  setIdleAgentRelease,
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -137,6 +152,100 @@ test.describe("Settings host page", () => {
     }
   });
 
+  test("idle agent release changes live on one host and stays saved without restarting", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const primaryServerId = getServerId();
+    const daemon = await startIsolatedHostDaemon("srv_e2e_idle_agent_release");
+    const client = await connectDaemonClient<DaemonClient>({
+      clientIdPrefix: "idle-release-settings",
+      port: daemon.port,
+    });
+    const originalPid = (await client.getDaemonStatus()).pid;
+    const expectLiveSavedSetting = async (enabled: boolean) => {
+      const saved = JSON.parse(await readFile(path.join(daemon.paseoHome, "config.json"), "utf8"));
+      expect(saved.agents.idleRuntimeCleanup).toBe(enabled);
+      expect((await client.getDaemonConfig()).config.idleRuntimeCleanup).toBe(enabled);
+      expect((await client.reloadDaemonConfig()).restartRequiredPaths).toEqual([]);
+      expect((await client.getDaemonStatus()).pid).toBe(originalPid);
+    };
+    const hosts = [
+      {
+        serverId: primaryServerId,
+        label: TEST_HOST_LABEL,
+        endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+      },
+      {
+        serverId: daemon.serverId,
+        label: "Idle release host",
+        endpoint: `127.0.0.1:${daemon.port}`,
+      },
+    ];
+    const openHostAgentsInFreshApp = async (serverId: string) => {
+      await seedSavedSettingsHosts(page, hosts);
+      await page.reload();
+      await openSettings(page);
+      await selectSettingsHost(page, serverId);
+      await openHostSection(page, serverId, "agents");
+    };
+    try {
+      await test.step("idle agent release starts on and turns off", async () => {
+        await openHostAgentsInFreshApp(daemon.serverId);
+        await expectIdleAgentRelease(page, true);
+        await setIdleAgentRelease(page, false);
+        await expectLiveSavedSetting(false);
+      });
+
+      await test.step("a fresh app reads the saved setting from the same running host", async () => {
+        await openHostAgentsInFreshApp(daemon.serverId);
+        await expectIdleAgentRelease(page, false);
+        await expectLiveSavedSetting(false);
+        await setIdleAgentRelease(page, true);
+        await expectLiveSavedSetting(true);
+        await setIdleAgentRelease(page, false);
+      });
+
+      await test.step("other hosts keep their own setting", async () => {
+        await selectSettingsHost(page, primaryServerId);
+        await openHostSection(page, primaryServerId, "agents");
+        await expectIdleAgentRelease(page, true);
+        await expectLiveSavedSetting(false);
+      });
+    } finally {
+      await client.close();
+      await daemon.close();
+    }
+  });
+
+  test("a failed idle release save stays visible and retry applies it live", async ({ page }) => {
+    const daemon = await startIsolatedHostDaemon("srv_e2e_idle_release_failure");
+    const configPath = path.join(daemon.paseoHome, "config.json");
+    try {
+      await seedSavedSettingsHosts(page, [
+        { serverId: daemon.serverId, label: "Failure host", endpoint: `127.0.0.1:${daemon.port}` },
+      ]);
+      await page.reload();
+      await openSettings(page);
+      await openHostSection(page, daemon.serverId, "agents");
+      await expectIdleAgentRelease(page, true);
+      // A real filesystem failure, with the daemon and RPC path intact.
+      await rename(configPath, `${configPath}.saved`);
+      await mkdir(configPath);
+      await page.getByRole("switch", { name: "Release idle agents" }).click();
+      await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toContainText(
+        "Failed to read",
+      );
+      await expectIdleAgentRelease(page, true);
+      await rm(configPath, { recursive: true });
+      await rename(`${configPath}.saved`, configPath);
+      await setIdleAgentRelease(page, false);
+      await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toHaveCount(0);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   test("navigating to /settings/hosts/[serverId] redirects to the connections section", async ({
     page,
   }) => {
@@ -152,3 +261,88 @@ test.describe("Settings host page", () => {
     await expectHostActionCards(page, serverId);
   });
 });
+
+test("restart recovery host controls persist the opt-out and custom prompt", async ({ page }) => {
+  const serverId = getServerId();
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openSettingsHost(page, serverId);
+  await openHostSection(page, serverId, "agents");
+  await expectRestartRecoveryEnabled(page, true);
+  await expectRestartRecoveryPrompt(page, "Resume working.");
+  await editRestartRecoveryPrompt(page, "Continue the interrupted work.");
+  await setRestartRecoveryEnabled(page, false);
+  await page.reload();
+  await expectRestartRecoveryEnabled(page, false);
+  await setRestartRecoveryEnabled(page, true);
+  await expectRestartRecoveryPrompt(page, "Continue the interrupted work.");
+  await editRestartRecoveryPrompt(page, "Resume working.");
+});
+
+test("sidebar Add host preserves its caller and stays closed after theme changes", async ({
+  page,
+}) => {
+  await gotoAppShell(page);
+  await expect(page).toHaveURL(/\/open-project$/);
+  const originalUrl = page.url();
+  await openSidebarAddHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await closeAddHostAndChangeTheme(page);
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeHidden();
+  await expect(page).toHaveURL(originalUrl);
+});
+
+async function openSidebarAddHost(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+  await page.getByRole("button", { name: "Add host", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeVisible();
+}
+
+async function closeAddHostAndChangeTheme(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeHidden();
+  await page.keyboard.press("Control+Alt+t");
+}
+
+test("sidebar Add host completes without navigating", async ({ page }) => {
+  await gotoAppShell(page);
+  await expect(page).toHaveURL(/\/open-project$/);
+  const originalUrl = page.url();
+  await openSidebarAddHost(page);
+  await connectToTestHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await expect(page.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();
+});
+
+test("Settings Add host opens the saved host Overview", async ({ page }) => {
+  await gotoAppShell(page);
+  await openSettings(page);
+  await addDirectHostFromSettings(page, { host: "127.0.0.1", port: Number(getE2EDaemonPort()) });
+  await expectSettingsHeader(page, "Overview");
+  await expect(page).toHaveURL(new RegExp(`/settings/hosts/${getServerId()}/host$`));
+});
+
+test("New workspace Add host preserves the prompt after connecting", async ({ page }) => {
+  await gotoAppShell(page);
+  await openGlobalNewWorkspaceComposer(page);
+  await fillNewWorkspaceDraft(page, "Keep this unfinished prompt while I add a host.");
+  const originalUrl = page.url();
+  await openNewWorkspaceAddHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await connectToTestHost(page);
+  await expect(page).toHaveURL(originalUrl);
+  await expectNewWorkspaceDraft(page, "Keep this unfinished prompt while I add a host.");
+});
+
+async function openNewWorkspaceAddHost(page: import("@playwright/test").Page) {
+  await page.getByTestId("host-picker-trigger").click();
+  await page.getByRole("button", { name: "Add host", exact: true }).click();
+}
+
+async function connectToTestHost(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Direct connection", exact: true }).click();
+  await page.getByRole("textbox", { name: "Host", exact: true }).fill("127.0.0.1");
+  await page.getByRole("textbox", { name: "Port", exact: true }).fill(String(getE2EDaemonPort()));
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByTestId("add-host-modal")).toBeHidden({ timeout: 30_000 });
+}

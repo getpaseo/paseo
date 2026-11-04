@@ -118,8 +118,8 @@ export function ChatFind({
   }, [active, isInteractive, model]);
   const close = useCallback(() => {
     model.close();
-    root.current?.focus({ preventScroll: true });
-  }, [model]);
+    viewportRef.current?.focus?.();
+  }, [model, viewportRef]);
   let status = "";
   if (state.phase === "searching") status = t("paneFind.searching");
   else if (state.phase === "loading") status = t("paneFind.loading");

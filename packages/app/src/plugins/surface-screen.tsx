@@ -1,33 +1,40 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
-import { ChevronDown, X } from "lucide-react-native";
-import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { X } from "lucide-react-native";
+import { useCallback, useMemo, type ComponentType } from "react";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { CompactHeader } from "@/components/headers/compact-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
-import { HostPicker } from "@/components/hosts/host-picker";
+import { HostFilter } from "@/components/hosts/host-filter";
+import type { HostPickerHost } from "@/components/hosts/host-picker";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { usePluginHostNavigation } from "./host-navigation";
-import { resolvePluginIcon } from "./icons";
+import { PluginIconView } from "./icons";
 import { toPluginTheme } from "./theme";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
-import { buildPluginSurfaceRoute } from "./routes";
-import { rememberPluginContributionHost } from "./contribution-host";
+import { buildPluginSurfaceRoute, pluginScreenParamsFromRoute } from "./routes";
+import {
+  legacySidebarItemHostKey,
+  pluginScreensHostKey,
+  rememberPluginContributionHost,
+} from "./contribution-host";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { PluginRuntimeBoundary } from "./runtime-boundary";
+import { PluginInstallationProvider } from "./installation-provider";
 import {
   getPluginSurfaceContributionServerIds,
+  resolvePluginScreenTitle,
   resolvePluginSurfaceContribution,
   type PluginSurfaceContributionIdentity,
 } from "./surface-contribution";
+import { resolvePluginPlatform } from "./platform";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -35,125 +42,93 @@ const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
 });
 const ThemedX = withUnistyles(X);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 
 function routeParam(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-function PluginHeaderIcon({
-  Icon,
-  color = "",
-}: {
-  Icon: ReturnType<typeof resolvePluginIcon>;
-  color?: string;
-}) {
-  return <Icon size={16} color={color} />;
+function PluginHeaderIcon({ icon, color = "" }: { icon: PluginIcon; color?: string }) {
+  return <PluginIconView icon={icon} size={16} color={color} />;
 }
 
 const ThemedPluginHeaderIcon = withUnistyles(PluginHeaderIcon);
 
 function SurfaceRenderer({
   Surface,
-  client,
   plugin,
   layout,
   host,
+  params,
   theme,
 }: {
-  Surface: ComponentType<PluginSurfaceProps>;
-  client: DaemonClient;
+  Surface: ComponentType<PluginScreenProps>;
   plugin: NonNullable<ReturnType<typeof useInstalledPlugin>>;
-  layout: PluginSurfaceProps["layout"];
-  host: PluginSurfaceProps["host"];
+  layout: PluginScreenProps["layout"];
+  host: PluginScreenProps["host"];
+  params: PluginScreenParams;
   theme: PluginTheme;
 }) {
   const navigation = usePluginHostNavigation(host.id);
   return (
-    <PluginRuntimeBoundary plugin={plugin} client={client}>
-      <Surface theme={theme} host={host} layout={layout} navigation={navigation} />
-    </PluginRuntimeBoundary>
+    <PluginInstallationProvider plugin={plugin}>
+      <Surface theme={theme} host={host} layout={layout} navigation={navigation} params={params} />
+    </PluginInstallationProvider>
   );
 }
 
 const ThemedSurfaceRenderer = withUnistyles(SurfaceRenderer);
 
-function resolvePlatform(): PluginSurfaceProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
-
-function PluginHostSwitcher({
+function PluginHostFilter({
   serverId,
   pluginId,
   identity,
-  serverIds,
+  params,
+  hosts,
 }: {
   serverId: string;
   pluginId: string;
   identity: PluginSurfaceContributionIdentity;
-  serverIds: string[];
+  params: PluginScreenParams;
+  hosts: HostPickerHost[];
 }) {
-  const allHosts = useHosts();
-  const hosts = useMemo(
-    () => allHosts.filter((host) => serverIds.includes(host.serverId)),
-    [allHosts, serverIds],
-  );
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<View | null>(null);
-  const selectedLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const selectHost = useCallback(
     (nextServerId: string) => {
-      rememberPluginContributionHost(`${pluginId}/${identity.kind}/${identity.id}`, nextServerId);
-      router.replace(buildPluginSurfaceRoute(nextServerId, pluginId, identity));
+      // A legacy row remembers its own host; a screen's host carries to all the plugin's items.
+      rememberPluginContributionHost(
+        identity.kind === "sidebar"
+          ? legacySidebarItemHostKey(pluginId, identity.id)
+          : pluginScreensHostKey(pluginId),
+        nextServerId,
+      );
+      router.replace(buildPluginSurfaceRoute(nextServerId, pluginId, identity, params));
     },
-    [identity, pluginId],
+    [identity, params, pluginId],
   );
-  const openPicker = useCallback(() => setOpen(true), []);
-  const show = serverIds.length > 1 && hosts.length > 1;
-  if (!show) return null;
-
   return (
-    <HostPicker
+    <HostFilter
       hosts={hosts}
-      value={serverId}
-      onSelect={selectHost}
-      open={open}
-      onOpenChange={setOpen}
-      anchorRef={anchorRef}
-      title="Choose plugin host"
-      desktopPlacement="bottom-start"
-    >
-      <View ref={anchorRef} collapsable={false}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Plugin host: ${selectedLabel}`}
-          testID="plugin-host-switcher"
-          onPress={openPicker}
-          style={styles.hostSwitcher}
-        >
-          <Text numberOfLines={1} style={styles.hostSwitcherText}>
-            {selectedLabel}
-          </Text>
-          <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
-        </Pressable>
-      </View>
-    </HostPicker>
+      selectedHost={serverId}
+      onSelectHost={selectHost}
+      includeAllHost={false}
+      triggerTestID="plugin-host-filter-trigger"
+    />
   );
 }
 
 export function PluginSurfaceScreen() {
-  const params = useLocalSearchParams<{
+  const routeParams = useLocalSearchParams<{
     serverId?: string | string[];
     pluginId?: string | string[];
     contributionKind?: string | string[];
     contributionId?: string | string[];
   }>();
-  const serverId = routeParam(params.serverId);
-  const pluginId = routeParam(params.pluginId);
-  const contributionKind = routeParam(params.contributionKind);
-  const contributionId = routeParam(params.contributionId);
+  const serverId = routeParam(routeParams.serverId);
+  const pluginId = routeParam(routeParams.pluginId);
+  const contributionKind = routeParam(routeParams.contributionKind);
+  const contributionId = routeParam(routeParams.contributionId);
+  const paramsKey = JSON.stringify(pluginScreenParamsFromRoute(routeParams));
+  // Keyed by content: the route hands back a new object on every render.
+  const params = useMemo<PluginScreenParams>(() => JSON.parse(paramsKey), [paramsKey]);
   const identity = useMemo<PluginSurfaceContributionIdentity | null>(() => {
     if (contributionKind !== "sidebar" && contributionKind !== "surface") return null;
     return { kind: contributionKind, id: contributionId };
@@ -168,43 +143,57 @@ export function PluginSurfaceScreen() {
     [identity, plugin],
   );
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
-  const contributionServerIds = useMemo(
-    () =>
-      identity ? getPluginSurfaceContributionServerIds(installations, pluginId, identity) : [],
-    [identity, installations, pluginId],
-  );
-  const title = sidebarItem?.title ?? surface?.id ?? (pluginId || "Plugin");
-  const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
+  // The hosts this contribution is installed on; the filter shows when there is a choice.
+  const filterHosts = useMemo(() => {
+    if (!identity) return [];
+    const serverIds = getPluginSurfaceContributionServerIds(installations, pluginId, identity);
+    return hosts.filter((candidate) => serverIds.includes(candidate.serverId));
+  }, [hosts, identity, installations, pluginId]);
+  const title = useMemo(() => {
+    if (surface && plugin)
+      return resolvePluginScreenTitle(surface, sidebarItem, params, (text) =>
+        plugin.i18n.resolve(text, plugin.locale),
+      );
+    if (sidebarItem && plugin) return plugin.i18n.resolve(sidebarItem.title, plugin.locale);
+    return pluginId || "Plugin";
+  }, [params, plugin, pluginId, sidebarItem, surface]);
+  const icon = sidebarItem?.icon ?? null;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
   }, [serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const headerLeft = useMemo(
     () => (
       <>
-        {Icon ? (
+        {icon ? (
           <HeaderIconBadge>
-            <ThemedPluginHeaderIcon Icon={Icon} uniProps={mutedColorMapping} />
+            <ThemedPluginHeaderIcon icon={icon} uniProps={mutedColorMapping} />
           </HeaderIconBadge>
         ) : null}
-        <ScreenTitle>{title}</ScreenTitle>
+        <ScreenTitle testID="plugin-surface-title">{title}</ScreenTitle>
       </>
     ),
-    [Icon, title],
+    [icon, title],
+  );
+  const hostFilter = useMemo(
+    () =>
+      identity && filterHosts.length > 1 ? (
+        <PluginHostFilter
+          serverId={serverId}
+          pluginId={pluginId}
+          identity={identity}
+          params={params}
+          hosts={filterHosts}
+        />
+      ) : null,
+    [filterHosts, identity, params, pluginId, serverId],
   );
   const headerRight = useMemo(
     () => (
       <>
-        {identity ? (
-          <PluginHostSwitcher
-            serverId={serverId}
-            pluginId={pluginId}
-            identity={identity}
-            serverIds={contributionServerIds}
-          />
-        ) : null}
+        {hostFilter}
         <HeaderToggleButton
           accessibilityLabel="Close plugin"
           onPress={close}
@@ -217,12 +206,22 @@ export function PluginSurfaceScreen() {
         </HeaderToggleButton>
       </>
     ),
-    [close, contributionServerIds, identity, pluginId, serverId],
+    [close, hostFilter],
   );
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader left={headerLeft} right={headerRight} />
+      {compact ? (
+        <CompactHeader
+          navigation="back"
+          onBack={close}
+          title={title}
+          titleTestID="plugin-surface-title"
+          actions={hostFilter}
+        />
+      ) : (
+        <ScreenHeader left={headerLeft} right={headerRight} />
+      )}
       <View style={styles.body}>
         {plugin && surface && client ? (
           <SurfaceErrorBoundary
@@ -232,10 +231,10 @@ export function PluginSurfaceScreen() {
           >
             <ThemedSurfaceRenderer
               Surface={surface.Component}
-              client={client}
               plugin={plugin}
               host={host}
               layout={layout}
+              params={params}
               uniProps={pluginThemeMapping}
             />
           </SurfaceErrorBoundary>
@@ -260,20 +259,5 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.statusDanger,
     padding: theme.spacing[4],
-  },
-  hostSwitcher: {
-    maxWidth: 180,
-    minHeight: 32,
-    paddingHorizontal: theme.spacing[2],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface1,
-  },
-  hostSwitcherText: {
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
   },
 }));

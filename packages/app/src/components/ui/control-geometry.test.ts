@@ -81,6 +81,8 @@ describe("control geometry", () => {
   it("keeps field text sizing tied to control size", () => {
     const geometry = createControlGeometry(theme);
 
+    expect(geometry.fieldTextXs.fontSize).toBe(12);
+    expect(geometry.fieldTextXs.lineHeight).toBe(17);
     expect(geometry.fieldTextSm.fontSize).toBe(14);
     expect(geometry.fieldTextSm.lineHeight).toBe(20);
     expect(geometry.fieldTextMd.fontSize).toBe(14);
@@ -94,6 +96,13 @@ describe("control geometry", () => {
   it("derives field padding from content and border without changing the control height", () => {
     const geometry = createControlGeometry(theme);
     const borderWidth = theme.borderWidth[1];
+
+    expect(geometry.fieldControlXs.minHeight).toBe(28);
+    expect(
+      geometry.fieldTextXs.lineHeight +
+        geometry.fieldControlXs.paddingVertical * 2 +
+        borderWidth * 2,
+    ).toBe(geometry.fieldControlXs.minHeight);
 
     expect(geometry.fieldControlSm.minHeight).toBe(32);
     expect(geometry.fieldControlSm.paddingVertical).toBe(5);

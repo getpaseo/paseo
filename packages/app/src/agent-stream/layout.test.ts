@@ -25,7 +25,7 @@ function userMessage(id: string, seed: number): Extract<StreamItem, { kind: "use
 function assistantMessage(
   id: string,
   seed: number,
-  block?: { groupId: string; index: number },
+  _block?: { groupId: string; index: number },
   turnId?: string,
 ): Extract<StreamItem, { kind: "assistant_message" }> {
   return {
@@ -33,7 +33,6 @@ function assistantMessage(
     id,
     text: id,
     timestamp: timestamp(seed),
-    ...(block ? { blockGroupId: block.groupId, blockIndex: block.index } : {}),
     ...(turnId ? { turnId } : {}),
   };
 }
@@ -105,7 +104,7 @@ function layoutFor(input: {
       strategy,
       streamHead: input.head ?? [],
     }),
-    timingByAssistantId: timingFor(...(input.timingIds ?? [])),
+    timingByItemId: timingFor(...(input.timingIds ?? [])),
   });
 }
 
@@ -149,7 +148,7 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
-  it("places one response footer after an adjacent tagged tool-only turn", () => {
+  it("keeps separate footers for an assistant turn and an adjacent tool-only turn", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const nextTool = toolCall("next-tool", 2, "turn-2");
     const layout = layoutFor({
@@ -158,8 +157,8 @@ describe("layoutStream", () => {
       timingIds: [priorAssistant.id],
     });
 
-    expect(layout.auxiliaryTurnFooter?.itemId).toBe(priorAssistant.id);
-    expect(footerOwners(layout)).toEqual([priorAssistant.id]);
+    expect(layout.auxiliaryTurnFooter?.itemId).toBe(nextTool.id);
+    expect(footerOwners(layout)).toEqual([priorAssistant.id, nextTool.id]);
   });
 
   it("recomputes cached history layout when only the live boundary turn changes", () => {
@@ -172,7 +171,7 @@ describe("layoutStream", () => {
       isTurnActive: true,
       history,
       liveHead,
-      timingByAssistantId: timingFor(priorAssistant.id),
+      timingByItemId: timingFor(priorAssistant.id),
     });
 
     liveHead[0] = { ...liveHead[0]!, turnId: "turn-2" };
@@ -181,7 +180,7 @@ describe("layoutStream", () => {
       isTurnActive: true,
       history,
       liveHead,
-      timingByAssistantId: timingFor(priorAssistant.id),
+      timingByItemId: timingFor(priorAssistant.id),
     });
 
     expect(footerOwners(first)).toEqual([]);
@@ -318,7 +317,7 @@ describe("layoutStream", () => {
     expect(assistantRow.frameOrder).toBe("content-then-footer");
   });
 
-  it("compacts assistant block spacing across the history and live-head boundary", () => {
+  it("keeps separate messages spaced across history and the live head", () => {
     const historyBlock = assistantMessage("turn:block:0", 2, { groupId: "turn", index: 0 });
     const headBlock = assistantMessage("turn:head", 3, { groupId: "turn", index: 1 });
     const layout = layoutFor({
@@ -328,8 +327,8 @@ describe("layoutStream", () => {
       timingIds: [historyBlock.id, headBlock.id],
     });
 
-    expect(findLayoutItem(layout, historyBlock.id).assistantSpacing).toBe("compactBottom");
-    expect(findLayoutItem(layout, headBlock.id).assistantSpacing).toBe("compactBoth");
+    expect(findLayoutItem(layout, historyBlock.id).assistantSpacing).toBe("default");
+    expect(findLayoutItem(layout, headBlock.id).assistantSpacing).toBe("compactBottom");
   });
 
   it.each(["web", "android"] as const)(

@@ -5,11 +5,13 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
@@ -18,12 +20,13 @@ import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import {
-  PiProviderParamsSchema,
+  PiProviderOptionsSchema,
   PiRpcAgentClient,
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
-import { FakePi, type FakePiSession } from "./test-utils/fake-pi.js";
+import { PiCliRuntime } from "./cli-runtime.js";
+import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
@@ -56,8 +59,8 @@ interface PiThinkingCatalogCase {
 }
 
 test("Pi RPC timeout defaults to 60 seconds and accepts an override", () => {
-  expect(PiProviderParamsSchema.parse({}).rpcTimeoutMs).toBe(60_000);
-  expect(PiProviderParamsSchema.parse({ rpcTimeoutMs: 90_000 }).rpcTimeoutMs).toBe(90_000);
+  expect(PiProviderOptionsSchema.parse({}).rpcTimeoutMs).toBe(60_000);
+  expect(PiProviderOptionsSchema.parse({ rpcTimeoutMs: 90_000 }).rpcTimeoutMs).toBe(90_000);
 });
 
 function createClient(
@@ -160,19 +163,32 @@ function parseEntryCapture(notification: string): unknown {
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  registerMcpServer: (name: string, config: unknown) => void = () => undefined,
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
+      events: { on: () => void };
       registerCommand: () => void;
+      registerMcpServer: (name: string, config: unknown) => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
+    events: { on: () => undefined },
     registerCommand: () => undefined,
+    registerMcpServer,
   });
   return listeners;
+}
+
+async function readRegisteredMcpServers(extensionPath: string): Promise<Record<string, unknown>> {
+  const servers: Record<string, unknown> = {};
+  await loadPaseoExtensionListeners(extensionPath, (name, config) => {
+    servers[name] = config;
+  });
+  return servers;
 }
 
 async function applyPaseoExtensionSystemPrompt(
@@ -201,71 +217,6 @@ async function createSession(
   const events = new SessionEvents(session);
   return { pi, session, events };
 }
-
-test("Pi usage reference follows the current OAuth model and agent directory", async () => {
-  const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-usage-"));
-  try {
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({
-        "openai-codex": {
-          type: "oauth",
-          access: "codex-token",
-          accountId: "account-1",
-          refresh: "refresh",
-          expires: Date.now() + 60_000,
-        },
-        anthropic: {
-          type: "oauth",
-          access: "claude-token",
-          refresh: "refresh",
-          expires: Date.now() + 60_000,
-        },
-      }),
-    );
-    const pi = new FakePi();
-    let runtime!: FakePiSession;
-    pi.queueSessionSetup((sessionRuntime) => {
-      runtime = sessionRuntime;
-      runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
-    });
-    const session = await createClient(pi).createSession(createConfig(), {
-      env: { PI_CODING_AGENT_DIR: agentDir },
-    });
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "codex-token", accountId: "account-1" },
-    });
-    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "claude",
-      input: { accessToken: "claude-token" },
-    });
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({
-        "openai-codex": { type: "oauth", access: "codex-token" },
-        anthropic: { type: "api_key", key: "api-key" },
-      }),
-    );
-    runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "codex-token" },
-    });
-    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
-    writeFileSync(
-      path.join(agentDir, "auth.json"),
-      JSON.stringify({ anthropic: { type: "api_key", key: "api-key" } }),
-    );
-    expect(await session.getUsageReference?.()).toBeNull();
-    runtime.state.model = { provider: "other", id: "other", name: "Other" };
-    expect(await session.getUsageReference?.()).toBeNull();
-    await session.close();
-  } finally {
-    rmSync(agentDir, { recursive: true, force: true });
-  }
-});
 
 test("forwards launch-context env to the Pi process launch", async () => {
   const pi = new FakePi();
@@ -1088,6 +1039,47 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("keeps custom context in separate tools while a turn continues", async () => {
+    const { pi, session, events } = await createSession();
+    const runtime = pi.latestSession();
+    await session.startTurn("Explain the project");
+    runtime.emit({ type: "agent_start" });
+    runtime.emit({ type: "turn_start" });
+    for (const display of [true, false, true]) {
+      runtime.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "project-context",
+          content: [{ type: "text", text: "Project instructions" }],
+          details: { project: "example" },
+          display,
+        },
+      });
+    }
+    const items = events.timelineItems();
+    expect(items).toEqual(
+      [1, 2].map(() => ({
+        type: "tool_call",
+        callId: expect.stringMatching(/^pi-custom-/),
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: {
+          synthetic: true,
+          customType: "project-context",
+          details: { project: "example" },
+        },
+        error: null,
+      })),
+    );
+    expect(new Set(items.map((item) => item.type === "tool_call" && item.callId)).size).toBe(2);
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    runtime.finishTurn();
+    await events.nextTurnCompletion();
+    await session.close();
+  });
+
   test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1104,7 +1096,15 @@ describe("PiRpcAgentSession", () => {
     expect(events.timelineAndCompletionEvents()).toEqual([
       {
         type: "timeline",
-        item: { type: "assistant_message", text: "Extension command output" },
+        item: {
+          type: "tool_call",
+          callId: expect.stringMatching(/^pi-custom-/),
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "Extension command output" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
+        },
       },
       { type: "turn_completed" },
     ]);
@@ -1133,7 +1133,18 @@ describe("PiRpcAgentSession", () => {
     });
 
     expect(events.timelineItems()).toEqual([
-      { type: "assistant_message", text: "Background process completed" },
+      {
+        type: "tool_call",
+        callId: expect.stringMatching(/^pi-custom-/),
+        name: "custom-message",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "Background process completed",
+        },
+        metadata: { synthetic: true, customType: "custom-message" },
+        error: null,
+      },
     ]);
     expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
 
@@ -1547,7 +1558,7 @@ describe("PiRpcAgentSession", () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
-    await client.resumeSession(
+    const session = await client.resumeSession(
       {
         provider: "pi",
         sessionId: "pi-session-1",
@@ -1562,6 +1573,12 @@ describe("PiRpcAgentSession", () => {
       { env: { RESUME_PROBE: "expected" } },
     );
 
+    expect(session.usageSession?.()).toMatchObject({
+      provider: "pi",
+      sessionKey: expect.any(String),
+    });
+    await session.close();
+    expect(session.usageSession?.()).toBeNull();
     expect(pi.recordedLaunches).toHaveLength(1);
     const actualLaunch = pi.recordedLaunches[0]!;
     expect(actualLaunch).toMatchObject({
@@ -1574,8 +1591,6 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
-      "--model",
-      "openrouter/model-a",
       "--thinking",
       "high",
       "--session",
@@ -1583,6 +1598,192 @@ describe("PiRpcAgentSession", () => {
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+  });
+
+  test("closes a history-only Pi runtime after replaying its timeline", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+
+    const client: import("../../agent-sdk-types.js").AgentClient = createClient(pi);
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+
+    onTestFinished(() => session.close());
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "timeline",
+          provider: "pi",
+          item: expect.objectContaining({ type: "assistant_message", text: "Old answer" }),
+        }),
+      ]),
+    );
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    await session.close();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay is stopped", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect((await history.next()).done).toBe(false);
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay fails", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.getMessagesError = new Error("History unavailable");
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    await expect(history.next()).rejects.toThrow("History unavailable");
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("keeps an interactive Pi runtime open after replaying history", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: tmpdir() },
+    });
+    onTestFinished(() => session.close());
+    for await (const _event of session.streamHistory()) {
+      // Hydrate the session before its next interactive prompt.
+    }
+    expect(pi.latestSession().closeCalls).toBe(0);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ provider: "pi" });
+  });
+
+  test("resumes a session whose model was removed on the model Pi falls back to", async () => {
+    const pi = new FakePi();
+    pi.removeModel("9router/deepseek-v4-flash");
+    pi.queueSessionSetup((session) => {
+      session.state = { ...session.state, model: RESTRICTED_THINKING_MODEL };
+    });
+
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project", model: "9router/deepseek-v4-flash" },
+    });
+    onTestFinished(() => session.close());
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "kimi-coding/kimi-k3",
+    });
+    expect(session.describePersistence()?.metadata?.model).toBe("kimi-coding/kimi-k3");
+  });
+
+  test("resumes a session on the requested model when it differs from the session's", async () => {
+    const pi = new FakePi();
+    const requestedModel = { ...RESTRICTED_THINKING_MODEL, provider: "openrouter", id: "a" };
+    pi.queueSessionSetup((session) => {
+      session.state = { ...session.state, model: RESTRICTED_THINKING_MODEL };
+      session.models = [RESTRICTED_THINKING_MODEL, requestedModel];
+      session.setModelResult = requestedModel;
+    });
+
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project", model: "openrouter/a" },
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.latestSession().setModelRequests).toEqual([{ provider: "openrouter", modelId: "a" }]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/a" });
+    expect(session.describePersistence()?.metadata?.model).toBe("openrouter/a");
+  });
+
+  test("resumes on a requested model written as provider:id", async () => {
+    const pi = new FakePi();
+    const requestedModel = { ...RESTRICTED_THINKING_MODEL, provider: "openrouter", id: "a" };
+    pi.queueSessionSetup((session) => {
+      session.state = { ...session.state, model: RESTRICTED_THINKING_MODEL };
+      session.models = [RESTRICTED_THINKING_MODEL, requestedModel];
+      session.setModelResult = requestedModel;
+    });
+
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project", model: "openrouter:a" },
+    });
+    onTestFinished(() => session.close());
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "openrouter/a" });
+  });
+
+  test("fails the resume when switching to an available model fails", async () => {
+    const pi = new FakePi();
+    const requestedModel = { ...RESTRICTED_THINKING_MODEL, provider: "openrouter", id: "a" };
+    pi.queueSessionSetup((session) => {
+      session.state = { ...session.state, model: RESTRICTED_THINKING_MODEL };
+      session.models = [RESTRICTED_THINKING_MODEL, requestedModel];
+    });
+
+    await expect(
+      createClient(pi).resumeSession({
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project", model: "openrouter/a" },
+      }),
+    ).rejects.toThrow("FakePi setModel requires setModelResult to be scripted");
   });
 
   test("adopts Pi's clamped thinking level when resuming a session", async () => {
@@ -1761,8 +1962,6 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
-      "--model",
-      "openrouter/model-a",
       "--thinking",
       "high",
       "--session",
@@ -1851,6 +2050,48 @@ describe("PiRpcAgentSession", () => {
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "off" });
     expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("off");
   });
+
+  test.each(["high", "off", "max"] as const)(
+    "publishes an extension's thinking change to %s before refreshing state",
+    async (level) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const changes: AgentStreamEvent[] = [];
+      session.subscribe((event) => {
+        if (event.type === "thinking_option_changed") {
+          expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(level);
+          changes.push(event);
+        }
+      });
+      const runtime = pi.latestSession();
+      runtime.state = { ...runtime.state, thinkingLevel: level };
+      runtime.emit({ type: "thinking_level_changed", level });
+
+      expect(changes).toEqual([
+        { type: "thinking_option_changed", provider: "pi", thinkingOptionId: level },
+      ]);
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(level);
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: level });
+    },
+  );
+
+  test.each([undefined, null, "invalid", 123])(
+    "ignores a thinking change with invalid level %s",
+    async (level) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const initialThinking = session.describePersistence()?.metadata?.thinkingOptionId;
+      const changes: AgentStreamEvent[] = [];
+      session.subscribe((event) => {
+        if (event.type === "thinking_option_changed") changes.push(event);
+      });
+
+      pi.latestSession().emit({ type: "thinking_level_changed", level });
+
+      expect(changes).toEqual([]);
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(initialThinking);
+    },
+  );
 
   test("surfaces state refresh failures after a Pi thinking update", async () => {
     const { pi, session } = await createSession();
@@ -2517,10 +2758,11 @@ describe("PiRpcAgentClient", () => {
     const client = new PiRpcAgentClient({
       logger: pino({ level: "silent" }),
       runtime: new FakePi(),
-      providerParams: { sessionDir: sessionsDir },
     });
 
-    await expect(client.listImportableSessions({ cwd })).resolves.toEqual([
+    await expect(
+      client.listImportableSessions({ cwd, providerOptions: { sessionDir: sessionsDir } }),
+    ).resolves.toEqual([
       {
         providerHandleId: sessionFile,
         cwd,
@@ -2568,7 +2810,9 @@ describe("PiRpcAgentClient", () => {
       },
     });
 
-    await expect(client.listImportableSessions({ cwd })).resolves.toMatchObject([
+    await expect(
+      client.listImportableSessions({ cwd, providerOptions: { sessionDir: sessionsDir } }),
+    ).resolves.toMatchObject([
       {
         providerHandleId: sessionFile,
         cwd,
@@ -2583,6 +2827,7 @@ describe("PiRpcAgentClient", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-import-config-"));
     const cwd = path.join(root, "workspace");
     const sessionsDir = path.join(root, "sessions");
+    mkdirSync(cwd, { recursive: true });
     mkdirSync(sessionsDir, { recursive: true });
     const sessionFile = path.join(sessionsDir, "20260103_session.jsonl");
     writeFileSync(
@@ -2619,12 +2864,16 @@ describe("PiRpcAgentClient", () => {
     );
     const pi = new FakePi();
     pi.queueSessionSetup((session) => {
+      session.state.model = {
+        ...RESTRICTED_THINKING_MODEL,
+        provider: "openrouter",
+        id: "anthropic/claude-sonnet-4.5",
+      };
       session.state.thinkingLevel = "high";
     });
     const client = new PiRpcAgentClient({
       logger: pino({ level: "silent" }),
       runtime: pi,
-      providerParams: { sessionDir: sessionsDir },
     });
 
     const imported = await client.importSession(
@@ -2638,8 +2887,6 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
-      "--model",
-      "openrouter/anthropic/claude-sonnet-4.5",
       "--thinking",
       "high",
       "--session",
@@ -2925,6 +3172,81 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test.each([
+    { outcome: "successful", error: null },
+    { outcome: "failed", error: new Error("summarizer failed") },
+  ])("waits for $outcome manual compaction before sending a new prompt", async ({ error }) => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.compactError = error;
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+
+    const { turnId } = await session.startTurn("continue after compaction");
+    await flushTurnScheduling();
+    expect(fakeSession.compactRequests).toEqual([{}]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    compactionFinished.resolve();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.prompts).toEqual([{ message: "continue after compaction", imageCount: 0 }]);
+
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+    expect(events.turnLifecycleEvents()).toContainEqual({ type: "turn_completed", turnId });
+    expect(events.eventTypes()).not.toContain("turn_failed");
+  });
+
+  test.each(["interrupt", "close"] as const)(
+    "does not send a prompt waiting on compaction after %s",
+    async (action) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      const compactionFinished = Promise.withResolvers<void>();
+      fakeSession.compactCompletion = compactionFinished.promise;
+      const handler = session.tryHandleOutOfBand("/compact");
+      const compaction = handler!.run({ emit: () => {} });
+
+      await session.startTurn("do not send this prompt");
+      await session[action]();
+      compactionFinished.resolve();
+      await compaction;
+      await flushTurnScheduling();
+
+      expect(fakeSession.prompts).toEqual([]);
+    },
+  );
+
+  test("does not send a prompt when compaction finishes during interruption", async () => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
+    const clearQueueFinished = Promise.withResolvers<void>();
+    fakeSession.clearQueueCompletion = clearQueueFinished.promise;
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+    const { turnId } = await session.startTurn("do not send this prompt");
+
+    const interruption = session.interrupt();
+    compactionFinished.resolve();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.controlRequests).toEqual(["clear_queue"]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    clearQueueFinished.resolve();
+    await interruption;
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_canceled", turnId }]);
+    expect(fakeSession.prompts).toEqual([]);
+  });
+
   test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();
@@ -3192,6 +3514,102 @@ describe("PiRpcAgentClient", () => {
     ).rejects.toThrow(`Failed to parse Pi MCP config: ${configPath}`);
   });
 
+  test("registers MCP servers through Pi's built-in MCP when pi-mcp-adapter is not loaded", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([
+      {
+        name: "mcp",
+        source: "extension",
+        sourceInfo: { path: "builtin:mcp", source: "builtin" },
+      },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer token" },
+          },
+          local: { type: "stdio", command: "node", args: ["server.js"], env: { KEY: "`${x}`" } },
+        },
+      }),
+    );
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.argv).not.toContain("--mcp-config");
+    const extensionPath = actualLaunch.extensionPaths[0]!;
+    expect(await readRegisteredMcpServers(extensionPath)).toEqual({
+      paseo: {
+        url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        headers: { Authorization: "Bearer token" },
+      },
+      local: { command: "node", args: ["server.js"], env: { KEY: "`${x}`" } },
+    });
+
+    await session.close();
+    expect(existsSync(extensionPath)).toBe(false);
+  });
+
+  test("registers the resumed session's MCP servers through Pi's built-in MCP", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const original = await client.createSession(createConfig());
+    const persistence = original.describePersistence()!;
+    await original.close();
+
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const session = await client.resumeSession(persistence, {
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
+      },
+    });
+    onTestFinished(() => session.close());
+
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const actualLaunch = pi.recordedLaunches.at(-1)!;
+    expect(actualLaunch.session).toBe(persistence.nativeHandle);
+    expect(actualLaunch.argv).not.toContain("--mcp-config");
+    expect(await readRegisteredMcpServers(actualLaunch.extensionPaths[0]!)).toEqual({
+      paseo: { url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
+    });
+  });
+
+  test("uses pi-mcp-adapter when it replaces Pi's built-in MCP", async () => {
+    const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+    const pi = new FakePi();
+    pi.queueCommands([
+      { name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } },
+      { name: "mcp:1", source: "extension", sourceInfo: { source: "npm:pi-mcp-adapter" } },
+    ]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" } },
+      }),
+      { env: { PI_CODING_AGENT_DIR: agentDir } },
+    );
+    onTestFinished(() => session.close());
+
+    const actualLaunch = pi.recordedLaunches[1]!;
+    expect(actualLaunch.argv).toContain("--mcp-config");
+    expect(await readRegisteredMcpServers(actualLaunch.extensionPaths[0]!)).toEqual({});
+  });
+
+  test.each([
+    { name: "legacy", config: { type: "sse" as const, url: "https://example.com/sse" } },
+    { name: "foo.bar", config: { type: "http" as const, url: "https://example.com/mcp" } },
+  ])("rejects $name, which Pi's built-in MCP cannot register", async ({ name, config }) => {
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+
+    await expect(
+      createClient(pi).createSession(createConfig({ mcpServers: { [name]: config } })),
+    ).rejects.toThrow(name);
+    expect(pi.recordedLaunches).toHaveLength(1);
+  });
+
   test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {
     const pi = new FakePi();
     pi.queueCommands([]);
@@ -3220,6 +3638,323 @@ describe("PiRpcAgentClient", () => {
     ]);
     expect(actualLaunch.mcpConfigPath).toBeUndefined();
     expect(session.capabilities.supportsMcpServers).toBe(false);
+  });
+});
+
+describe("PiRpcAgentClient history resume", () => {
+  const BUILTIN_MCP_COMMAND = {
+    name: "mcp",
+    source: "extension",
+    sourceInfo: { path: "builtin:mcp" },
+  } as const;
+  const PASEO_MCP_SERVERS = {
+    paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+  } as const;
+
+  interface ArchivedPiSession {
+    handle: {
+      provider: string;
+      sessionId: string;
+      nativeHandle: string;
+      metadata: { cwd: string; model?: string };
+    };
+    sessionFile: string;
+    header: Record<string, unknown>;
+    body: string;
+    originalBytes: Buffer;
+  }
+
+  function createDeletedFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-deleted-cwd-"));
+    rmSync(folder, { recursive: true, force: true });
+    return folder;
+  }
+
+  function createFileWhereFolderWas(): string {
+    const folder = createDeletedFolder();
+    writeFileSync(folder, "not a directory");
+    onTestFinished(() => rmSync(folder, { force: true }));
+    return folder;
+  }
+
+  function createExistingFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-existing-cwd-"));
+    onTestFinished(() => rmSync(folder, { recursive: true, force: true }));
+    return folder;
+  }
+
+  function writeArchivedSession(cwd: string, metadata: { model?: string } = {}): ArchivedPiSession {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-archived-session-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const sessionFile = path.join(dir, "2026-01-01_pi-session-1.jsonl");
+    const header = {
+      type: "session",
+      version: 3,
+      id: "pi-session-1",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd,
+    };
+    const body = [
+      JSON.stringify({
+        type: "message",
+        id: "entry-1",
+        parentId: null,
+        message: { role: "user", content: "Où est le café ☕ ?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "entry-2",
+        parentId: "entry-1",
+        message: { role: "assistant", content: [{ type: "text", text: "Dans la cuisine." }] },
+      }),
+    ]
+      .map((line) => `${line}\n`)
+      .join("");
+    writeFileSync(sessionFile, `${JSON.stringify(header)}\n${body}`);
+    return {
+      handle: {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: sessionFile,
+        metadata: { cwd, ...metadata },
+      },
+      sessionFile,
+      header,
+      body,
+      originalBytes: readFileSync(sessionFile),
+    };
+  }
+
+  function readSessionCopy(sessionFile: string): { header: unknown; body: string } {
+    const content = readUtf8File(sessionFile);
+    const headerEnd = content.indexOf("\n");
+    return {
+      header: JSON.parse(content.slice(0, headerEnd)),
+      body: content.slice(headerEnd + 1),
+    };
+  }
+
+  function resumeArchived(
+    client: PiRpcAgentClient,
+    archived: ArchivedPiSession,
+    purpose: "history" | "interactive",
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentSession> {
+    return client.resumeSession(archived.handle, overrides, undefined, { purpose });
+  }
+
+  function writeFakePiProcess(): {
+    command: [string, ...string[]];
+    readLaunches: () => Array<{ cwd: string; session: string | null }>;
+  } {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-process-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const scriptPath = path.join(dir, "fake-pi.cjs");
+    const launchesPath = path.join(dir, "launches.jsonl");
+    writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const readline = require("node:readline");
+const [launchesPath, ...piArgs] = process.argv.slice(2);
+const sessionFlag = piArgs.indexOf("--session");
+const sessionFile = sessionFlag === -1 ? null : piArgs[sessionFlag + 1];
+fs.appendFileSync(launchesPath, JSON.stringify({ cwd: process.cwd(), session: sessionFile }) + "\\n");
+if (sessionFile) {
+  const header = JSON.parse(fs.readFileSync(sessionFile, "utf8").split("\\n", 1)[0]);
+  if (header.cwd && !fs.existsSync(header.cwd)) {
+    fs.writeSync(
+      2,
+      "Stored session working directory does not exist: " + header.cwd + "\\nSession file: " + sessionFile + "\\nCurrent working directory: " + process.cwd() + "\\n",
+    );
+    process.exit(1);
+  }
+}
+const models = [
+  { provider: "openrouter", id: "a" },
+  { provider: "openrouter", id: "b" },
+];
+const state = {
+  sessionId: "pi-session-1",
+  sessionFile,
+  model: models[0],
+  thinkingLevel: "medium",
+  isStreaming: false,
+  isCompacting: false,
+  messageCount: 0,
+  pendingMessageCount: 0,
+};
+const commands = [${JSON.stringify(BUILTIN_MCP_COMMAND)}];
+function handle(request) {
+  switch (request.type) {
+    case "get_state":
+      return state;
+    case "get_commands":
+      return { commands };
+    case "get_available_models":
+      return { models };
+    case "set_model":
+      fs.appendFileSync(
+        sessionFile,
+        JSON.stringify({ type: "model_change", id: "model-1", provider: request.provider, modelId: request.modelId }) + "\\n",
+      );
+      state.model = models.find((model) => model.id === request.modelId);
+      return state.model;
+    default:
+      return {};
+  }
+}
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(
+    JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data: handle(request) }) + "\\n",
+  );
+});
+`,
+    );
+    return {
+      command: [process.execPath, scriptPath, launchesPath],
+      readLaunches: () =>
+        readUtf8File(launchesPath)
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { cwd: string; session: string | null }),
+    };
+  }
+
+  test.each([
+    ["is gone", createDeletedFolder],
+    ["is now a file", createFileWhereFolderWas],
+  ])(
+    "a history resume of an agent whose folder %s starts Pi from the home directory on a copy of its session",
+    async (_folderState, createFolder) => {
+      const archived = writeArchivedSession(createFolder());
+      const pi = new FakePi();
+
+      const session = await resumeArchived(createClient(pi), archived, "history");
+      onTestFinished(() => session.close());
+
+      expect(pi.recordedLaunches).toHaveLength(1);
+      const launch = pi.recordedLaunches[0]!;
+      expect(launch.cwd).toBe(homedir());
+      expect(launch.session).not.toBe(archived.sessionFile);
+      expect(readSessionCopy(launch.session!)).toEqual({
+        header: { ...archived.header, cwd: homedir() },
+        body: archived.body,
+      });
+    },
+  );
+
+  test("a history resume of an agent whose folder is gone removes its session copy after replay and leaves the original unchanged", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    const sessionCopy = pi.recordedLaunches[0]!.session!;
+    expect(existsSync(sessionCopy)).toBe(true);
+    for await (const _event of session.streamHistory()) {
+      // Completion releases both the runtime and its temporary session copy.
+    }
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
+  });
+
+  test("a history resume of an agent whose folder is gone persists the original session file while Pi reports the copy", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+    await session.getRuntimeInfo();
+
+    expect(pi.latestSession().state.sessionFile).toBe(pi.recordedLaunches[0]!.session);
+    expect(session.describePersistence()).toMatchObject({
+      nativeHandle: archived.sessionFile,
+      metadata: { cwd: storedCwd },
+    });
+  });
+
+  test("a history resume of an agent whose folder is gone removes its session copy when Pi fails to start", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.getStateError = new Error("Pi RPC process exited with code 1 and signal null");
+    });
+
+    await expect(resumeArchived(createClient(pi), archived, "history")).rejects.toThrow(
+      "Pi RPC process exited with code 1",
+    );
+
+    expect(pi.recordedLaunches).toHaveLength(1);
+    expect(pi.recordedLaunches[0]!.session).not.toBe(archived.sessionFile);
+    expect(existsSync(path.dirname(pi.recordedLaunches[0]!.session!))).toBe(false);
+  });
+
+  test("a history resume of an agent whose folder is gone checks MCP support from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueCommands([BUILTIN_MCP_COMMAND]);
+
+    const session = await resumeArchived(createClient(pi), archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches.map((launch) => launch.cwd)).toEqual([homedir(), homedir()]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+  });
+
+  test("an interactive resume of an agent whose folder is gone still fails in its stored folder", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    await expect(resumeArchived(createClient(pi), archived, "interactive")).rejects.toThrow(
+      `Stored session working directory does not exist: ${storedCwd}`,
+    );
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder exists keeps the stored folder and session file", async () => {
+    const storedCwd = createExistingFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder is gone opens its session in a real Pi process started from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder(), { model: "openrouter/b" });
+    const fakePiProcess = writeFakePiProcess();
+    const logger = pino({ level: "silent" });
+    const client = new PiRpcAgentClient({
+      logger,
+      runtime: new PiCliRuntime({ logger, command: fakePiProcess.command }),
+    });
+
+    const session = await resumeArchived(client, archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    const launches = fakePiProcess.readLaunches();
+    const home = realpathSync.native(homedir());
+    expect(launches.map((launch) => realpathSync.native(launch.cwd))).toEqual([home, home]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const sessionCopy = launches[1]!.session!;
+    expect(readUtf8File(sessionCopy)).toContain('"type":"model_change"');
+    expect(session.describePersistence()?.nativeHandle).toBe(archived.sessionFile);
+
+    await session.close();
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
   });
 });
 
@@ -3253,4 +3988,195 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+});
+
+test("pi runtime safety protects queued replies and runtime-owned activity", async () => {
+  const runtime = new FakePi();
+  const session = await createClient(runtime).createSession(createConfig());
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.state.pendingMessageCount = 1;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.pendingMessageCount = 0;
+  native.state.isStreaming = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isStreaming = false;
+  native.state.isCompacting = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isCompacting = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.getStateError = new Error("Unable to prove idle");
+  await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
+
+test("reserves the Pi turn while an image prompt is materialized", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const first = session.startTurn([
+    { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+  ]);
+  await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+  await first;
+  expect(pi.latestSession().prompts).toHaveLength(1);
+});
+
+test("interrupting Pi during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 51).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(pi.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing Pi during image conversion rejects its pending start", async () => {
+  const { pi, session } = await createSession();
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 52).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
+});
+
+describe("Pi tool-result images", () => {
+  test.each([false, true])(
+    "tool-result images precede the reply and completion (isError=%s)",
+    async (isError) => {
+      const { pi, session, events } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      await session.startTurn("run");
+      fakeSession.emit({
+        type: "tool_execution_start",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        args: {},
+      });
+      fakeSession.emit({
+        type: "tool_execution_end",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        result: {
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+          ],
+          structuredContent: {
+            type: "image",
+            data: Buffer.from("hello").toString("base64"),
+            mimeType: "image/png",
+            note: "captured",
+          },
+        },
+        isError,
+      });
+      fakeSession.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "Image read complete." },
+      });
+      fakeSession.finishTurn();
+      await events.nextTurnCompletion();
+
+      const items = events.timelineItems();
+      const toolIndex = items.findIndex(
+        (item) =>
+          item.type === "tool_call" &&
+          item.callId === "shot-1" &&
+          item.status === (isError ? "failed" : "completed"),
+      );
+      expect(toolIndex).toBeGreaterThanOrEqual(0);
+      // Base64 must never reach the tool output stringifier.
+      expect(JSON.stringify(items[toolIndex])).not.toContain(
+        Buffer.from("hello").toString("base64"),
+      );
+      expect(items.slice(toolIndex + 1)).toEqual([
+        expect.objectContaining({
+          type: "assistant_message",
+          text: expect.stringContaining("![Image]("),
+        }),
+        expect.objectContaining({ type: "assistant_message", text: "Image read complete." }),
+      ]);
+      expect(events.timelineAndCompletionEvents().at(-1)).toEqual({ type: "turn_completed" });
+    },
+  );
+});
+
+test("Pi image rendering preserves turn ownership across an interrupt and follow-up", async () => {
+  const { pi, session, events } = await createSession();
+  onTestFinished(() => session.close());
+  const emitted: AgentStreamEvent[] = [];
+  session.subscribe((event) => emitted.push(event));
+  const native = pi.latestSession();
+  const first = await session.startTurn("read image");
+  native.emit({
+    type: "tool_execution_end",
+    toolCallId: "large-image",
+    toolName: "screenshot",
+    result: {
+      content: [
+        {
+          type: "image",
+          data: Buffer.alloc(8 * 1024 * 1024, 73).toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+    },
+    isError: false,
+  });
+  native.finishTurn();
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image");
+  await waitForImmediate();
+  await waitForImmediate();
+  await expect
+    .poll(() =>
+      events
+        .timelineItems()
+        .some((item) => item.type === "assistant_message" && item.text.includes("![Image](")),
+    )
+    .toBe(true);
+  expect(events.turnCompletedEvents().some((event) => event.turnId === followup.turnId)).toBe(
+    false,
+  );
+  const imageEvent = emitted.find(
+    (event) =>
+      event.type === "timeline" &&
+      event.item.type === "assistant_message" &&
+      event.item.text.includes("![Image]("),
+  );
+  expect(imageEvent).toMatchObject({ turnId: first.turnId });
+  native.finishTurn();
+  await events.nextTurnCompletion();
 });

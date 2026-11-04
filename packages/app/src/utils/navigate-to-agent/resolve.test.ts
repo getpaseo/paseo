@@ -62,7 +62,7 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
-  it("uses the input workspaceId without reading the nav target", () => {
+  it("uses the input workspaceId only when the store has no record", () => {
     const readTargets: { serverId: string; agentId: string }[] = [];
     const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: null });
     deps.readAgentNavTarget = (input) => {
@@ -75,7 +75,7 @@ describe("resolveNavigateToAgent", () => {
       deps,
     );
 
-    expect(readTargets).toEqual([]);
+    expect(readTargets).toEqual([{ serverId: SERVER_ID, agentId: AGENT_ID }]);
     expect(tabNavigations).toEqual([
       {
         serverId: SERVER_ID,
@@ -84,6 +84,12 @@ describe("resolveNavigateToAgent", () => {
         pin: undefined,
       },
     ]);
+  });
+
+  it("prefers the current agent workspace over a stale input workspace", () => {
+    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: "current" });
+    resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: "stale" }, deps);
+    expect(tabNavigations[0]?.workspaceId).toBe("current");
   });
 
   it("falls back to the host agent route when the agent has no workspaceId", () => {

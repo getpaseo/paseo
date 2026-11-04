@@ -4,6 +4,7 @@ import {
   toneFromUsedPct,
   usedPctOf,
   windowFromUsedPct,
+  windowFromReportedDuration,
 } from "./usage.js";
 
 test("shared usage tones preserve the app threshold contract", () => {
@@ -17,14 +18,13 @@ test("shared usage tones preserve the app threshold contract", () => {
   expect([null, 0, 0.01].map(balanceToneFromRemaining)).toEqual(["default", "danger", "ok"]);
 });
 
-test("shared windows retain percentage, reset time, and optional headline", () => {
-  expect(windowFromUsedPct({ id: "a", label: "A", utilizationPct: 30, headline: true })).toEqual({
+test("shared windows retain percentage and reset time", () => {
+  expect(windowFromUsedPct({ id: "a", label: "A", utilizationPct: 30 })).toEqual({
     id: "a",
     label: "A",
     usedPct: 30,
     remainingPct: 70,
     resetsAt: null,
-    headline: true,
   });
   expect(windowFromUsedPct({ id: "b", label: "B", utilizationPct: null })).toEqual({
     id: "b",
@@ -85,3 +85,23 @@ describe("balanceToneFromRemaining", () => {
     expect(balanceToneFromRemaining(null)).toBe("default");
   });
 });
+
+test.each([
+  [18000, "five_hour", "5-hour", "5h"],
+  [604800, "weekly", "Weekly", "wk"],
+  [7200, "7200s", "2-hour", "2h"],
+  [86400, "86400s", "1-day", "1d"],
+  [90, "90s", "90-second", "90s"],
+  [null, "primary", "Primary limit", ""],
+])(
+  "duration %s owns the window's identity and both names",
+  (durationSeconds, id, label, shortLabel) => {
+    expect(
+      windowFromReportedDuration({
+        durationSeconds: durationSeconds as number | null,
+        unknown: { id: "primary", label: "Primary limit", shortLabel: "" },
+        utilizationPct: 11,
+      }),
+    ).toMatchObject({ id, label, shortLabel, usedPct: 11 });
+  },
+);

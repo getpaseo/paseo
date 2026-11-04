@@ -197,7 +197,7 @@ If you don't want to manage a reverse proxy or open ports, a tunnel gives you an
 - **Tailscale Serve** keeps it inside your tailnet, no public exposure, TLS handled for you:
 
   ```bash
-  tailscale serve https / http://127.0.0.1:6767
+  tailscale serve --bg http://127.0.0.1:6767
   ```
 
   Reach it at `https://<your-machine>.<tailnet>.ts.net/`. Only devices on your tailnet can connect.

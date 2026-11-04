@@ -1,3 +1,4 @@
+import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
@@ -56,6 +57,7 @@ export class PiCliRuntime implements PiRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
+    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
@@ -76,7 +78,7 @@ export class PiCliRuntime implements PiRuntime {
       await process.close(input.signal.reason);
       input.signal.throwIfAborted();
     }
-    return new PiCliRuntimeSession(process, this.commandsRpcName);
+    return new PiCliRuntimeSession(process, this.commandsRpcName, launch.env);
   }
 }
 
@@ -86,6 +88,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: string,
+    private readonly launchEnvironment: Record<string, string>,
   ) {
     process.onMessage((message) => {
       this.emit(message as PiRuntimeEvent);
@@ -93,6 +96,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     process.onExit(({ error }) => {
       this.emit({ type: "process_exit", error: error.message });
     });
+  }
+
+  get environment(): Record<string, string> {
+    return this.launchEnvironment;
   }
 
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void {

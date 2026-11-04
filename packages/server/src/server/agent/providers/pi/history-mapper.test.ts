@@ -16,6 +16,35 @@ async function collectHistory(
 }
 
 describe("Pi history mapper", () => {
+  test("renders visible custom messages as completed tools and hides private context", async () => {
+    const events = await collectHistory([
+      {
+        role: "custom",
+        customType: "project-context",
+        content: "Project instructions",
+        display: true,
+      },
+      {
+        role: "custom",
+        customType: "private-context",
+        content: "Hidden instructions",
+        display: false,
+      },
+      { role: "custom", customType: "project-context", content: "Project instructions" },
+    ]);
+    expect(events.map((event) => event.item)).toEqual(
+      [1, 2].map((index) => ({
+        type: "tool_call",
+        callId: `pi-custom-${index}`,
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: { synthetic: true, customType: "project-context" },
+        error: null,
+      })),
+    );
+  });
+
   test("replays user, assistant, reasoning, and completed tool calls", async () => {
     await expect(
       collectHistory([
@@ -128,14 +157,22 @@ describe("Pi history mapper", () => {
     ]);
   });
 
-  test("replays non-notice custom messages as assistant text, matching the live path", async () => {
+  test("replays custom messages as completed tools, matching the live path", async () => {
     await expect(
       collectHistory([{ role: "custom", content: "Extension command output" }]),
     ).resolves.toEqual([
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "Extension command output" },
+        item: {
+          type: "tool_call",
+          callId: "pi-custom-1",
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "Extension command output" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
+        },
       },
     ]);
   });
@@ -183,4 +220,76 @@ describe("Pi history mapper", () => {
       },
     ]);
   });
+});
+
+describe("Pi tool-result image replay", () => {
+  test("recreates an image from native tool-result history without its source file", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "image-read",
+            name: "read",
+            arguments: { path: "missing-preview.png" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "image-read",
+        toolName: "read",
+        content: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+      },
+    ]);
+    expect(events.map((event) => event.item?.type)).toEqual([
+      "tool_call",
+      "tool_call",
+      "assistant_message",
+    ]);
+    const image = events.find(
+      (event) => event.type === "timeline" && event.item.type === "assistant_message",
+    );
+    expect(image).toMatchObject({
+      type: "timeline",
+      item: { type: "assistant_message", text: expect.stringContaining("![Image](file://") },
+    });
+    if (image?.type !== "timeline" || image.item.type !== "assistant_message")
+      throw new Error("Missing image");
+    const url = image.item.text.match(/\((file:[^)]+)\)/)![1];
+    const { readFile, unlink } = await import("node:fs/promises");
+    expect(await readFile(new URL(url))).toEqual(Buffer.from("hello"));
+    await unlink(new URL(url));
+    const replay = await collectHistory([
+      {
+        role: "toolResult",
+        toolCallId: "image-read",
+        toolName: "read",
+        content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+      },
+    ]);
+    expect(replay).toContainEqual(image);
+    expect(await readFile(new URL(url))).toEqual(Buffer.from("hello"));
+  });
+});
+
+test("replayed Pi images keep their position before the following reply", async () => {
+  const events = await collectHistory([
+    {
+      role: "toolResult",
+      toolCallId: "image-position",
+      toolName: "read",
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Image read complete." }] },
+  ]);
+  expect(
+    events.map((event) =>
+      event.item?.type === "assistant_message" ? event.item.text : event.item?.type,
+    ),
+  ).toEqual(["tool_call", expect.stringContaining("![Image]("), "Image read complete."]);
 });

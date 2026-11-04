@@ -82,11 +82,14 @@ test.describe("Composer attachments", () => {
       port: sourceHost.port,
       ownProjects: false,
     });
+    const destinationClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const plugin = await copyPluginFixture("attachment-source");
     const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
     try {
       await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
       await sourceClient.installDirectoryPlugin(plugin.directory);
+      await destinationClient.patchDaemonConfig({ pluginsEnabled: true });
+      await destinationClient.installDirectoryPlugin(plugin.directory);
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
         serverId: sourceHost.serverId,
@@ -105,6 +108,9 @@ test.describe("Composer attachments", () => {
 
       await expect(
         page.getByRole("button", { name: "Attach Conversation context", exact: true }),
+      ).toHaveCount(1);
+      await expect(
+        page.getByRole("button", { name: "Attach Conversation context from Secondary" }),
       ).toHaveCount(0);
       await openAttachmentMenu(page);
       await page
@@ -133,6 +139,7 @@ test.describe("Composer attachments", () => {
       await submitMessage(page, "Use the attached conversation.");
       await traffic.expectSnapshotSubmittedToDestination();
     } finally {
+      await destinationClient.close();
       await sourceClient.close();
       await sourceHost.close();
       await plugin.cleanup();

@@ -2,7 +2,7 @@ import type { StyleProp, ViewStyle } from "react-native";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 export type ButtonControlSize = "xs" | "sm" | "md" | "lg";
-export type FieldControlSize = "sm" | "md";
+export type FieldControlSize = "xs" | "sm" | "md";
 export type SegmentedControlSize = "xs" | "sm" | "md";
 export type ControlInteractionPhase = "rest" | "hover" | "active";
 
@@ -188,8 +188,19 @@ export function resolveControlInteractionStyles(
 
 export function createControlGeometry(theme: Theme) {
   const controlBorderWidth = theme.borderWidth[1];
+  const fieldTextXsLineHeight = fieldLineHeight(theme.fontSize.sm);
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldTextMdLineHeight = fieldLineHeight(theme.fontSize.base);
+  const fieldControlXs = {
+    minHeight: CONTROL_HEIGHTS.tight,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: fieldVerticalPadding(
+      CONTROL_HEIGHTS.tight,
+      fieldTextXsLineHeight,
+      controlBorderWidth,
+    ),
+    borderRadius: theme.borderRadius.md,
+  };
   const fieldControlSm = {
     minHeight: CONTROL_HEIGHTS.compact,
     paddingHorizontal: theme.spacing[3],
@@ -209,6 +220,10 @@ export function createControlGeometry(theme: Theme) {
       controlBorderWidth,
     ),
     borderRadius: theme.borderRadius.lg,
+  };
+  const fieldTextXs = {
+    fontSize: theme.fontSize.sm,
+    lineHeight: fieldTextXsLineHeight,
   };
   const fieldTextSm = {
     fontSize: theme.fontSize.base,
@@ -252,6 +267,10 @@ export function createControlGeometry(theme: Theme) {
       fontSize: theme.fontSize.sm,
     },
     alert,
+    formTextInputXs: {
+      ...fieldControlXs,
+      ...fieldTextXs,
+    },
     formTextInputSm: {
       ...fieldControlSm,
       ...fieldTextSm,
@@ -264,8 +283,10 @@ export function createControlGeometry(theme: Theme) {
       ...fieldControlMd,
       ...fieldTextMd,
     },
+    fieldControlXs,
     fieldControlSm,
     fieldControlMd,
+    fieldTextXs,
     fieldTextSm,
     fieldTextMd,
     controlRest: {
