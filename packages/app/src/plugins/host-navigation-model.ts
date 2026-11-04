@@ -9,6 +9,7 @@ interface HostNavigationOwner {
   openAgent(input: { serverId: string; agentId: string }): string;
   openWorkspace(input: NavigateToWorkspaceInput): string;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
+  resolveAgentWorkspace(input: { serverId: string; agentId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
   focusHost(serverId: string): void;
 }
@@ -33,6 +34,19 @@ export function createPluginHostNavigation(
     openWorkspace: ({ workspaceId, serverId: targetServerId, focusHost }) => {
       const route = owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId });
       if (focusHost) focusRouteHost(route);
+    },
+    openProviderSubagent: ({ parentAgentId, subagentId, serverId: targetServerId }) => {
+      const destinationServerId = targetServerId ?? serverId;
+      const workspaceId = owner.resolveAgentWorkspace({
+        serverId: destinationServerId,
+        agentId: parentAgentId,
+      });
+      if (!workspaceId) throw new Error("Parent agent is unavailable on the requested host.");
+      owner.openWorkspace({
+        serverId: destinationServerId,
+        workspaceId,
+        target: { kind: "provider_subagent", parentAgentId, subagentId },
+      });
     },
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
