@@ -751,10 +751,10 @@ function DesktopSidebar({
   );
   const desktopSidebarBorderStyle = useMemo(
     () => [
-      styles.desktopSidebarBorder,
+      styles.desktopSidebarBorder(divisionLayout !== null),
       { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
     ],
-    [insetsTop, insets.bottom],
+    [insetsTop, insets.bottom, divisionLayout],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
@@ -901,11 +901,11 @@ const styles = StyleSheet.create((theme) => ({
   mobileCloseButton: (rightInset: number) => ({
     marginRight: theme.spacing[2] + rightInset,
   }),
-  desktopSidebarBorder: {
-    borderRightWidth: 1,
+  desktopSidebarBorder: (hasDivision: boolean) => ({
+    borderRightWidth: hasDivision ? 0 : 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
-  },
+  }),
   sidebarDragArea: {
     position: "relative",
   },

@@ -1,5 +1,10 @@
+/** @vitest-environment jsdom */
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { lightTheme } from "@/styles/theme";
 import {
+  WindowLayoutDivisionGap,
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,
   type WindowLayout,
@@ -19,6 +24,29 @@ describe("desktop sidebar layout", () => {
     verticalBar: { x: 875, y: 160, width: 44, height: 450 },
     divisions: [{ x: 465, y: 0, width: 21, height: 669 }],
   };
+
+  it("continues the sidebar surface through the division with its divider at the workspace edge", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    try {
+      container.innerHTML = renderToStaticMarkup(
+        createElement(WindowLayoutDivisionGap, {
+          layout: { sidebarWidth: 465, gap: 21, contentWidth: 381 },
+          sidebarVisible: true,
+          compact: false,
+        }),
+      );
+      const gap = container.firstElementChild as HTMLElement;
+      const expected = document.createElement("div");
+      expected.style.backgroundColor = lightTheme.colors.surfaceSidebar;
+      const style = getComputedStyle(gap);
+      expect(style.backgroundColor).toBe(expected.style.backgroundColor);
+      expect(style.borderRightWidth).toBe("1px");
+      expect(style.width).toBe("21px");
+    } finally {
+      container.remove();
+    }
+  });
 
   it("places workspace action symbols in the reported trailing bar", () => {
     expect(resolveWorkspaceActionPlacement(geometry)).toBe("vertical-bar");

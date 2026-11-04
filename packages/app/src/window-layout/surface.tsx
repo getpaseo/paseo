@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement, type DesktopDivisionLayout } from "./model";
@@ -51,5 +52,13 @@ export function WindowLayoutDivisionGap({
     }),
     [layout, sidebarVisible],
   );
-  return !compact && layout ? <View style={style} /> : null;
+  return !compact && layout ? <View style={[styles.divisionGap, style]} /> : null;
 }
+
+const styles = StyleSheet.create((theme) => ({
+  divisionGap: {
+    backgroundColor: theme.colors.surfaceSidebar,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+}));
