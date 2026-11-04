@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeSync } from "node:fs";
 import {
   cp,
   rename,
@@ -1613,6 +1614,16 @@ export default function contribute() {
   }, 120_000);
 
   it("preserves dependencies and metadata, and reloads without npm", async () => {
+    const started = performance.now();
+    let previous = started;
+    const mark = (phase: string) => {
+      const now = performance.now();
+      writeSync(
+        2,
+        `npm journey: ${phase}; phase=${Math.round(now - previous)}ms total=${Math.round(now - started)}ms\n`,
+      );
+      previous = now;
+    };
     const home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
     roots.push(home);
     const previousConfig = process.env.npm_config_userconfig;
@@ -1628,6 +1639,7 @@ export default function contribute() {
     let service = open();
     try {
       await service.start();
+      mark("start complete");
       const installed = await service.installSource({ source: "npm:paseo-fixture-plugin@^1.0.0" });
       expect(installed).toMatchObject({
         id: "npm-review",
@@ -1656,6 +1668,7 @@ export default function contribute() {
           "node_modules/paseo-fixture-dependency"
         ].version,
       ).toBe("1.0.0");
+      mark("initial install complete");
       for (const [source, id, version] of [
         ["npm:paseo-fixture-plugin@1.0.0", "exact", "1.0.0"],
         ["paseo-fixture-plugin@stable", "tag", "1.0.0"],
@@ -1667,6 +1680,7 @@ export default function contribute() {
           installation: { currentRevision: version },
         });
       }
+      mark("selector installs complete");
       const [preview] = await service.previewUpdates({ pluginId: "exact" });
       expect(preview).toMatchObject({
         outcome: "update",
@@ -1721,6 +1735,7 @@ export default function contribute() {
       ]);
       expect((await service.previewUpdates({ pluginId: "exact" }))[0]?.outcome).toBe("update");
       await expect(service.updateSources("exact")).rejects.toThrow("Update the client");
+      mark("update journey complete");
       const prepared = await service.installSource({
         source: "npm:paseo-prepared-plugin@1.0.0:nested",
       });
@@ -1739,6 +1754,7 @@ export default function contribute() {
         "already configured",
       );
       expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      mark("prepared and rejected inputs complete");
       for (const name of [
         "bad-manifest",
         "bad-build",
@@ -1755,6 +1771,7 @@ export default function contribute() {
         ]);
         expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
       }
+      mark("failed packages complete");
       await service.disablePlugin("scoped");
       await service.stopAllPlugins();
       const recordsPath = path.join(home, "plugins", "sources.json");
@@ -1788,6 +1805,7 @@ export default function contribute() {
         service.installSource({ source: "npm:paseo-fixture-plugin", id: "missing-npm" }),
       ).rejects.toThrow("npm is required on the daemon host");
       expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      mark("restart without npm complete");
       const packagePath = path.join(installed.path, "package.json");
       const packageJson = await readFile(packagePath, "utf8");
       await writeFile(
@@ -1803,6 +1821,7 @@ export default function contribute() {
       });
       expect(await service.reloadPlugin("npm-review")).toMatchObject({ status: "running" });
       await writeFile(packagePath, packageJson);
+      mark("corrupt metadata complete");
       await service.removePlugin("npm-review");
       await expect(stat(installRoot)).rejects.toMatchObject({ code: "ENOENT" });
       expect(
@@ -1816,6 +1835,7 @@ export default function contribute() {
       else process.env.npm_config_userconfig = previousConfig;
       await service.stopAllPlugins();
       await registry.close();
+      mark("cleanup complete");
     }
   }, 120_000);
 });
