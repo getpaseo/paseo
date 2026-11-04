@@ -1,0 +1,548 @@
+# LegendList 3.7.1 for the native chat timeline (docs/agent-stream-disclosure.md).
+# Upstream: https://github.com/LegendApp/legend-list/issues/593 covers every change below.
+# react-native.js and react-native.mjs carry the same hunks; each has a "Paseo patch" comment.
+#
+# 1. getEstimatedItemSize (react-native.d.ts, getItemSize, LegendListInner props): a per-item
+#    estimate for an unmeasured row wins over the running average for its type.
+# 2. MVCP anchor lock on native (canRestoreAnchorLock, resolveAnchorLock, updateAnchorLock,
+#    prepareMVCP): upstream enables it on web only. On native the lock ends when its row leaves
+#    the view or shouldRestorePosition rejects it, instead of after 300 ms.
+# 3. Preserved initial end only with maintainScrollAtEnd (finishScrollTo,
+#    finishBootstrapInitialScrollWithoutScroll): otherwise every data change re-arms the initial
+#    scroll to the end.
+# 4. Silent initial scroll retry in one task (checkFinishedScrollFallback): the nudge and the return
+#    to the target go out together, so Android does not reveal 1 dp short of the end.
+# 5. Layout noise against the floored known size (isNativeLayoutNoise, updateOneItemSize): a
+#    one-pixel snap change is not a resize.
+# 6. Content height from React state on the New Architecture (useContentSize, ContainersLayer):
+#    the Animated height mounts the estimated layout for a frame.
+# 7. Header and footer revealed with the rows (RevealedLayoutView, ListComponent).
+# 8. Top-padding shrink hold on iOS only (setPaddingTop): Android paints the held height as blank
+#    space at the end.
+# 9. Rows cut off at the top count as in view (getIdsInVisibleRange): they follow the fully
+#    visible rows in idsInView, so a disclosure hold on a row whose top is above the viewport
+#    still anchors on that row instead of the row below it.
+# 10. A size change keeps only a row shouldRestorePosition accepts in place (prepareMVCP), as a
+#    data change already does, so a disclosure that only grows (a todo card) holds the cut-off
+#    row instead of the first row in view.
+#
+# Upgrading: drop each hunk whose fix the new version ships, regenerate with
+# `npx patch-package @legendapp/list`, and copy this header back on top.
+diff --git a/node_modules/@legendapp/list/react-native.d.ts b/node_modules/@legendapp/list/react-native.d.ts
+index 983e937..970ba51 100644
+--- a/node_modules/@legendapp/list/react-native.d.ts
++++ b/node_modules/@legendapp/list/react-native.d.ts
+@@ -204,6 +204,11 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * Change extraData when the fixed sizes returned by this callback change.
+      */
+     getFixedItemSize?: (item: ItemT, index: number, type: TItemType) => number | undefined;
++    /**
++     * Paseo patch: estimated size of an item that has not been measured yet. Return undefined to
++     * fall back to the average size for its type.
++     */
++    getEstimatedItemSize?: (item: ItemT, index: number, type: TItemType) => number | undefined;
+     /**
+      * Returns a stable item type used for pooling and size estimation.
+      */
+diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legendapp/list/react-native.js
+index eeb3fb0..b1689ad 100644
+--- a/node_modules/@legendapp/list/react-native.js
++++ b/node_modules/@legendapp/list/react-native.js
+@@ -1497,7 +1497,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+     return renderedSize;
+   }
+   const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
+-  if (useAverageSize && !scrollingTo) {
++  // Paseo patch: a caller estimate for an unmeasured item wins over the running average for its
++  // type, so a row new to the list can be laid out near its real size before it is measured.
++  if (state.props.getEstimatedItemSize) {
++    const estimate = state.props.getEstimatedItemSize(data, index, itemType);
++    if (estimate !== void 0) {
++      size = estimate + ctx.scrollAxisGap;
++    }
++  }
++  if (size === void 0 && useAverageSize && !scrollingTo) {
+     const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
+     if (averageSizeForType !== void 0) {
+       size = roundSize(averageSizeForType);
+@@ -1570,6 +1578,12 @@ var MVCP_POSITION_EPSILON = 0.1;
+ var MVCP_ANCHOR_LOCK_TTL_MS = 300;
+ var MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE = 2;
+ var NATIVE_END_CLAMP_EPSILON = 1;
++function canRestoreAnchorLock(state, id) {
++  const shouldRestorePosition = state.props.maintainVisibleContentPosition.shouldRestorePosition;
++  const index = state.indexByKey.get(id);
++  const data = state.props.data;
++  return !shouldRestorePosition || index !== void 0 && data[index] !== void 0 && shouldRestorePosition(data[index], index, data);
++}
+ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   if (!enableMVCPAnchorLock) {
+     state.mvcpAnchorLock = void 0;
+@@ -1579,7 +1593,13 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   if (!lock) {
+     return void 0;
+   }
+-  const isExpired = now > lock.expiresAt;
++  // Paseo patch: native keeps the anchor of a data change through the size passes that follow, as
++  // web does. Upstream limits the lock to web (d24a9d93 "feat: (web) add MVCP anchor lock") without a
++  // native reason. Without it, the pass that applies the measured sizes of prepended rows re-anchors
++  // on the first row in view, which can be one of those rows, and its growth moves the rows below.
++  // A wall-clock expiry is wrong on native, where the measurements arrive after the native mount
++  // and a slow render; the lock ends when its row leaves the view or may not be restored instead.
++  const isExpired = Platform.OS === "web" ? now > lock.expiresAt : !state.idsInView.includes(lock.id) || !canRestoreAnchorLock(state, lock.id);
+   const isMissing = state.indexByKey.get(lock.id) === void 0;
+   if (isExpired || isMissing || !mvcpData) {
+     state.mvcpAnchorLock = void 0;
+@@ -1588,7 +1608,7 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   return lock;
+ }
+ function updateAnchorLock(state, params) {
+-  if (Platform.OS === "web") {
++  {
+     const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
+     const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+     const mvcpData = state.props.maintainVisibleContentPosition.data;
+@@ -1713,7 +1733,7 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+   } = props;
+   const isWeb = Platform.OS === "web";
+   const now = Date.now();
+-  const enableMVCPAnchorLock = isWeb && (!!dataChanged || !!state.mvcpAnchorLock);
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+   const scrollingTo = state.scrollingTo;
+   if ((scrollingTo == null ? void 0 : scrollingTo.key) !== void 0) {
+     const nextIndex = state.indexByKey.get(scrollingTo.key);
+@@ -1723,7 +1743,7 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+     state.mvcpAnchorLock = void 0;
+     return void 0;
+   }
+-  const anchorLock = isWeb ? resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) : void 0;
++  const anchorLock = resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now);
+   let prevPosition;
+   let targetId;
+   const idsInViewWithPositions = [];
+@@ -1755,7 +1775,10 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+       }
+       targetId = (_b = scrollingTo == null ? void 0 : scrollingTo.key) != null ? _b : getId(state, scrollTarget);
+     } else if (idsInView.length > 0 && state.didContainersLayout && !dataChanged) {
+-      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0);
++      // Paseo patch: a size change keeps only a row shouldRestorePosition accepts in place, as a data
++      // change does. Upstream keeps the first row in view, so a disclosure hold on a row cut off at
++      // the top kept the row below it instead and moved the trigger by the row's size change.
++      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0 && canRestoreAnchorLock(state, id));
+     }
+     if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
+       for (let i = 0; i < idsInView.length; i++) {
+@@ -2371,7 +2394,10 @@ function finishScrollTo(ctx) {
+     };
+     if (scrollingTo.isInitialScroll || state.initialScroll) {
+       const isOffsetSession = ((_b = state.initialScrollSession) == null ? void 0 : _b.kind) === "offset";
+-      const shouldPreserveResizeTarget = !!scrollingTo.isInitialScroll && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_c = state.initialScroll) == null ? void 0 : _c.viewPosition) === 1;
++      // Paseo patch: only a list that keeps its end keeps landing on the initial end after the
++      // initial scroll. Without maintainScrollAtEnd, the preserved target re-arms the initial scroll
++      // on every data change, footer layout and viewport resize, and a stream never lets it clear.
++      const shouldPreserveResizeTarget = !!state.props.maintainScrollAtEnd && !!scrollingTo.isInitialScroll && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_c = state.initialScroll) == null ? void 0 : _c.viewPosition) === 1;
+       finishInitialScroll(ctx, {
+         onFinished: complete,
+         preserveTarget: isOffsetSession && state.props.data.length === 0 || shouldPreserveResizeTarget,
+@@ -2515,11 +2541,12 @@ function checkFinishedScrollFallback(ctx) {
+         const targetOffset = (_d = (_c = (_b = initialScrollWatchdog.get(state)) == null ? void 0 : _b.targetOffset) != null ? _c : isStillScrollingTo.targetOffset) != null ? _d : 0;
+         const jiggleOffset = targetOffset >= SILENT_INITIAL_SCROLL_TARGET_EPSILON ? targetOffset - SILENT_INITIAL_SCROLL_TARGET_EPSILON : targetOffset + SILENT_INITIAL_SCROLL_TARGET_EPSILON;
+         initialScrollCompletion.markSilentInitialScrollRetry(state);
++        // Paseo patch: send the nudge and the return to the target in one task, so native applies both before
++        // it draws and the pair still emits the scroll event this retry exists for. Upstream returns on the next
++        // frame, but the 16 ms check below can run first, finish the scroll and cancel that frame; the list then
++        // revealed 1 dp short of its end and moved into place a frame later.
+         scrollToFallbackOffset(ctx, jiggleOffset);
+-        state.scheduledWork.frame(
+-          () => scrollToFallbackOffset(ctx, targetOffset),
+-          "checkFinishedScrollRetryFrame"
+-        );
++        scrollToFallbackOffset(ctx, targetOffset);
+         scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+       } else if (shouldRetryUnalignedEndScroll) {
+         scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
+@@ -3378,7 +3405,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
+   var _a3;
+   const state = ctx.state;
+   clearBootstrapInitialScrollSession(state);
+-  const shouldPreserveResizeTarget = !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_a3 = state.initialScroll) == null ? void 0 : _a3.viewPosition) === 1;
++  // Paseo patch: see finishScrollTo; only a list that keeps its end preserves the initial end.
++  const shouldPreserveResizeTarget = !!state.props.maintainScrollAtEnd && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_a3 = state.initialScroll) == null ? void 0 : _a3.viewPosition) === 1;
+   finishInitialScroll(ctx, {
+     preserveTarget: shouldPreserveResizeTarget,
+     recalculateItems: true,
+@@ -4569,6 +4597,17 @@ function getIdsInVisibleRange(state, range) {
+       const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
+       idsInView.push(id);
+     }
++    // Paseo patch: a row whose top is above the viewport is still in view. Upstream starts the ids at
++    // the first fully visible row, so a disclosure hold on a row cut off at the top finds no anchor
++    // (shouldRestorePosition rejects every other row) and the next size pass keeps the row below it
++    // in place instead. The partly visible rows go last, so the first fully visible row stays the
++    // anchor of every pass that does not restrict it.
++    if (range.startNoBuffer !== null && range.startNoBuffer < firstVisibleAnchorIndex) {
++      for (let i = range.startNoBuffer; i < firstVisibleAnchorIndex; i++) {
++        const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
++        idsInView.push(id);
++      }
++    }
+   }
+   return idsInView;
+ }
+@@ -5176,8 +5215,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
+ function isWithinEpsilon(delta) {
+   return Math.abs(delta) <= NATIVE_LAYOUT_MEASUREMENT_EPSILON;
+ }
+-function isNativeLayoutNoise(delta) {
+-  return isWithinEpsilon(delta);
++// Paseo patch: sizesKnown holds roundSize values, floored to 1/8 dp, so the raw size behind a known
++// size lies in [known, known + 1/8). Upstream compares the raw size with the floored one, so a row
++// whose pixel-snapped height changes by one pixel, plus the floor, reads as a resize. On a cold open
++// that late resize moved every row a frame after the reveal.
++function isNativeLayoutNoise(rawSize, knownSize) {
++  const delta = rawSize - knownSize;
++  return delta >= -NATIVE_LAYOUT_MEASUREMENT_EPSILON && delta < NATIVE_LAYOUT_MEASUREMENT_EPSILON + 1 / 8;
+ }
+ 
+ // src/core/updateItemSizes.ts
+@@ -5414,7 +5458,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+     state.fixedItemSizeKeys.add(itemKey);
+   }
+   const prevSizeKnown = sizesKnown.get(itemKey);
+-  if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize - prevSizeKnown)) {
++  if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize, prevSizeKnown)) {
+     return 0;
+   }
+   const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
+@@ -6283,6 +6327,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+ 
+ // src/components/Containers.native.tsx
+ var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
++// Paseo patch: on the new architecture the content height comes from React state only. The
++// JS-driven Animated height writes through setNativeProps, which Fabric commits synchronously
++// mid-task, mounting React's estimated layout for a frame before the measured one.
++var useContentSize = IsNewArchitecture ? useCommittedMinSize : () => useValue$("totalSize");
+ var ContainersLayer = typedMemo(function ContainersLayer2({
+   children,
+   freshDataTransitionEpoch,
+@@ -6290,7 +6338,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+ }) {
+   const ctx = useStateContext();
+   const columnWrapperStyle = ctx.columnWrapperStyle;
+-  const size = useValue$("totalSize");
++  const size = useContentSize();
+   const minSize = useCommittedMinSize();
+   const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
+   const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
+@@ -6513,6 +6561,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+     null
+   );
+ });
++// Paseo patch: the header and footer reveal with the rows. Upstream hides only the containers until
++// readyToRender, so a cold open paints the header and footer at their estimated place a frame or more
++// before the rows appear around them.
++var RevealedLayoutView = function RevealedLayoutView2({ freshDataTransitionEpoch, style, ...rest }) {
++  const [readyToRender] = useArr$(["readyToRender"]);
++  const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
++  return /* @__PURE__ */ React2__namespace.createElement(LayoutView, { ...rest, pointerEvents: isVisible ? "auto" : "none", style: isVisible ? style : [style, { opacity: 0 }] });
++};
+ var ListComponent = typedMemo(function ListComponent2({
+   canRender,
+   freshDataTransitionEpoch,
+@@ -6651,7 +6707,7 @@ var ListComponent = typedMemo(function ListComponent2({
+       style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
+     },
+     /* @__PURE__ */ React2__namespace.createElement(ScrollAdjust, null),
+-    ListHeaderComponent && /* @__PURE__ */ React2__namespace.createElement(LayoutView, { onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
++    ListHeaderComponent && /* @__PURE__ */ React2__namespace.createElement(RevealedLayoutView, { freshDataTransitionEpoch, onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
+     ListEmptyComponent && getComponent(ListEmptyComponent),
+     shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
+     canRender && !ListEmptyComponent && /* @__PURE__ */ React2__namespace.createElement(
+@@ -6665,7 +6721,7 @@ var ListComponent = typedMemo(function ListComponent2({
+         stickyHeaderConfig
+       }
+     ),
+-    ListFooterComponent && /* @__PURE__ */ React2__namespace.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
++    ListFooterComponent && /* @__PURE__ */ React2__namespace.createElement(RevealedLayoutView, { freshDataTransitionEpoch, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
+     IS_DEV && ENABLE_DEVMODE
+   );
+ });
+@@ -7886,7 +7942,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+   const state = ctx.state;
+   if (stylePaddingTop !== void 0) {
+     const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
+-    if (stylePaddingTop < prevStylePaddingTop) {
++    // Paseo patch: only iOS compensates a shrinking top padding with a scroll adjust, which this
++    // keeps the native clamp from doubling. Elsewhere the held height paints as blank space at the
++    // end until the timer fires, and a scroll view that keeps its end scrolls into it.
++    if (stylePaddingTop < prevStylePaddingTop && Platform.OS === "ios") {
+       let prevTotalSize = peek$(ctx, "totalSize") || 0;
+       set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
+       state.timeoutSetPaddingTop = setTimeout(() => {
+@@ -7989,6 +8048,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     estimatedListSize,
+     extraData,
+     getFixedItemSize,
++    getEstimatedItemSize,
+     getItemType,
+     horizontal,
+     rtl,
+@@ -8282,6 +8342,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     dataVersion,
+     drawDistance,
+     estimatedItemSize,
++    getEstimatedItemSize: useWrapIfItem(getEstimatedItemSize),
+     getFixedItemSize: useWrapIfItem(getFixedItemSize),
+     getItemType: useWrapIfItem(getItemType),
+     hasExternalScroll,
+diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legendapp/list/react-native.mjs
+index fe5f415..e61945e 100644
+--- a/node_modules/@legendapp/list/react-native.mjs
++++ b/node_modules/@legendapp/list/react-native.mjs
+@@ -1476,7 +1476,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+     return renderedSize;
+   }
+   const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
+-  if (useAverageSize && !scrollingTo) {
++  // Paseo patch: a caller estimate for an unmeasured item wins over the running average for its
++  // type, so a row new to the list can be laid out near its real size before it is measured.
++  if (state.props.getEstimatedItemSize) {
++    const estimate = state.props.getEstimatedItemSize(data, index, itemType);
++    if (estimate !== void 0) {
++      size = estimate + ctx.scrollAxisGap;
++    }
++  }
++  if (size === void 0 && useAverageSize && !scrollingTo) {
+     const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
+     if (averageSizeForType !== void 0) {
+       size = roundSize(averageSizeForType);
+@@ -1549,6 +1557,12 @@ var MVCP_POSITION_EPSILON = 0.1;
+ var MVCP_ANCHOR_LOCK_TTL_MS = 300;
+ var MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE = 2;
+ var NATIVE_END_CLAMP_EPSILON = 1;
++function canRestoreAnchorLock(state, id) {
++  const shouldRestorePosition = state.props.maintainVisibleContentPosition.shouldRestorePosition;
++  const index = state.indexByKey.get(id);
++  const data = state.props.data;
++  return !shouldRestorePosition || index !== void 0 && data[index] !== void 0 && shouldRestorePosition(data[index], index, data);
++}
+ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   if (!enableMVCPAnchorLock) {
+     state.mvcpAnchorLock = void 0;
+@@ -1558,7 +1572,13 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   if (!lock) {
+     return void 0;
+   }
+-  const isExpired = now > lock.expiresAt;
++  // Paseo patch: native keeps the anchor of a data change through the size passes that follow, as
++  // web does. Upstream limits the lock to web (d24a9d93 "feat: (web) add MVCP anchor lock") without a
++  // native reason. Without it, the pass that applies the measured sizes of prepended rows re-anchors
++  // on the first row in view, which can be one of those rows, and its growth moves the rows below.
++  // A wall-clock expiry is wrong on native, where the measurements arrive after the native mount
++  // and a slow render; the lock ends when its row leaves the view or may not be restored instead.
++  const isExpired = Platform.OS === "web" ? now > lock.expiresAt : !state.idsInView.includes(lock.id) || !canRestoreAnchorLock(state, lock.id);
+   const isMissing = state.indexByKey.get(lock.id) === void 0;
+   if (isExpired || isMissing || !mvcpData) {
+     state.mvcpAnchorLock = void 0;
+@@ -1567,7 +1587,7 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   return lock;
+ }
+ function updateAnchorLock(state, params) {
+-  if (Platform.OS === "web") {
++  {
+     const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
+     const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+     const mvcpData = state.props.maintainVisibleContentPosition.data;
+@@ -1692,7 +1712,7 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+   } = props;
+   const isWeb = Platform.OS === "web";
+   const now = Date.now();
+-  const enableMVCPAnchorLock = isWeb && (!!dataChanged || !!state.mvcpAnchorLock);
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+   const scrollingTo = state.scrollingTo;
+   if ((scrollingTo == null ? void 0 : scrollingTo.key) !== void 0) {
+     const nextIndex = state.indexByKey.get(scrollingTo.key);
+@@ -1702,7 +1722,7 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+     state.mvcpAnchorLock = void 0;
+     return void 0;
+   }
+-  const anchorLock = isWeb ? resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) : void 0;
++  const anchorLock = resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now);
+   let prevPosition;
+   let targetId;
+   const idsInViewWithPositions = [];
+@@ -1734,7 +1754,10 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+       }
+       targetId = (_b = scrollingTo == null ? void 0 : scrollingTo.key) != null ? _b : getId(state, scrollTarget);
+     } else if (idsInView.length > 0 && state.didContainersLayout && !dataChanged) {
+-      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0);
++      // Paseo patch: a size change keeps only a row shouldRestorePosition accepts in place, as a data
++      // change does. Upstream keeps the first row in view, so a disclosure hold on a row cut off at
++      // the top kept the row below it instead and moved the trigger by the row's size change.
++      targetId = idsInView.find((id) => indexByKey.get(id) !== void 0 && canRestoreAnchorLock(state, id));
+     }
+     if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
+       for (let i = 0; i < idsInView.length; i++) {
+@@ -2350,7 +2373,10 @@ function finishScrollTo(ctx) {
+     };
+     if (scrollingTo.isInitialScroll || state.initialScroll) {
+       const isOffsetSession = ((_b = state.initialScrollSession) == null ? void 0 : _b.kind) === "offset";
+-      const shouldPreserveResizeTarget = !!scrollingTo.isInitialScroll && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_c = state.initialScroll) == null ? void 0 : _c.viewPosition) === 1;
++      // Paseo patch: only a list that keeps its end keeps landing on the initial end after the
++      // initial scroll. Without maintainScrollAtEnd, the preserved target re-arms the initial scroll
++      // on every data change, footer layout and viewport resize, and a stream never lets it clear.
++      const shouldPreserveResizeTarget = !!state.props.maintainScrollAtEnd && !!scrollingTo.isInitialScroll && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_c = state.initialScroll) == null ? void 0 : _c.viewPosition) === 1;
+       finishInitialScroll(ctx, {
+         onFinished: complete,
+         preserveTarget: isOffsetSession && state.props.data.length === 0 || shouldPreserveResizeTarget,
+@@ -2494,11 +2520,12 @@ function checkFinishedScrollFallback(ctx) {
+         const targetOffset = (_d = (_c = (_b = initialScrollWatchdog.get(state)) == null ? void 0 : _b.targetOffset) != null ? _c : isStillScrollingTo.targetOffset) != null ? _d : 0;
+         const jiggleOffset = targetOffset >= SILENT_INITIAL_SCROLL_TARGET_EPSILON ? targetOffset - SILENT_INITIAL_SCROLL_TARGET_EPSILON : targetOffset + SILENT_INITIAL_SCROLL_TARGET_EPSILON;
+         initialScrollCompletion.markSilentInitialScrollRetry(state);
++        // Paseo patch: send the nudge and the return to the target in one task, so native applies both before
++        // it draws and the pair still emits the scroll event this retry exists for. Upstream returns on the next
++        // frame, but the 16 ms check below can run first, finish the scroll and cancel that frame; the list then
++        // revealed 1 dp short of its end and moved into place a frame later.
+         scrollToFallbackOffset(ctx, jiggleOffset);
+-        state.scheduledWork.frame(
+-          () => scrollToFallbackOffset(ctx, targetOffset),
+-          "checkFinishedScrollRetryFrame"
+-        );
++        scrollToFallbackOffset(ctx, targetOffset);
+         scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+       } else if (shouldRetryUnalignedEndScroll) {
+         scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
+@@ -3357,7 +3384,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
+   var _a3;
+   const state = ctx.state;
+   clearBootstrapInitialScrollSession(state);
+-  const shouldPreserveResizeTarget = !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_a3 = state.initialScroll) == null ? void 0 : _a3.viewPosition) === 1;
++  // Paseo patch: see finishScrollTo; only a list that keeps its end preserves the initial end.
++  const shouldPreserveResizeTarget = !!state.props.maintainScrollAtEnd && !state.clearPreservedInitialScrollOnNextFinish && state.props.data.length > 0 && ((_a3 = state.initialScroll) == null ? void 0 : _a3.viewPosition) === 1;
+   finishInitialScroll(ctx, {
+     preserveTarget: shouldPreserveResizeTarget,
+     recalculateItems: true,
+@@ -4548,6 +4576,17 @@ function getIdsInVisibleRange(state, range) {
+       const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
+       idsInView.push(id);
+     }
++    // Paseo patch: a row whose top is above the viewport is still in view. Upstream starts the ids at
++    // the first fully visible row, so a disclosure hold on a row cut off at the top finds no anchor
++    // (shouldRestorePosition rejects every other row) and the next size pass keeps the row below it
++    // in place instead. The partly visible rows go last, so the first fully visible row stays the
++    // anchor of every pass that does not restrict it.
++    if (range.startNoBuffer !== null && range.startNoBuffer < firstVisibleAnchorIndex) {
++      for (let i = range.startNoBuffer; i < firstVisibleAnchorIndex; i++) {
++        const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
++        idsInView.push(id);
++      }
++    }
+   }
+   return idsInView;
+ }
+@@ -5155,8 +5194,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
+ function isWithinEpsilon(delta) {
+   return Math.abs(delta) <= NATIVE_LAYOUT_MEASUREMENT_EPSILON;
+ }
+-function isNativeLayoutNoise(delta) {
+-  return isWithinEpsilon(delta);
++// Paseo patch: sizesKnown holds roundSize values, floored to 1/8 dp, so the raw size behind a known
++// size lies in [known, known + 1/8). Upstream compares the raw size with the floored one, so a row
++// whose pixel-snapped height changes by one pixel, plus the floor, reads as a resize. On a cold open
++// that late resize moved every row a frame after the reveal.
++function isNativeLayoutNoise(rawSize, knownSize) {
++  const delta = rawSize - knownSize;
++  return delta >= -NATIVE_LAYOUT_MEASUREMENT_EPSILON && delta < NATIVE_LAYOUT_MEASUREMENT_EPSILON + 1 / 8;
+ }
+ 
+ // src/core/updateItemSizes.ts
+@@ -5393,7 +5437,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+     state.fixedItemSizeKeys.add(itemKey);
+   }
+   const prevSizeKnown = sizesKnown.get(itemKey);
+-  if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize - prevSizeKnown)) {
++  if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize, prevSizeKnown)) {
+     return 0;
+   }
+   const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
+@@ -6262,6 +6306,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+ 
+ // src/components/Containers.native.tsx
+ var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
++// Paseo patch: on the new architecture the content height comes from React state only. The
++// JS-driven Animated height writes through setNativeProps, which Fabric commits synchronously
++// mid-task, mounting React's estimated layout for a frame before the measured one.
++var useContentSize = IsNewArchitecture ? useCommittedMinSize : () => useValue$("totalSize");
+ var ContainersLayer = typedMemo(function ContainersLayer2({
+   children,
+   freshDataTransitionEpoch,
+@@ -6269,7 +6317,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+ }) {
+   const ctx = useStateContext();
+   const columnWrapperStyle = ctx.columnWrapperStyle;
+-  const size = useValue$("totalSize");
++  const size = useContentSize();
+   const minSize = useCommittedMinSize();
+   const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
+   const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
+@@ -6492,6 +6540,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+     null
+   );
+ });
++// Paseo patch: the header and footer reveal with the rows. Upstream hides only the containers until
++// readyToRender, so a cold open paints the header and footer at their estimated place a frame or more
++// before the rows appear around them.
++var RevealedLayoutView = function RevealedLayoutView2({ freshDataTransitionEpoch, style, ...rest }) {
++  const [readyToRender] = useArr$(["readyToRender"]);
++  const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
++  return /* @__PURE__ */ React2.createElement(LayoutView, { ...rest, pointerEvents: isVisible ? "auto" : "none", style: isVisible ? style : [style, { opacity: 0 }] });
++};
+ var ListComponent = typedMemo(function ListComponent2({
+   canRender,
+   freshDataTransitionEpoch,
+@@ -6630,7 +6686,7 @@ var ListComponent = typedMemo(function ListComponent2({
+       style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
+     },
+     /* @__PURE__ */ React2.createElement(ScrollAdjust, null),
+-    ListHeaderComponent && /* @__PURE__ */ React2.createElement(LayoutView, { onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
++    ListHeaderComponent && /* @__PURE__ */ React2.createElement(RevealedLayoutView, { freshDataTransitionEpoch, onLayoutChange: onLayoutHeader, style: ListHeaderComponentStyle }, getComponent(ListHeaderComponent)),
+     ListEmptyComponent && getComponent(ListEmptyComponent),
+     shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2.createElement(AlignItemsAtEndSpacer, { horizontal }),
+     canRender && !ListEmptyComponent && /* @__PURE__ */ React2.createElement(
+@@ -6644,7 +6700,7 @@ var ListComponent = typedMemo(function ListComponent2({
+         stickyHeaderConfig
+       }
+     ),
+-    ListFooterComponent && /* @__PURE__ */ React2.createElement(LayoutView, { onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
++    ListFooterComponent && /* @__PURE__ */ React2.createElement(RevealedLayoutView, { freshDataTransitionEpoch, onLayoutChange: onLayoutFooterInternal, style: ListFooterComponentStyle }, getComponent(ListFooterComponent)),
+     IS_DEV && ENABLE_DEVMODE
+   );
+ });
+@@ -7865,7 +7921,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+   const state = ctx.state;
+   if (stylePaddingTop !== void 0) {
+     const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
+-    if (stylePaddingTop < prevStylePaddingTop) {
++    // Paseo patch: only iOS compensates a shrinking top padding with a scroll adjust, which this
++    // keeps the native clamp from doubling. Elsewhere the held height paints as blank space at the
++    // end until the timer fires, and a scroll view that keeps its end scrolls into it.
++    if (stylePaddingTop < prevStylePaddingTop && Platform.OS === "ios") {
+       let prevTotalSize = peek$(ctx, "totalSize") || 0;
+       set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
+       state.timeoutSetPaddingTop = setTimeout(() => {
+@@ -7968,6 +8027,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     estimatedListSize,
+     extraData,
+     getFixedItemSize,
++    getEstimatedItemSize,
+     getItemType,
+     horizontal,
+     rtl,
+@@ -8261,6 +8321,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     dataVersion,
+     drawDistance,
+     estimatedItemSize,
++    getEstimatedItemSize: useWrapIfItem(getEstimatedItemSize),
+     getFixedItemSize: useWrapIfItem(getFixedItemSize),
+     getItemType: useWrapIfItem(getItemType),
+     hasExternalScroll,

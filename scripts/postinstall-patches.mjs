@@ -43,6 +43,11 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // The native chat timeline. The patch's header lists its hunks and the upstream issue.
+  {
+    nodeModulesPath: "node_modules/@legendapp/list",
+    patchPrefix: "@legendapp+list+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
