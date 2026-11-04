@@ -2319,6 +2319,7 @@ export class AgentManager {
       const issues =
         (await this.validateAgentSelection?.({
           provider: agent.provider,
+          cwd: agent.cwd,
           model,
           thinkingOptionId,
         })) ?? [];
@@ -2328,7 +2329,11 @@ export class AgentManager {
         return;
       }
     }
-    await this.assertSelectionListed({ provider: agent.provider, thinkingOptionId });
+    await this.assertSelectionListed({
+      provider: agent.provider,
+      cwd: agent.cwd,
+      thinkingOptionId,
+    });
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -2338,6 +2343,7 @@ export class AgentManager {
     if (normalizedModelId) {
       await this.assertSelectionListed({
         provider: agent.provider,
+        cwd: agent.cwd,
         model: normalizedModelId,
       });
     }

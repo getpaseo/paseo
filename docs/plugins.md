@@ -680,15 +680,19 @@ implementations provide it:
   settings are the session store's agent, and `model` and `thinking` resolve through the provider
   catalog with `resolveAgentModelSelection`, the picker's own function, so a read equals what the
   picker shows. The model loads the catalog itself and resolves with no models until it lands, as the picker does,
-  so a read never differs from what the picker shows. The mounted
+  so a read never differs from what the picker shows. While anything watches the model it holds a
+  `QueryObserver` on the agent's catalog: that is what lets reconnect repair, which refetches only
+  active queries, refresh a catalog nobody has a picker open for, and retry one that failed. The
+  model is shared while a watcher or a mounted composer holds it and dropped when the last one
+  lets go. The mounted
   `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor.
   Without a live input the model writes the stored prompt with `replaceDraftText`, which also asks
   a mounted input to show it. A workspace the user left stays mounted, display none, with no
   input ref: `ComposerInput.isLive()` is how the model tells. Closing a root agent's tab archives
   it, so a running agent with no mounted composer at all only exists as a subagent whose tab was
-  closed. The daemon is the authority for `setModel` and `setThinking`, and validates a thinking
-  option against the model the agent runs: the runtime model when the catalog lists it, else the
-  configured one.
+  closed. The daemon is the authority for `setModel` and `setThinking`. It validates against the
+  catalog of the agent's directory, the one the picker reads, and checks a thinking option against
+  the model the agent runs: the runtime model when the catalog lists it, else the configured one.
 - A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.

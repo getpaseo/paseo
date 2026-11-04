@@ -311,6 +311,58 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("validates a selection against the catalog of the directory it is for", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          // A project can configure models its global catalog does not list.
+          fetchCatalog: async (options) => ({
+            models: [
+              {
+                provider: "opencode",
+                id: options.scope === "workspace" ? "project/custom" : "global/default",
+                label: "Model",
+                thinkingOptions: [
+                  { id: options.scope === "workspace" ? "deep" : "plain", label: "Level" },
+                ],
+              },
+            ],
+            modes: [],
+          }),
+        }),
+      },
+    });
+
+    try {
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "opencode",
+          cwd: "/tmp/project",
+          model: "project/custom",
+          thinkingOptionId: "deep",
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        manager.validateAgentConfiguration({ provider: "opencode", model: "project/custom" }),
+      ).resolves.toEqual([
+        {
+          path: ["model"],
+          message: "Model 'project/custom' is not available for provider 'opencode'",
+        },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("reports an unavailable Hub agent provider at the authored provider field", async () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {

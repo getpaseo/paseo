@@ -5436,6 +5436,32 @@ test("a running agent rejects a model or thinking option its provider does not l
   expect(manager.getAgent(snapshot.id)?.config.model).toBeUndefined();
 });
 
+test("a selection is validated against the catalog of the agent's directory", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-selection-cwd-"));
+  const asked: Array<string | undefined> = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    validateAgentSelection: async (input) => {
+      asked.push(input.cwd);
+      return [];
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000137",
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.4" },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.setAgentThinkingOption(snapshot.id, "low");
+
+  expect(asked.length).toBeGreaterThan(0);
+  expect(asked.every((cwd) => cwd === workdir)).toBe(true);
+});
+
 test("a thinking option is checked against the model the agent runs, as the picker chooses it", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-thinking-runtime-model-"));
   const provider: ProviderSnapshotEntry = {

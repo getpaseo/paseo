@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { QueryObserver, type QueryClient } from "@tanstack/react-query";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { providersSnapshotQuery } from "@/data/providers-snapshot";
 import { replicaQueryOptions } from "@/data/query";
@@ -39,6 +39,10 @@ export interface AgentComposer extends ComposerModel {
 interface AgentComposerDeps {
   queryClient: QueryClient;
   cache?: ProviderSnapshotCache;
+  /** Something watches the composer or a composer is mounted. */
+  onHeld?: () => void;
+  /** Nothing watches the composer and no composer is mounted, so it can be dropped. */
+  onIdle?: () => void;
 }
 
 type Catalog = { status: "loading" } | { status: "ready"; entries: ProviderSnapshotEntry[] | null };
@@ -53,8 +57,9 @@ export function createAgentComposer(
 ): AgentComposer {
   const draftKey = buildDraftStoreKey({ serverId, agentId });
   const listeners = new Set<() => void>();
-  const catalogFailures = new Set<string>();
-  const catalogRequests = new Set<string>();
+  // While something watches, the catalog has an observer: it fetches the catalog, and it is what
+  // makes the catalog an active query that reconnect repair refetches, a failed one included.
+  let observing: { cwd: string; stop: () => void } | null = null;
   let mounted: MountedComposerInput | null = null;
   let last: {
     agent: Agent | null;
@@ -90,15 +95,21 @@ export function createAgentComposer(
     for (const listener of listeners) listener();
   }
 
-  async function loadCatalog(query: ReturnType<typeof catalogQuery>, key: string) {
-    try {
-      await deps.queryClient.ensureQueryData(query);
-    } catch {
-      catalogFailures.add(key);
-    } finally {
-      catalogRequests.delete(key);
-      notify();
-    }
+  function observeCatalog() {
+    const agent = listeners.size > 0 ? readAgent() : null;
+    const session = useSessionStore.getState().sessions[serverId];
+    const cwd =
+      agent && session?.client && session.serverInfo?.features?.providersSnapshot === true
+        ? agent.cwd
+        : null;
+    if ((observing?.cwd ?? null) === cwd) return;
+    observing?.stop();
+    observing = null;
+    if (cwd === null) return;
+    observing = {
+      cwd,
+      stop: new QueryObserver(deps.queryClient, catalogQuery(cwd)).subscribe(notify),
+    };
   }
 
   function readCatalog(agent: Agent): Catalog {
@@ -112,15 +123,14 @@ export function createAgentComposer(
       query.queryKey,
     );
     if (data) return { status: "ready", entries: data.entries };
-    const key = JSON.stringify(query.queryKey);
-    if (catalogFailures.has(key)) return { status: "ready", entries: null };
-    if (!session.client) return { status: "loading" };
-    if (!catalogRequests.has(key)) {
-      catalogRequests.add(key);
-      // Creating the query tells every query-cache subscriber. A read can run in another
-      // component's render, so the load starts after it.
-      queueMicrotask(() => void loadCatalog(query, key));
+    if (deps.queryClient.getQueryState(query.queryKey)?.status === "error") {
+      return { status: "ready", entries: null };
     }
+    if (!session.client) return { status: "loading" };
+    // Nothing watches, so nothing observes: a command reads once and the load starts after it.
+    // Creating the query tells every query-cache subscriber, and a read can run in another
+    // component's render.
+    if (!observing) queueMicrotask(() => void deps.queryClient.prefetchQuery(query));
     return { status: "loading" };
   }
 
@@ -179,29 +189,37 @@ export function createAgentComposer(
     return last.state;
   }
 
+  function releaseWhenIdle() {
+    if (listeners.size === 0 && mounted === null) deps.onIdle?.();
+  }
+
   return {
     getState,
     subscribe(listener) {
       listeners.add(listener);
+      deps.onHeld?.();
+      observeCatalog();
       getState();
       const stops = [
-        useSessionStore.subscribe(notify),
-        useDraftStore.subscribe(notify),
-        // Only a query's update changes the catalog. A query another component creates while it
-        // renders is announced too, and a subscriber that updates then makes React warn.
-        deps.queryClient.getQueryCache().subscribe((event) => {
-          if (event.type === "updated") notify();
+        useSessionStore.subscribe(() => {
+          observeCatalog();
+          notify();
         }),
+        useDraftStore.subscribe(notify),
       ];
       return () => {
         listeners.delete(listener);
         for (const stop of stops) stop();
+        observeCatalog();
+        releaseWhenIdle();
       };
     },
     attachInput(input) {
       mounted = input;
+      deps.onHeld?.();
       return () => {
         if (mounted === input) mounted = null;
+        releaseWhenIdle();
       };
     },
     setPrompt(text) {
@@ -251,12 +269,21 @@ function sameCatalog(left: Catalog, right: Catalog): boolean {
 
 const composers = new Map<string, AgentComposer>();
 
-/** The composer of a running agent; the same one for every caller. */
+/** The composer of a running agent; the same one for every caller while something holds it. */
 export function agentComposer(serverId: string, agentId: string): AgentComposer {
   const key = `${serverId}:${agentId}`;
   let composer = composers.get(key);
   if (!composer) {
-    composer = createAgentComposer(serverId, agentId, { queryClient: singletonQueryClient });
+    composer = createAgentComposer(serverId, agentId, {
+      queryClient: singletonQueryClient,
+      // A holder that outlives a release, such as a remounting tab, puts its composer back.
+      onHeld: () => {
+        if (composer && !composers.has(key)) composers.set(key, composer);
+      },
+      onIdle: () => {
+        if (composers.get(key) === composer) composers.delete(key);
+      },
+    });
     composers.set(key, composer);
   }
   return composer;

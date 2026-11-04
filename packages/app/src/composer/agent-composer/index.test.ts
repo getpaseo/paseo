@@ -7,7 +7,8 @@ import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import { createAgentComposer } from "./index";
+import { providersSnapshotQueryRoot } from "@/data/providers-snapshot";
+import { agentComposer, createAgentComposer } from "./index";
 
 const serverId = "host-1";
 const agentId = "agent-1";
@@ -78,7 +79,12 @@ function fakeClient() {
   const calls: string[] = [];
   const client = {
     async getProvidersSnapshot() {
-      return { entries, generatedAt: "2026-11-04T10:00:00.000Z", requestId: "snapshot" };
+      if (hostCatalog.failing) throw new Error("The host is busy.");
+      return {
+        entries: hostCatalog.entries,
+        generatedAt: "2026-11-04T10:00:00.000Z",
+        requestId: "snapshot",
+      };
     },
     async setAgentModel(id: string, model: string | null) {
       calls.push(`model:${id}:${model}`);
@@ -102,6 +108,12 @@ function fakeClient() {
   return { client: client as unknown as DaemonClient, calls };
 }
 
+/** What the host answers the next catalog request with. */
+const hostCatalog: { entries: ProviderSnapshotEntry[]; failing: boolean } = {
+  entries,
+  failing: false,
+};
+
 function openSession(running: Agent) {
   const { client, calls } = fakeClient();
   const store = useSessionStore.getState();
@@ -124,11 +136,20 @@ async function until(read: () => unknown, expected: unknown) {
   expect(read()).toBe(expected);
 }
 
+let queryClient: QueryClient;
+
+function runtimeModel(model: string): Agent["runtimeInfo"] {
+  return { provider: "claude", sessionId: null, model };
+}
+
 function composer() {
-  return createAgentComposer(serverId, agentId, { queryClient: new QueryClient() });
+  return createAgentComposer(serverId, agentId, { queryClient });
 }
 
 beforeEach(() => {
+  queryClient = new QueryClient();
+  hostCatalog.entries = entries;
+  hostCatalog.failing = false;
   useDraftStore.setState({ drafts: {}, textReplacementRequestByDraftKey: {} });
 });
 
@@ -148,7 +169,6 @@ describe("agent composer", () => {
         [other.id, other],
       ]),
     );
-    const queryClient = new QueryClient();
     const watched = createAgentComposer(serverId, running.id, { queryClient });
     const reader = createAgentComposer(serverId, other.id, { queryClient });
     let notifications = 0;
@@ -281,6 +301,41 @@ describe("agent composer", () => {
     );
   });
 
+  it("takes the catalog the host changed while the picker was not open, once the host reconnects", async () => {
+    openSession(agent({ runtimeInfo: runtimeModel("opus") }));
+    const model = composer();
+    const stop = model.subscribe(() => {});
+    await until(() => model.getState().thinking, "high");
+
+    // The host changes the catalog while the client is away. Reconnecting invalidates the provider
+    // catalogs, which refetches the ones something is watching.
+    hostCatalog.entries = [
+      {
+        ...entries[0],
+        models: [{ ...entries[0].models![0], defaultThinkingOptionId: "low" }],
+      },
+    ] as ProviderSnapshotEntry[];
+    await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+
+    await until(() => model.getState().thinking, "low");
+    stop();
+  });
+
+  it("asks for the catalog again after a failed load once the host reconnects", async () => {
+    hostCatalog.failing = true;
+    openSession(agent({ runtimeInfo: runtimeModel("opus") }));
+    const model = composer();
+    const stop = model.subscribe(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(model.getState().thinking).toBeNull();
+
+    hostCatalog.failing = false;
+    await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+
+    await until(() => model.getState().thinking, "high");
+    stop();
+  });
+
   function pickerShows(running: Agent, catalog: ProviderSnapshotEntry[] | null) {
     const picker = resolveAgentModelSelection({
       models: filterSelectableModels(catalog?.[0]?.models ?? null),
@@ -318,4 +373,24 @@ describe("agent composer", () => {
       stop();
     },
   );
+
+  it("is released when nothing watches it and no composer is mounted, and shared while something does", () => {
+    openSession(agent());
+    const held = agentComposer(serverId, agentId);
+    const stop = held.subscribe(() => {});
+    expect(agentComposer(serverId, agentId)).toBe(held);
+    stop();
+
+    // A tab that remounts holds the composer it rendered with, which is shared again.
+    const stopAgain = held.subscribe(() => {});
+    expect(agentComposer(serverId, agentId)).toBe(held);
+    stopAgain();
+    expect(agentComposer(serverId, agentId)).not.toBe(held);
+
+    const mounted = agentComposer(serverId, agentId);
+    const detach = mounted.attachInput({ isLive: () => true, setText() {}, insertText() {} });
+    expect(agentComposer(serverId, agentId)).toBe(mounted);
+    detach();
+    expect(agentComposer(serverId, agentId)).not.toBe(mounted);
+  });
 });
