@@ -72,16 +72,16 @@ export class OpenCodeV2Session implements AgentSession {
     private readonly acquire?: () => Promise<V2Connection>,
     private readonly moved?: (connection: V2Connection) => void,
   ) {
-    this.background = new OpenCodeBackgroundInventory(
-      info.id,
-      config.cwd,
-      (event) => this.emit(event),
-      (error) =>
+    this.background = new OpenCodeBackgroundInventory({
+      id: info.id,
+      cwd: config.cwd,
+      emit: (event) => this.emit(event),
+      report: (error) =>
         this.logger.warn(
           { error: toDiagnosticErrorMessage(error) },
           "OpenCode background inventory failed",
         ),
-    );
+    });
     this.permissions = new SessionPermissions(
       () => this.client,
       info.id,

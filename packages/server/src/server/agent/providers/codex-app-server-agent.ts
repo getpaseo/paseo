@@ -3719,7 +3719,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connectionState = "connected";
-      this.background.start(client, this.currentThreadId);
+      this.background.start({ client, thread: this.currentThreadId });
     } catch (error) {
       try {
         if (this.client === client) {

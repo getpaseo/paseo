@@ -543,16 +543,16 @@ test("retries transient inventory failures and cancels retries on stop", async (
     let calls = 0;
     let fail = true;
     const inventory = new CodexBackgroundInventory(() => {});
-    inventory.start(
-      {
+    inventory.start({
+      client: {
         request: async () => {
           calls++;
           if (fail) throw new Error("temporary");
           return { data: [{ processId: "live", command: "sleep 120" }], nextCursor: null };
         },
       },
-      THREAD,
-    );
+      thread: THREAD,
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(inventory.snapshot()).toBeNull();
     inventory.changed(THREAD);
@@ -583,15 +583,15 @@ test("does not retry a failure from a stopped inventory generation", async () =>
       reject = fail;
     });
     const inventory = new CodexBackgroundInventory(() => {});
-    inventory.start(
-      {
+    inventory.start({
+      client: {
         request: () => {
           calls++;
           return response;
         },
       },
-      THREAD,
-    );
+      thread: THREAD,
+    });
     inventory.stop();
     reject(new Error("late failure"));
     await vi.advanceTimersByTimeAsync(15000);

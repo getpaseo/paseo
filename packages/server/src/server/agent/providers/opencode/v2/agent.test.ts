@@ -1635,12 +1635,12 @@ test("retries failed background bootstrap and roster without losing stale work",
         ],
       };
     };
-    const inventory = new OpenCodeBackgroundInventory(
-      harness.info.id,
-      "/tmp/project",
-      () => {},
-      () => {},
-    );
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
     inventory.start(harness.api);
     await vi.advanceTimersByTimeAsync(0);
     expect(inventory.snapshot()).toBeNull();
@@ -1696,12 +1696,12 @@ test("does not retry a failed bootstrap from a disconnected generation", async (
       calls++;
       return response;
     };
-    const inventory = new OpenCodeBackgroundInventory(
-      harness.info.id,
-      "/tmp/project",
-      () => {},
-      () => {},
-    );
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
     inventory.start(harness.api);
     inventory.disconnect();
     reject(new Error("late failure"));
@@ -1851,12 +1851,12 @@ test("keeps a shell available when its stop request times out", async () => {
       ],
     });
     harness.api.shell.remove = () => new Promise(() => {});
-    const inventory = new OpenCodeBackgroundInventory(
-      harness.info.id,
-      "/tmp/project",
-      () => {},
-      () => {},
-    );
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
     inventory.start(harness.api);
     await vi.advanceTimersByTimeAsync(0);
     expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);

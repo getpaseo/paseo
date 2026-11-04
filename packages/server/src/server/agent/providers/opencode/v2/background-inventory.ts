@@ -76,12 +76,21 @@ export class OpenCodeBackgroundInventory {
   private notify() {
     for (const listener of this.listeners) listener();
   }
-  constructor(
-    private readonly id: string,
-    private readonly cwd: string,
-    private readonly emit: (event: InventoryEvent) => void,
-    private readonly report: (error: unknown) => void,
-  ) {}
+  constructor(options: {
+    id: string;
+    cwd: string;
+    emit: (event: InventoryEvent) => void;
+    report: (error: unknown) => void;
+  }) {
+    this.id = options.id;
+    this.cwd = options.cwd;
+    this.emit = options.emit;
+    this.report = options.report;
+  }
+  private readonly id: string;
+  private readonly cwd: string;
+  private readonly emit: (event: InventoryEvent) => void;
+  private readonly report: (error: unknown) => void;
   snapshot() {
     return this.current;
   }

@@ -57,7 +57,7 @@ unsubscribe();
 
 `subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list on every change. Use `list()` for a one-shot read. Each item has `id`, `kind` (`"shell"`, `"monitor"`, or `"other"`; treat unknown values as `"other"`), `description` (or `null`) and `startedAt`, the time Paseo first observed it. Inventory is scoped to the current provider session and is not persisted. When its runtime is lost, its old items are discarded. An unavailable inventory is reported as an error rather than an empty list.
 
-Pass `subscribe(listener, { onError })` to receive the error when reading the current list fails; the listener is not called and the list is read again on the next reconnect. Without `onError`, the error is logged.
+Pass `subscribe(listener, { onError })` to receive setup or list errors. After a setup failure, create a new subscription; after a list failure, the list is read again on the next reconnect. Without `onError`, the error is logged.
 
 `list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host. For an item with `canStop`, call `backgroundWork.stop(item)` to wait for provider confirmation. Stop requires `features.agentBackgroundWorkStop`.
 

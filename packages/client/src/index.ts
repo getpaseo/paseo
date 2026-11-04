@@ -975,7 +975,13 @@ function createAgentHandleFactory(
           // Bumped by every delivery so a list answered after a newer update is dropped.
           let sequence = 0;
           let released = false;
+          const reportError = (error: unknown) => {
+            if (released) return;
+            if (options?.onError) options.onError(error);
+            else console.error("Background work subscription failed", error);
+          };
           observation.subscribe({
+            error: reportError,
             snapshot: () => {
               const listed = ++sequence;
               void daemonClient
@@ -984,11 +990,7 @@ function createAgentHandleFactory(
                   if (!released && listed === sequence) listener(items);
                   return undefined;
                 })
-                .catch((error: unknown) => {
-                  if (released) return;
-                  if (options?.onError) options.onError(error);
-                  else console.error("Background work list failed", error);
-                });
+                .catch(reportError);
             },
             update: (message) => {
               if (message.type !== "agent.background_work.update") return;

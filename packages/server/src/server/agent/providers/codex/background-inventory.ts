@@ -70,7 +70,7 @@ export class CodexBackgroundInventory {
   snapshot() {
     return this.current;
   }
-  start(client: Client, thread: string | null) {
+  start({ client, thread }: { client: Client; thread: string | null }) {
     this.stop();
     this.client = client;
     this.thread = thread;

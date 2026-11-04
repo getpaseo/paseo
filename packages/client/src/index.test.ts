@@ -2072,6 +2072,26 @@ test("background work subscriptions keep an update that overtakes their list", a
   await client.close();
 });
 
+test("background work subscriptions report a failed setup to onError", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items), {
+    onError: (error) => errors.push(error),
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "session.events.set_subscription.response",
+      payload: { requestId: request.requestId },
+    }),
+  );
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect((errors[0] as Error).message).toContain("subscription ID");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
 test("background work subscriptions report a failed list to onError", async () => {
   const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
   const received: unknown[] = [];
