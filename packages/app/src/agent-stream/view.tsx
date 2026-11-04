@@ -76,6 +76,7 @@ import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./mode
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { DisclosureRow } from "./disclosure";
+import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -335,6 +336,47 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
   return Math.max(16, clearance ?? 0);
 }
 
+// Keep entry/exit animations off on Android due to RN dispatchDraw crashes
+// tracked in react-native-reanimated#8422.
+const shouldDisableEntryExitAnimations = Platform.OS === "android";
+const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(200);
+const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(200);
+
+function ScrollToBottomButton({
+  nearBottom,
+  isTimelineDetached,
+  bottomOffset,
+  onPress,
+}: {
+  nearBottom: NearBottom;
+  isTimelineDetached: boolean;
+  bottomOffset: number;
+  onPress: () => void;
+}) {
+  const { t } = useTranslation();
+  const isNearBottom = useIsNearBottom(nearBottom);
+  const containerStyle = useMemo(
+    () => [stylesheet.scrollToBottomContainer, { bottom: bottomOffset }],
+    [bottomOffset],
+  );
+  if (isNearBottom && !isTimelineDetached) return null;
+  return (
+    <View style={containerStyle} pointerEvents="box-none">
+      <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
+        <Pressable
+          style={stylesheet.scrollToBottomButton}
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={t("agentStream.scrollToBottom")}
+          testID="scroll-to-bottom-button"
+        >
+          <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -376,7 +418,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [isMobile],
     );
-    const [isNearBottom, setIsNearBottom] = useState(true);
+    const nearBottom = useNearBottom(agentId);
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
       new Set(),
     );
@@ -433,18 +475,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           loadOlder: historyPagination.onLoadOlder,
         }
       : agentHistoryPagination;
-    // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
-    // tracked in react-native-reanimated#8422.
-    const shouldDisableEntryExitAnimations = Platform.OS === "android";
-    const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations
-      ? undefined
-      : FadeIn.duration(200);
-    const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations
-      ? undefined
-      : FadeOut.duration(200);
-
     useEffect(() => {
-      setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
       setExpandedTurnHostIds(new Set());
     }, [agentId]);
@@ -1071,13 +1102,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [baseRenderModel, pendingPermissionsNode, turnFooterNode]);
 
     const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
-    const scrollToBottomContainerStyle = useMemo(
-      () => [
-        stylesheet.scrollToBottomContainer,
-        { bottom: resolveBottomOverlayControlOffset(bottomOverlayControlClearance) },
-      ],
-      [bottomOverlayControlClearance],
-    );
+    const scrollToBottomOffset = resolveBottomOverlayControlOffset(bottomOverlayControlClearance);
     const listEmptyComponent = useMemo(
       () =>
         renderListEmptyComponent({
@@ -1235,7 +1260,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   viewportRef,
                   routeBottomAnchorRequest,
                   isAuthoritativeHistoryReady,
-                  onNearBottomChange: setIsNearBottom,
+                  onNearBottomChange: nearBottom.set,
                   onReadingPositionChange: handleReadingPositionChange,
                   onNearHistoryStart: loadOlder,
                   isLoadingOlderHistory: isLoadingOlder,
@@ -1254,21 +1279,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               activePrompt={chatOutline.activePrompt}
               onJumpToPrompt={chatOutline.jumpToPrompt}
             />
-            {(!isNearBottom || isTimelineDetached) && (
-              <View style={scrollToBottomContainerStyle} pointerEvents="box-none">
-                <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-                  <Pressable
-                    style={stylesheet.scrollToBottomButton}
-                    onPress={scrollToBottom}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("agentStream.scrollToBottom")}
-                    testID="scroll-to-bottom-button"
-                  >
-                    <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-                  </Pressable>
-                </Animated.View>
-              </View>
-            )}
+            <ScrollToBottomButton
+              nearBottom={nearBottom}
+              isTimelineDetached={isTimelineDetached}
+              bottomOffset={scrollToBottomOffset}
+              onPress={scrollToBottom}
+            />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
       </ChatFind>
