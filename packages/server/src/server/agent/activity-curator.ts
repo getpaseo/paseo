@@ -177,6 +177,11 @@ function curateProjectedActivityEntries(
       case "error":
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
+      case "notification": {
+        const label = { info: "Info", warning: "Warning", error: "Error" }[item.level];
+        entries.push(activityEntry(`[${label}] ${item.message}`));
+        break;
+      }
       case "compaction":
         entries.push(activityEntry("[Compacted]"));
         break;
