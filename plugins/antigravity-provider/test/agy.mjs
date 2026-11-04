@@ -103,6 +103,7 @@ let nextServerRpcId = 1000;
 let multiTurnCount = 0;
 let activePromptId = null;
 let failSetModelOnce = process.env.AGY_TEST_FAIL_SET_MODEL_ONCE === "yes";
+let failSetModelTarget = process.env.AGY_TEST_FAIL_SET_MODEL_TARGET;
 const pendingClientRequests = new Map();
 
 function send(msg) {
@@ -711,8 +712,9 @@ lines.on("line", async (line) => {
           setTimeout(resolve, Number(process.env.AGY_TEST_SET_MODEL_DELAY_MS)),
         );
       }
-      if (failSetModelOnce) {
+      if (failSetModelOnce || (failSetModelTarget && params.modelId === failSetModelTarget)) {
         failSetModelOnce = false;
+        failSetModelTarget = undefined;
         respondError(id, -32603, "Transient model switch error");
         return;
       }

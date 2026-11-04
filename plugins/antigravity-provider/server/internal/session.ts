@@ -98,6 +98,7 @@ export class Session {
   private mode: AntigravityModeId;
   private modelDirty = false;
   private modelRevision = 0;
+  private modelChangeChain: Promise<void> = Promise.resolve();
   private availableCommands: ProviderCommand[] = [];
   private lastUsage: ProviderUsage = {};
   private accumulatedCostUsd = 0;
@@ -360,13 +361,25 @@ export class Session {
     this.cancelAllPermissions();
     await this.retireDriver();
     if (activeTurn) await activeTurn.settled;
+    await this.modelChangeChain.catch(() => {});
     await this.retireDriver();
     await this.files.close();
   }
 
-  private async applyModelChange(nextModel: string | null): Promise<void> {
+  private applyModelChange(nextModel: string | null): Promise<void> {
+    const run = () => this.executeModelChange(nextModel);
+    const queued = this.modelChangeChain.then(run, run);
+    this.modelChangeChain = queued.catch(() => {});
+    return queued;
+  }
+
+  private async executeModelChange(nextModel: string | null): Promise<void> {
     if (nextModel === null) {
-      if (this.requestedModel === null && !this.modelDirty) return;
+      const isAlreadyDefault =
+        this.requestedModel === null &&
+        (this.effectiveModel === null || this.effectiveModel === this.defaultModelId) &&
+        !this.modelDirty;
+      if (isAlreadyDefault) return;
       const revision = ++this.modelRevision;
       if (this.driver?.isAlive && this.conversationId && !this.turn) {
         if (this.defaultModelId) {
@@ -466,6 +479,7 @@ export class Session {
   }
 
   private async ensureLiveDriver(): Promise<DriverProcess> {
+    await this.modelChangeChain.catch(() => {});
     if (
       this.driver?.isAlive &&
       this.conversationId &&
