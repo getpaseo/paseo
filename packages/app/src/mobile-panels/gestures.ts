@@ -2,6 +2,7 @@ import { createContext, useContext, useRef, type RefObject, useCallback, useMemo
 import { Gesture, PointerType, type GestureType } from "react-native-gesture-handler";
 import { useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
@@ -9,8 +10,6 @@ import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
 import { resolveMobilePanelGestureIntent } from "./gesture-intent";
-
-const PANEL_OPEN_EDGE_WIDTH = 32;
 
 function isCurrentSelection(startedRevision: number): boolean {
   return usePanelStore.getState().mobilePanel.revision === startedRevision;
@@ -54,6 +53,10 @@ export function useOpenAgentListGesture({
   } = useMobilePanelsRuntime();
   const width = panelWidth ?? windowWidth;
   const { touchScreen: hasTouchScreen } = usePointerCapabilities();
+  // Phone web keeps interior swipes for the page's horizontal scrollers; the wide overlay opens
+  // from anywhere in the workspace.
+  const isCompact = useIsCompactFormFactor();
+  const openFromEdgeOnly = isWeb && isCompact;
   const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -93,6 +96,7 @@ export function useOpenAgentListGesture({
             deltaY,
             direction: 1,
             openGesturesBlocked: openGesturesBlocked.value,
+            openEdge: openFromEdgeOnly ? { startX: touchStartX.value, windowWidth } : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
@@ -132,6 +136,7 @@ export function useOpenAgentListGesture({
       horizontalScroll?.isAnyScrolledRight,
       leftOpenGestureRef,
       motionState,
+      openFromEdgeOnly,
       openGesturesBlocked,
       position,
       startedRevision,
@@ -139,6 +144,7 @@ export function useOpenAgentListGesture({
       touchStartY,
       updateGesture,
       width,
+      windowWidth,
     ],
   );
 }
@@ -196,6 +202,7 @@ export function useCloseAgentListGesture({
             deltaY,
             direction: -1,
             openGesturesBlocked: false,
+            openEdge: null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent-list", position.value) ||
@@ -298,10 +305,10 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
             deltaY,
             direction: -1,
             openGesturesBlocked: openGesturesBlocked.value,
+            openEdge: isWeb ? { startX: touchStartX.value, windowWidth } : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
-            (isWeb && touchStartX.value < windowWidth - PANEL_OPEN_EDGE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -392,6 +399,7 @@ export function useCloseFileExplorerGesture(enabled = true) {
             deltaY,
             direction: 1,
             openGesturesBlocked: false,
+            openEdge: null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "file-explorer", position.value) ||
