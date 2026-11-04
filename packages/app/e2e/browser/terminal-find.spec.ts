@@ -627,3 +627,36 @@ async function dragTerminalWithFinger(
     }
   });
 }
+
+// Diagnostic-only: application modes emitted before the first attachment.
+// The existing live-mode tests above are the control for this failure.
+test.describe("mouse mode enabled before terminal attachment", () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test("preserves SGR wheel reports when opening a running terminal", async ({ page }) => {
+    await openPreAttachedMouseCapture(page);
+    await expectFingerNavigationInput(page, "mouse");
+  });
+});
+
+async function openPreAttachedMouseCapture(page: Page) {
+  await harness.createTerminal({
+    name: "Mouse mode before attachment",
+    command: process.execPath,
+    args: [
+      "-e",
+      `
+      process.stdin.setRawMode(true);
+      process.stdin.on("data", chunk => {
+        process.stdout.write("\\r\\nTOUCH_BYTES:" + chunk.toString("hex") + ":END\\r\\n");
+      });
+      process.stdout.write("\\x1b[?1000h\\x1b[?1006hTOUCH_INPUT_READY\\r\\n");
+    `,
+    ],
+  });
+  await openPhoneTerminal(page);
+  await expect.poll(() => getTerminalBufferText(page)).toContain("TOUCH_INPUT_READY");
+  await expect
+    .poll(() => page.evaluate(() => window.__paseoTerminal!.modes.mouseTrackingMode))
+    .toBe("vt200");
+}
