@@ -54,7 +54,7 @@ export function KeptPanelProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useKeptPanel(panel: Panel | null) {
+function useKeptPanel(panel: Panel | null) {
   const context = useContext(PanelContext);
   const register = context?.register;
   useEffect(() => {
@@ -95,6 +95,9 @@ export function KeepPanelContent({
   );
   useKeptPanel(panel);
   const keep = useCallback(() => select?.(id), [select, id]);
+  useEffect(() => {
+    if (context?.selected === id && menu.open) select?.(null);
+  }, [context?.selected, id, menu.open, select]);
   if (context?.selected === id) return null;
   return renderSurface(
     <>

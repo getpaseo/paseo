@@ -101,6 +101,12 @@ describe("composer track panel", () => {
     expect(row("composer-kept-panel")?.textContent).toContain("Run focused tests");
     click(row("composer-kept-panel-collapse") as Element);
     expect(row("composer-kept-panel")).toBeNull();
+    openPanel();
+    click(row("pill-keep-open") as Element);
+    expect(row("composer-kept-panel")).not.toBeNull();
+    openPanel();
+    expect(row("composer-kept-panel")).toBeNull();
+    expect(isPanelOpen()).toBe(true);
   });
 
   it("replaces the kept panel and removes it when its contribution disappears", () => {
