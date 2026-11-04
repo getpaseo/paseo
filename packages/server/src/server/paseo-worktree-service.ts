@@ -90,7 +90,7 @@ async function createPaseoWorktreeWithPriority(
         },
       });
     }
-    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree, input });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,
@@ -280,9 +280,14 @@ async function findAvailableBranchName(options: {
 
 async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
+  input: Pick<CreatePaseoWorktreeInput, "branchName">;
 }): Promise<void> {
-  const { createdWorktree } = options;
+  const { createdWorktree, input } = options;
   if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+    return;
+  }
+  // A branch the caller named is their choice; only a placeholder slug is replaced.
+  if (input.branchName !== undefined) {
     return;
   }
 
