@@ -1,7 +1,10 @@
 import { router, usePathname } from "expo-router";
 import { useCallback } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
-import { rememberPluginContributionHost } from "../contribution-host";
+import {
+  rememberPluginContributionHost,
+  usePreferredPluginContributionHosts,
+} from "../contribution-host";
 import { pluginIconComponent } from "../icons";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { selectPluginSidebarTarget, type PluginSidebarGroup } from "../sidebar-groups";
@@ -19,6 +22,7 @@ export function LegacyPluginSidebarRow({
   onBeforeNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  usePreferredPluginContributionHosts();
   const identity = { kind: "sidebar", id: group.contributionId } as const;
   const target = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
   const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, identity);
