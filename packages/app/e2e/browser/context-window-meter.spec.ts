@@ -431,7 +431,6 @@ test("context details support keyboard entry and dismiss when the viewport moves
 
 test("context details stay open while the chat streams", async ({ page }) => {
   test.setTimeout(120_000);
-  const usage = await scriptAgentUsage(page);
   await page.setViewportSize(DESKTOP);
   const session = await seedMockAgentWorkspace({
     repoPrefix: "context-window-streaming-",
@@ -444,16 +443,7 @@ test("context details stay open while the chat streams", async ({ page }) => {
     await submitMessageWithButton(page, "Stream while the context details are open.");
     const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
     await expect(stop).toBeVisible();
-    const [claude] = claudeAndCodexReports();
-    usage.answerNext([onPersonalLogin(claude!)]);
-    const meter = page.getByTestId("context-window-meter");
-    const trigger = page.getByRole("button", {
-      name: (await meter.getAttribute("aria-label"))!,
-      exact: true,
-    });
-    await trigger.focus();
-    const details = contextWindowDetails(page);
-    await expect(details).toBeVisible();
+    const details = await pressContextWindowMeter(page, /^Context window/);
     await expect(stop).toBeVisible();
     await qaScreenshot(page, "context-details-while-streaming");
 
