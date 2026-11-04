@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TerminalSession, WorkspaceLaunchTerminalMetadata } from "../terminal/terminal.js";
+import type {
+  TerminalSession,
+  WorkspaceLaunchTerminalMetadata,
+  WorkspacePortBlockTerminalMetadata,
+} from "../terminal/terminal.js";
 import {
   createTerminalManager as createRealTerminalManager,
   type TerminalManager,
@@ -225,6 +229,59 @@ describe("WorkspaceLaunchManager", () => {
       await original.disposeWorkspace(context.workspaceId);
     }
   });
+
+  it.each(["script", "service"])(
+    "restores a surviving %s block without inventing a launch",
+    async (name) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-script-block-recovery-"));
+      tempDirs.push(directory);
+      const terminalManager = createTerminalManager();
+      await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId: "surviving-script",
+        name,
+        workspacePortBlock: { portBase: 42000, portCount: 4 },
+      });
+      const environment = new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      });
+      const context = {
+        workspaceId: "surviving-script",
+        workspaceDirectory: directory,
+        projectSlug: "app",
+        branchName: null,
+      };
+      const manager = new WorkspaceLaunchManager({
+        terminalManager: terminalManager.manager,
+        serviceProxy: null,
+        workspaceRuntimeEnvironment: environment,
+        getDaemonTcpPort: null,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        logger: pino({ level: "silent" }),
+      });
+      await manager.initialize([context]);
+      expect(environment.get(context.workspaceId)).toMatchObject({ portBase: 42000, portCount: 4 });
+      expect(await manager.buildSnapshot(context)).toEqual([]);
+      await expect(
+        environment.ensure({
+          workspaceId: context.workspaceId,
+          cwd: directory,
+          branchName: null,
+          allocation: { range: "43000-43003", blockSize: 4 },
+        }),
+      ).resolves.toMatchObject({ portBase: 42000, portCount: 4 });
+      await expect(
+        environment.ensure({
+          workspaceId: "sibling",
+          cwd: directory,
+          branchName: null,
+          allocation: { range: "42001-42007", blockSize: 4 },
+        }),
+      ).resolves.toMatchObject({ portBase: 42004, portCount: 4 });
+    },
+  );
 
   it("reserves every surviving launch block before a different workspace starts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-startup-reservations-"));
@@ -1558,6 +1615,7 @@ function createTerminalManager(managerOptions: { unavailableError?: Error } = {}
       env?: Record<string, string>;
       retainOnExit?: boolean;
       workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+      workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
     }) => {
       if (failNextCreate) {
         failNextCreate = false;
@@ -1576,6 +1634,7 @@ function createTerminalManager(managerOptions: { unavailableError?: Error } = {}
         cwd: options.cwd,
         workspaceId: options.workspaceId,
         workspaceLaunch: options.workspaceLaunch,
+        workspacePortBlock: options.workspacePortBlock,
         getState: () => ({ scrollback: [], grid: [[{ char: "$" }]] }),
         subscribe: () => () => {},
         onExit: (listener: (info: { exitCode: number | null }) => void) => {

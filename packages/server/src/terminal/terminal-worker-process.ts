@@ -279,6 +279,7 @@ function runWorker(argv: string[]): void {
       hasOutput: session.hasOutput(),
       title: session.getTitle(),
       workspaceLaunch: session.workspaceLaunch,
+      workspacePortBlock: session.workspacePortBlock,
     };
   }
 

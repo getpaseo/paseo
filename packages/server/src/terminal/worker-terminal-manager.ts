@@ -287,6 +287,9 @@ export function createWorkerTerminalManager(
       get workspaceLaunch() {
         return record.state.workspaceLaunch;
       },
+      get workspacePortBlock() {
+        return record.state.workspacePortBlock;
+      },
       send(message: ClientMessage): void {
         if (message.type === "resize") {
           record.state = {

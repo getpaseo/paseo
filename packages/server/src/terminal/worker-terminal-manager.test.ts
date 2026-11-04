@@ -854,6 +854,27 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
 });
 
+it("retains an ordinary script's port-block ownership when adopting its detached worker", async () => {
+  const paseoHome = createTemporaryHome();
+  const cwd = mkdtempSync(join(tmpdir(), "worker-script-block-adopt-"));
+  temporaryDirs.push(cwd);
+  const first = await startRealWorkerManager({ paseoHome });
+  const workspacePortBlock = { portBase: 42000, portCount: 4 };
+  const created = await first.createTerminal({
+    cwd,
+    workspaceId: "script-block-owner",
+    workspacePortBlock,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+  });
+  expect(created.workspacePortBlock).toEqual(workspacePortBlock);
+  await first.detach();
+  manager = await startRealWorkerManager({ paseoHome });
+  const adopted = manager.getTerminal(created.id);
+  expect(adopted?.workspacePortBlock).toEqual(workspacePortBlock);
+  expect(adopted?.workspaceLaunch).toBeUndefined();
+  expect(adopted?.workspaceId).toBe("script-block-owner");
+});
+
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);

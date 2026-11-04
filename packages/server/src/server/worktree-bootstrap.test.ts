@@ -245,6 +245,7 @@ describe("runWorktreeAutoTerminals", () => {
     name?: string;
     title?: string;
     env?: Record<string, string>;
+    workspacePortBlock?: TerminalSession["workspacePortBlock"];
   }
 
   interface StubTerminalRecord {
@@ -541,6 +542,7 @@ describe("runWorktreeAutoTerminals", () => {
       PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
       COMPOSE_PROJECT_NAME: "paseo_workspace",
     });
+    expect(createTerminalCalls[0]?.workspacePortBlock).toEqual({ portBase: 21000, portCount: 100 });
   });
 
   it("keeps legacy service port allocation when no workspace block is configured", async () => {

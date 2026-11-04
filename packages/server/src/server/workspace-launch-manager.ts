@@ -139,13 +139,16 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     const terminals = new Map<string, TerminalSession>();
     for (const directory of terminalManager.listDirectories()) {
       for (const terminal of await terminalManager.getTerminals(directory)) {
-        if (terminal.workspaceLaunch) terminals.set(terminal.id, terminal);
+        if (terminal.workspacePortBlock || terminal.workspaceLaunch) {
+          terminals.set(terminal.id, terminal);
+        }
       }
     }
     // Reserve all blocks first, including unused ports, before resuming endpoint
     // monitoring or allowing another workspace to allocate.
     for (const terminal of terminals.values()) {
-      const metadata = terminal.workspaceLaunch!;
+      // COMPAT(workspaceLaunchPortBlock): added in v0.15.0, remove after 2027-05-05 once pre-metadata launch workers drain.
+      const metadata = (terminal.workspacePortBlock ?? terminal.workspaceLaunch)!;
       await this.deps.workspaceRuntimeEnvironment.adopt({
         workspaceId: terminal.workspaceId,
         portBase: metadata.portBase,
@@ -155,7 +158,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     const contextsById = new Map(contexts.map((context) => [context.workspaceId, context]));
     for (const terminal of terminals.values()) {
       const context = contextsById.get(terminal.workspaceId);
-      if (context) this.recoverTerminal(context, terminal);
+      if (context && terminal.workspaceLaunch) this.recoverTerminal(context, terminal);
     }
   }
 
@@ -326,6 +329,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
         portBase: environment.portBase,
         portCount: environment.portCount,
       },
+      workspacePortBlock: { portBase: environment.portBase, portCount: environment.portCount },
     });
     const runtime: WorkspaceLaunchRuntime = {
       launchName,

@@ -3,6 +3,7 @@ import type {
   ServerMessage,
   ClientMessage,
   WorkspaceLaunchTerminalMetadata,
+  WorkspacePortBlockTerminalMetadata,
 } from "./terminal.js";
 import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
 export interface WorkerTerminalState {
@@ -11,6 +12,7 @@ export interface WorkerTerminalState {
   hasOutput: boolean;
   title?: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
 }
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -30,6 +32,7 @@ export interface WorkerCreateTerminalOptions {
   cwd: string;
   workspaceId?: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
   name?: string;
   title?: string;
   env?: Record<string, string>;

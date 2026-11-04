@@ -504,6 +504,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   workspaceId: string;
   scriptName: string;
   env: Record<string, string> | undefined;
+  workspacePortBlock?: TerminalSession["workspacePortBlock"];
 }): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
   const {
     serviceScript,
@@ -513,6 +514,7 @@ async function acquireWorkspaceScriptTerminal(params: {
     workspaceId,
     scriptName,
     env,
+    workspacePortBlock,
   } = params;
   let reusableTerminal: TerminalSession | null = null;
   if (!serviceScript && existingRuntimeEntry?.terminalId) {
@@ -526,6 +528,7 @@ async function acquireWorkspaceScriptTerminal(params: {
       name: scriptName,
       title: scriptName,
       env,
+      workspacePortBlock,
     }));
   return { terminal, reusableTerminal };
 }
@@ -749,6 +752,9 @@ export async function spawnWorkspaceScript(
       workspaceId,
       scriptName,
       env,
+      workspacePortBlock: workspaceRuntime
+        ? { portBase: workspaceRuntime.portBase, portCount: workspaceRuntime.portCount }
+        : undefined,
     });
 
     runtimeStore.set({
