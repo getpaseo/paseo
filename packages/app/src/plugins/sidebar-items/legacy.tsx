@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import {
   rememberPluginContributionHost,
-  usePreferredPluginContributionHosts,
+  usePreferredPluginContributionHost,
 } from "../contribution-host";
 import { pluginIconComponent } from "../icons";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
@@ -22,7 +22,7 @@ export function LegacyPluginSidebarRow({
   onBeforeNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  usePreferredPluginContributionHosts();
+  usePreferredPluginContributionHost(group.key);
   const identity = { kind: "sidebar", id: group.contributionId } as const;
   const target = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
   const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, identity);

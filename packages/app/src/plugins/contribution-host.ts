@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStoreWithSelector } from "use-sync-external-store/shim/with-selector";
 import { z } from "zod";
 import { createStore } from "zustand/vanilla";
 import { persist, type StateStorage } from "zustand/middleware";
@@ -28,9 +28,15 @@ const preferredHosts = createPluginHostPreferences();
 
 const getPreferredHosts = () => preferredHosts.getState().hosts;
 
-/** Refresh sidebar targets when preferences finish loading or a screen changes its host. */
-export function usePreferredPluginContributionHosts(): void {
-  useSyncExternalStore(preferredHosts.subscribe, getPreferredHosts, getPreferredHosts);
+/** Refresh only the sidebar row whose remembered host changed. */
+export function usePreferredPluginContributionHost(contributionId: string): string | null {
+  return useSyncExternalStoreWithSelector(
+    preferredHosts.subscribe,
+    getPreferredHosts,
+    getPreferredHosts,
+    (hosts) => hosts[contributionId] ?? null,
+    Object.is,
+  );
 }
 
 export function getPreferredPluginContributionHost(contributionId: string): string | null {

@@ -23,7 +23,7 @@ import { createPluginClientStateSource } from "../client-state/source";
 import {
   pluginScreensHostKey,
   rememberPluginContributionHost,
-  usePreferredPluginContributionHosts,
+  usePreferredPluginContributionHost,
 } from "../contribution-host";
 import {
   PluginEnvironmentProvider,
@@ -88,7 +88,7 @@ function PluginSidebarItemHost({
   theme,
 }: PluginSidebarItemHostProps & { theme: PluginTheme }) {
   const pathname = usePathname();
-  usePreferredPluginContributionHosts();
+  usePreferredPluginContributionHost(pluginScreensHostKey(group.pluginId));
   const routeParams = useGlobalSearchParams();
   const { plugin, item } = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
   const client = useHostRuntimeClient(plugin.serverId);
