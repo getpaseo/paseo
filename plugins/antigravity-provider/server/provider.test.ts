@@ -508,6 +508,18 @@ it("switches models dynamically via session/set_model without respawning the pro
 
   await h.request({
     type: "session.configure",
+    requestId: "clear-model",
+    sessionId: "s",
+    changes: { model: null },
+  });
+  expect(
+    (await h.records())
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params.modelId),
+  ).toEqual(["gemini-3.8-flash-low", "gemini-4-argon-medium"]);
+
+  await h.request({
+    type: "session.configure",
     requestId: "invalid-mode",
     sessionId: "s",
     changes: { mode: "plan" },
@@ -533,6 +545,55 @@ it("switches models dynamically via session/set_model without respawning the pro
       error: expect.objectContaining({ code: "INVALID_MODEL" }),
     }),
   );
+});
+
+it("keeps the previous model when session/set_model fails so a retry succeeds", async () => {
+  const h = await harness({ AGY_TEST_FAIL_SET_MODEL_ONCE: "yes" });
+  await h.open();
+  await h.request({
+    type: "session.configure",
+    requestId: "set-model-fail",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.failed",
+      requestId: "set-model-fail",
+    }),
+  );
+  await h.request({
+    type: "session.configure",
+    requestId: "set-model-retry",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.completed",
+      requestId: "set-model-retry",
+    }),
+  );
+});
+
+it("prompts for external MCP tools with a query field in accept-edits mode and prefers allow_once", async () => {
+  const h = await harness();
+  await h.open(undefined, "s", "accept-edits");
+  const id = await h.prompt("MCP_QUERY_TOOL");
+  const perm = (await h.wait(
+    (event) => event.type === "session.permission" && event.request.name === "mcp__db__query",
+  )) as Extract<ProviderEvent, { type: "session.permission" }>;
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: perm.request.id,
+    response: { behavior: "allow" },
+  });
+  await h.completed(id);
+  const rpcResponse = (await h.records()).find(
+    (entry) => entry.rpc?.result?.outcome?.outcome === "selected",
+  );
+  expect(rpcResponse?.rpc?.result?.outcome?.optionId).toBe("allow_once");
 });
 
 it.each(["auth", "exit", "stderr"])(
