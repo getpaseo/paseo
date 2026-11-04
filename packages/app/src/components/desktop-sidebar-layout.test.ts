@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveDesktopDivisionLayout,
+  resolveWorkspaceActionPlacement,
+  type WindowLayout,
+} from "@/window-layout";
+import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
@@ -8,6 +13,71 @@ import {
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
+  const geometry: WindowLayout = {
+    bounds: { x: 0, y: 0, width: 951, height: 669 },
+    verticalBarEdge: "trailing",
+    verticalBar: { x: 875, y: 160, width: 44, height: 450 },
+    divisions: [{ x: 465, y: 0, width: 21, height: 669 }],
+  };
+
+  it("places workspace action symbols in the reported trailing bar", () => {
+    expect(resolveWorkspaceActionPlacement(geometry)).toBe("vertical-bar");
+    expect(resolveWorkspaceActionPlacement(null)).toBe("header");
+    expect(resolveWorkspaceActionPlacement({ ...geometry, verticalBarEdge: "none" })).toBe(
+      "header",
+    );
+    expect(resolveWorkspaceActionPlacement({ ...geometry, verticalBar: null })).toBe("header");
+    expect(resolveWorkspaceActionPlacement({ ...geometry, verticalBarEdge: "leading" })).toBe(
+      "header",
+    );
+  });
+
+  it("allocates both panels around a live division without clamping to saved sidebar widths", () => {
+    const input = {
+      geometry,
+      windowWidth: 951,
+      windowHeight: 669,
+      leftInset: 0,
+      rightInset: 84,
+    };
+    expect(resolveDesktopDivisionLayout(input)).toEqual({
+      sidebarWidth: 465,
+      gap: 21,
+      contentWidth: 381,
+    });
+    expect(
+      resolveDesktopDivisionLayout({ ...input, geometry: { ...geometry, divisions: [] } }),
+    ).toBeNull();
+    expect(
+      resolveDesktopDivisionLayout({ ...input, windowWidth: 669, windowHeight: 951 }),
+    ).toBeNull();
+    expect(resolveDesktopDivisionLayout({ ...input, geometry: null })).toBeNull();
+    expect(
+      resolveDesktopDivisionLayout({
+        ...input,
+        geometry: { ...geometry, divisions: [{ x: 0, y: 325, width: 951, height: 19 }] },
+      }),
+    ).toBeNull();
+  });
+
+  it("temporarily reveals navigation for a division without changing the saved closed intent", () => {
+    const visibility = {
+      chromeEnabled: true,
+      isCompactLayout: false,
+      isMounted: true,
+      isOpen: false,
+      canShare: false,
+    };
+    expect(
+      resolveDesktopSidebarVisibility({
+        ...visibility,
+        divisionLayout: { sidebarWidth: 465, gap: 21, contentWidth: 381 },
+      }),
+    ).toBe(true);
+    expect(resolveDesktopSidebarVisibility({ ...visibility, divisionLayout: null })).toBe(false);
+    expect(visibility.isOpen).toBe(false);
+  });
+
   it("keeps a retained sidebar hidden while app chrome is suppressed", () => {
     expect(
       resolveDesktopSidebarVisibility({

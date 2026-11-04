@@ -6,6 +6,12 @@ import {
   WorkspaceExplorerToggle,
 } from "@/screens/workspace/workspace-explorer-toggle";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
+import {
+  useWindowLayout,
+  resolveWorkspaceActionPlacement,
+  WindowLayoutActions,
+} from "@/window-layout";
+import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
 
 export { MobileWorkspaceTabSwitcher } from "./tab-switcher";
 
@@ -20,6 +26,8 @@ interface CompactWorkspaceHeaderProps {
   explorerToggleAccessibilityState: { expanded: boolean };
   /** Tab switcher and workspace menu, before the explorer toggle. */
   children: ReactNode;
+  actionsOnly?: boolean;
+  actionsActive: boolean;
 }
 
 /** The compact header with the workspace's project row and controls. */
@@ -33,8 +41,11 @@ export function CompactWorkspaceHeader({
   explorerToggleAccessibilityState,
   children,
   serverId,
+  actionsOnly = false,
+  actionsActive,
 }: CompactWorkspaceHeaderProps) {
   const { t } = useTranslation();
+  const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   const projectRow = useMemo(
     () => (
       <WorkspaceHeaderProjectRow
@@ -60,13 +71,18 @@ export function CompactWorkspaceHeader({
   );
 
   return (
-    <CompactHeader
-      navigation="menu"
-      title={title}
-      titleTestID="workspace-header-title"
-      subtitle={projectRow}
-      loading={isLoading}
-      actions={actions}
-    />
+    <IconButtonChromeProvider value="header-island">
+      {actionsOnly ? null : (
+        <CompactHeader
+          navigation="menu"
+          title={title}
+          titleTestID="workspace-header-title"
+          subtitle={projectRow}
+          loading={isLoading}
+          actions={actionsInBar ? undefined : actions}
+        />
+      )}
+      <WindowLayoutActions active={actionsActive}>{actions}</WindowLayoutActions>
+    </IconButtonChromeProvider>
   );
 }

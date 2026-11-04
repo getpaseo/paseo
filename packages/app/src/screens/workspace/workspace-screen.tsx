@@ -7,6 +7,7 @@ import {
   type InlinePathTarget,
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
@@ -502,6 +503,7 @@ function WorkspaceHeaderTitleBar({
   onCopyBranchName,
   onOpenSetupTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -518,18 +520,20 @@ function WorkspaceHeaderTitleBar({
           />
         </View>
       )}
-      <View style={styles.compactHeaderMenuCluster}>
-        <WorkspaceHeaderMenuDesktop
-          currentBranchName={currentBranchName}
-          showWorkspaceSetup={showWorkspaceSetup}
-          importAgentDisabled={importAgentDisabled}
-          copyPathDisabled={copyPathDisabled}
-          onOpenImportSheet={onOpenImportSheet}
-          onCopyWorkspacePath={onCopyWorkspacePath}
-          onCopyBranchName={onCopyBranchName}
-          onOpenSetupTab={onOpenSetupTab}
-        />
-      </View>
+      {actionsInBar ? null : (
+        <View style={styles.compactHeaderMenuCluster}>
+          <WorkspaceHeaderMenuDesktop
+            currentBranchName={currentBranchName}
+            showWorkspaceSetup={showWorkspaceSetup}
+            importAgentDisabled={importAgentDisabled}
+            copyPathDisabled={copyPathDisabled}
+            onOpenImportSheet={onOpenImportSheet}
+            onCopyWorkspacePath={onCopyWorkspacePath}
+            onCopyBranchName={onCopyBranchName}
+            onOpenSetupTab={onOpenSetupTab}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -1022,6 +1026,8 @@ function WorkspaceScreenContent({
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
+  const workspaceActionsInBar =
+    resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
@@ -3211,15 +3217,17 @@ function WorkspaceScreenContent({
         {workspaceDirectory ? (
           <>
             <WorkspaceActions serverId={normalizedServerId} cwd={workspaceDirectory} />
-            <WorkspaceHeaderExplorerToggle
-              owner={explorerToggleOwner}
-              onPress={handleToggleExplorerSidebar}
-              label={explorerSidebarToggleLabel}
-              tooltipLabel={t("workspace.tabs.explorerSidebar.toggle")}
-              tooltipKeys={EXPLORER_TOGGLE_KEYS}
-              style={styles.compactHeaderActionButton}
-              accessibilityState={explorerSidebarToggleAccessibilityState}
-            />
+            {workspaceActionsInBar ? null : (
+              <WorkspaceHeaderExplorerToggle
+                owner={explorerToggleOwner}
+                onPress={handleToggleExplorerSidebar}
+                label={explorerSidebarToggleLabel}
+                tooltipLabel={t("workspace.tabs.explorerSidebar.toggle")}
+                tooltipKeys={EXPLORER_TOGGLE_KEYS}
+                style={styles.compactHeaderActionButton}
+                accessibilityState={explorerSidebarToggleAccessibilityState}
+              />
+            )}
           </>
         ) : null}
       </View>
@@ -3238,6 +3246,7 @@ function WorkspaceScreenContent({
       explorerSidebarToggleLabel,
       explorerSidebarToggleAccessibilityState,
       explorerToggleOwner,
+      workspaceActionsInBar,
       t,
     ],
   );
@@ -3362,57 +3371,58 @@ function WorkspaceScreenContent({
     ],
   );
   const compactWorkspaceHeader = useMemo(
-    () =>
-      isMobile ? (
-        <CompactWorkspaceHeader
-          isLoading={isWorkspaceHeaderLoading}
-          title={workspaceHeaderTitle}
-          subtitle={workspaceHeaderSubtitle}
-          isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
-          serverId={normalizedServerId}
-          onToggleExplorer={handleToggleExplorerSidebar}
-          explorerToggleLabel={explorerSidebarToggleLabel}
-          explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
-        >
-          <MobileWorkspaceTabSwitcher
-            tabs={tabs}
-            activeTabKey={activeTabKey}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            onSelectSwitcherTab={handleSelectSwitcherTab}
-            createTerminalDisabled={createTerminalDisabled}
-            onCreateDraftTab={handleCreateDraftTab}
-            onCreateTerminal={handleCreateTerminal}
-            onCopyResumeCommand={handleCopyResumeCommand}
-            onCopyAgentId={handleCopyAgentId}
-            onCopyTerminalId={handleCopyTerminalId}
-            onCopyFilePath={handleCopyFilePath}
-            onReloadAgent={handleReloadAgent}
-            onRenameTab={handleRenameTab}
-            onCloseTab={handleCloseTabById}
-            onCloseTabsAbove={handleCloseTabsToLeft}
-            onCloseTabsBelow={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-          />
-          <WorkspaceHeaderMenuMobile
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            scripts={compactHeaderScripts}
-            currentBranchName={currentBranchName}
-            showWorkspaceSetup={showWorkspaceSetup}
-            showCreateBrowserTab={showCreateBrowserTab}
-            createTerminalDisabled={createTerminalDisabled}
-            importAgentDisabled={!canOpenImportSheet}
-            copyPathDisabled={!workspaceDirectory}
-            onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-            onCreateBrowser={handleCreateBrowserTab}
-            onOpenImportSheet={openImportSheet}
-            onCopyWorkspacePath={handleCopyWorkspacePath}
-            onCopyBranchName={handleCopyBranchName}
-            onOpenSetupTab={handleOpenSetupTab}
-          />
-        </CompactWorkspaceHeader>
-      ) : null,
+    () => (
+      <CompactWorkspaceHeader
+        actionsOnly={!isMobile}
+        actionsActive={isRouteFocused}
+        isLoading={isWorkspaceHeaderLoading}
+        title={workspaceHeaderTitle}
+        subtitle={workspaceHeaderSubtitle}
+        isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
+        serverId={normalizedServerId}
+        onToggleExplorer={handleToggleExplorerSidebar}
+        explorerToggleLabel={explorerSidebarToggleLabel}
+        explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
+      >
+        <MobileWorkspaceTabSwitcher
+          tabs={tabs}
+          activeTabKey={activeTabKey}
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+          onSelectSwitcherTab={handleSelectSwitcherTab}
+          createTerminalDisabled={createTerminalDisabled}
+          onCreateDraftTab={handleCreateDraftTab}
+          onCreateTerminal={handleCreateTerminal}
+          onCopyResumeCommand={handleCopyResumeCommand}
+          onCopyAgentId={handleCopyAgentId}
+          onCopyTerminalId={handleCopyTerminalId}
+          onCopyFilePath={handleCopyFilePath}
+          onReloadAgent={handleReloadAgent}
+          onRenameTab={handleRenameTab}
+          onCloseTab={handleCloseTabById}
+          onCloseTabsAbove={handleCloseTabsToLeft}
+          onCloseTabsBelow={handleCloseTabsToRight}
+          onCloseOtherTabs={handleCloseOtherTabs}
+        />
+        <WorkspaceHeaderMenuMobile
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+          scripts={compactHeaderScripts}
+          currentBranchName={currentBranchName}
+          showWorkspaceSetup={showWorkspaceSetup}
+          showCreateBrowserTab={showCreateBrowserTab}
+          createTerminalDisabled={createTerminalDisabled}
+          importAgentDisabled={!canOpenImportSheet}
+          copyPathDisabled={!workspaceDirectory}
+          onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+          onCreateBrowser={handleCreateBrowserTab}
+          onOpenImportSheet={openImportSheet}
+          onCopyWorkspacePath={handleCopyWorkspacePath}
+          onCopyBranchName={handleCopyBranchName}
+          onOpenSetupTab={handleOpenSetupTab}
+        />
+      </CompactWorkspaceHeader>
+    ),
     [
       activeTabKey,
       canOpenImportSheet,
@@ -3441,6 +3451,7 @@ function WorkspaceScreenContent({
       handleSelectSwitcherTab,
       handleToggleExplorerSidebar,
       isMobile,
+      isRouteFocused,
       isWorkspaceHeaderLoading,
       isWorkspaceHeaderSubtitleDistinct,
       normalizedServerId,
@@ -3559,6 +3570,7 @@ function WorkspaceScreenContent({
     </View>
   ) : (
     <View style={styles.centerColumn}>
+      {compactWorkspaceHeader}
       {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
 
       {shouldRenderDesktopPaneFallback ? (
