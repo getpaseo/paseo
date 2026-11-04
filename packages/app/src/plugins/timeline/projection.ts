@@ -22,13 +22,14 @@ function cloneAndFreeze<T>(value: T): T {
 }
 
 function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
-  const { callId, name, status, error, detail, metadata } = data;
+  const { callId, name, status, error, detail, metadata, agentMessage } = data;
   const base = {
     type: "tool_call" as const,
     callId,
     name,
     detail,
     ...(metadata ? { metadata } : {}),
+    ...(agentMessage ? { agentMessage } : {}),
   };
   switch (status) {
     case "running":

@@ -15,6 +15,13 @@ function isExcludedPath(requestPath: string): boolean {
   return EXCLUDED_PATHS.has(requestPath);
 }
 
+// RFC 8615 well-known URIs are machine-read metadata. Clients such as MCP OAuth
+// discovery (RFC 9728, RFC 8414) need a 404 for documents the daemon does not
+// serve; the SPA's index.html with a 200 reads as malformed metadata.
+function isWellKnownPath(requestPath: string): boolean {
+  return requestPath === "/.well-known" || requestPath.startsWith("/.well-known/");
+}
+
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -71,7 +78,14 @@ interface ResolvedTarget {
   isIndexHtml: boolean;
 }
 
-function resolveTargetFile(distDir: string, requestPath: string): ResolvedTarget | null {
+interface ResolveTargetFileOptions {
+  distDir: string;
+  requestPath: string;
+  spaFallback: boolean;
+}
+
+function resolveTargetFile(options: ResolveTargetFileOptions): ResolvedTarget | null {
+  const { distDir, requestPath, spaFallback } = options;
   const safePath = path.normalize(requestPath).replace(/^(\.\.[/\\])+/, "");
   let filePath = path.join(distDir, safePath);
 
@@ -82,6 +96,9 @@ function resolveTargetFile(distDir: string, requestPath: string): ResolvedTarget
 
   const finalStat = safeStat(filePath);
   if (!finalStat?.isFile()) {
+    if (!spaFallback) {
+      return null;
+    }
     filePath = path.join(distDir, "index.html");
     const fallbackStat = safeStat(filePath);
     if (!fallbackStat?.isFile()) {
@@ -190,8 +207,13 @@ interface ServeWebUiFileOptions {
 function serveWebUiFile(options: ServeWebUiFileOptions): void {
   const { distDir, requestPath, label, req, res } = options;
 
-  const target = resolveTargetFile(distDir, requestPath);
+  const wellKnown = isWellKnownPath(requestPath);
+  const target = resolveTargetFile({ distDir, requestPath, spaFallback: !wellKnown });
   if (!target) {
+    if (wellKnown) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     res.status(404).end();
     return;
   }

@@ -29,8 +29,9 @@ import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
  * on every platform.
  *
  * The bar floats over the transcript with no background, so content remains visible underneath.
- * Its host gives the scroll viewport a small bottom inset only when the bar exists; that keeps
- * the final footer clear without turning the overlay into a layout band.
+ * Its host gives the scroll viewport a small bottom inset for as long as the bar is mounted, with
+ * or without pills: that keeps the final footer clear, and pills that come and go every turn do not
+ * move the transcript.
  */
 export function ComposerTrackBar({ children }: { children: ReactNode }): ReactElement {
   return (

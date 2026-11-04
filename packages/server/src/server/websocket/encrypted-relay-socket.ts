@@ -1,3 +1,5 @@
+import { maxSecuredPlaintextByteLength } from "@getpaseo/relay";
+import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import { EventEmitter } from "node:events";
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 
@@ -8,6 +10,7 @@ export interface EncryptedRelayChannel {
 }
 
 export interface EncryptedRelaySocket {
+  readonly maxFrameBytes: number;
   readonly readyState: number;
   readonly bufferedAmount: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
@@ -43,6 +46,7 @@ export function createEncryptedRelaySocket(params: {
   });
 
   return {
+    maxFrameBytes: maxSecuredPlaintextByteLength(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES),
     get readyState() {
       return readyState;
     },
