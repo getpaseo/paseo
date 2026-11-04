@@ -842,9 +842,18 @@ test.skipIf(process.platform !== "linux")(
     };
     try {
       await expect
-        .poll(() => degraded && service.getMetrics().workspaceRefreshInFlightCount === 0, {
-          timeout: 15_000,
-        })
+        .poll(
+          () => {
+            const metrics = service.getMetrics();
+            // Metadata observation writes a canary after the working tree degrades.
+            return (
+              degraded &&
+              metrics.workspaceRefreshInFlightCount === 0 &&
+              metrics.workspaceObservationSetupInFlightCount === 0
+            );
+          },
+          { timeout: 15_000 },
+        )
         .toBe(true);
       rmSync(cwd, { recursive: true, force: true });
       await expect.poll(() => suspended, { timeout: 15_000 }).toBe(true);
@@ -867,10 +876,17 @@ test.skipIf(process.platform !== "linux")(
         reason: "refresh-button",
       });
       expect(snapshot.git).toMatchObject({ isGit: true, currentBranch: "restored" });
-      await expect.poll(() => service.getMetrics().repositoryWorkspaceLinkCount).toBe(1);
+      await expect
+        .poll(() => service.getMetrics(), { timeout: 15_000 })
+        .toMatchObject({
+          repositoryWorkspaceLinkCount: 1,
+          workspaceObservationSetupInFlightCount: 0,
+        });
     } finally {
       subscription.unsubscribe();
       await service.dispose();
+      // The diagnostic sink outlives Git commands and owns writes into this fixture.
+      await flushGitCommandTrace();
       if (previousTrace === undefined) delete process.env.PASEO_GIT_TRACE_FILE;
       else process.env.PASEO_GIT_TRACE_FILE = previousTrace;
       rmSync(root, { recursive: true, force: true });
