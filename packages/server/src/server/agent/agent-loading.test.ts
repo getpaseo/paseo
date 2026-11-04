@@ -261,6 +261,20 @@ test("timeline reads keep runnable unarchived agents interactive for the next pr
     expect((await ctx.client.waitForFinish(agent.id, 15000)).status).toBe("idle");
     const timeline = await ctx.client.fetchAgentTimeline(agent.id);
     expect(timeline.entries.length).toBeGreaterThan(0);
+    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
+    await rm(cwd, { recursive: true, force: true });
+    await ctx.client.fetchAgentTimeline(agent.id);
+    await mkdir(cwd);
+    const manager = ctx.daemon.daemon.agentManager;
+    await Promise.all([
+      manager.tryRunOutOfBand(agent.id, "first prompt"),
+      manager.tryRunOutOfBand(agent.id, "second prompt"),
+    ]);
+    expect(purposes).toEqual([
+      { purpose: "interactive" },
+      { purpose: "history" },
+      undefined, // Reload uses the provider's interactive default.
+    ]);
   } finally {
     await ctx.cleanup();
     await rm(cwd, { recursive: true, force: true });

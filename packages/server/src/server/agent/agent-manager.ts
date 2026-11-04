@@ -2803,8 +2803,16 @@ export class AgentManager {
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
-      // Reload validates the directory before releasing the readable history session.
-      await this.reloadAgentSession(agentId);
+      await this.trackAgentRegistrationOperation(
+        this.runLifecycleMutation(agentId, async () => {
+          const current = this.requireSessionAgent(agentId);
+          if (this.historySessions.has(current.session)) {
+            // Recheck inside the lane: another prompt may already have upgraded it.
+            // Reload validates the directory before releasing readable history.
+            await this.reloadAgentSessionInternal(agentId);
+          }
+        }),
+      );
     }
     return this.requireSessionAgent(agentId);
   }
