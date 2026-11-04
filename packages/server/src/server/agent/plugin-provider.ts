@@ -46,6 +46,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  AgentUsageSession,
   FetchCatalogOptions,
   ImportableProviderSession,
   ImportedProviderSession,
@@ -960,7 +961,10 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
+  constructor(
+    registration: ProviderRegistration,
+    private readonly runtimeSettings?: ProviderRuntimeSettings,
+  ) {
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
@@ -1111,6 +1115,10 @@ class PluginAgentClient implements AgentClient {
       this.attachPendingChildren();
     };
     const config = mapSessionConfig(input.config, input.launchContext, input.persist);
+    const usageEnv = createProviderEnv({
+      runtimeSettings: this.runtimeSettings,
+      overlays: [input.launchContext?.env],
+    });
     const session = new PluginAgentSession(
       this.provider,
       bridge,
@@ -1133,6 +1141,8 @@ class PluginAgentClient implements AgentClient {
         });
       },
       bind,
+      usageEnv,
+      input.config.model ?? undefined,
     );
     bind(bridge);
     return session;
@@ -1200,8 +1210,10 @@ class PluginAgentSession implements AgentSession {
     { session: ProviderRuntimeSession; unsubscribe: () => void }
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
+  private readonly usageSessionKey = randomUUID();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
+  private currentModel: string | undefined;
   private closed = false;
   private replay: {
     persistence: ProviderPersistence;
@@ -1221,7 +1233,10 @@ class PluginAgentSession implements AgentSession {
       state: ProviderConfigState,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
+    private readonly usageEnv: Record<string, string>,
+    initialModel?: string,
   ) {
+    this.currentModel = bridge.config.model ?? initialModel;
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.
@@ -1230,6 +1245,16 @@ class PluginAgentSession implements AgentSession {
       (entry) => entry.item.type === "notification",
     );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
+  }
+
+  usageSession(): AgentUsageSession | null {
+    if (this.closed) return null;
+    return {
+      provider: this.provider,
+      model: this.currentModel,
+      env: this.usageEnv,
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   get id(): string {
@@ -1599,6 +1624,7 @@ class PluginAgentSession implements AgentSession {
   private translateConfig(
     event: Extract<ProviderEvent, { type: "session.config" }>,
   ): AgentStreamEvent[] {
+    this.currentModel = event.config.model;
     return [
       {
         type: "mode_changed",

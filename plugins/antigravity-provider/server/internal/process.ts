@@ -44,6 +44,7 @@ export class DriverProcess {
   private stderr = "";
   private closing = false;
   private hasExited = false;
+  private exitNotified = false;
   private stopPromise: Promise<void> | null = null;
 
   constructor(
@@ -71,7 +72,7 @@ export class DriverProcess {
       detached: process.platform !== "win32",
       stdio: "pipe",
     });
-    this.child.stdin.on("error", () => {});
+    this.child.stdin.on("error", (error) => this.handleStdinFailure(error));
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", (chunk: string) => {
       this.stderr = (this.stderr + chunk).slice(-MAX_STDERR_CHARS);
@@ -84,7 +85,9 @@ export class DriverProcess {
       this.child.once("error", (error) => {
         this.hasExited = true;
         lines.close();
-        this.failAllPending(classifyFailure(this.stderr, error.message));
+        const failure = classifyFailure(this.stderr, error.message);
+        this.failAllPending(failure);
+        if (!this.closing) this.notifyExit(failure);
         resolve();
       });
       this.child.once("close", (code, signal) => {
@@ -93,7 +96,7 @@ export class DriverProcess {
         const exitReason = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
         const failure = classifyFailure(this.stderr, `Antigravity ACP exited (${exitReason})`);
         this.failAllPending(failure);
-        if (!this.closing) this.handlers.onExit(failure);
+        if (!this.closing) this.notifyExit(failure);
         resolve();
       });
     });
@@ -169,9 +172,9 @@ export class DriverProcess {
 
   private async finishStop(): Promise<void> {
     if (process.platform === "win32") {
+      // Node signal emulation kills only the leader; taskkill /T reaps any surviving tree.
+      await this.signalGroup("SIGKILL");
       if (!this.hasExited) {
-        // Node signal emulation kills only the leader; taskkill must see the live tree.
-        await this.signalGroup("SIGKILL");
         await this.exitedPromise;
       }
       return;
@@ -190,7 +193,27 @@ export class DriverProcess {
   }
 
   private writeMessage(payload: Record<string, unknown>): void {
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    if (this.child.stdin.destroyed || !this.child.stdin.writable) {
+      this.handleStdinFailure(new Error("stdin is not writable"));
+      return;
+    }
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+      if (error) this.handleStdinFailure(error);
+    });
+  }
+
+  private handleStdinFailure(error: Error): void {
+    if (this.closing || this.hasExited) return;
+    const failure = classifyFailure(this.stderr, `Antigravity ACP stdin failed: ${error.message}`);
+    this.failAllPending(failure);
+    this.notifyExit(failure);
+    void this.stop();
+  }
+
+  private notifyExit(failure: AntigravityError): void {
+    if (this.exitNotified) return;
+    this.exitNotified = true;
+    this.handlers.onExit(failure);
   }
 
   private handleLine(line: string): void {
