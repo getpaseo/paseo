@@ -25,7 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
-import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import { resolveDesktopSidebarInsetLeft } from "@/components/desktop-sidebar-layout";
 import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -737,9 +737,10 @@ function DesktopSidebar({
   const desktopSidebarBorderStyle = useMemo(
     () => [
       styles.desktopSidebarBorder(divisionLayout !== null),
-      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
+      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom,
+        paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }), },
     ],
-    [insetsTop, insets.bottom, divisionLayout],
+    [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],

@@ -41,6 +41,17 @@ export function resolveLeftSidebarPresentation(input: {
   return input.desktopSidebarVisible ? "dock" : "overlay";
 }
 
+/**
+ * The overlay sidebar starts at the window's left edge, over the workspace's safe-area padding, so
+ * its content takes the left inset itself. The dock sits inside app chrome, which already pads it.
+ */
+export function resolveDesktopSidebarInsetLeft(input: {
+  overlay: boolean;
+  safeAreaLeft: number;
+}): number {
+  return input.overlay ? input.safeAreaLeft : 0;
+}
+
 export function resolveDesktopAppChromeLayout(input: {
   desktopSidebarRendered: boolean;
   hasTopLeftWindowControls: boolean;

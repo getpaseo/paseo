@@ -9,6 +9,7 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
+  resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
   resolveDesktopSidebarWidth,
@@ -241,4 +242,9 @@ it("reserves room for Explorer and the workspace before showing app navigation",
       viewportWidth: 951,
     }),
   ).toBe(true);
+});
+
+it("insets an overlay sidebar's content by the left safe area and leaves the dock to app chrome", () => {
+  expect(resolveDesktopSidebarInsetLeft({ overlay: true, safeAreaLeft: 20 })).toBe(20);
+  expect(resolveDesktopSidebarInsetLeft({ overlay: false, safeAreaLeft: 20 })).toBe(0);
 });
