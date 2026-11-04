@@ -61,6 +61,11 @@ the chat and its replica cache would keep only the end of the reply. A recovery 
 running catch-up starts after whatever that catch-up applied, because the app applies a forward page
 row by row and an older cursor repeats rows.
 
+A live row whose epoch differs from the local cursor is a rewind or replacement this client never
+saw as an invalidation, not a stale row. The app recovers like a gap: it asks `after` its own
+cursor, and the daemon answers that stale epoch with a reset tail. Dropping the rows instead would
+leave the chat on pre-rewind history while the new epoch streams.
+
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
 Opening or resuming an agent fetches the latest available turns with a soft target of 40
