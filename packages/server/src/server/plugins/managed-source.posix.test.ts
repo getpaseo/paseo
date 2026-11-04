@@ -579,7 +579,7 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
 it("installs a registry npm pin through the configured npm mirror", async () => {
   const { startNpmRegistry, npmPluginPackages } =
     await import("../../../../../scripts/test-support/npm-registry.mjs");
-  const { resolveNpm } = await import("./managed-source/npm.js");
+  const { readNpmArtifact, resolveNpm } = await import("./managed-source/npm.js");
   const mirror = await startNpmRegistry(npmPluginPackages());
   const previous = process.env.npm_config_userconfig;
   process.env.npm_config_userconfig = mirror.userconfig;
@@ -614,10 +614,9 @@ it("installs a registry npm pin through the configured npm mirror", async () => 
     await sources.verifyCandidate("example", candidate);
     sources.commit("example", candidate.record);
     expect((await sources.describe("example", candidate.directory)).currentRevision).toBe("1.0.0");
-    expect(mirror.requests.filter((request) => request.endsWith(".tgz")).sort()).toEqual([
-      "/artifacts/0.tgz",
-      "/artifacts/1.tgz",
-    ]);
+    expect(
+      await readNpmArtifact(path.resolve(candidate.directory, "../.."), "paseo-fixture-plugin"),
+    ).toEqual({ ...pin, resolved: `${mirror.url}/artifacts/1.tgz` });
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
