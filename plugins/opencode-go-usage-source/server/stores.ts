@@ -28,7 +28,7 @@ const keySchema = z.object({ type: z.literal("key"), key: z.string().min(1) });
 export function defaultStorePaths(env: NodeJS.ProcessEnv = process.env): StorePaths {
   const dataHome = env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share");
   const directory = join(dataHome, "opencode");
-  const database = env.OPENCODE_DB ? resolve(env.OPENCODE_DB) : join(directory, "opencode.db");
+  const database = resolve(directory, env.OPENCODE_DB || "opencode.db");
   return { file: join(directory, "auth.json"), database };
 }
 
