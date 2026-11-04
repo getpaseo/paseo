@@ -115,6 +115,10 @@ nav: API 参考
 
 `agent.timeline.subscribe(handler)` 为该 Agent 建立网络订阅需求，并在重连后恢复它。它返回的取消订阅函数会释放这项需求；开始工作之前，请 await `unsubscribe.ready` 以等待 daemon 的初始确认。投递只包含实时内容。重连时会发出一个本地的 `subscription_restored` 事件；错过的历史请用 `refetch()` 显式请求。实时的替换会使之前的 epoch 失效。回调的形状、分页和失败行为见[时间线事件](./events.md#follow-timeline-events)。
 
+### Provider subagents {#provider-subagents}
+
+`agent.providerSubagents.list()` 返回 provider 在该 Agent 内部运行的子执行，例如 Claude Code 的 Task subagent。它们不是受管理的 Agent，因此 `client.agents.list()` 不包含它们。每个描述符包含 `id`、`parentAgentId`、`parentSubagentId`（直接的 provider subagent 父级；Agent 的直接子级为 `null`）、`provider`、`title`、`description`、`status`（`"running"`、`"completed"`、`"failed"` 或 `"canceled"`）、`createdAt` 和 `updatedAt`。当 daemon 报告父 Agent 出错时，该调用会 reject。
+
 ## `client.projects` {#clientprojects}
 
 | 方法                 | 结果                     | 行为                                                                   |

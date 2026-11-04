@@ -49,6 +49,12 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly serverId?: string;
     }) => void;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    /** Opens a provider subagent's read-only tab in its parent agent's workspace. Undefined on older hosts. */
+    readonly openProviderSubagent?: (input: {
+      readonly parentAgentId: string;
+      readonly subagentId: string;
+      readonly serverId?: string;
+    }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
