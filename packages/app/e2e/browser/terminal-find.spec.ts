@@ -413,6 +413,8 @@ test("searches retained output without sending Find input to the shell", async (
 test("keeps terminal Find owned by retained tabs and the focused split pane", async ({
   page,
 }, testInfo) => {
+  // This journey selects tabs from the full rails in both split panes.
+  await page.setViewportSize({ width: 1600, height: 900 });
   const first = await harness.createTerminal({
     name: "First search",
     command: "bash",
