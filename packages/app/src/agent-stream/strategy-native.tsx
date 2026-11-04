@@ -643,8 +643,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     scheduleHistoryStartSettle,
   ]);
 
-  // LegendList does not re-render visible rows when only renderItem changes; rows re-render
-  // through item identity (`useRevisedHistoryRows`).
+  // LegendList re-renders a mounted row only when its item or `extraData` changes, not when
+  // renderItem does. Item identity carries content and display changes (`useRevisedHistoryRows`);
+  // `extraData` carries the history renderer, whose identity changes with the history layout (a
+  // reply gaining its completed footer when the next prompt arrives) and keeps its row's item.
+  // StreamRow's memo limits that pass to the rows whose layout item changed.
   const renderItem = useStableEvent(
     ({ item, index }: LegendListRenderItemProps<StreamItem>): ReactElement => (
       <RowLayoutSync rowId={item.id} registry={rowLayoutSyncRegistry}>
@@ -687,6 +690,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ref={listRef}
       data={rows}
       renderItem={renderItem}
+      extraData={renderHistoryMountedRow}
       keyExtractor={keyExtractor}
       testID="agent-chat-scroll"
       nativeID="agent-chat-scroll-native-virtualized"
