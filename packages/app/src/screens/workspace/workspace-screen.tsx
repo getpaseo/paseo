@@ -1030,6 +1030,7 @@ function WorkspaceScreenContent({
     resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
+  const workspacePanelActive = usePanelStore((state) => state.mobilePanel.target === "agent");
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const layoutMode = useWorkspaceLayoutStore((state) => state.layoutMode);
   const hasMacTrafficLights = useHasWindowChromeObstruction("top-left");
@@ -3374,7 +3375,7 @@ function WorkspaceScreenContent({
     () => (
       <CompactWorkspaceHeader
         actionsOnly={!isMobile}
-        actionsActive={isRouteFocused}
+        actionsActive={isRouteFocused && (!isMobile || workspacePanelActive)}
         isLoading={isWorkspaceHeaderLoading}
         title={workspaceHeaderTitle}
         subtitle={workspaceHeaderSubtitle}
@@ -3463,6 +3464,7 @@ function WorkspaceScreenContent({
       workspaceDirectory,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
+      workspacePanelActive,
     ],
   );
   const desktopSplitContent = useMemo(() => {
