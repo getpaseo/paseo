@@ -1,3 +1,4 @@
+import { subscribeMobilePanelSelection } from "@/mobile-panels/selection";
 import { beforeEach, describe, expect, it } from "vitest";
 import { usePanelStore } from ".";
 import {
@@ -125,6 +126,25 @@ it("discards obsolete checkout selection while preserving other panel preference
 });
 
 describe("panel-store wide navigation overlay", () => {
+  it("subscribes with the current selection and observes future commands until unsubscribe", () => {
+    usePanelStore.getState().showMobileAgent();
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "hidden" });
+    const published = usePanelStore.getState().mobilePanel;
+    const received: (typeof published)[] = [];
+    const unsubscribe = subscribeMobilePanelSelection((selection) => received.push(selection));
+    try {
+      expect(received).toEqual([published]);
+      usePanelStore.getState().showMobileAgentList();
+      expect(received).toEqual([published, usePanelStore.getState().mobilePanel]);
+      unsubscribe();
+      const before = [...received];
+      usePanelStore.getState().showMobileAgent();
+      expect(received).toEqual(before);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   beforeEach(() => {
     const panels = usePanelStore.getState();
     panels.showMobileAgent();
