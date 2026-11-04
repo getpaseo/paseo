@@ -5,6 +5,7 @@ import {
   recordComposerToolbarFrames,
 } from "../support/helpers/composer-control-density";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const SETTLE_MS = 1_000;
@@ -89,6 +90,37 @@ test.describe("Composer control density across tab switches", () => {
       await expectNoCollapsedComposerToolbarFrame(page);
     } finally {
       await workspace.cleanup();
+    }
+  });
+});
+
+test.describe("Composer controls folding on a touch device", () => {
+  test.use({ viewport: { width: 1194, height: 834 }, isMobile: true, hasTouch: true });
+  test.describe.configure({ timeout: 180_000 });
+
+  test("an open menu stays closed after the controls fold and unfold", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "composer-density-fold-",
+      title: "Folding chat",
+      model: "ten-second-stream",
+    });
+    try {
+      await openAgentRoute(page, session);
+      const thinking = page.getByTestId("agent-thinking-selector").filter({ visible: true });
+      const thinkingMenu = page.getByTestId("combobox-desktop-container");
+
+      await thinking.click();
+      await expect(thinkingMenu).toBeVisible();
+
+      // Still a wide layout, but too narrow for separate controls: they fold into the model control.
+      await page.setViewportSize({ width: 640, height: 834 });
+      await expect(thinking).toHaveCount(0);
+
+      await page.setViewportSize({ width: 1194, height: 834 });
+      await expect(thinking).toBeVisible();
+      await expect(thinkingMenu).toHaveCount(0);
+    } finally {
+      await session.cleanup();
     }
   });
 });

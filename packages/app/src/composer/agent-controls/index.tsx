@@ -461,6 +461,10 @@ function buildAgentProviderModels(
   return map;
 }
 
+function densityFolds(density: ComposerControlDensity): boolean {
+  return resolveComposerControlPresentation(density).foldControls;
+}
+
 function buildOpenChangeHandler(
   selector: AgentControlSelector,
   setOpenSelector: (next: AgentControlSelector | null) => void,
@@ -597,6 +601,12 @@ function ControlledAgentControls({
         minimumDensity,
       });
       if (nextDensity === densityRef.current) return;
+      // Folding swaps the toolbar controls for the model sheet and back, so whatever menu or
+      // sheet was open belonged to controls that are gone.
+      if (densityFolds(nextDensity) !== densityFolds(densityRef.current)) {
+        setOpenSelector(null);
+        setActiveSheet(null);
+      }
       densityRef.current = nextDensity;
       setDensity(nextDensity);
     },
