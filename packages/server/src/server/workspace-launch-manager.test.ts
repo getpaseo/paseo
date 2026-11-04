@@ -142,6 +142,62 @@ describe("WorkspaceLaunchManager", () => {
     await manager.disposeWorkspace(context.workspaceId);
   });
 
+  it("reads current global policy for new leases while preserving existing workspace blocks", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-live-policy-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/dev" } } }),
+    );
+    let policy = { range: "42000-42003", blockSize: 4 };
+    let reads = 0;
+    const terminalManager = createTerminalManager();
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      }),
+      getGlobalServicePorts: async () => {
+        reads++;
+        return policy;
+      },
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+      logger: pino({ level: "silent" }),
+    });
+    const original = {
+      workspaceId: "policy-original",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    const sibling = { ...original, workspaceId: "policy-sibling" };
+    try {
+      await expect(manager.start(original, "dev")).resolves.toMatchObject({
+        portBase: 42000,
+        portCount: 4,
+      });
+      policy = { range: "43000-43007", blockSize: 8 };
+      await expect(manager.start(sibling, "dev")).resolves.toMatchObject({
+        portBase: 43000,
+        portCount: 8,
+      });
+      await manager.stop(original, "dev");
+      await expect(manager.start(original, "dev")).resolves.toMatchObject({
+        portBase: 42000,
+        portCount: 4,
+      });
+      expect(reads).toBe(2);
+    } finally {
+      await manager.disposeWorkspace(original.workspaceId);
+      await manager.disposeWorkspace(sibling.workspaceId);
+    }
+  });
+
   it("recovers a surviving launch terminal and its port block after daemon restart", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-recovery-"));
     tempDirs.push(directory);

@@ -19,7 +19,7 @@ The worker retains a fixed 10,000 history rows plus the screen in its existing x
 
 Which triggers keep terminals and which close them is owned by the stop reason (`keepTerminals`) that flows from the request through the supervisor to `stop()`. The kill side always ends in the reaper (`terminal-worker-reaper.ts`), the only path that signals terminal processes outside a connected daemon.
 
-Workspace launches keep their command and port-block ownership in typed worker metadata, separate from terminal names and titles. Bootstrap restores every surviving block before exposing workspace commands; a free port inside a surviving launch's block is still reserved. Completed launch output remains readable without contributing terminal activity to the workspace. An incompatible worker disables terminal operations without preventing workspace descriptors from loading.
+Opted-in scripts, services, and launches keep port-block ownership in typed worker metadata, separate from launch identity and terminal names. Bootstrap restores every surviving block before exposing workspace commands; an unused port inside a surviving command's block is still reserved. New launch leases read the current global policy; policy edits do not move issued leases. Completed launch output remains readable without contributing terminal activity to the workspace. An incompatible worker disables terminal operations without preventing workspace descriptors from loading.
 
 ## Record, socket and secret
 

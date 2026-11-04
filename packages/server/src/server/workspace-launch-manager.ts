@@ -102,7 +102,7 @@ export interface WorkspaceLaunchManagerDependencies {
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
   serviceProxyPublicBaseUrl: string | null;
-  globalServicePorts?: PaseoServicePortAllocation;
+  getGlobalServicePorts?: () => Promise<PaseoServicePortAllocation | undefined>;
   resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   emitWorkspaceUpdates?: (workspaceIds: Iterable<string>) => Promise<void>;
   /** Injected by tests so listener lifecycle races can be reproduced deterministically. */
@@ -238,21 +238,23 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       configResult.config,
       suppressedServiceNames,
     );
-    const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
-      workspaceId: context.workspaceId,
-      cwd: context.workspaceDirectory,
-      branchName: context.branchName,
-      allocation:
-        getWorkspaceServicePortAllocation(configResult.config?.worktree) ??
-        this.deps.globalServicePorts,
-      excludedPorts: () => {
-        const ports = new Set(configuredServicePorts);
-        for (const port of getAllReservedWorkspaceServicePorts()) {
-          ports.add(port);
-        }
-        return ports;
-      },
-    });
+    const environment =
+      this.deps.workspaceRuntimeEnvironment.get(context.workspaceId) ??
+      (await this.deps.workspaceRuntimeEnvironment.ensure({
+        workspaceId: context.workspaceId,
+        cwd: context.workspaceDirectory,
+        branchName: context.branchName,
+        allocation:
+          getWorkspaceServicePortAllocation(configResult.config?.worktree) ??
+          (await this.deps.getGlobalServicePorts?.()),
+        excludedPorts: () => {
+          const ports = new Set(configuredServicePorts);
+          for (const port of getAllReservedWorkspaceServicePorts()) {
+            ports.add(port);
+          }
+          return ports;
+        },
+      }));
     const preparedLaunch: PreparedWorkspaceLaunch = {
       launchName,
       command: config.command,
