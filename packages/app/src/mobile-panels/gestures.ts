@@ -4,7 +4,7 @@ import { useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { isWeb } from "@/constants/platform";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
-import { useHasTouchScreen } from "@/hooks/use-has-touch-screen";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
@@ -53,7 +53,7 @@ export function useOpenAgentListGesture({
     windowWidth,
   } = useMobilePanelsRuntime();
   const width = panelWidth ?? windowWidth;
-  const hasTouchScreen = useHasTouchScreen();
+  const { touchScreen: hasTouchScreen } = usePointerCapabilities();
   const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -157,7 +157,7 @@ export function useCloseAgentListGesture({
     windowWidth,
   } = useMobilePanelsRuntime();
   const width = panelWidth ?? windowWidth;
-  const hasTouchScreen = useHasTouchScreen();
+  const { touchScreen: hasTouchScreen } = usePointerCapabilities();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);

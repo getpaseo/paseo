@@ -1,4 +1,4 @@
-import { hasTouchScreen } from "@/hooks/use-fine-pointer";
+import { hasTouchScreen } from "@/hooks/pointer-capabilities";
 
 // The sizing gate, apart from the control sizes so that low-level modules such as
 // `constants/layout` can size by it without loading the theme. Import it through
