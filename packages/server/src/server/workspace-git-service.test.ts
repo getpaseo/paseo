@@ -1601,6 +1601,56 @@ describe("WorkspaceGitServiceImpl", () => {
     15_000,
   );
 
+  test.each(["repository metadata", "working tree"])(
+    "ignores expired %s watcher callbacks after recovery",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      const callbacks: Array<
+        (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+      > = [];
+      const recovered = createAsyncSubscription();
+      const subscribe = vi.fn(async (directory: string, callback: (typeof callbacks)[number]) => {
+        if (directory === watchPath) callbacks.push(callback);
+        if (directory === watchPath && ++attempts === 1) {
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return directory === watchPath ? recovered : createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        const readsBeforePoll = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsBeforePoll);
+        await vi.advanceTimersByTimeAsync(24_999);
+        expect(attempts).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await settle(() => expect(attempts).toBe(2));
+        // Recovery emits a debounced working-tree refresh before observation takes over.
+        await vi.advanceTimersByTimeAsync(1_000);
+        await waitForRefreshesToSettle(service);
+        const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+        callbacks[0]!(new Error("expired watcher stopped"), []);
+        callbacks[0]!(null, [{ path: join(watchPath, "stale.ts"), type: "update" }]);
+        expect(recovered.unsubscribe).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(20_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterRecovery);
+        expect(recovered.unsubscribe).not.toHaveBeenCalled();
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    15_000,
+  );
+
   test("sets a bounded polling fallback when recursive observation is unavailable", async () => {
     const subscribe = vi.fn(async () => {
       throw new Error("watcher unavailable");
