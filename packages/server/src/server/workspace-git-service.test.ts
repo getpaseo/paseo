@@ -1651,6 +1651,61 @@ describe("WorkspaceGitServiceImpl", () => {
     15_000,
   );
 
+  test.each(["repository metadata", "working tree"])(
+    "refreshes changes missed before %s watcher recovery",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      let changed = false;
+      const subscribe = vi.fn(async (directory: string) => {
+        if (directory === watchPath && ++attempts === 1) {
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          isDirty: changed,
+          currentBranch: changed ? "feature" : "main",
+        }),
+      );
+      const service = createService({
+        subscribe,
+        getCheckoutStatus,
+        getCheckoutSnapshotFacts: async (cwd) => ({
+          ...createCheckoutSnapshotFacts(cwd),
+          currentBranch: changed ? "feature" : "main",
+        }),
+      });
+      const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
+      service.onSnapshotUpdated((snapshot) => snapshots.push(snapshot));
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        await vi.advanceTimersByTimeAsync(29_999);
+        await waitForRefreshesToSettle(service);
+        expect(snapshots.at(-1)?.git).toMatchObject({ currentBranch: "main", isDirty: false });
+        changed = true;
+        await vi.advanceTimersByTimeAsync(1);
+        await settle(() => expect(attempts).toBe(2));
+        await vi.advanceTimersByTimeAsync(1_000);
+        await waitForRefreshesToSettle(service);
+        expect(snapshots.at(-1)?.git).toMatchObject(
+          kind === "repository metadata" ? { currentBranch: "feature" } : { isDirty: true },
+        );
+        const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(20_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterRecovery);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+  );
+
   test("sets a bounded polling fallback when recursive observation is unavailable", async () => {
     const subscribe = vi.fn(async () => {
       throw new Error("watcher unavailable");
