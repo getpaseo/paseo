@@ -23,6 +23,7 @@ import { openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
 import {
   failPromptIndexResponses,
+  holdPromptIndexResponses,
   trackPromptJumpRequests,
 } from "../support/helpers/agent-timeline-gate";
 
@@ -123,6 +124,88 @@ test("chat open position exposes a failed history jump and retries", async ({ pa
     await agent.cleanup();
   }
 });
+
+test("chat open position yields to a reader who scrolls while the start is loading", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 30 });
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await chooseChatOpenPosition(page, "Start");
+    const index = await holdPromptIndexResponses(page);
+    await openAgentTimeline(page, agent);
+    await index.waitForHeldResponse();
+    await expect(page.getByTestId("chat-opening-start")).toBeVisible();
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    const reading = await scrollChatAwayFromBottom(page, {
+      deltaY: -600,
+      minDistanceFromBottom: 300,
+    });
+    await expect(page.getByTestId("chat-opening-start")).toBeHidden();
+    index.release();
+    await expectReadingPositionKept(page, reading.offsetY);
+    await expect(
+      page
+        .locator('[data-testid="agent-chat-scroll"]:visible')
+        .first()
+        .getByText(agent.oldestPrompt, { exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("chat open position yields to a chat find match while the start is loading", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 30 });
+  const target = agent.prompts[25];
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await chooseChatOpenPosition(page, "Start");
+    const index = await holdPromptIndexResponses(page);
+    await openAgentTimeline(page, agent);
+    await index.waitForHeldResponse();
+    await expect(page.getByTestId("chat-opening-start")).toBeVisible();
+    await page.getByTestId("assistant-message").filter({ visible: true }).last().click();
+    await page.keyboard.press("ControlOrMeta+f");
+    const findQuery = page.getByRole("textbox", { name: "Find in pane", exact: true });
+    await expect(findQuery).toBeFocused();
+    await findQuery.fill(target);
+    await expect(page.getByRole("status", { name: "Find matches" })).toHaveText("1 of 1");
+    await expect(page.getByTestId("chat-opening-start")).toBeHidden();
+    const matched = await readScrollMetrics(page);
+    index.release();
+    await expectReadingPositionKept(page, matched.offsetY);
+    await expectTimelinePromptVisible(page, target);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+/**
+ * The opening request has been released, so a wrongly late jump would land within a few frames.
+ * Polling for a stable offset across a window that outlasts it keeps the check deterministic
+ * without asserting on a fixed sleep.
+ */
+async function expectReadingPositionKept(page: Page, offsetY: number): Promise<void> {
+  const samples: number[] = [];
+  await expect
+    .poll(
+      async () => {
+        samples.push((await readScrollMetrics(page)).offsetY);
+        return samples.length >= 10 && samples.every((sample) => Math.abs(sample - offsetY) <= 24);
+      },
+      { intervals: [200], timeout: 10_000 },
+    )
+    .toBe(true);
+}
 
 async function expectChatAtBottom(page: Page): Promise<void> {
   await expect

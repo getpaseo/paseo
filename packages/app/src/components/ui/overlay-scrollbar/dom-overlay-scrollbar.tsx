@@ -4,9 +4,12 @@ import { OverlayScrollbar, type OverlayScrollbarMetrics } from "./overlay-scroll
 export function DomOverlayScrollbar({
   scrollContainerRef,
   onUserScrollUp,
+  onUserScrollStart,
 }: {
   scrollContainerRef: RefObject<HTMLElement | null>;
   onUserScrollUp: () => void;
+  /** Called whenever the reader drags the thumb, in either direction. */
+  onUserScrollStart?: () => void;
 }) {
   const [metrics, setMetrics] = useState<OverlayScrollbarMetrics>({
     offset: 0,
@@ -41,9 +44,11 @@ export function DomOverlayScrollbar({
   const scrollToOffset = useCallback(
     (offset: number) => {
       const scrollContainer = scrollContainerRef.current;
-      if (scrollContainer) scrollContainer.scrollTop = offset;
+      if (!scrollContainer) return;
+      onUserScrollStart?.();
+      scrollContainer.scrollTop = offset;
     },
-    [scrollContainerRef],
+    [onUserScrollStart, scrollContainerRef],
   );
 
   return (

@@ -126,6 +126,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
+    onUserScroll,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -535,6 +536,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
+    onUserScroll?.();
     scrollKeyboardDismiss.onScrollBeginDrag(event);
     // The gesture takes the viewport from a disclosure hold. Size changes from a streaming row can
     // keep the hold's quiet frames from ever passing, and a held row that scrolls away would leave

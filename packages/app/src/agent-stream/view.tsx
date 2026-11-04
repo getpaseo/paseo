@@ -658,6 +658,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const {
       status: chatOpeningStatus,
       cancel: cancelChatOpening,
+      yieldToReader: yieldChatOpeningToReader,
       retry: retryChatOpening,
       bottomAnchorRequest: effectiveBottomAnchorRequest,
     } = useChatOpenPosition({
@@ -1259,6 +1260,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
+        onNavigate={yieldChatOpeningToReader}
       >
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
@@ -1283,6 +1285,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   isAuthoritativeHistoryReady,
                   onNearBottomChange: nearBottom.set,
                   onReadingPositionChange: handleReadingPositionChange,
+                  onUserScroll: yieldChatOpeningToReader,
                   onNearHistoryStart: loadOlder,
                   isLoadingOlderHistory: isLoadingOlder,
                   hasOlderHistory: hasOlder,

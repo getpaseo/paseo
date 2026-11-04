@@ -121,10 +121,18 @@ export function useChatOpenPosition(input: {
     cancelPending.current();
     setState({ status: "idle" });
   });
+  // The reader scrolled or a find match moved the list. A pending opening must not pull them back
+  // later; an error stays until they retry or go to the bottom. Runs on every wheel and touch
+  // move, so it only touches state while an opening is pending.
+  const yieldToReader = useStableEvent(() => {
+    if (state.status !== "loading" && state.status !== "positioning") return;
+    cancel();
+  });
   const retry = useStableEvent(() => setAttempt((value) => value + 1));
   return {
     status: state.status,
     cancel,
+    yieldToReader,
     retry,
     bottomAnchorRequest: position === "start" ? null : input.bottomAnchorRequest,
   };

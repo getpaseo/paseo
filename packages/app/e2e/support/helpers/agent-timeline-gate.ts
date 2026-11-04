@@ -39,6 +39,41 @@ export interface PromptJumpRequestTracker {
   requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
 }
 
+/**
+ * Hold every prompt-index response until `release`, so a test can act while a chat is still
+ * opening at its start. Held responses are delivered in order on release; later ones pass.
+ */
+export async function holdPromptIndexResponses(
+  page: Page,
+): Promise<{ waitForHeldResponse(): Promise<void>; release(): void }> {
+  let held = true;
+  const pending: Array<() => void> = [];
+  let notifyHeld: () => void = () => {};
+  const firstHeld = new Promise<void>((resolve) => {
+    notifyHeld = resolve;
+  });
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const session = getSessionMessage(message);
+      if (held && session?.type === "agent.timeline.list_prompts.response") {
+        pending.push(() => socket.send(message));
+        notifyHeld();
+        return;
+      }
+      socket.send(message);
+    });
+  });
+  return {
+    waitForHeldResponse: () => firstHeld,
+    release() {
+      held = false;
+      for (const deliver of pending.splice(0)) deliver();
+    },
+  };
+}
+
 export async function failPromptIndexResponses(page: Page): Promise<{ recover(): void }> {
   let failing = true;
   await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
