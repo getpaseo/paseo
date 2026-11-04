@@ -970,6 +970,47 @@ function TabChip({
   );
 }
 
+export function useWorkspaceNewTabKeyboardAction({
+  handlerName = "workspace-new-tab",
+  ownsKeyboardShortcuts,
+  normalizedServerId,
+  normalizedWorkspaceId,
+  paneId,
+  createNewTab,
+}: {
+  handlerName?: string;
+  ownsKeyboardShortcuts: boolean;
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
+  paneId?: string;
+  createNewTab: () => void;
+}) {
+  const handleNewTabKeyboardAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      if (!ownsKeyboardShortcuts) return false;
+      if (action.id === "workspace.tab.menu.open") {
+        createNewTab();
+        return true;
+      }
+      return false;
+    },
+    [createNewTab, ownsKeyboardShortcuts],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: buildWorkspaceKeyboardHandlerId({
+      name: handlerName,
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      paneId,
+    }),
+    actions: ["workspace.tab.menu.open"],
+    enabled: ownsKeyboardShortcuts,
+    priority: 200,
+    handle: handleNewTabKeyboardAction,
+  });
+}
+
 export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   const [presentations, setPresentations] = useState(
     () => new Map<string, WorkspaceTabPresentation>(),
@@ -1262,29 +1303,12 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
 
-  const handleNewTabKeyboardAction = useCallback(
-    (action: KeyboardActionDefinition): boolean => {
-      if (!ownsKeyboardShortcuts) return false;
-      if (action.id === "workspace.tab.menu.open") {
-        createNewTab();
-        return true;
-      }
-      return false;
-    },
-    [createNewTab, ownsKeyboardShortcuts],
-  );
-
-  useKeyboardActionHandler({
-    handlerId: buildWorkspaceKeyboardHandlerId({
-      name: "workspace-new-tab",
-      serverId: normalizedServerId,
-      workspaceId: normalizedWorkspaceId,
-      paneId,
-    }),
-    actions: ["workspace.tab.menu.open"],
-    enabled: ownsKeyboardShortcuts,
-    priority: 200,
-    handle: handleNewTabKeyboardAction,
+  useWorkspaceNewTabKeyboardAction({
+    ownsKeyboardShortcuts,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    paneId,
+    createNewTab,
   });
 
   const rail: WorkspaceTabRailSurface = host === "explorer" ? "sidebar" : "surface";

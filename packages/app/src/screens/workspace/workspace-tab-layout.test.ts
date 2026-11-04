@@ -7,6 +7,7 @@ import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import { resolveWorkspaceTabChipBackdrop } from "@/screens/workspace/workspace-tab-chip-backdrop";
 import { darkPureBlackTheme, darkTheme, lightTheme } from "@/styles/theme";
 import {
+  selectWorkspaceChrome,
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
@@ -265,4 +266,15 @@ it.each([
   [800, false],
 ])("workspace width %s selects compact=%s", (width, compact) => {
   expect(shouldUseCompactWorkspaceHeader(width)).toBe(compact);
+});
+
+describe("desktop pane chrome", () => {
+  it("replaces the pane header and rail together at the pane width boundary", () => {
+    const full = ["workspace header", "pane tab rail"];
+    expect(selectWorkspaceChrome({ width: 440, compact: "pane dropdown", full })).toBe(
+      "pane dropdown",
+    );
+    expect(selectWorkspaceChrome({ width: 500, compact: "pane dropdown", full })).toBe(full);
+    expect(selectWorkspaceChrome({ width: null, compact: "pane dropdown", full })).toBe(full);
+  });
 });

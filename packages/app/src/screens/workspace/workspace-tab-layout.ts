@@ -126,3 +126,12 @@ export function computeWorkspaceTabLayout(
     requiresHorizontalScrollFallback,
   };
 }
+
+export function selectWorkspaceChrome<Compact, Full>(input: {
+  width: number | null;
+  compact: Compact;
+  full: Full;
+}): Compact | Full {
+  const compact = input.width !== null && shouldUseCompactWorkspaceHeader(input.width);
+  return compact ? input.compact : input.full;
+}
