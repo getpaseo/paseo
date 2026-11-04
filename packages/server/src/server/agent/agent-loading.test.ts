@@ -142,60 +142,92 @@ test("resuming a stored agent keeps its unread flag and its last-activity time",
   }
 });
 
-test("loads an archived agent's history after its working directory is removed", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-missing-cwd-"));
-  const worktree = path.join(root, "managed-worktree");
-  await mkdir(worktree, { recursive: true });
-  const logger = createTestLogger();
-  const storage = new AgentStorage(path.join(root, "agents"), logger);
-  const manager = new AgentManager({
-    clients: createTestAgentClients(),
-    registry: storage,
-    logger,
-  });
-
-  const agentId = "00000000-0000-4000-8000-000000000501";
-
-  try {
-    const agent = await manager.createAgent({ provider: "codex", cwd: worktree }, agentId, {
-      workspaceId: "workspace-worktree",
-    });
-    await startAgentRun(manager, agent.id, "what did you change", logger, {});
-    // Dispatching a run does not finish it: the provider appends the reply to its
-    // history afterwards, and the turn is finalized only once that append lands.
-    // Archive after the turn is finalized so the transcript this test reads back is
-    // already on disk when the worktree goes away.
-    const finished = await manager.waitForAgentEvent(agent.id);
-    expect(finished.status).toBe("idle");
-    await manager.archiveAgent(agent.id);
-    await manager.closeAgent(agent.id);
-    await manager.flush();
-    await storage.flush();
-
-    // Archiving the workspace removes the worktree it owned. The agent's history is
-    // persisted and reading it must not depend on that directory still being there.
-    await rm(worktree, { recursive: true, force: true });
-
-    const loaded = await ensureAgentLoaded(agentId, {
-      agentManager: manager,
-      agentStorage: storage,
+test.each([false, true])(
+  "loads history after its working directory is removed (archived: %s)",
+  async (archived) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agent-loading-missing-cwd-"));
+    const worktree = path.join(root, "managed-worktree");
+    await mkdir(worktree, { recursive: true });
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
       logger,
     });
 
-    expect(loaded.id).toBe(agentId);
-    // The transcript is replayed from the provider's persisted history, so the reply the
-    // agent gave before the worktree went away is still readable.
-    const replies = manager
-      .getTimeline(agentId)
-      .filter((item) => item.type === "assistant_message");
-    expect(replies.length).toBeGreaterThan(0);
-    expect(replies.every((item) => item.type === "assistant_message" && item.text.length > 0)).toBe(
-      true,
+    const agentId = "00000000-0000-4000-8000-000000000501";
+
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: worktree }, agentId, {
+        workspaceId: "workspace-worktree",
+      });
+      await startAgentRun(manager, agent.id, "what did you change", logger, {});
+      // Dispatching a run does not finish it: the provider appends the reply to its
+      // history afterwards, and the turn is finalized only once that append lands.
+      // Archive after the turn is finalized so the transcript this test reads back is
+      // already on disk when the worktree goes away.
+      const finished = await manager.waitForAgentEvent(agent.id);
+      expect(finished.status).toBe("idle");
+      if (archived) await manager.archiveAgent(agent.id);
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      await storage.flush();
+
+      // Archiving the workspace removes the worktree it owned. The agent's history is
+      // persisted and reading it must not depend on that directory still being there.
+      await rm(worktree, { recursive: true, force: true });
+
+      const loaded = await ensureAgentLoaded(agentId, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+        purpose: "history",
+      });
+
+      expect(loaded.id).toBe(agentId);
+      // The transcript is replayed from the provider's persisted history, so the reply the
+      // agent gave before the worktree went away is still readable.
+      const replies = manager
+        .getTimeline(agentId)
+        .filter((item) => item.type === "assistant_message");
+      expect(replies.length).toBeGreaterThan(0);
+      expect(
+        replies.every((item) => item.type === "assistant_message" && item.text.length > 0),
+      ).toBe(true);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("timeline requests read unarchived stored history with a deleted cwd", async () => {
+  const { createDaemonTestContext } = await import("../test-utils/daemon-test-context.js");
+  const ctx = await createDaemonTestContext();
+  const cwd = await mkdtemp(path.join(tmpdir(), "timeline-deleted-cwd-"));
+  try {
+    const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+    await ctx.client.sendMessage(agent.id, "remember this conversation");
+    await ctx.client.waitForFinish(agent.id, 15000);
+    const before = await ctx.client.fetchAgentTimeline(agent.id);
+    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
+    await ctx.daemon.daemon.agentManager.flush();
+    await rm(cwd, { recursive: true, force: true });
+    const after = await ctx.client.fetchAgentTimeline(agent.id);
+    expect(after.entries).toEqual(before.entries);
+    expect(after.entries.length).toBeGreaterThan(0);
+    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
+    await expect(ctx.client.sendMessage(agent.id, "continue")).rejects.toThrow(
+      "Working directory does not exist",
+    );
+    await expect(ctx.client.createAgent({ provider: "codex", cwd })).rejects.toThrow(
+      "Working directory does not exist",
     );
   } finally {
-    await manager.closeAgent(agentId).catch(() => undefined);
-    await manager.flush().catch(() => undefined);
-    await storage.flush().catch(() => undefined);
-    await rm(root, { recursive: true, force: true });
+    await ctx.cleanup();
+    await rm(cwd, { recursive: true, force: true });
   }
-});
+}, 30000);
