@@ -165,6 +165,7 @@ export default defineConfig({
       "expo-router/react-navigation",
       "@testing-library/react",
       "@tanstack/react-query",
+      "@tanstack/react-virtual",
       "react-i18next",
       "i18next",
       "@marijn/find-cluster-break",
