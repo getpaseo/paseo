@@ -379,27 +379,31 @@ describe("@tintinweb/pi-subagents adapter", () => {
       expect.objectContaining({ id: "call-1", status: "completed" }),
     ]);
   });
-  test("applies a follow-up result to the run that was latest when it started", () => {
-    const host = createPiExtensionHost();
-    spawn(host, "call-1", "native-1");
-    const followup = {
-      callId: "followup-1",
-      toolName: "get_subagent_result",
-      args: { agent_id: "native-1", wait: true },
-    };
-    host.mapToolCall({ ...followup, status: "running", result: null });
-    spawn(host, "call-2", "native-1");
-    const mapping = host.mapToolCall({
-      ...followup,
-      status: "completed",
-      result: {
-        content: [
-          { type: "text", text: "Agent: native-1\nType: Explore | Status: completed\n\nDone." },
-        ],
-      },
-    });
-    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
-  });
+  // `agent_id` may be the agent's id or a handle such as its name.
+  test.each(["native-1", "explore"])(
+    "applies a follow-up result for %s to the run that was latest when it started",
+    (agentId) => {
+      const host = createPiExtensionHost();
+      spawn(host, "call-1", "native-1");
+      const followup = {
+        callId: "followup-1",
+        toolName: "get_subagent_result",
+        args: { agent_id: agentId, wait: true },
+      };
+      host.mapToolCall({ ...followup, status: "running", result: null });
+      spawn(host, "call-2", "native-1");
+      const mapping = host.mapToolCall({
+        ...followup,
+        status: "completed",
+        result: {
+          content: [
+            { type: "text", text: "Agent: native-1\nType: Explore | Status: completed\n\nDone." },
+          ],
+        },
+      });
+      expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
+    },
+  );
   // A `schedule` spawn registers a job and returns only text, so nothing runs under its row.
   const schedule = (text: string) => {
     const host = createPiExtensionHost();

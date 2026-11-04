@@ -96,11 +96,16 @@ const status = (value: string): "running" | "completed" | "failed" | "canceled" 
 export const tintinwebPiSubagents: PiExtension = {
   id: "@tintinweb/pi-subagents",
   createSession: () => {
-    /** A resume is a new call, so this names each agent's latest spawn or resume. */
-    const callsByAgent = new Map<string, string>();
-    const calls = new Set<string>();
-    /** Follow-ups report on the attempt that was latest when they started. */
-    const followupTargets = new Map<string, string>();
+    /** A resume is a new call, so this lists each agent's spawn and resume calls, latest last. */
+    const attemptsByAgent = new Map<string, string[]>();
+    /** Each spawn or resume call, mapped to the order it was recorded in. */
+    const calls = new Map<string, number>();
+    /** How many calls were recorded when each follow-up started. */
+    const followupStarts = new Map<string, number>();
+    // The agent's latest attempt among the first `recorded` calls, so a follow-up reports on
+    // the attempt that was latest when it started, whether it named the agent by id or handle.
+    const attempt = (agentId: string, recorded = Infinity) =>
+      attemptsByAgent.get(agentId)?.findLast((callId) => (calls.get(callId) ?? 0) < recorded);
     const readSessions = new Set<string>();
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = SpawnArgs.safeParse(call.args);
@@ -144,8 +149,11 @@ export const tintinwebPiSubagents: PiExtension = {
               subagents: [{ type: "upsert" as const, id: call.callId, status: "failed" as const }],
             }
           : { detail };
-      callsByAgent.set(details.data.agentId, call.callId);
-      calls.add(call.callId);
+      if (!calls.has(call.callId)) {
+        calls.set(call.callId, calls.size);
+        const attempts = attemptsByAgent.get(details.data.agentId) ?? [];
+        attemptsByAgent.set(details.data.agentId, [...attempts, call.callId]);
+      }
       const file = outputFileFromToolResult(call.result);
       const childSessions = file && !readSessions.has(file) ? [{ id: call.callId, file }] : [];
       if (file) readSessions.add(file);
@@ -185,14 +193,11 @@ export const tintinwebPiSubagents: PiExtension = {
       );
       const text = extractTextFromToolResult(call.result)?.trim() ?? "";
       const header = call.toolName === "get_subagent_result" ? RESULT_HEADER.exec(text) : null;
-      if (call.status === "running" && !followupTargets.has(call.callId)) {
-        const target = callsByAgent.get(args.data.agent_id);
-        if (target) followupTargets.set(call.callId, target);
-      }
+      if (call.status === "running" && !followupStarts.has(call.callId))
+        followupStarts.set(call.callId, calls.size);
       // `agent_id` may be a handle such as the agent's name; the header names the real id.
-      const id =
-        followupTargets.get(call.callId) ?? callsByAgent.get(header?.[1] ?? args.data.agent_id);
-      if (call.status !== "running") followupTargets.delete(call.callId);
+      const id = attempt(header?.[1] ?? args.data.agent_id, followupStarts.get(call.callId));
+      if (call.status !== "running") followupStarts.delete(call.callId);
       if (!id) return undefined;
       const detail = {
         type: "sub_agent" as const,
@@ -232,7 +237,7 @@ export const tintinwebPiSubagents: PiExtension = {
         for (const entry of entries) {
           // A result built before a resume must not finish the resumed run.
           const toolUseId = blocks.find((block) => block.id === entry.id)?.toolUseId;
-          const id = toolUseId && calls.has(toolUseId) ? toolUseId : callsByAgent.get(entry.id);
+          const id = toolUseId && calls.has(toolUseId) ? toolUseId : attempt(entry.id);
           if (!id) continue;
           const file = entry.outputFile;
           if (file && !readSessions.has(file)) {
