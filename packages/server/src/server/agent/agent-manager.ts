@@ -1597,6 +1597,9 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
       ...options,
+      // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
+      // it has saved a newer record, the one the open hooks saw.
+      ...(record ? { metadata: record.metadata } : {}),
       launchEnv,
       persistence: handle,
       restoring: true,

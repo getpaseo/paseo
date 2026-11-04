@@ -5597,6 +5597,37 @@ test("setLabels merges and persists labels", async () => {
   });
 });
 
+test("reopening a closed agent keeps metadata saved while the loader was reading its record", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-metadata-reopen-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Metadata reopen" },
+    undefined,
+    { workspaceId: undefined, metadata: { first: 1 } },
+  );
+  const agentId = created.id;
+  await manager.closeAgent(agentId);
+
+  // The loader reads the record, then a setMetadata is queued before its resume runs.
+  const readByLoader = await storage.get(agentId);
+  const saved = manager.setMetadata(agentId, { second: 2 });
+  const reopened = manager.resumeAgentFromPersistence(
+    { provider: "codex", sessionId: "session-metadata", metadata: { cwd: workdir } },
+    { cwd: workdir },
+    agentId,
+    { metadata: readByLoader?.metadata },
+  );
+
+  expect(await saved).toEqual({ first: 1, second: 2 });
+  expect((await reopened).metadata).toEqual({ first: 1, second: 2 });
+  expect((await storage.get(agentId))?.metadata).toEqual({ first: 1, second: 2 });
+});
+
 test("detachAgent removes relationship lifecycle labels from a live agent and emits state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-live-"));
   const storagePath = join(workdir, "agents");
