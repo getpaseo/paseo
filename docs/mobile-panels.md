@@ -77,7 +77,9 @@ A gesture captures the current revision when it becomes active. Per-frame update
 while that revision still owns the gesture.
 
 When a React command arrives during a drag, its newer revision clears gesture ownership and starts
-motion toward the new target. The older gesture's remaining updates and finish callback are ignored.
+motion toward its target, even an unchanged one: docking mid-swipe keeps `agent` and still returns
+the dragged position to its anchor. The older gesture's remaining updates and finish callback are
+ignored.
 Canceled gestures return to the latest canonical target. A successful gesture starts its finishing
 motion immediately; the matching React command adopts that motion instead of restarting it. Position
 settlement and command acceptance may arrive in either order. Activity changes after both agree on
