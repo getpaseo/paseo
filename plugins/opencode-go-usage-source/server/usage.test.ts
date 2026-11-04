@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -179,6 +179,34 @@ test("resolves default and overridden OpenCode store paths", () => {
     file: join(fixtureDirectory, "opencode", "auth.json"),
     database: customDatabase,
   });
+});
+
+test("discovers a relative OPENCODE_DB under the OpenCode data directory", async () => {
+  const paths = defaultStorePaths({
+    XDG_DATA_HOME: fixtureDirectory,
+    OPENCODE_DB: "go.db",
+  });
+  const databasePath = join(fixtureDirectory, "opencode", "go.db");
+  await mkdir(dirname(databasePath));
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(databasePath);
+  db.exec(
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER)",
+  );
+  db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)").run(
+    "go",
+    "opencode-go",
+    JSON.stringify({ type: "key", key: "relative-key" }),
+    1,
+    1,
+  );
+  db.close();
+  expect(await discover(paths)).toEqual([
+    {
+      key: expect.stringMatching(/^[a-f0-9]{64}$/),
+      input: { store: "database", path: databasePath },
+    },
+  ]);
 });
 
 test("discovers and fetches the default key from read-only auth.json", async () => {
