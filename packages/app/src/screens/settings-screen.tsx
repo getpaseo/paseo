@@ -125,7 +125,7 @@ import {
   SETTINGS_DESKTOP_SIDEBAR_WIDTH,
   useIsCompactFormFactor,
 } from "@/constants/layout";
-import { densityIconBox, densityIconSize } from "@/styles/density";
+import { density, densityIconBox, densityIconSize } from "@/styles/density";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
@@ -1523,7 +1523,7 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: { xs: theme.spacing[3], md: theme.spacing[2] },
-    minHeight: { xs: 52, md: 28 },
+    minHeight: { xs: 52, md: density.tightRowHeight.md },
     paddingVertical: theme.spacing[1],
     paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[2] },
     borderRadius: { xs: 0, md: theme.borderRadius.lg },
@@ -1549,7 +1549,7 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: { xs: theme.spacing[3], md: theme.spacing[2] },
-    minHeight: { xs: 52, md: 28 },
+    minHeight: { xs: 52, md: density.tightRowHeight.md },
     paddingVertical: theme.spacing[1],
     paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[2] },
     borderRadius: { xs: 0, md: theme.borderRadius.lg },

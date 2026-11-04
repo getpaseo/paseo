@@ -19,6 +19,16 @@ export function hasFinePointer(): boolean {
 }
 
 /**
+ * True when the device has a touch screen, even while a mouse or keyboard is attached to it:
+ * the primary pointer is coarse, or the screen reports touch points. Always true on native.
+ */
+export function hasTouchScreen(): boolean {
+  if (!isWeb) return true;
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(pointer: coarse)").matches || window.navigator.maxTouchPoints > 0;
+}
+
+/**
  * Reactive `hasFinePointer()` — re-renders when the user switches between a
  * mouse and touch (detachable keyboards, tablet mode).
  */
