@@ -1,0 +1,65 @@
+import { appendFileSync } from "node:fs";
+import { test, expect } from "../support/fixtures";
+import { clickNewChat } from "../support/helpers/launcher";
+import { expectComposerVisible } from "../support/helpers/composer";
+
+for (const size of [50_000, 500_000, 2_000_000]) {
+  for (const shape of ["single", "multiline"]) {
+    for (let repeat = 1; repeat <= 3; repeat++) {
+      test(`clipboard measurement ${size} ${shape} ${repeat}`, async ({ page, withWorkspace }) => {
+        test.setTimeout(120_000);
+        const record: Record<string, unknown> = { variant: process.env.PASTE_VARIANT, size, shape, repeat };
+        await page.goto("/");
+        await expect(page.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();
+        const workspace = await withWorkspace({ prefix: "paste-perf-8777-" });
+        await workspace.navigateTo();
+        await clickNewChat(page);
+        await expectComposerVisible(page);
+        await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+        const input = page.getByRole("textbox", { name: "Message agent..." }).first();
+        await input.fill("draft ");
+        const text = shape === "single" ? "x".repeat(size) : ("x".repeat(79) + "\n").repeat(size / 80);
+        await page.evaluate(value => navigator.clipboard.writeText(value), text);
+        await input.evaluate((element) => {
+          const state = { start: 0, paintedMs: 0, maxGapMs: 0, last: performance.now(), longTasks: [] as number[], visible: document.visibilityState };
+          (window as any).__pasteProbe = state;
+          new PerformanceObserver(list => {
+            for (const entry of list.getEntries()) if (state.start && entry.startTime >= state.start - 1) state.longTasks.push(entry.duration);
+          }).observe({ type: "longtask", buffered: false });
+          setInterval(() => { const now = performance.now(); if (state.start) state.maxGapMs = Math.max(state.maxGapMs, now - state.last); state.last = now; }, 10);
+          element.addEventListener("paste", () => {
+            state.start = performance.now(); state.last = state.start;
+            requestAnimationFrame(() => requestAnimationFrame(() => { state.paintedMs = performance.now() - state.start; }));
+          }, { capture: true, once: true });
+        });
+        const start = performance.now();
+        try {
+          await input.press("ControlOrMeta+V", { timeout: 30_000 });
+          await page.waitForFunction(() => (window as any).__pasteProbe.paintedMs > 0, null, { timeout: 30_000 });
+          record.pasteActionMs = performance.now() - start;
+          const keyStart = performance.now();
+          await page.keyboard.insertText(".");
+          await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+          record.followupKeyAndPaintMs = performance.now() - keyStart;
+          await page.waitForTimeout(500);
+          Object.assign(record, await input.evaluate((element: HTMLTextAreaElement) => ({ ...(window as any).__pasteProbe, inputLength: element.value.length })));
+          record.filePills = await page.getByTestId("composer-file-attachment-pill").count();
+          if (process.env.PASTE_VARIANT === "fixed") {
+            await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(1);
+            await expect(input).toHaveValue("draft .");
+          } else {
+            expect(await input.inputValue()).toHaveLength(text.length + 7);
+          }
+          if (size === 2_000_000 && repeat === 1) await page.screenshot({ path: `/tmp/paseo-8777-${process.env.PASTE_VARIANT}-${shape}.png` });
+          record.status = "completed";
+        } catch (error) {
+          record.status = "error-or-timeout"; record.elapsedMs = performance.now() - start; record.error = String(error);
+          throw error;
+        } finally {
+          appendFileSync(`/tmp/paseo-8777-${process.env.PASTE_VARIANT}-metrics.jsonl`, JSON.stringify(record) + "\n");
+          console.log("PASTE_METRIC", JSON.stringify(record));
+        }
+      });
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { observeFileUploads } from "../support/helpers/file-uploads";
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -53,6 +55,140 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("large clipboard text uploads exact bytes and retries a real upload failure", async ({
+    page,
+    withWorkspace,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const uploads = await observeFileUploads(page);
+    const workspace = await withWorkspace({ prefix: "attach-large-paste-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const input = page.getByRole("textbox", { name: "Message agent..." }).first();
+    await input.fill("keep this draft");
+    const text = "中文🙂 code\r\n  ".repeat(100_000);
+    await page.evaluate((value) => navigator.clipboard.writeText(value), text);
+    await input.press("ControlOrMeta+V");
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(1);
+    await expect(input).toHaveValue("keep this draft");
+    await expect.poll(() => uploads.uploadedPaths.length).toBe(1);
+    expect(await readFile(uploads.uploadedPaths[0], "utf8")).toBe(text);
+    await page.screenshot({ path: testInfo.outputPath("large-paste-attached.png") });
+
+    // Corrupt one size declaration so the real daemon rejects the transferred bytes.
+    uploads.failNextUpload();
+    await page.evaluate((value) => navigator.clipboard.writeText(value), text);
+    await input.press("ControlOrMeta+V");
+    const failed = page.getByTestId("composer-failed-file-attachment");
+    await expect(failed).toBeVisible();
+    await expect(failed).toContainText("Upload size mismatch");
+    await expect(input).toHaveValue("keep this draft");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await page.screenshot({ path: testInfo.outputPath("large-paste-upload-failed.png") });
+    // Replace the clipboard to prove retry retains the original content.
+    await page.evaluate(() => navigator.clipboard.writeText("different clipboard"));
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.getByTestId("composer-failed-file-attachment")).toHaveCount(0);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(2);
+    await expect.poll(() => uploads.uploadedPaths.length).toBe(2);
+    expect(await readFile(uploads.uploadedPaths[1], "utf8")).toBe(text);
+    await expect(input).toHaveValue("keep this draft");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath("large-paste-retried.png") });
+  });
+
+  test("clipboard length boundary matches Codex plain text at 5000 UTF-16 units", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "attach-paste-boundary-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const input = page.getByRole("textbox", { name: "Message agent..." }).first();
+    for (const length of [4999, 5000, 5001]) {
+      const text = "🙂".repeat(Math.floor(length / 2)) + (length % 2 ? "a" : "");
+      await input.fill("left replace right");
+      await input.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(5, 12));
+      await page.evaluate((value) => navigator.clipboard.writeText(value), text);
+      await input.press("ControlOrMeta+V");
+      await expect(input).toHaveValue(
+        length < 5000 ? "left " + text + " right" : "left replace right",
+      );
+      await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(
+        Math.max(0, length - 4999),
+      );
+    }
+  });
+
+  test("short and mixed clipboard pastes replace the selection without losing the image", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "attach-mixed-paste-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const input = page.getByRole("textbox", { name: "Message agent..." }).first();
+    await input.fill("left replace right");
+    await input.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(5, 12));
+    await page.evaluate(() => navigator.clipboard.writeText("short"));
+    await input.press("ControlOrMeta+V");
+    await expect(input).toHaveValue("left short right");
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+    await input.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(5, 10));
+    await page.evaluate(async (png) => {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob(["caption"], { type: "text/plain" }),
+          "image/png": new Blob([new Uint8Array(png)], { type: "image/png" }),
+        }),
+      ]);
+    }, Array.from(MINIMAL_PNG));
+    await input.press("ControlOrMeta+V");
+    await expect(input).toHaveValue("left caption right");
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(1);
+  });
+
+  test("large clipboard attachments survive queue editing and draft reload", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await startRunningMockAgent(page, {
+      prefix: "attach-paste-queue-",
+      model: "one-minute-stream",
+      prompt: "Stay running for paste queue test.",
+    });
+    try {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+      const input = page.getByRole("textbox", { name: "Message agent..." }).first();
+      await input.fill("queued attachment");
+      await page.evaluate(() => navigator.clipboard.writeText("q".repeat(5_000)));
+      await input.press("ControlOrMeta+V");
+      const pill = page.getByTestId("composer-file-attachment-pill");
+      await expect(pill).toHaveCount(1);
+      const fileName = await pill.innerText();
+      await sendDraftToQueue(page);
+      await expectQueuedMessageButton(page);
+      await expect(pill).toHaveCount(0);
+      await page.getByRole("button", { name: "Edit queued message", exact: true }).click();
+      await expect(input).toHaveValue("queued attachment");
+      await expect(pill).toHaveText(fileName, { useInnerText: true });
+      await page.reload();
+      await expectComposerVisible(page);
+      await expect(input).toHaveValue("queued attachment");
+      await expect(pill).toHaveText(fileName, { useInnerText: true });
+      await input.press("Enter");
+      await expect(input).toHaveValue("");
+      await expect(pill).toHaveCount(0);
+      await expect(page.getByText(fileName.split("\n")[0], { exact: true })).toBeVisible();
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,

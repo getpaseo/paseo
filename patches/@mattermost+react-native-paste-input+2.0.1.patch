@@ -28,17 +28,105 @@ index 73466dd..8440ac9 100644
  
    auto textSize = textLayoutManager_
 diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-index 9e429b8..1d10014 100644
+index 1794b53..b1f75aa 100644
 --- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
 +++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+@@ -1,5 +1,12 @@
+ package com.mattermost.pasteinputtext
+ 
++import android.content.ClipboardManager
++import android.content.Context
++import android.net.Uri
++import com.facebook.react.bridge.Arguments
++import com.facebook.react.uimanager.UIManagerHelper
++import java.io.File
++import java.io.IOException
+ import android.annotation.SuppressLint
+ import android.os.Build
+ import android.view.inputmethod.EditorInfo
+@@ -33,8 +40,43 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+     return mOnPasteListener
+   }
+ 
 -  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
 -    val ic = super.onCreateInputConnection(outAttrs)
++  override fun onTextContextMenuItem(id: Int): Boolean {
++    val isPaste = id == android.R.id.paste || id == android.R.id.pasteAsPlainText
++    if (!isPaste || mDisabledCopyPaste) return super.onTextContextMenuItem(id)
++    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
++    val clip = clipboard.primaryClip ?: return super.onTextContextMenuItem(id)
++    val text = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).text }.joinToString("\n")
++    // Keep in sync with LARGE_PASTE_THRESHOLD in the app composer.
++    if (text.length < 5_000) return super.onTextContextMenuItem(id)
++
++    val event = Arguments.createMap()
++    val files = Arguments.createArray()
++    try {
++      val file = File.createTempFile("pasted-text-", ".txt", context.cacheDir)
++      file.writeText(text, Charsets.UTF_8)
++      val info = Arguments.createMap()
++      info.putString("fileName", file.name)
++      info.putString("type", "text/plain")
++      info.putDouble("fileSize", file.length().toDouble())
++      info.putString("uri", Uri.fromFile(file).toString())
++      files.pushMap(info)
++    } catch (error: IOException) {
++      val failure = Arguments.createMap()
++      failure.putString("message", error.localizedMessage)
++      event.putMap("error", failure)
++    }
++    event.putArray("data", files)
++    mPasteEventDispatcher.dispatchEvent(PasteTextInputPasteEvent(UIManagerHelper.getSurfaceId(this), this.id, event))
++    if (id == android.R.id.paste) {
++      for (index in 0 until clip.itemCount) {
++        clip.getItemAt(index).uri?.let { getOnPasteListener().onPaste(it, mPasteEventDispatcher) }
++      }
++    }
++    return true
++  }
++
 +  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
 +    val ic = super.onCreateInputConnection(outAttrs) ?: return null
-@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+ 
+     EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("*/*"))
+ 
+@@ -55,6 +97,6 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+       true
+     }
+ 
 -    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+   }
+ }
+diff --git a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+index 59ff531..02fe082 100644
+--- a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
++++ b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+@@ -450,7 +450,23 @@ static void pasteInputInterceptedPasteIMP(id self, SEL _cmd, id sender)
+     // back to the system paste handler — that's our signal that the pasteboard
+     // only contained text/rich-text representations.
+     UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+-    NSArray<NSDictionary *> *files = [pasteboard getCopiedFiles];
++    NSMutableArray<NSDictionary *> *files = [[pasteboard getCopiedFiles] mutableCopy];
++    NSString *text = [[pasteboard strings] componentsJoinedByString:@"\n"];
++    // Keep in sync with LARGE_PASTE_THRESHOLD in the app composer.
++    if (text.length >= 5000) {
++        NSString *name = [NSString stringWithFormat:@"pasted-text-%@.txt", NSUUID.UUID.UUIDString];
++        NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
++        NSData *bytes = [text dataUsingEncoding:NSUTF8StringEncoding];
++        NSError *writeError = nil;
++        if ([bytes writeToURL:url options:NSDataWritingAtomic error:&writeError]) {
++            [files addObject:@{@"fileName": name, @"fileSize": @(bytes.length),
++                              @"type": @"text/plain", @"uri": url.absoluteString}];
++        } else {
++            [files addObject:@{@"error": writeError.localizedDescription}];
++        }
++    } else if (files.count > 0 && text.length > 0) {
++        [(id<UIKeyInput>)self insertText:text];
++    }
+ 
+     if (files.count == 0) {
+         struct objc_super superData = {
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 index 51b9dfa..501badf 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
