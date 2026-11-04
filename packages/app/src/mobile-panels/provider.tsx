@@ -86,14 +86,20 @@ function useResolvedLeftPanelWidth(windowWidth: number): number {
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const { height: windowHeight } = useWindowDimensions();
   const divisionLayout = resolveDesktopDivisionLayout({
-    geometry: useWindowLayout(), windowWidth, windowHeight,
-    leftInset: insets.left, rightInset: insets.right,
+    geometry: useWindowLayout(),
+    windowWidth,
+    windowHeight,
+    leftInset: insets.left,
+    rightInset: insets.right,
   });
   if (isCompact) return windowWidth;
-  return divisionLayout?.sidebarWidth ?? resolveDesktopSidebarWidth({
-    requestedWidth: sidebarWidth,
-    viewportWidth: windowWidth - insets.left - insets.right,
-  });
+  return (
+    divisionLayout?.sidebarWidth ??
+    resolveDesktopSidebarWidth({
+      requestedWidth: sidebarWidth,
+      viewportWidth: windowWidth - insets.left - insets.right,
+    })
+  );
 }
 
 export function MobilePanelsProvider({ children }: { children: ReactNode }) {

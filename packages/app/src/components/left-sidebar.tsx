@@ -25,7 +25,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
-import { resolveDesktopSidebarInsetLeft } from "@/components/desktop-sidebar-layout";
+import {
+  resolveDesktopSidebarInsetLeft,
+  resolveDesktopSidebarWidth,
+} from "@/components/desktop-sidebar-layout";
 import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -670,7 +673,6 @@ function DesktopSidebar({
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
 
-
   const startWidth = useSharedValue(visibleSidebarWidth);
   const resizeWidth = useSharedValue(visibleSidebarWidth);
   const [resizePressed, setResizePressed] = useState(false);
@@ -737,8 +739,12 @@ function DesktopSidebar({
   const desktopSidebarBorderStyle = useMemo(
     () => [
       styles.desktopSidebarBorder(divisionLayout !== null),
-      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom,
-        paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }), },
+      {
+        flex: 1,
+        paddingTop: insetsTop,
+        paddingBottom: insets.bottom,
+        paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }),
+      },
     ],
     [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
@@ -827,7 +833,6 @@ function DesktopSidebar({
         </View>
       </Animated.View>
     </MobilePanelOverlay>
-
   );
 }
 

@@ -81,5 +81,8 @@ export function hasFinePointer(): boolean {
 
 /** Touch sizing remains enabled on hybrid browsers that report touch points. */
 export function hasTouchScreen(): boolean {
-  return source.getSnapshot().touchScreen || (isWeb && typeof window !== "undefined" && window.navigator.maxTouchPoints > 0);
+  return (
+    source.getSnapshot().touchScreen ||
+    (isWeb && typeof window !== "undefined" && window.navigator.maxTouchPoints > 0)
+  );
 }
