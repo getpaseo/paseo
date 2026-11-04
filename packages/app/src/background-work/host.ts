@@ -59,7 +59,9 @@ export function createHostBackgroundWorkModel(
         | ReturnType<BackgroundWorkClient["observeAgentBackgroundWork"]>
         | undefined;
       const sync = () => {
-        const next = host.getClient();
+        const candidate = host.getClient();
+        // The runtime keeps the client across reconnects, but clears server info until handshake.
+        const next = candidate?.getLastServerInfoMessage() ? candidate : null;
         if (next === client) return;
         const previousRelease = release;
         client = next;

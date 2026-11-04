@@ -56,3 +56,42 @@ test("retries a failed observation and receives subsequent updates", async () =>
   expect(model.getSnapshot()).toEqual({ status: "ready", items: [] });
   unsubscribe();
 });
+
+test("starts observing after the same client reconnects", async () => {
+  let connected = false;
+  let notify = () => {};
+  let snapshot = () => {};
+  const item = {
+    id: "shell",
+    kind: "shell",
+    description: "sleep",
+    startedAt: "2026-01-01T00:00:00Z",
+  };
+  const client = {
+    getLastServerInfoMessage: () =>
+      connected ? { features: { agentBackgroundWork: true } } : null,
+    stopAgentBackgroundWork: async () => {},
+    listAgentBackgroundWork: async () => [item],
+    observeAgentBackgroundWork: () => ({
+      subscribe: (observer: { snapshot(): void }) => {
+        snapshot = observer.snapshot;
+      },
+      release: async () => {},
+    }),
+  };
+  const model = createHostBackgroundWorkModel("host", "agent", {
+    getClient: () => client,
+    subscribe: (listener) => {
+      notify = listener;
+      return () => {};
+    },
+  });
+  const unsubscribe = model.subscribe(() => {});
+  connected = true;
+  notify();
+  snapshot();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(model.getSnapshot()).toEqual({ status: "ready", items: [item] });
+  unsubscribe();
+});
