@@ -514,7 +514,10 @@ function ControlledAgentControls({
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
-  const initialDensity: ComposerControlDensity = isCompact ? "tight" : "full";
+  // A compact composer always folds its controls into the model sheet; the width budget only
+  // decides whether the model keeps its label.
+  const minimumDensity: ComposerControlDensity = isCompact ? "compact" : "full";
+  const initialDensity = minimumDensity;
   const [density, setDensity] = useState<ComposerControlDensity>(initialDensity);
   const densityRef = useRef<ComposerControlDensity>(initialDensity);
   const availableWidthRef = useRef(0);
@@ -591,12 +594,13 @@ function ControlledAgentControls({
         currentDensity: densityRef.current,
         controls: controlPresence,
         geometry: toolbarGeometry,
+        minimumDensity,
       });
       if (nextDensity === densityRef.current) return;
       densityRef.current = nextDensity;
       setDensity(nextDensity);
     },
-    [controlPresence, toolbarGeometry],
+    [controlPresence, minimumDensity, toolbarGeometry],
   );
 
   const handleLayout = useCallback(
@@ -706,8 +710,8 @@ function ControlledAgentControls({
 
   const handleCloseSheet = useCallback(() => {
     setActiveSheet(null);
-    if (!isCompact) onDropdownClose?.();
-  }, [isCompact, onDropdownClose]);
+    if (!presentation.foldControls) onDropdownClose?.();
+  }, [onDropdownClose, presentation.foldControls]);
 
   const handleSelectThinkingAndClose = useCallback(
     (thinkingOptionId: string) => {
@@ -738,7 +742,7 @@ function ControlledAgentControls({
   return (
     <ComposerControlLayoutProvider value={layoutContextValue}>
       <View style={styles.container} onLayout={handleLayout}>
-        {!isCompact ? (
+        {!presentation.foldControls ? (
           <DesktopAgentControlsContent
             provider={provider}
             providerOptions={providerOptions}
@@ -825,6 +829,7 @@ function ControlledAgentControls({
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
             glyphSize={layoutContextValue.glyphSize}
+            showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
@@ -1148,6 +1153,7 @@ interface SheetAgentControlsContentProps {
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
   glyphSize: number;
+  showLabels: boolean;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
 }
@@ -1187,6 +1193,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     renderThinkingOption,
     modeControl,
     glyphSize,
+    showLabels,
     modelSelectorServerId,
     canSwitchProvider,
   } = props;
@@ -1275,6 +1282,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       isRetryingProvider={isRetryingModelProvider}
       serverId={modelSelectorServerId}
       glyphSize={glyphSize}
+      showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
     >
       {sheetControls}

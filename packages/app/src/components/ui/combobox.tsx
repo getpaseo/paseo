@@ -64,7 +64,8 @@ import {
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
-import { densityIconBox } from "@/styles/density";
+import { density, densityIconBox } from "@/styles/density";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -204,7 +205,7 @@ export function SearchInput({
 
   return (
     <View style={styles.searchInputContainer}>
-      <Search size={16} color={theme.colors.foregroundMuted} />
+      <DensityIcon icon={Search} size="md" color="foregroundMuted" />
       <AdaptiveTextInput
         ref={inputRef}
         // @ts-expect-error - outlineStyle is web-only
@@ -251,21 +252,19 @@ export function ComboboxItem({
   onPress,
   testID,
 }: ComboboxItemProps): ReactElement {
-  const { theme } = useUnistyles();
-
   let leadingContent: ReactElement | null = null;
   if (leadingSlot) {
     leadingContent = <View style={styles.comboboxItemLeadingSlot}>{leadingSlot}</View>;
   } else if (kind === "directory") {
     leadingContent = (
       <View style={styles.comboboxItemLeadingSlot}>
-        <Folder size={16} color={theme.colors.foregroundMuted} />
+        <DensityIcon icon={Folder} size="md" color="foregroundMuted" />
       </View>
     );
   } else if (kind === "file") {
     leadingContent = (
       <View style={styles.comboboxItemLeadingSlot}>
-        <File size={16} color={theme.colors.foregroundMuted} />
+        <DensityIcon icon={File} size="md" color="foregroundMuted" />
       </View>
     );
   }
@@ -309,7 +308,7 @@ export function ComboboxItem({
       {selected || trailingSlot ? (
         <View style={styles.comboboxItemTrailingContainer}>
           <View style={styles.comboboxItemTrailingSlot}>
-            {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
+            {selected ? <DensityIcon icon={Check} size="md" color="foregroundMuted" /> : null}
           </View>
           {trailingSlot}
         </View>
@@ -1683,7 +1682,7 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItem: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 36,
+    minHeight: density.rowHeight,
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
@@ -1714,7 +1713,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.55,
   },
   comboboxItemTrailingSlot: {
-    width: 16,
+    width: densityIconBox("md"),
     alignItems: "center",
     justifyContent: "center",
   },

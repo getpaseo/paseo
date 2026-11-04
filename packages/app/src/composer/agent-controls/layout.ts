@@ -4,7 +4,20 @@ import {
   type ControlSizing,
 } from "@/components/ui/control-geometry";
 
-export type ComposerControlDensity = "full" | "condensed" | "tight";
+/**
+ * How much of the toolbar shows, widest first. Each step drops something before the next:
+ * carets and labels, then the mode label, then the thinking, mode and feature controls fold into
+ * the model control's sheet (`compact`, the phone toolbar), then the model's own label.
+ */
+export type ComposerControlDensity = "full" | "condensed" | "tight" | "compact" | "iconOnly";
+
+const DENSITY_LADDER: readonly ComposerControlDensity[] = [
+  "full",
+  "condensed",
+  "tight",
+  "compact",
+  "iconOnly",
+];
 
 export interface ComposerControlPresence {
   hasModel: boolean;
@@ -21,6 +34,9 @@ export interface ComposerControlPresentation {
   showThinkingLabel: boolean;
   showModeLabel: boolean;
   aggregateFeatures: boolean;
+  /** Thinking, mode and features live in the model control's sheet. */
+  foldControls: boolean;
+  showModelLabel: boolean;
 }
 
 export interface ComposerToolbarGeometry {
@@ -45,6 +61,10 @@ export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarG
 }
 
 const DENSITY_HYSTERESIS = 12;
+/** The model label's narrowest useful width: enough for the model family, such as "GPT-6…". */
+const MODEL_FAMILY_LABEL_WIDTH = 56;
+/** A thinking label beside the folded model label, such as "Medium". */
+const THINKING_LABEL_WIDTH = 48;
 
 function normalizedFontScale(fontScale: number): number {
   return Number.isFinite(fontScale) ? Math.max(1, fontScale) : 1;
@@ -111,54 +131,123 @@ function resolveFullFloor(
   return sumControlWidths(widths, geometry);
 }
 
+/** Model at its family label, with thinking, mode and features as icon-only squares. */
+function resolveTightFloor(
+  controls: ComposerControlPresence,
+  geometry: ComposerToolbarGeometry,
+): number {
+  const fontScale = normalizedFontScale(controls.fontScale);
+  const widths: number[] = [];
+  if (controls.hasModel) {
+    widths.push(labelledChrome(geometry) + MODEL_FAMILY_LABEL_WIDTH * fontScale);
+  }
+  if (controls.hasThinking) widths.push(geometry.controlSize);
+  if (controls.hasMode) widths.push(geometry.controlSize);
+  if (controls.features.length > 0) widths.push(geometry.controlSize);
+  return sumControlWidths(widths, geometry);
+}
+
+/** One model control carrying the model family label and the thinking label. */
+function resolveCompactFloor(
+  controls: ComposerControlPresence,
+  geometry: ComposerToolbarGeometry,
+): number {
+  const fontScale = normalizedFontScale(controls.fontScale);
+  const thinkingLabel = controls.hasThinking
+    ? geometry.iconLabelGap + THINKING_LABEL_WIDTH * fontScale
+    : 0;
+  return labelledChrome(geometry) + MODEL_FAMILY_LABEL_WIDTH * fontScale + thinkingLabel;
+}
+
+function resolveDensityFloor(
+  density: ComposerControlDensity,
+  controls: ComposerControlPresence,
+  geometry: ComposerToolbarGeometry,
+): number {
+  switch (density) {
+    case "full":
+      return resolveFullFloor(controls, geometry);
+    case "condensed":
+      return resolveCondensedFloor(controls, geometry);
+    case "tight":
+      return resolveTightFloor(controls, geometry);
+    case "compact":
+      return resolveCompactFloor(controls, geometry);
+    case "iconOnly":
+      return 0;
+  }
+}
+
+/**
+ * The widest density whose floor fits `availableWidth`. Widening past the current density needs
+ * the floor plus the hysteresis and keeping it tolerates the floor minus it, so a width near a
+ * floor does not flip back and forth. `minimumDensity` is the widest density allowed.
+ */
 export function resolveComposerControlDensity(input: {
   availableWidth: number;
   currentDensity: ComposerControlDensity;
   controls: ComposerControlPresence;
   geometry: ComposerToolbarGeometry;
+  minimumDensity?: ComposerControlDensity;
 }): ComposerControlDensity {
-  const fullFloor = resolveFullFloor(input.controls, input.geometry);
-  const condensedFloor = resolveCondensedFloor(input.controls, input.geometry);
-
-  if (input.currentDensity === "full") {
-    if (input.availableWidth >= fullFloor - DENSITY_HYSTERESIS) return "full";
-    return input.availableWidth >= condensedFloor ? "condensed" : "tight";
+  const current = DENSITY_LADDER.indexOf(input.currentDensity);
+  const first = DENSITY_LADDER.indexOf(input.minimumDensity ?? "full");
+  for (let step = first; step < DENSITY_LADDER.length; step += 1) {
+    const density = DENSITY_LADDER[step];
+    const floor = resolveDensityFloor(density, input.controls, input.geometry);
+    let required = floor;
+    if (step < current) required = floor + DENSITY_HYSTERESIS;
+    if (step === current) required = floor - DENSITY_HYSTERESIS;
+    if (input.availableWidth >= required) return density;
   }
-
-  if (input.currentDensity === "condensed") {
-    if (input.availableWidth >= fullFloor + DENSITY_HYSTERESIS) return "full";
-    if (input.availableWidth < condensedFloor - DENSITY_HYSTERESIS) return "tight";
-    return "condensed";
-  }
-
-  if (input.availableWidth >= fullFloor + DENSITY_HYSTERESIS) return "full";
-  if (input.availableWidth >= condensedFloor + DENSITY_HYSTERESIS) return "condensed";
-  return "tight";
+  return "iconOnly";
 }
 
-export function resolveComposerControlPresentation(
-  density: ComposerControlDensity,
-): ComposerControlPresentation {
-  if (density === "full") {
-    return {
-      showCarets: true,
-      showThinkingLabel: true,
-      showModeLabel: true,
-      aggregateFeatures: false,
-    };
-  }
-  if (density === "condensed") {
-    return {
-      showCarets: false,
-      showThinkingLabel: false,
-      showModeLabel: true,
-      aggregateFeatures: true,
-    };
-  }
-  return {
+const PRESENTATIONS: Record<ComposerControlDensity, ComposerControlPresentation> = {
+  full: {
+    showCarets: true,
+    showThinkingLabel: true,
+    showModeLabel: true,
+    aggregateFeatures: false,
+    foldControls: false,
+    showModelLabel: true,
+  },
+  condensed: {
+    showCarets: false,
+    showThinkingLabel: false,
+    showModeLabel: true,
+    aggregateFeatures: true,
+    foldControls: false,
+    showModelLabel: true,
+  },
+  tight: {
     showCarets: false,
     showThinkingLabel: false,
     showModeLabel: false,
     aggregateFeatures: true,
-  };
+    foldControls: false,
+    showModelLabel: true,
+  },
+  compact: {
+    showCarets: false,
+    showThinkingLabel: true,
+    showModeLabel: false,
+    aggregateFeatures: true,
+    foldControls: true,
+    showModelLabel: true,
+  },
+  iconOnly: {
+    showCarets: false,
+    showThinkingLabel: false,
+    showModeLabel: false,
+    aggregateFeatures: true,
+    foldControls: true,
+    showModelLabel: false,
+  },
+};
+
+export function resolveComposerControlPresentation(
+  density: ComposerControlDensity,
+): ComposerControlPresentation {
+  return PRESENTATIONS[density];
 }

@@ -2082,7 +2082,6 @@ function ComposerContentImpl({
     ],
   );
 
-  const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
   const beforeVoiceContent = useMemo(
     () =>
       hasAgent ? (
@@ -2093,7 +2092,7 @@ function ComposerContentImpl({
             maxTokens={agentState.contextWindowMaxTokens}
             usedTokens={agentState.contextWindowUsedTokens}
             totalCostUsd={agentState.totalCostUsd}
-            glyphSize={contextWindowMeterGlyphSize}
+            glyphSize={buttonIconSize}
           />
         </View>
       ) : null,
@@ -2104,7 +2103,7 @@ function ComposerContentImpl({
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
-      contextWindowMeterGlyphSize,
+      buttonIconSize,
     ],
   );
 
