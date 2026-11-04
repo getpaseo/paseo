@@ -1129,7 +1129,8 @@ export class Session {
       getTerminalsUnavailable: () => terminalManager?.getUnavailableError?.()?.message ?? null,
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),
-      listWorkspaces: () => this.workspaceRegistry.list(),
+      // Diagnostics report both the active count and total archived history.
+      listWorkspaces: () => this.workspaceRegistry.listAll(),
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
       reloadConfig: () => daemonConfigStore.reload(),
@@ -1260,8 +1261,10 @@ export class Session {
       logger: this.sessionLogger,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
-      listAgentPayloads: () => this.listAgentPayloads({ includeBackground: true }),
-      workspaceLastUserMessageTimes: () => this.agentDirectory.workspaceLastUserMessageTimes(),
+      listAgentPayloads: (workspaceIds) =>
+        this.listAgentPayloads({ workspaceIds, includeBackground: true, includeAncestors: true }),
+      workspaceLastUserMessageTimes: (workspaceIds) =>
+        this.agentDirectory.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
@@ -1875,11 +1878,19 @@ export class Session {
       if (this.isCleanedUp) {
         return;
       }
-      const projectWorkspaceIds = (await this.workspaceRegistry.list())
+      const projectWorkspaceIds = (await this.workspaceRegistry.listActive())
         .filter((workspace) => workspace.projectId === mutation.projectId)
         .map((workspace) => workspace.workspaceId);
 
       if (mutation.kind === "remove") {
+        // Archived workspaces can still represent an empty project in this subscription.
+        for (const [workspaceId, update] of subscription.lastEmittedByWorkspaceId) {
+          const projectId =
+            update.kind === "upsert" ? update.workspace.projectId : update.emptyProject?.projectId;
+          if (projectId === mutation.projectId && !projectWorkspaceIds.includes(workspaceId)) {
+            projectWorkspaceIds.push(workspaceId);
+          }
+        }
         const visibleWorkspaceIds = projectWorkspaceIds.filter((workspaceId) => {
           const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
           return (
@@ -3805,7 +3816,7 @@ export class Session {
 
       // Re-emit descriptors for every workspace under this project so the new
       // resolved name lands in the UI immediately.
-      const workspaces = await this.workspaceRegistry.list();
+      const workspaces = await this.workspaceRegistry.listActive();
       const affectedWorkspaceIds = workspaces
         .filter((workspace) => workspace.projectId === existing.projectId)
         .map((workspace) => workspace.workspaceId);
@@ -3857,7 +3868,7 @@ export class Session {
       });
       await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
-      const affectedWorkspaceIds = (await this.workspaceRegistry.list())
+      const affectedWorkspaceIds = (await this.workspaceRegistry.listActive())
         .filter((workspace) => workspace.projectId === projectId)
         .map((workspace) => workspace.workspaceId);
       if (affectedWorkspaceIds.length > 0) {
@@ -3903,7 +3914,7 @@ export class Session {
     try {
       const project = await this.projectRegistry.get(projectId);
       const resolvedProjectId = project?.projectId ?? projectId;
-      const projectWorkspaces = (await this.workspaceRegistry.list()).filter(
+      const projectWorkspaces = (await this.workspaceRegistry.listActive()).filter(
         (workspace) => workspace.projectId === resolvedProjectId,
       );
       const activeWorkspaceIds = projectWorkspaces
@@ -5471,7 +5482,8 @@ export class Session {
       return { ok: true, agentId: trimmed };
     }
 
-    const stored = await this.agentStorage.list();
+    // Explicit identifier resolution admits archived agents by ID prefix.
+    const stored = await this.agentStorage.listAll();
     const storedRecords = stored.filter((record) => !record.internal);
     const knownIds = new Set<string>();
     for (const record of storedRecords) {
@@ -5583,7 +5595,7 @@ export class Session {
     Map<string, ProjectPlacementPayload>
   > {
     const [persistedWorkspaces, persistedProjects] = await Promise.all([
-      this.workspaceRegistry.list(),
+      this.workspaceRegistry.listActive(),
       this.projectRegistry.list(),
     ]);
     const activeProjects = new Map(
@@ -5982,7 +5994,8 @@ export class Session {
   // than a workspaceId. This is a directory lookup for an archive target, not a
   // status/ownership attribution.
   private async findWorkspaceIdForCwd(cwd: string): Promise<string | null> {
-    const workspaces = await this.workspaceRegistry.list();
+    // Explicit archive administration must prefer an archived exact match to an active ancestor.
+    const workspaces = await this.workspaceRegistry.listAll();
     return resolveWorkspaceIdForPath(cwd, workspaces);
   }
 
@@ -6173,7 +6186,7 @@ export class Session {
   }
 
   private async listActiveWorkspaceRefs(): Promise<ActiveWorkspaceRef[]> {
-    const workspaces = await this.workspaceRegistry.list();
+    const workspaces = await this.workspaceRegistry.listActive();
     return workspaces
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => ({
@@ -6199,7 +6212,7 @@ export class Session {
     }
 
     if (!existingWorkspace.archivedAt) {
-      const activeSiblings = (await this.workspaceRegistry.list()).filter(
+      const activeSiblings = (await this.workspaceRegistry.listActive()).filter(
         (workspace) => workspace.projectId === existingWorkspace.projectId && !workspace.archivedAt,
       );
       this.sessionLogger.info(
@@ -6404,7 +6417,7 @@ export class Session {
   // path. See `workspaceIdsOnCheckout`.
   private async emitWorkspaceUpdateForCwd(cwd: string, options?: {}): Promise<void> {
     if (this.workspaceUpdatesSubscriptions.size === 0) return;
-    const workspaceIds = workspaceIdsOnCheckout(await this.workspaceRegistry.list(), cwd);
+    const workspaceIds = workspaceIdsOnCheckout(await this.workspaceRegistry.listActive(), cwd);
     if (workspaceIds.length === 0) {
       return;
     }
@@ -7158,7 +7171,7 @@ export class Session {
         projectsBefore.set(project.projectId, project);
       }
       const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
-      for (const workspaceRecord of await this.workspaceRegistry.list()) {
+      for (const workspaceRecord of await this.workspaceRegistry.listActive()) {
         workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
       }
       const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
@@ -7787,7 +7800,10 @@ export class Session {
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
     let agents: AgentSnapshotPayload[];
     try {
-      agents = await this.listAgentPayloads({ includeBackground: true });
+      agents = await this.listAgentPayloads({
+        workspaceIds: requestedWorkspaceIds,
+        includeBackground: true,
+      });
     } catch (error) {
       const message = getErrorMessage(error);
       const results = requestedWorkspaceIds.map((requestedWorkspaceId) => ({
@@ -7927,9 +7943,13 @@ export class Session {
         throw new Error(`Workspace not found: ${workspaceId}`);
       }
 
-      const agents = (await this.listAgentPayloads({ includeBackground: true })).filter((agent) =>
-        this.isProviderVisibleToClient(agent.provider),
-      );
+      const agents = (
+        await this.listAgentPayloads({
+          workspaceIds: [workspaceId],
+          includeBackground: true,
+          includeAncestors: true,
+        })
+      ).filter((agent) => this.isProviderVisibleToClient(agent.provider));
       const agentsById = new Map(agents.map((agent) => [agent.id, agent] as const));
       const candidates = agents
         .filter((agent) => !agent.archivedAt && !agent.background)

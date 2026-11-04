@@ -4092,7 +4092,7 @@ test("createAgent rejects a disabled provider without creating a session", async
     ),
   ).rejects.toThrow("Provider 'codex' is disabled");
   expect(disabledClient.createSessionCalls).toBe(0);
-  expect(await storage.list()).toHaveLength(0);
+  expect(await storage.listAll()).toHaveLength(0);
 });
 
 test("updateProviderRegistry re-enables a previously disabled provider", async () => {
@@ -8273,7 +8273,7 @@ test("archiveAgent closes an internal agent without writing a record", async () 
   expect(Number.isNaN(Date.parse(archivedAt))).toBe(false);
   expect(manager.getAgent(internalAgentId)).toBeNull();
   expect(await storage.get(internalAgentId)).toBeNull();
-  expect(await storage.list()).toEqual([]);
+  expect(await storage.listAll()).toEqual([]);
   expect(manager.getRetiredInternalAgent(internalAgentId)).toEqual({
     record: expect.objectContaining({
       id: internalAgentId,
@@ -9379,8 +9379,8 @@ test("archiveAgent re-reads a child before deciding whether to cascade", async (
   class ChildOpensAfterCascadeListStorage extends AgentStorage {
     childId: string | null = null;
 
-    override async list(): Promise<StoredAgentRecord[]> {
-      const records = await super.list();
+    override async listActive(): Promise<StoredAgentRecord[]> {
+      const records = await super.listAll();
       const parentIsArchived = records.some(
         (record) => record.id !== this.childId && Boolean(record.archivedAt),
       );
