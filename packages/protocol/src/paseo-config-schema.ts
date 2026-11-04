@@ -129,6 +129,7 @@ export function toPaseoConfigRpcShape(config: PaseoConfigRaw): PaseoConfigRaw;
 export function toPaseoConfigRpcShape(config: null): null;
 export function toPaseoConfigRpcShape(config: PaseoConfigRaw | null): PaseoConfigRaw | null;
 export function toPaseoConfigRpcShape(config: PaseoConfigRaw | null): PaseoConfigRaw | null {
+  // COMPAT(projectConfigPortBlockSize): added in v0.15.0; remove after 2027-11-04.
   const worktree = config?.worktree;
   const servicePorts = worktree?.servicePorts;
   if (!config || !worktree || servicePorts?.blockSize === undefined) return config;

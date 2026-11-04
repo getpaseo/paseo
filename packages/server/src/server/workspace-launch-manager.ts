@@ -716,20 +716,12 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     return ports;
   }
 
-  private async getSuppressedServiceNames(
+  private getSuppressedServiceNames(
     context: WorkspaceLaunchContext,
     projectConfig: PaseoConfig | null,
     activeLaunchName: string,
-  ): Promise<Set<string>> {
+  ): Set<string> {
     const launchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
-    if (this.getConfigDirectory(context) !== context.workspaceDirectory) {
-      const workspaceConfig = await readPaseoConfig(context.workspaceDirectory);
-      if (workspaceConfig.ok) {
-        for (const name of getWorkspaceLaunchConfigs(workspaceConfig.config).keys()) {
-          launchNames.add(name);
-        }
-      }
-    }
 
     return new Set(
       Array.from(launchNames).filter(
