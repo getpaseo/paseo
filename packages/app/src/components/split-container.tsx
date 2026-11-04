@@ -772,6 +772,7 @@ const SplitPaneView = memo(function SplitPaneView({
   const compactHeader = useMemo(
     () => (
       <WindowChromeSafeArea placement="inline">
+        <TitlebarDragRegion />
         {renderCompactHeader(paneTabs, activeTabDescriptor?.key ?? "", compactHeaderActions)}
       </WindowChromeSafeArea>
     ),

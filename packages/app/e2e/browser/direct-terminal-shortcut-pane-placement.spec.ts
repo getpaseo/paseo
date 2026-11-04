@@ -1,3 +1,4 @@
+import { installLocalDesktopHost } from "../support/helpers/local-desktop-host";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
@@ -100,6 +101,36 @@ test("compact pane launch stays in its owning pane and pane controls remain reac
     await expect(otherPane.getByTestId("workspace-new-tab-panel")).toBeVisible();
     await maximizeAndRestoreCompactPane(page, originalPane);
     await expect(otherPane).toBeVisible();
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+async function expectPaneHasWindowDragSurface(pane: Locator) {
+  await expect
+    .poll(() =>
+      pane.evaluate((element) =>
+        Array.from(element.querySelectorAll<HTMLElement>("div")).some(
+          (node) => node.style.getPropertyValue("-webkit-app-region") === "drag",
+        ),
+      ),
+    )
+    .toBe(true);
+}
+
+test("compact desktop panes retain window dragging with both sidebars closed", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "compact-pane-window-drag-" });
+  try {
+    await installLocalDesktopHost(page, workspace.repoPath);
+    const { originalPane, otherPane } = await prepareUnfocusedCompactPane(
+      page,
+      workspace.workspaceId,
+    );
+    await runWorkspaceActionFromCommandCenter(page, "Toggle left sidebar");
+    await expect(originalPane.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+    await expect(otherPane.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+    await expectPaneHasWindowDragSurface(originalPane);
+    await expectPaneHasWindowDragSurface(otherPane);
   } finally {
     await workspace.cleanup();
   }
