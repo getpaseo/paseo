@@ -58,16 +58,23 @@ One owner keeps the scroll offset at any moment:
 | Disclosure hold        | LegendList's `maintainVisibleContentPosition`, restoring only the held row.               |
 | User scroll            | The finger. The controller detaches at drag start.                                        |
 | Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                   |
+| Keyboard motion        | Nobody. The keyboard translates the list with the composer and leaves the offset alone.   |
 
 The end pin is a zero-height view at the bottom of the content and the content's first native
 child, with React Native's `maintainVisibleContentPosition` set to `{ minIndexForVisible: 0 }`. The
 native correction runs on the UI thread around each mount, so a row that grows or lands at the end
-scrolls in the frame it lays out. The controller scrolls only for a viewport resize (the keyboard)
-and an explicit jump, both through the native `scrollToEnd`.
+scrolls in the frame it lays out. The controller scrolls only for a viewport resize (the composer
+growing or shrinking) and an explicit jump, both through the native `scrollToEnd`.
 
 Do not use LegendList's `maintainScrollAtEnd` instead. It scrolls from JS after the mount to the end
 its JS sizes predict: growth paints below the viewport for a frame, and the scroll lands short of
 the native end, which the controller reads as the user scrolling away.
+
+The keyboard never changes the list's size, padding or offset. `KeyboardTranslateView` moves the list
+and the composer together on the UI thread, and the composer viewport clips the top of the list
+while the keyboard is open. Do not add a keyboard-sized inset to keep that content reachable: it can
+only commit after the motion, and while detached or holding nothing corrects for it, so every row
+jumps by the keyboard height after the keyboard settles.
 
 ### The hold
 

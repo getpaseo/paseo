@@ -28,7 +28,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useKeyboardStreamInset } from "@/keyboard/shift";
 import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
@@ -155,7 +154,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
-  const streamKeyboardInset = useKeyboardStreamInset();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const isReleasedAtEndRef = useRef(false);
   const programmaticScrollEventBudgetRef = useRef(0);
@@ -355,10 +353,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   //   controller acts; the content does not count as measured yet (`handleContentSizeChange`).
   // - Following the end: the end pin. Rows added, rows resized and footer changes never scroll from
   //   JS; the pin holds the end in the frame the change mounts. The controller scrolls only for a
-  //   viewport resize (the keyboard), which the pin cannot see, and for an explicit jump, and both go
-  //   to the native end (`scrollToBottom`). LegendList's end keeping stays off: it scrolls to the end
-  //   its JS sizes predict, which runs ahead of the native mount, so it lands short of the real end
-  //   and the controller reads that as the user scrolling away.
+  //   viewport resize (the composer growing or shrinking), which the pin cannot see, and for an
+  //   explicit jump, and both go to the native end (`scrollToBottom`). The keyboard does not resize
+  //   the viewport: it translates the list with the composer. LegendList's end keeping stays off: it
+  //   scrolls to the end its JS sizes predict, which runs ahead of the native mount, so it lands
+  //   short of the real end and the controller reads that as the user scrolling away.
   // - A disclosure hold: the held row. The hold detaches the controller, which removes the pin, and
   //   LegendList keeps only the held row in place.
   // - A user scroll: the finger. The controller detaches for the gesture, so streamed lines grow below
@@ -377,32 +376,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     [pinsEnd],
   );
   const topOverlayInset = useStreamTopOverlayInset();
-  // The keyboard lifts the whole list, so its settled height becomes clearance at the top.
+  // No keyboard inset: one committed after the keyboard settles moves every row when the end pin is
+  // not holding the offset (docs/agent-stream-disclosure.md).
   const listContentContainerStyle = useMemo(
-    () => [
-      baseListContentContainerStyle,
-      {
-        paddingTop: streamKeyboardInset.contentContainerPaddingTop + topOverlayInset,
-      },
-    ],
-    [
-      baseListContentContainerStyle,
-      streamKeyboardInset.contentContainerPaddingTop,
-      topOverlayInset,
-    ],
-  );
-  const listInsetProps = useMemo(
-    () =>
-      streamKeyboardInset.contentInset
-        ? {
-            automaticallyAdjustContentInsets: false,
-            automaticallyAdjustsScrollIndicatorInsets: false,
-            contentInsetAdjustmentBehavior: "never" as const,
-            contentInset: streamKeyboardInset.contentInset,
-            scrollIndicatorInsets: streamKeyboardInset.contentInset,
-          }
-        : {},
-    [streamKeyboardInset.contentInset],
+    () => [baseListContentContainerStyle, { paddingTop: topOverlayInset }],
+    [baseListContentContainerStyle, topOverlayInset],
   );
 
   useEffect(() => {
@@ -709,7 +687,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   return (
     <LegendList<StreamItem>
-      {...listInsetProps}
       ref={listRef}
       data={rows}
       renderItem={renderItem}
@@ -720,6 +697,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ListHeaderComponent={historyStartContent}
       ListFooterComponent={liveAuxiliaryContent ?? undefined}
       contentContainerStyle={listContentContainerStyle}
+      automaticallyAdjustContentInsets={false}
+      automaticallyAdjustsScrollIndicatorInsets={false}
+      contentInsetAdjustmentBehavior="never"
       style={listStyle}
       onLayout={handleListLayout}
       onScroll={handleScroll}
