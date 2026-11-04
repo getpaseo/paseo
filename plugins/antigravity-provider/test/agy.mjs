@@ -216,6 +216,34 @@ async function handlePrompt(id, params) {
     handleTransientRetryPrompt(id);
     return;
   }
+  if (text.includes("NOTIFICATION_COST_TURN_1")) {
+    notifyUpdate({
+      sessionUpdate: "usage_update",
+      used: 50_000,
+      size: 1_048_576,
+      cost: { amount: 1.0, currency: "USD" },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "DONE_TURN_1\n" },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
+  if (text.includes("ESTIMATED_TOKENS_TURN_2")) {
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "DONE_TURN_2\n" },
+    });
+    respond(id, {
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+      },
+    });
+    return;
+  }
 
   notifyUpdate({
     sessionUpdate: "agent_message_chunk",
@@ -620,6 +648,14 @@ async function handleSessionLoad(id, params) {
     messageId: "replay-a1",
     content: { type: "text", text: "REPLAYED_ASSISTANT" },
   });
+  if (process.env.AGY_TEST_REPLAY_COST) {
+    notifyUpdate({
+      sessionUpdate: "usage_update",
+      used: 60_000,
+      size: 1_048_576,
+      cost: { amount: Number(process.env.AGY_TEST_REPLAY_COST), currency: "USD" },
+    });
+  }
   notifyUpdate({
     sessionUpdate: "plan",
     entries: [

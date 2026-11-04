@@ -674,12 +674,21 @@ export class Session {
       return;
     }
 
-    if (this.replayMode === "skip") return;
-
     if (update.sessionUpdate === "usage_update") {
+      if (typeof update.cost?.amount === "number") {
+        this.accumulatedCostUsd = update.cost.amount;
+      }
+      if (this.replayMode === "skip") {
+        if (typeof update.cost?.amount === "number") {
+          this.lastUsage = mergeUsageSnapshot(this.lastUsage, { totalCostUsd: update.cost.amount });
+        }
+        return;
+      }
       this.emitUsageUpdate(update);
       return;
     }
+
+    if (this.replayMode === "skip") return;
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk" ||
@@ -722,6 +731,9 @@ export class Session {
     update: Extract<AcpSessionUpdate, { sessionUpdate: "usage_update" }>,
   ): void {
     recordTurnUsageUpdate(this.turn, update);
+    if (typeof update.cost?.amount === "number") {
+      this.accumulatedCostUsd = update.cost.amount;
+    }
     const activeModel = this.turn ? this.turn.model : this.effectiveModel;
     const usage = mergeUsageSnapshot(this.lastUsage, {
       inputTokens: update.inputTokens,

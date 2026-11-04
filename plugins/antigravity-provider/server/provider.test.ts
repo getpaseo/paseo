@@ -1371,6 +1371,48 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     ]);
   });
 
+  it("retains notification-only costs across turns and replay when prompt completions omit usage", async () => {
+    const h = await harness();
+    await h.open();
+
+    // Turn 1: receives usage_update with $1.0 cost, but prompt completion omits usage.
+    const turn1Id = await h.message([{ type: "text", text: "NOTIFICATION_COST_TURN_1" }]);
+    await h.completed(turn1Id);
+
+    const usageAfterTurn1 = h.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usageAfterTurn1?.usage.totalCostUsd).toBe(1.0);
+
+    // Turn 2: completion has tokens (1,000 input, 200 output on gemini-4-argon) and no explicit cost.
+    // 1,000 in @ $1.25/M = $0.00125; 200 out @ $5.00/M = $0.001 -> $0.00225 added to $1.0 = $1.00225.
+    const turn2Id = await h.message([{ type: "text", text: "ESTIMATED_TOKENS_TURN_2" }]);
+    await h.completed(turn2Id);
+
+    const usageAfterTurn2 = h.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usageAfterTurn2?.usage.totalCostUsd).toBe(1.00225);
+
+    // Replay: load an existing conversation whose history updates contain $1.0 cost.
+    const h2 = await harness({ AGY_TEST_REPLAY_COST: "1.0" });
+    await h2.open({
+      restored: { version: 1, data: { conversationId: "conv-alpha-1" } },
+    });
+
+    // Run Turn 1 on restored session: token estimate must accumulate on top of the replayed $1.0.
+    const turn3Id = await h2.message([{ type: "text", text: "ESTIMATED_TOKENS_TURN_2" }]);
+    await h2.completed(turn3Id);
+
+    const usageAfterTurn3 = h2.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usageAfterTurn3?.usage.totalCostUsd).toBe(1.00225);
+  });
+
   it.skipIf(process.platform === "win32")(
     "reaps surviving tool subprocesses in the POSIX group when the ACP leader crashes",
     async () => {
