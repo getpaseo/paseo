@@ -164,6 +164,20 @@ describe("panel-store wide navigation overlay", () => {
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   });
 
+  it.each(["dock", "hidden"] as const)(
+    "invalidates an opening swipe when presentation becomes %s before its target commits",
+    (presentation) => {
+      usePanelStore.getState().applyLeftSidebarPresentation("overlay");
+      const startedRevision = usePanelStore.getState().mobilePanel.revision;
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+
+      usePanelStore.getState().applyLeftSidebarPresentation(presentation);
+
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+      expect(usePanelStore.getState().mobilePanel.revision).toBeGreaterThan(startedRevision);
+    },
+  );
+
   it("keeps the compact explorer target when the sidebar presentation changes", () => {
     usePanelStore.getState().showMobileFileExplorer();
 
