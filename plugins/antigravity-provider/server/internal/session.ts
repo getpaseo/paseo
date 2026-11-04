@@ -694,11 +694,9 @@ export class Session {
     }
 
     if (update.sessionUpdate === "usage_update") {
-      if (typeof update.cost?.amount === "number") {
-        this.accumulatedCostUsd = update.cost.amount;
-      }
       if (this.replayMode === "skip") {
         if (typeof update.cost?.amount === "number") {
+          this.accumulatedCostUsd = update.cost.amount;
           this.lastUsage = mergeUsageSnapshot(this.lastUsage, { totalCostUsd: update.cost.amount });
         }
         return;

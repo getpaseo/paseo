@@ -1861,6 +1861,49 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     await h2.request({ type: "session.close", sessionId: "s", requestId: "close-2" });
   });
 
+  it("persists notification-only session cost across resumes when prompt completions omit usage", async () => {
+    const h1 = await harness();
+    await h1.open();
+
+    const turn1Id = await h1.message([{ type: "text", text: "NOTIFICATION_COST_TURN_1" }]);
+    await h1.completed(turn1Id);
+
+    const persistence1 = h1.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence1?.persistence.data).toMatchObject({
+      conversationId: expect.any(String),
+      accumulatedCostUsd: 1.0,
+    });
+    if (!persistence1) throw new Error("Expected session persistence event");
+    const conversationId = (persistence1.persistence.data as { conversationId: string })
+      .conversationId;
+    await h1.request({ type: "session.close", sessionId: "s", requestId: "close-1" });
+
+    const h2 = await harness();
+    await h2.open({ restored: persistence1.persistence });
+
+    const turn2Id = await h2.message([{ type: "text", text: "ESTIMATED_TOKENS_TURN_2" }]);
+    await h2.completed(turn2Id);
+
+    const usageAfterTurn2 = h2.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usageAfterTurn2?.usage.totalCostUsd).toBe(1.00225);
+
+    const persistence2 = h2.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence2?.persistence.data).toMatchObject({
+      conversationId,
+      accumulatedCostUsd: 1.00225,
+    });
+    await h2.request({ type: "session.close", sessionId: "s", requestId: "close-2" });
+  });
+
   it("preserves literal Other enum choices without a companion field as ordinary options", async () => {
     const h = await harness();
     await h.open();
