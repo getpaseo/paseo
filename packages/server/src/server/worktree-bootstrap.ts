@@ -34,6 +34,7 @@ import type {
   WorkspaceRuntimeEnvironmentService,
 } from "./workspace-runtime-environment.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import { getWorkspaceServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
@@ -694,7 +695,8 @@ export async function spawnWorkspaceScript(
     }
 
     const existingRuntimeEntry = runtimeStore.get({ workspaceId, scriptName });
-    const servicePortAllocation = configResult.config?.worktree?.servicePorts ?? globalServicePorts;
+    const servicePortAllocation =
+      getWorkspaceServicePortAllocation(configResult.config?.worktree) ?? globalServicePorts;
     const workspaceRuntime = await resolveWorkspaceScriptRuntimeEnvironment({
       workspaceRuntimeEnvironment,
       workspaceId,

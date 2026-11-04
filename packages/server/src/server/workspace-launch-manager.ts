@@ -10,6 +10,7 @@ import type {
   PaseoConfig,
   PaseoServicePortAllocation,
 } from "@getpaseo/protocol/paseo-config-schema";
+import { getWorkspaceServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
 import {
   getExplicitWorkspaceServicePorts,
   getWorkspaceLaunchConfigs,
@@ -21,6 +22,7 @@ import type { ServiceProxySubsystem } from "./service-proxy.js";
 import {
   getAllReservedWorkspaceServicePorts,
   releaseWorkspaceServicePort,
+  releaseWorkspaceServicePorts,
 } from "./workspace-service-port-registry.js";
 import {
   buildStringCommandShellInvocation,
@@ -222,15 +224,24 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
     await this.stopSupersededScript(context, launchName);
 
+    const suppressedServiceNames = await this.getSuppressedServiceNames(
+      context,
+      configResult.config,
+      launchName,
+    );
+    await releaseWorkspaceServicePorts(context.workspaceId, Array.from(suppressedServiceNames));
     const configuredServicePorts = await this.getConfiguredServicePorts(
       context,
       configResult.config,
+      suppressedServiceNames,
     );
     const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
       workspaceId: context.workspaceId,
       cwd: context.workspaceDirectory,
       branchName: context.branchName,
-      allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
+      allocation:
+        getWorkspaceServicePortAllocation(configResult.config?.worktree) ??
+        this.deps.globalServicePorts,
       excludedPorts: () => {
         const ports = new Set(configuredServicePorts);
         for (const port of getAllReservedWorkspaceServicePorts()) {
@@ -685,9 +696,9 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   private async getConfiguredServicePorts(
     context: WorkspaceLaunchContext,
     projectConfig: PaseoConfig | null,
+    suppressedServiceNames: ReadonlySet<string>,
   ): Promise<Set<number>> {
-    const projectLaunchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
-    const ports = getExplicitWorkspaceServicePorts(projectConfig, projectLaunchNames);
+    const ports = getExplicitWorkspaceServicePorts(projectConfig, suppressedServiceNames);
     if (this.getConfigDirectory(context) === context.workspaceDirectory) {
       return ports;
     }
@@ -698,11 +709,36 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
     for (const port of getExplicitWorkspaceServicePorts(
       workspaceConfig.config,
-      projectLaunchNames,
+      suppressedServiceNames,
     )) {
       ports.add(port);
     }
     return ports;
+  }
+
+  private async getSuppressedServiceNames(
+    context: WorkspaceLaunchContext,
+    projectConfig: PaseoConfig | null,
+    activeLaunchName: string,
+  ): Promise<Set<string>> {
+    const launchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
+    if (this.getConfigDirectory(context) !== context.workspaceDirectory) {
+      const workspaceConfig = await readPaseoConfig(context.workspaceDirectory);
+      if (workspaceConfig.ok) {
+        for (const name of getWorkspaceLaunchConfigs(workspaceConfig.config).keys()) {
+          launchNames.add(name);
+        }
+      }
+    }
+
+    return new Set(
+      Array.from(launchNames).filter(
+        (name) =>
+          name === activeLaunchName ||
+          this.deps.scriptRuntimeStore?.get({ workspaceId: context.workspaceId, scriptName: name })
+            ?.lifecycle !== "running",
+      ),
+    );
   }
 
   private async stopSupersededScript(

@@ -58,6 +58,9 @@ export const PaseoWorktreeConfigRawSchema = z
     setup: PaseoLifecycleCommandRawSchema.optional(),
     teardown: PaseoLifecycleCommandRawSchema.optional(),
     terminals: z.unknown().optional(),
+    // Keep the block size outside the strict servicePorts object on the wire:
+    // older clients parse worktree passthrough fields but reject unknown servicePorts keys.
+    portBlockSize: z.number().int().min(1).max(1000).optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
   .passthrough();
@@ -107,6 +110,43 @@ export const PaseoConfigSchema = PaseoConfigRawSchema.extend({
 })
   .passthrough()
   .catch({});
+
+export function getWorkspaceServicePortAllocation(
+  worktree: PaseoConfig["worktree"] | undefined,
+): PaseoServicePortAllocation | undefined {
+  if (!worktree) return undefined;
+  const { portBlockSize, servicePorts } = worktree;
+  const blockSize = portBlockSize ?? servicePorts?.blockSize;
+  if (!servicePorts && blockSize === undefined) return undefined;
+  return {
+    ...servicePorts,
+    ...(blockSize === undefined ? {} : { blockSize }),
+  };
+}
+
+/** Move the legacy strict-object field to a location old clients pass through. */
+export function toPaseoConfigRpcShape(config: PaseoConfigRaw): PaseoConfigRaw;
+export function toPaseoConfigRpcShape(config: null): null;
+export function toPaseoConfigRpcShape(config: PaseoConfigRaw | null): PaseoConfigRaw | null;
+export function toPaseoConfigRpcShape(config: PaseoConfigRaw | null): PaseoConfigRaw | null {
+  const worktree = config?.worktree;
+  const servicePorts = worktree?.servicePorts;
+  if (!config || !worktree || servicePorts?.blockSize === undefined) return config;
+
+  const { blockSize, ...legacyAllocation } = servicePorts;
+  const hasLegacyAllocation =
+    legacyAllocation.range !== undefined || legacyAllocation.portScript !== undefined;
+  const worktreeWithoutServicePorts = { ...worktree };
+  delete worktreeWithoutServicePorts.servicePorts;
+  return {
+    ...config,
+    worktree: {
+      ...worktreeWithoutServicePorts,
+      portBlockSize: worktree.portBlockSize ?? blockSize,
+      ...(hasLegacyAllocation ? { servicePorts: legacyAllocation } : {}),
+    },
+  };
+}
 
 export const PaseoConfigRevisionSchema = z.object({
   mtimeMs: z.number(),

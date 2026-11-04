@@ -4,6 +4,7 @@ import {
   ensureWorkspaceServicePortPlan,
   refreshWorkspaceServicePort,
   releaseWorkspaceServicePort,
+  releaseWorkspaceServicePorts,
   getAllReservedWorkspaceServicePorts,
   releaseWorkspaceServicePortPlan,
 } from "./workspace-service-port-registry.js";
@@ -433,6 +434,28 @@ describe("ensureWorkspaceServicePortPlan", () => {
 });
 
 describe("releaseWorkspaceServicePort", () => {
+  it("releases several suppressed service reservations atomically", async () => {
+    const workspaceId = "registry-release-suppressed-services";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [
+        { scriptName: "dev", port: 70_091 },
+        { scriptName: "full", port: 70_092 },
+        { scriptName: "api", port: 70_093 },
+      ],
+      allocatePort: async () => {
+        throw new Error("Configured service ports must not request allocation");
+      },
+    });
+
+    await releaseWorkspaceServicePorts(workspaceId, ["dev", "full"]);
+
+    expect(getAllReservedWorkspaceServicePorts().has(70_091)).toBe(false);
+    expect(getAllReservedWorkspaceServicePorts().has(70_092)).toBe(false);
+    expect(getAllReservedWorkspaceServicePorts().has(70_093)).toBe(true);
+    releaseWorkspaceServicePortPlan(workspaceId);
+  });
+
   it("waits for a sibling refresh and releases only the superseded service", async () => {
     const workspaceId = "registry-release-during-refresh";
     await ensureWorkspaceServicePortPlan({

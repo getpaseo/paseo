@@ -122,14 +122,25 @@ export async function releaseWorkspaceServicePort(
   workspaceId: string,
   scriptName: string,
 ): Promise<void> {
+  await releaseWorkspaceServicePorts(workspaceId, [scriptName]);
+}
+
+/** Releases a set of service leases atomically when project launches suppress idle services. */
+export async function releaseWorkspaceServicePorts(
+  workspaceId: string,
+  scriptNames: readonly string[],
+): Promise<void> {
+  if (scriptNames.length === 0) return;
   await runWithWorkspacePortAllocationLock(async () => {
     const plan = workspaceServicePortPlans.get(workspaceId);
-    const port = plan?.get(scriptName);
-    if (port === undefined) return;
-
-    plan?.delete(scriptName);
+    if (!plan) return;
+    for (const scriptName of new Set(scriptNames)) {
+      const port = plan.get(scriptName);
+      if (port === undefined) continue;
+      plan.delete(scriptName);
+      releaseDynamicPort({ workspaceId, scriptName, port });
+    }
     if (plan?.size === 0) workspaceServicePortPlans.delete(workspaceId);
-    releaseDynamicPort({ workspaceId, scriptName, port });
   });
 }
 

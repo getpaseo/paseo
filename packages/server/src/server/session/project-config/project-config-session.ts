@@ -2,6 +2,7 @@ import { resolve } from "path";
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { ProjectRegistry } from "../../workspace-registry.js";
+import { toPaseoConfigRpcShape } from "@getpaseo/protocol/paseo-config-schema";
 import {
   readPaseoConfigForEdit,
   resolveProjectConfigRoot,
@@ -81,7 +82,7 @@ export class ProjectConfigSession {
         requestId: msg.requestId,
         repoRoot,
         ok: true,
-        config: result.config,
+        config: toPaseoConfigRpcShape(result.config),
         revision: result.revision,
         ...(setupCommitStatus === null
           ? {}
@@ -141,7 +142,7 @@ export class ProjectConfigSession {
         requestId: msg.requestId,
         repoRoot,
         ok: true,
-        config: result.config,
+        config: toPaseoConfigRpcShape(result.config),
         revision: result.revision,
         ...(setupCommitStatus === null
           ? {}

@@ -111,6 +111,34 @@ describe("ProjectConfigSession", () => {
     ]);
   });
 
+  test("read moves the block size outside the strict service-port object for older clients", async () => {
+    const repoRoot = makeRoot();
+    writeFileSync(
+      join(repoRoot, "paseo.json"),
+      JSON.stringify({ worktree: { servicePorts: { range: "20000-50000", blockSize: 100 } } }),
+    );
+    const { subsystem, emitted } = makeSubsystem([projectRecord(repoRoot)]);
+
+    await subsystem.handleReadProjectConfigRequest({
+      type: "read_project_config_request",
+      requestId: "read-port-block-size",
+      repoRoot,
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: expect.objectContaining({
+          requestId: "read-port-block-size",
+          ok: true,
+          config: {
+            worktree: { portBlockSize: 100, servicePorts: { range: "20000-50000" } },
+          },
+        }),
+      },
+    ]);
+  });
+
   // POSIX-only: creates a directory symlink without Windows privileges.
   test.skipIf(process.platform === "win32")(
     "read resolves a symlink to an active root via realpath",
