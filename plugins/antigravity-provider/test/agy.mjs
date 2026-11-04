@@ -488,7 +488,7 @@ lines.on("line", async (line) => {
   if (method === "session/set_model") {
     if (process.env.AGY_TEST_FAIL_SET_MODEL_ONCE === "yes" && !failedSetModelOnce) {
       failedSetModelOnce = true;
-      writeMessage({
+      send({
         jsonrpc: "2.0",
         id,
         error: { code: -32603, message: "Model switch temporarily unavailable" },
