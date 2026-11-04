@@ -248,8 +248,22 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("");
   });
 
+  it("keeps a stored home URL that loads once normalized", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          browserHomeUrl: "https://example.com/search?q=hello world",
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe(
+      "https://example.com/search?q=hello%20world",
+    );
+  });
+
   it("falls back to the default page when the stored home URL would not load", async () => {
-    for (const browserHomeUrl of ["https://exa mple.com", "file:///tmp/index.html", "paseo.sh"]) {
+    for (const browserHomeUrl of ["https://exa mple.com", "file:///tmp/index.html"]) {
       const deps = makeDeps({
         storage: createInMemoryKeyValueStorage({
           [APP_SETTINGS_KEY]: JSON.stringify({ browserHomeUrl }),

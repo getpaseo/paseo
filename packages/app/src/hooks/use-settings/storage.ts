@@ -297,10 +297,7 @@ const StoredAppSettingsSchema = z
         legacyPullRequestsInSidePane: undefined,
       }),
     pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
-    browserHomeUrl: z
-      .string()
-      .refine((url) => parseBrowserHomeUrl(url) === url)
-      .catch(""),
+    browserHomeUrl: z.string().transform(parseBrowserHomeUrl).pipe(z.string()).catch(""),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.

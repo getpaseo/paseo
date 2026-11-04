@@ -127,12 +127,9 @@ export function parseBrowserHomeUrl(value: string | null | undefined): string | 
   if (!trimmed) {
     return "";
   }
-  // Chromium's URL parser percent-encodes a space in the host instead of throwing like Node's,
-  // so "exa mple.com" would parse in the app and fail only when a tab loads it.
-  if (/\s/.test(trimmed)) {
-    return null;
-  }
-  const url = normalizeBrowserUrl(trimmed);
+  // Spaces are fine in a path or query once encoded. In the host they stay encoded: Chromium's
+  // URL parser keeps "exa%20mple.com" as the hostname where Node's throws, so check for "%".
+  const url = normalizeBrowserUrl(trimmed.replace(/\s/g, encodeURIComponent));
   if (!isLoadableBrowserUrl(url)) {
     return null;
   }

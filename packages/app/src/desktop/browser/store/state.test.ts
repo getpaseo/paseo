@@ -56,6 +56,13 @@ describe("parseBrowserHomeUrl", () => {
     expect(parseBrowserHomeUrl("http://intranet/start")).toBe("http://intranet/start");
   });
 
+  it("encodes spaces in the path and query", () => {
+    expect(parseBrowserHomeUrl("https://example.com/search?q=hello world")).toBe(
+      "https://example.com/search?q=hello%20world",
+    );
+    expect(parseBrowserHomeUrl("example.com/my page")).toBe("https://example.com/my%20page");
+  });
+
   it("rejects URLs a browser tab would not load", () => {
     expect(parseBrowserHomeUrl("https://exa mple.com")).toBeNull();
     expect(parseBrowserHomeUrl("exa mple.com")).toBeNull();
