@@ -1813,8 +1813,8 @@ function WorkspaceScreenContent({
   });
 
   const handleCreateTerminalWithProfile = useCallback(
-    (profile: TerminalProfile) => {
-      createTerminal({ profile, destination: { kind: "open" } });
+    (profile: TerminalProfile, paneId?: string) => {
+      createTerminal({ profile, destination: { kind: "open", paneId } });
     },
     [createTerminal],
   );
@@ -3386,6 +3386,7 @@ function WorkspaceScreenContent({
     ) => {
       const tabSwitcher = (
           <MobileWorkspaceTabSwitcher
+            paneId={actions.pane?.id}
             tabs={headerTabs}
             activeTabKey={headerActiveTabKey}
             normalizedServerId={normalizedServerId}
@@ -3421,6 +3422,7 @@ function WorkspaceScreenContent({
           explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
         >
           <WorkspaceHeaderMenuMobile
+            pane={actions.pane}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
             scripts={compactHeaderScripts}

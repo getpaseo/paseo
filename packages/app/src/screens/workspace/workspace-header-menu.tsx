@@ -1,3 +1,4 @@
+import type { WorkspaceCompactHeaderActions } from "./adaptive-workspace-chrome";
 import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
@@ -206,13 +207,14 @@ function HeaderMenuProfileItem({
 }
 
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
+  pane?: WorkspaceCompactHeaderActions["pane"];
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-  onCreateBrowser: () => void;
+  onCreateTerminalWithProfile: (profile: TerminalProfile, paneId?: string) => void;
+  onCreateBrowser: (input?: { paneId?: string }) => void;
 }
 
 /**
@@ -231,8 +233,18 @@ export function WorkspaceHeaderMenuMobile({
   createTerminalDisabled,
   onCreateTerminalWithProfile,
   onCreateBrowser,
+  pane,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
+  const paneId = pane?.id;
+  const handleCreateBrowser = useCallback(
+    () => onCreateBrowser({ paneId }),
+    [onCreateBrowser, paneId],
+  );
+  const handleCreateTerminalWithProfile = useCallback(
+    (profile: TerminalProfile) => onCreateTerminalWithProfile(profile, paneId),
+    [onCreateTerminalWithProfile, paneId],
+  );
   const { t } = useTranslation();
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
@@ -278,6 +290,25 @@ export function WorkspaceHeaderMenuMobile({
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        {pane?.splitRight ? (
+          <DropdownMenuItem onSelect={pane.splitRight}>
+            {t("workspace.tabs.actions.splitRight")}
+          </DropdownMenuItem>
+        ) : null}
+        {pane?.splitDown ? (
+          <DropdownMenuItem onSelect={pane.splitDown}>
+            {t("workspace.tabs.actions.splitDown")}
+          </DropdownMenuItem>
+        ) : null}
+        {pane?.toggleMaximized ? (
+          <DropdownMenuItem onSelect={pane.toggleMaximized}>
+            {t(
+              pane.maximized
+                ? "workspace.tabs.actions.restorePane"
+                : "workspace.tabs.actions.maximizePane",
+            )}
+          </DropdownMenuItem>
+        ) : null}
         {scriptsMenu.trigger}
         {pluginMenu.rows}
         {pluginMenu.rows.length > 0 ? <DropdownMenuSeparator /> : null}
@@ -285,7 +316,7 @@ export function WorkspaceHeaderMenuMobile({
           <DropdownMenuItem
             testID="workspace-header-new-browser"
             leading={MENU_NEW_BROWSER_ICON}
-            onSelect={onCreateBrowser}
+            onSelect={handleCreateBrowser}
           >
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
@@ -298,7 +329,7 @@ export function WorkspaceHeaderMenuMobile({
             key={profile.id}
             profile={profile}
             disabled={createTerminalDisabled}
-            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
+            onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
           />
         ))}
         <DropdownMenuSeparator />

@@ -36,6 +36,7 @@ import {
   WindowChromeSafeArea,
   useWindowChromeCorners,
   removeWindowChromeCorner,
+  resolveChildWindowChromeCorners,
   type WindowChromeCorners,
 } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -187,7 +188,7 @@ export function SplitContainer({
   renderCompactHeader,
 }: SplitContainerProps) {
   const inheritedWindowChromeCorners = useWindowChromeCorners();
-  const windowChromeCorners = focusModeEnabled ? inheritedWindowChromeCorners : "none";
+  const windowChromeCorners = inheritedWindowChromeCorners;
   const { activeDragTabId, dropPreview, tabDropPreview } = useWorkspaceTabDrag();
   const [maximizedPane, setMaximizedPane] = useState<{
     workspaceKey: string;
@@ -560,7 +561,18 @@ function SplitNodeView({
               showDropZones={showDropZones}
               dropPreview={dropPreview}
               tabDropPreview={tabDropPreview}
-              windowChromeCorners={windowChromeCorners}
+              windowChromeCorners={resolveChildWindowChromeCorners({
+                corners: windowChromeCorners,
+                direction: node.group.direction,
+                isFirst:
+                  node.group.children.findIndex(
+                    (candidate) => !isSplitNodeHiddenForPresentation(candidate, maximizedPaneId),
+                  ) === index,
+                isLast:
+                  node.group.children.findLastIndex(
+                    (candidate) => !isSplitNodeHiddenForPresentation(candidate, maximizedPaneId),
+                  ) === index,
+              })}
               maximizedPaneId={maximizedPaneId}
               workspaceHasMultiplePanes={workspaceHasMultiplePanes}
               onTogglePaneMaximized={onTogglePaneMaximized}
@@ -723,11 +735,30 @@ const SplitPaneView = memo(function SplitPaneView({
   );
   const compactHeaderActions = useMemo(
     () => ({
+      pane: {
+        id: paneId,
+        splitRight: focusModeEnabled ? undefined : handleSplitRight,
+        splitDown: focusModeEnabled ? undefined : handleSplitDown,
+        toggleMaximized:
+          workspaceHasMultiplePanes && !focusModeEnabled ? handleTogglePaneMaximized : undefined,
+        maximized: paneId === maximizedPaneId,
+      },
       closeAbove: handleCloseTabsToLeft,
       closeBelow: handleCloseTabsToRight,
       closeOthers: handleCloseOtherTabs,
     }),
-    [handleCloseTabsToLeft, handleCloseTabsToRight, handleCloseOtherTabs],
+    [
+      paneId,
+      focusModeEnabled,
+      handleSplitRight,
+      handleSplitDown,
+      workspaceHasMultiplePanes,
+      handleTogglePaneMaximized,
+      maximizedPaneId,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+    ],
   );
   const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
   useWorkspaceNewTabKeyboardAction({
@@ -738,6 +769,14 @@ const SplitPaneView = memo(function SplitPaneView({
     paneId,
     createNewTab,
   });
+  const compactHeader = useMemo(
+    () => (
+      <WindowChromeSafeArea placement="inline">
+        {renderCompactHeader(paneTabs, activeTabDescriptor?.key ?? "", compactHeaderActions)}
+      </WindowChromeSafeArea>
+    ),
+    [renderCompactHeader, paneTabs, activeTabDescriptor?.key, compactHeaderActions],
+  );
   return (
     <RenderProfile id={`SplitPaneView:${pane.id}`}>
       <View
@@ -746,52 +785,48 @@ const SplitPaneView = memo(function SplitPaneView({
         style={styles.pane}
         testID={`workspace-pane-${pane.id}`}
       >
-        <AdaptiveWorkspaceChrome
-          compactHeader={renderCompactHeader(
-            paneTabs,
-            activeTabDescriptor?.key ?? "",
-            compactHeaderActions,
-          )}
-        >
+        <AdaptiveWorkspaceChrome compactHeader={compactHeader}>
           {renderMainHeader?.()}
-          <WindowChromeSafeArea placement="inline" style={styles.paneTabs}>
-            <TitlebarDragRegion />
-            <WorkspaceDesktopTabsRow
-              paneId={pane.id}
-              isFocused={isFocused && isWorkspaceFocused}
-              tabs={desktopTabRowItems}
-              normalizedServerId={normalizedServerId}
-              normalizedWorkspaceId={normalizedWorkspaceId}
-              setHoveredCloseTabKey={setHoveredCloseTabKey}
-              onNavigateTab={onNavigateTab}
-              onCloseTab={onCloseTab}
-              onCopyResumeCommand={onCopyResumeCommand}
-              onCopyAgentId={onCopyAgentId}
-              onCopyTerminalId={onCopyTerminalId}
-              onCopyFilePath={onCopyFilePath}
-              onReloadAgent={onReloadAgent}
-              onRenameTab={onRenameTab}
-              onCloseTabsToLeft={handleCloseTabsToLeft}
-              onCloseTabsToRight={handleCloseTabsToRight}
-              onCloseOtherTabs={handleCloseOtherTabs}
-              onCreateNewTab={onCreateNewTab}
-              onReorderTabs={handleReorderTabs}
-              ownsKeyboardShortcuts={false}
-              externalDndContext
-              activeDragTabId={activeDragTabId}
-              tabDropPreviewIndex={
-                tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
-              }
-              showPaneSplitActions={!focusModeEnabled}
-              showPaneMaximizeAction={workspaceHasMultiplePanes && !focusModeEnabled}
-              paneMaximized={paneId === maximizedPaneId}
-              onTogglePaneMaximized={handleTogglePaneMaximized}
-              onSplitRight={handleSplitRight}
-              onSplitDown={handleSplitDown}
-              focusModeEnabled={Boolean(focusModeEnabled)}
-              onExitFocusMode={onExitFocusMode}
-            />
-          </WindowChromeSafeArea>
+          <WindowChromeRegion corners={focusModeEnabled ? "both" : "none"}>
+            <WindowChromeSafeArea placement="inline" style={styles.paneTabs}>
+              <TitlebarDragRegion />
+              <WorkspaceDesktopTabsRow
+                paneId={pane.id}
+                isFocused={isFocused && isWorkspaceFocused}
+                tabs={desktopTabRowItems}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                setHoveredCloseTabKey={setHoveredCloseTabKey}
+                onNavigateTab={onNavigateTab}
+                onCloseTab={onCloseTab}
+                onCopyResumeCommand={onCopyResumeCommand}
+                onCopyAgentId={onCopyAgentId}
+                onCopyTerminalId={onCopyTerminalId}
+                onCopyFilePath={onCopyFilePath}
+                onReloadAgent={onReloadAgent}
+                onRenameTab={onRenameTab}
+                onCloseTabsToLeft={handleCloseTabsToLeft}
+                onCloseTabsToRight={handleCloseTabsToRight}
+                onCloseOtherTabs={handleCloseOtherTabs}
+                onCreateNewTab={onCreateNewTab}
+                onReorderTabs={handleReorderTabs}
+                ownsKeyboardShortcuts={false}
+                externalDndContext
+                activeDragTabId={activeDragTabId}
+                tabDropPreviewIndex={
+                  tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
+                }
+                showPaneSplitActions={!focusModeEnabled}
+                showPaneMaximizeAction={workspaceHasMultiplePanes && !focusModeEnabled}
+                paneMaximized={paneId === maximizedPaneId}
+                onTogglePaneMaximized={handleTogglePaneMaximized}
+                onSplitRight={handleSplitRight}
+                onSplitDown={handleSplitDown}
+                focusModeEnabled={Boolean(focusModeEnabled)}
+                onExitFocusMode={onExitFocusMode}
+              />
+            </WindowChromeSafeArea>
+          </WindowChromeRegion>
         </AdaptiveWorkspaceChrome>
 
         <View style={styles.paneContent}>

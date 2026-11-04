@@ -25,6 +25,13 @@ export function AdaptiveWorkspaceChrome({
 }
 
 export interface WorkspaceCompactHeaderActions {
+  pane?: {
+    id: string;
+    splitRight?: () => void;
+    splitDown?: () => void;
+    toggleMaximized?: () => void;
+    maximized: boolean;
+  };
   closeAbove: (key: string) => Promise<void> | void;
   closeBelow: (key: string) => Promise<void> | void;
   closeOthers: (key: string) => Promise<void> | void;
