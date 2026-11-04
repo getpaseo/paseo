@@ -1,3 +1,4 @@
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "../messages.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
@@ -28,7 +29,7 @@ export class AgentDirectory {
       manager: Pick<AgentManager, "listAgents">;
       storage: Pick<
         AgentStorage,
-        "listActive" | "listByWorkspaces" | "lastUserMessageAtByWorkspace"
+        "get" | "listActive" | "listByWorkspaces" | "lastUserMessageAtByWorkspace"
       >;
       workspaces: Pick<WorkspaceRegistry, "get">;
       projectLive(agent: ManagedAgent): Promise<AgentSnapshotPayload>;
@@ -67,8 +68,36 @@ export class AgentDirectory {
     return admits(agent, workspace?.background === true, visibility);
   }
 
+  private async appendAncestors(
+    live: ManagedAgent[],
+    selectedLive: ManagedAgent[],
+    records: StoredAgentRecord[],
+  ): Promise<void> {
+    const selectedIds = new Set([...selectedLive, ...records].map((agent) => agent.id));
+    const liveById = new Map(live.map((agent) => [agent.id, agent]));
+    const pending = [...selectedLive, ...records];
+    for (const agent of pending) {
+      const parentId = getParentAgentIdFromLabels(agent.labels);
+      if (!parentId || selectedIds.has(parentId)) continue;
+      selectedIds.add(parentId);
+      const liveParent = liveById.get(parentId);
+      if (liveParent) {
+        pending.push(liveParent);
+        selectedLive.push(liveParent);
+      } else {
+        const storedParent = await this.deps.storage.get(parentId);
+        if (storedParent) {
+          pending.push(storedParent);
+          records.push(storedParent);
+        }
+      }
+    }
+  }
+
   async list(filter?: {
     workspaceIds?: Iterable<string>;
+    /** Include parent chains by ID for workspace root classification. */
+    includeAncestors?: boolean;
     labels?: Record<string, string>;
     includeArchived?: boolean;
     includeBackground?: BackgroundVisibility;
@@ -82,8 +111,17 @@ export class AgentDirectory {
     const records = requested
       ? await this.deps.storage.listByWorkspaces(requested, filter)
       : await this.deps.storage.listActive(filter);
+    const selectedLive = requested
+      ? live.filter((agent) => requested.has(agent.workspaceId ?? ""))
+      : live;
+    if (filter?.includeAncestors && requested) {
+      await this.appendAncestors(live, selectedLive, records);
+    }
+
     const workspaceIds = new Set(
-      [...live, ...records].flatMap((agent) => (agent.workspaceId ? [agent.workspaceId] : [])),
+      [...selectedLive, ...records].flatMap((agent) =>
+        agent.workspaceId ? [agent.workspaceId] : [],
+      ),
     );
     const backgroundWorkspaceIds = new Set<string>();
     if (visibility !== true) {
@@ -109,10 +147,7 @@ export class AgentDirectory {
       )
       .map((record) => this.deps.projectStored(record));
     const active = await Promise.all(
-      live
-        .filter((agent) => !requested || requested.has(agent.workspaceId ?? ""))
-        .filter(matches)
-        .map((agent) => this.deps.projectLive(agent)),
+      selectedLive.filter(matches).map((agent) => this.deps.projectLive(agent)),
     );
     return [...active, ...stored]
       .filter(matches)

@@ -108,6 +108,7 @@ export class AgentStorage {
   private readonly idsByWorkspace = new Map<string, Set<string>>();
   private readonly workspaceById = new Map<string, string>();
   private readonly activeIds = new Set<string>();
+  private readonly promptTimeByAgent = new Map<string, string>();
   private readonly promptTimes = new Map<string, string>();
   private loaded = false;
   private baseDir: string;
@@ -193,8 +194,31 @@ export class AgentStorage {
       this.idsByWorkspace.set(record.workspaceId, ids);
       this.workspaceById.set(record.id, record.workspaceId);
     }
-    if (previous) this.refreshPromptTime(previous);
-    if (record.workspaceId) this.refreshPromptTime(record.workspaceId);
+    this.indexPromptTime(record, previous);
+  }
+
+  private indexPromptTime(record: StoredAgentRecord, previous: string | undefined): void {
+    const previousTime = this.promptTimeByAgent.get(record.id);
+    const nextTime =
+      !record.internal && !record.background ? (record.lastUserMessageAt ?? undefined) : undefined;
+    if (nextTime) this.promptTimeByAgent.set(record.id, nextTime);
+    else this.promptTimeByAgent.delete(record.id);
+    if (previous === record.workspaceId && previousTime === nextTime) return;
+    if (
+      previous &&
+      previousTime &&
+      this.promptTimes.get(previous) === previousTime &&
+      (previous !== record.workspaceId || !nextTime || nextTime < previousTime)
+    ) {
+      this.refreshPromptTime(previous);
+    }
+    if (
+      record.workspaceId &&
+      nextTime &&
+      nextTime > (this.promptTimes.get(record.workspaceId) ?? "")
+    ) {
+      this.promptTimes.set(record.workspaceId, nextTime);
+    }
   }
 
   private refreshPromptTime(workspaceId: string): void {
@@ -324,6 +348,7 @@ export class AgentStorage {
 
     const workspaceId = this.workspaceById.get(agentId);
     this.workspaceById.delete(agentId);
+    this.promptTimeByAgent.delete(agentId);
     this.activeIds.delete(agentId);
     if (workspaceId) {
       this.idsByWorkspace.get(workspaceId)?.delete(agentId);

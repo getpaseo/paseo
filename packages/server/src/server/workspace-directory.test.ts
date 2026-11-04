@@ -1,3 +1,4 @@
+import { buildStoredAgentPayload } from "./agent/agent-projections.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { Session as InspectorSession } from "node:inspector/promises";
 import type { HeapProfiler } from "node:inspector";
@@ -881,7 +882,7 @@ test("scoped descriptor builds allocate independently of archived history", asyn
               id,
               provider: "codex",
               cwd: home,
-              workspaceId: `w${offset + i + 1}`,
+              workspaceId: "w1",
               createdAt: NOW,
               updatedAt: NOW,
               labels: {},
@@ -894,6 +895,24 @@ test("scoped descriptor builds allocate independently of archived history", asyn
     const storage = new AgentStorage(agentsPath, logger);
     const registry = new FileBackedWorkspaceRegistry(join(home, "workspaces.json"), logger);
     await storage.initialize();
+    await storage.upsert({
+      id: "parent",
+      provider: "codex",
+      cwd: home,
+      workspaceId: "w2",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    await storage.upsert({
+      id: "child",
+      provider: "codex",
+      cwd: home,
+      workspaceId: "w0",
+      createdAt: NOW,
+      updatedAt: NOW,
+      lastStatus: "running",
+      labels: { "paseo.parent-agent-id": "parent" },
+    });
     await registry.initialize();
     const agents = new AgentDirectory({
       storage,
@@ -902,9 +921,7 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       projectLive: async () => {
         throw new Error("Unexpected live projection");
       },
-      projectStored: () => {
-        throw new Error("Unexpected stored projection");
-      },
+      projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
       isProviderVisible: () => true,
       isStoredProviderAvailable: () => true,
     });
@@ -924,7 +941,8 @@ test("scoped descriptor builds allocate independently of archived history", asyn
           },
         ],
       },
-      listAgentPayloads: (workspaceIds) => agents.list({ workspaceIds, includeBackground: true }),
+      listAgentPayloads: (workspaceIds) =>
+        agents.list({ workspaceIds, includeBackground: true, includeAncestors: true }),
       workspaceLastUserMessageTimes: (workspaceIds) =>
         agents.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => [],
@@ -947,10 +965,11 @@ test("scoped descriptor builds allocate independently of archived history", asyn
         githubRuntime: null,
       }),
     });
-    await directory.buildDescriptorMap({
+    const scoped = await directory.buildDescriptorMap({
       workspaceIds: new Set(["w0"]).values(),
       includeGitData: false,
     });
+    expect(scoped.get("w0")?.status).toBe("running");
     const inspector = new InspectorSession();
     inspector.connect();
     let bytes = 0;

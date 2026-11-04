@@ -1129,7 +1129,8 @@ export class Session {
       getTerminalsUnavailable: () => terminalManager?.getUnavailableError?.()?.message ?? null,
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),
-      listWorkspaces: () => this.workspaceRegistry.listActive(),
+      // Diagnostics report both the active count and total archived history.
+      listWorkspaces: () => this.workspaceRegistry.listAll(),
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
       reloadConfig: () => daemonConfigStore.reload(),
@@ -1261,7 +1262,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: (workspaceIds) =>
-        this.listAgentPayloads({ workspaceIds, includeBackground: true }),
+        this.listAgentPayloads({ workspaceIds, includeBackground: true, includeAncestors: true }),
       workspaceLastUserMessageTimes: (workspaceIds) =>
         this.agentDirectory.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
@@ -1882,6 +1883,14 @@ export class Session {
         .map((workspace) => workspace.workspaceId);
 
       if (mutation.kind === "remove") {
+        // Archived workspaces can still represent an empty project in this subscription.
+        for (const [workspaceId, update] of subscription.lastEmittedByWorkspaceId) {
+          const projectId =
+            update.kind === "upsert" ? update.workspace.projectId : update.emptyProject?.projectId;
+          if (projectId === mutation.projectId && !projectWorkspaceIds.includes(workspaceId)) {
+            projectWorkspaceIds.push(workspaceId);
+          }
+        }
         const visibleWorkspaceIds = projectWorkspaceIds.filter((workspaceId) => {
           const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
           return (
@@ -7934,7 +7943,11 @@ export class Session {
       }
 
       const agents = (
-        await this.listAgentPayloads({ workspaceIds: [workspaceId], includeBackground: true })
+        await this.listAgentPayloads({
+          workspaceIds: [workspaceId],
+          includeBackground: true,
+          includeAncestors: true,
+        })
       ).filter((agent) => this.isProviderVisibleToClient(agent.provider));
       const agentsById = new Map(agents.map((agent) => [agent.id, agent] as const));
       const candidates = agents
