@@ -114,7 +114,7 @@ import {
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
 import { PluginSettingsContent } from "@/plugins/settings";
-import { useInstalledPlugins } from "@/plugins/registry";
+import { usePluginDisplayName } from "@/plugins/plugin-list";
 import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
@@ -1267,15 +1267,10 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     returnFromSettings({ kind: "root" });
   }, []);
 
-  const installedPlugins = useInstalledPlugins();
+  // The header names the plugin; its tabs name the open settings screen.
+  const pluginDisplayName = usePluginDisplayName(view.kind === "plugin" ? view : null);
   const detailTitle = ((): string | undefined => {
-    if (view.kind === "plugin") {
-      const plugin = installedPlugins.find(
-        (candidate) => candidate.serverId === view.serverId && candidate.id === view.pluginId,
-      );
-      const screen = plugin?.settingsScreens.find((candidate) => candidate.id === view.screenId);
-      return `${view.pluginId} · ${plugin && screen ? plugin.i18n.resolve(screen.title, plugin.locale) : t("settings.title")}`;
-    }
+    if (view.kind === "plugin") return pluginDisplayName;
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
       return item ? t(item.labelKey) : undefined;

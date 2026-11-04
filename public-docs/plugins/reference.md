@@ -73,16 +73,16 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                                                                                                     |
-| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                                                                                                     |
-| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.                                                     |
-| `icon`         | No       | Relative path to a PNG inside the plugin package.                                                                                            |
-| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid.                                                    |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                                                                       |
-| `translations` | No       | Listing text in other languages, read by the registry and ignored by Paseo. See [other languages](/docs/plugins/publishing#other-languages). |
-| `requirements` | No       | Supported Paseo versions, described below.                                                                                                   |
-| `build`        | No       | Preparation commands, described in the CLI reference.                                                                                        |
+| Field          | Required | Behavior                                                                                                                                            |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                                                                            |
+| `name`         | No       | Non-empty display name for the registry, the website, your row in **Settings → Plugins**, and your settings header. Without it, Paseo shows the ID. |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                                                                                   |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid.                                                           |
+| `description`  | No       | Non-empty summary shown below the plugin name in **Settings → Plugins**.                                                                            |
+| `translations` | No       | Listing text in other languages, read by the registry and ignored by Paseo. See [other languages](/docs/plugins/publishing#other-languages).        |
+| `requirements` | No       | Supported Paseo versions, described below.                                                                                                          |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                                                                               |
 
 Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
 segments. Registry listings for visual plugins require an interface image even though `media` is
@@ -1302,8 +1302,11 @@ Themes need a host that supports them. A client released before `addTheme` canno
 ## Settings screens
 
 Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
-`index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
-`id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
+`index.client.tsx`. Your plugin's row in **Settings → Plugins** on that host then shows a settings
+button (cog) that opens your first screen. When you register several screens, the settings page shows
+one tab per screen, labeled with its `title` and `icon`, in registration order. With one screen there
+are no tabs. The page header shows your manifest `name`, or your plugin ID when you leave `name`
+out; it never includes a screen title. `id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
 idempotent remover, and plugin teardown removes remaining screens.
 
 Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
