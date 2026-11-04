@@ -1706,6 +1706,43 @@ describe("WorkspaceGitServiceImpl", () => {
     },
   );
 
+  test.each(["repository metadata", "working tree"])(
+    "settles a pending %s watcher retry after the final consumer leaves",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      const subscribe = vi.fn(async (directory: string) => {
+        if (directory === watchPath) {
+          attempts += 1;
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        await vi.advanceTimersByTimeAsync(30_000);
+        await settle(() => expect(attempts).toBe(2));
+        subscription.unsubscribe();
+        await waitForRefreshesToSettle(service);
+        const readsAfterUnsubscribe = getCheckoutStatus.mock.calls.length;
+        // Vitest reports any unhandled rejection as a suite failure.
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(attempts).toBe(2);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterUnsubscribe);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+  );
+
   test("sets a bounded polling fallback when recursive observation is unavailable", async () => {
     const subscribe = vi.fn(async () => {
       throw new Error("watcher unavailable");
