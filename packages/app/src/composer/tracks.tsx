@@ -8,6 +8,8 @@ import {
   MenuSurface,
   MenuTrigger,
   useMenuContext,
+  useMenuDepth,
+  type MenuPageDefinition,
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
@@ -27,8 +29,9 @@ import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
  * on every platform.
  *
  * The bar floats over the transcript with no background, so content remains visible underneath.
- * Its host gives the scroll viewport a small bottom inset only when the bar exists; that keeps
- * the final footer clear without turning the overlay into a layout band.
+ * Its host gives the scroll viewport a small bottom inset for as long as the bar is mounted, with
+ * or without pills: that keeps the final footer clear, and pills that come and go every turn do not
+ * move the transcript.
  */
 export function ComposerTrackBar({ children }: { children: ReactNode }): ReactElement {
   return (
@@ -61,6 +64,8 @@ export interface ComposerTrackPillProps {
   accessibilityLabel?: string;
   /** Panel body. Rendered into a popover on wide screens and a sheet on compact ones. */
   children: ReactNode;
+  /** Pages a row can open in place of the list (`ComposerTrackRow` `opensPage`). */
+  pages?: readonly MenuPageDefinition[];
 }
 
 /**
@@ -85,6 +90,7 @@ export function ComposerTrackPill({
   testID,
   accessibilityLabel,
   children,
+  pages,
 }: ComposerTrackPillProps): ReactElement {
   return (
     <MenuRoot compactMode="sheet">
@@ -98,6 +104,7 @@ export function ComposerTrackPill({
         align="start"
         offset={PANEL_OFFSET}
         sheetTitle={panelTitle}
+        pages={pages}
         minWidth={PANEL_MIN_WIDTH}
         maxWidth={PANEL_MAX_WIDTH}
         maxHeight={PANEL_MAX_HEIGHT}
@@ -199,6 +206,11 @@ export interface ComposerTrackRowProps {
    * lands inside the panel is not.
    */
   closeOnSelect?: boolean;
+  /**
+   * A page of the panel this row opens in place of the list, instead of running `onPress`. The
+   * panel stays open: Back returns to the list.
+   */
+  opensPage?: string;
   disabled?: boolean;
   accessibilityLabel?: string;
   testID?: string;
@@ -220,18 +232,23 @@ export function ComposerTrackRow({
   children,
   onPress,
   closeOnSelect = true,
+  opensPage,
   disabled = false,
   accessibilityLabel,
   testID,
 }: ComposerTrackRowProps): ReactElement {
-  const { selectItem } = useMenuContext("ComposerTrackRow");
+  const { selectItem, openSub } = useMenuContext("ComposerTrackRow");
+  const depth = useMenuDepth();
   const [hovered, setHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
-  const handleSelect = useCallback(
-    () => selectItem(onPress, closeOnSelect),
-    [closeOnSelect, onPress, selectItem],
-  );
+  const handleSelect = useCallback(() => {
+    if (opensPage) {
+      selectItem(() => openSub({ id: opensPage, depth }), false);
+      return;
+    }
+    selectItem(onPress, closeOnSelect);
+  }, [closeOnSelect, depth, onPress, openSub, opensPage, selectItem]);
 
   const itemDataSet = useMemo(
     () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
@@ -251,7 +268,7 @@ export function ComposerTrackRow({
     [hovered, renderRow],
   );
 
-  if (!onPress) {
+  if (!onPress && !opensPage) {
     return <View accessibilityLabel={accessibilityLabel}>{renderRow(false)}</View>;
   }
 

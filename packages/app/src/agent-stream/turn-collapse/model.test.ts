@@ -48,6 +48,14 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("maps hidden rows only while their turn is closed", () => {
+    const result = collapse([user("u1"), shell("c1"), reply("final")]);
+    expect(result.hostIdByHiddenRowId.get("c1")).toBe("u1");
+    const expanded = collapse([user("u1"), shell("c1"), reply("final")], {
+      expandedHostIds: new Set(["u1"]),
+    });
+    expect(expanded.hostIdByHiddenRowId.size).toBe(0);
+  });
   it("keeps lifecycle events and compaction recognizable beside a semantic action summary", () => {
     const create = shell("create");
     if (create.payload.source !== "agent") throw new Error("Expected agent tool");

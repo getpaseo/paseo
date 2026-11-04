@@ -1,3 +1,5 @@
+import { createRestartRecovery } from "./agent/restart-recovery/index.js";
+import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
 import {
   createFinishSubscriptions,
@@ -181,7 +183,7 @@ import {
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
+import { startWorkerTerminalManager } from "../terminal/worker-terminal-manager.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
@@ -397,12 +399,14 @@ export type DaemonLifecycleIntent =
       clientId: string;
       requestId: string;
       reason: string;
+      keepTerminals: boolean;
     }
   | {
       type: "restart";
       clientId: string;
       requestId: string;
       reason: string;
+      keepTerminals: boolean;
     };
 
 export interface PaseoDaemonConfig {
@@ -417,6 +421,7 @@ export interface PaseoDaemonConfig {
   trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  usageEnabled?: boolean;
   browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
@@ -463,6 +468,8 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   idleRuntimeCleanup?: boolean;
+  resumeOnStartup?: boolean;
+  resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
   metadataGeneration?: {
     providers?: Array<{
@@ -494,7 +501,8 @@ export interface PaseoDaemon {
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   browserToolsBroker: BrowserToolsBroker;
   start(): Promise<void>;
-  stop(): Promise<void>;
+  /** Stops the daemon. Terminals keep running for the next daemon only with keepTerminals. */
+  stop(options?: { keepTerminals?: boolean }): Promise<void>;
   getListenTarget(): ListenTarget | null;
   getServerId(): string;
 }
@@ -584,6 +592,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     ...(config.providerCatalogRefreshTimeoutMs !== undefined
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
+    usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
     metadataGeneration: {
@@ -592,6 +601,8 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
+    resumeOnStartup: config.resumeOnStartup === true,
+    resumePrompt: config.resumePrompt ?? "Resume working.",
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
@@ -710,7 +721,10 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
-  const terminalManager = createConfiguredTerminalManager({
+  const terminalManager = await startWorkerTerminalManager({
+    paseoHome: config.paseoHome,
+    paseoVersion: daemonVersion,
+    logger,
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
@@ -951,14 +965,14 @@ export async function createPaseoDaemon(
   workspaceRegistry.subscribeToMutations(async (mutation) => {
     if (mutation.kind === "remove" && mutation.workspace) {
       const cwd = path.resolve(mutation.workspace.cwd);
-      const workspaces = await workspaceRegistry.list();
+      const workspaces = await workspaceRegistry.listActive();
       const hasActiveWorkspace = workspaces.some(
         (workspace) => !workspace.archivedAt && path.resolve(workspace.cwd) === cwd,
       );
       if (!hasActiveWorkspace) workspaceRuntimeStore.remove(cwd);
     }
     if (mutation.kind === "archive" && mutation.workspace) {
-      pluginRuntime.emit("workspace.archived", {
+      pluginRuntime.emit("workspace.archive.after", {
         workspace: describeHookWorkspace(mutation.workspace),
       });
     }
@@ -1031,7 +1045,19 @@ export async function createPaseoDaemon(
     agentStorage,
   );
   await agentStorage.initialize();
-  await closeStaleAgentRecords(agentStorage);
+  const restartRecovery = createRestartRecovery({
+    storage: agentStorage,
+    settings: () => ({
+      enabled: daemonConfigStore.get().resumeOnStartup === true,
+      prompt: daemonConfigStore.get().resumePrompt ?? "Resume working.",
+    }),
+    eligible: async (record) =>
+      !record.workspaceId || !(await workspaceRegistry?.get(record.workspaceId))?.archivedAt,
+    dispatch: (agentId, prompt) =>
+      sendPromptToAgent({ agentId, prompt, agentManager, agentStorage, logger, unarchive: false }),
+    report: (agentId, err) => logger.error({ agentId, err }, "Agent restart recovery failed"),
+  });
+  await restartRecovery.prepareStartup();
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
     serverId,
@@ -1096,12 +1122,13 @@ export async function createPaseoDaemon(
   // external path→workspace adapter, not ownership: archive-by-path requests that
   // arrive with a worktree path and no workspaceId (old clients / CLI).
   const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
-    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list());
+    // Explicit archive administration must prefer an archived exact match to an active ancestor.
+    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listAll());
   };
   const ensureWorkspaceForCreateExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
@@ -1119,7 +1146,7 @@ export async function createPaseoDaemon(
     return workspace.workspaceId;
   };
   const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listActive();
     return workspaces
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => ({
@@ -1154,14 +1181,14 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext, context);
     await emitWorkspaceUpdatesExternal([workspaceId]);
     return workspaceId;
   };
   const emitWorkspaceUpdateForCwdExternal = async (cwd: string) => {
-    const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.list(), cwd);
+    const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.listActive(), cwd);
     await emitWorkspaceUpdatesExternal(workspaceIds);
   };
   const emitExternalSessionMessage = (message: SessionOutboundMessage) => {
@@ -1214,6 +1241,7 @@ export async function createPaseoDaemon(
         worktreesRoot: config.worktreesRoot,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
           return createRegisteredPaseoWorktree(workflowInput, {
+            lifecycle: pluginRuntime,
             github,
             ...(workflowOptions?.resolveDefaultBranch
               ? {
@@ -1446,7 +1474,8 @@ export async function createPaseoDaemon(
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
-  const persistedRecords = await agentStorage.list();
+  // Startup loads persisted agent history once before restoring the registry.
+  const persistedRecords = await agentStorage.listAll();
   logger.info(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
@@ -1471,6 +1500,7 @@ export async function createPaseoDaemon(
     ...createFinishObservation({
       agentManager,
       agentStorage,
+      waitForResume: restartRecovery.waitForResume,
       serverId,
       logger,
       messages: () => {
@@ -1871,6 +1901,7 @@ export async function createPaseoDaemon(
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
+            restartRecovery.resumePending();
             await finishSubscriptions.start();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
@@ -1944,7 +1975,9 @@ export async function createPaseoDaemon(
     }
   };
 
-  const stop = async () => {
+  const stop = async (options?: { keepTerminals?: boolean }) => {
+    const keepTerminals = options?.keepTerminals === true;
+    let terminalShutdownError: unknown = null;
     localCredential = null;
     await deleteLocalCredential(config.paseoHome);
     // Stop tracking plugin provider registrations before anything tears plugins
@@ -1964,6 +1997,7 @@ export async function createPaseoDaemon(
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
+    await restartRecovery.captureRunningAgents();
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
@@ -1975,7 +2009,19 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();
-    terminalManager.killAll();
+    try {
+      if (keepTerminals) {
+        await terminalManager.detach();
+        logger.info("Terminals left running for the next daemon");
+      } else {
+        await terminalManager.closeTerminals();
+      }
+    } catch (error) {
+      // Finish the rest of the shutdown, then report it: the supervisor and `daemon stop`
+      // retry the cleanup from the record the reaper kept.
+      terminalShutdownError = error;
+      logger.error({ err: error }, "Terminal shutdown failed");
+    }
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
@@ -1998,6 +2044,9 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
     }
+    if (terminalShutdownError) {
+      throw terminalShutdownError;
+    }
   };
 
   return {
@@ -2013,16 +2062,6 @@ export async function createPaseoDaemon(
     getListenTarget: () => boundListenTarget,
     getServerId: () => serverId,
   };
-}
-
-async function closeStaleAgentRecords(agentStorage: AgentStorage): Promise<void> {
-  // No provider runtimes are loaded at startup. Repair interrupted
-  // shutdowns before any status consumer sees the persisted active states.
-  for (const record of await agentStorage.list()) {
-    if (record.lastStatus === "running" || record.lastStatus === "initializing") {
-      await agentStorage.upsert({ ...record, lastStatus: "closed" });
-    }
-  }
 }
 
 /**

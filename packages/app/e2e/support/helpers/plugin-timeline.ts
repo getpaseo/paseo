@@ -5,8 +5,64 @@ import { expect, type Page, type TestInfo } from "@playwright/test";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { expectReconnectingToastVisible } from "./workspace-ui";
 
 const PLUGIN_ID = "timeline-transform-e2e";
+
+/** Observe the app's real socket, including fresh sockets after a reload. */
+export function trackPluginChatRecovery(page: Page) {
+  const messages: {
+    type: string;
+    payload?: { plugins?: { id: string; clientBundle?: string }[] };
+  }[] = [];
+  page.on("websocket", (socket) => {
+    const collect = ({ payload }: { payload: string | Buffer }) => {
+      if (typeof payload !== "string") return;
+      const frame = JSON.parse(payload);
+      if (frame.type === "session") messages.push(frame.message);
+    };
+    socket.on("framesent", collect);
+    socket.on("framereceived", collect);
+  });
+  return {
+    reset() {
+      messages.length = 0;
+    },
+    async expectCatalogWithoutRetransmission() {
+      await expect
+        .poll(() =>
+          messages.some(
+            (message) =>
+              message.type === "plugin.catalog.get.response" &&
+              message.payload?.plugins?.some((plugin) => plugin.id === PLUGIN_ID),
+          ),
+        )
+        .toBe(true);
+      const entry = messages
+        .find((message) => message.type === "plugin.catalog.get.response")
+        ?.payload?.plugins?.find((plugin) => plugin.id === PLUGIN_ID);
+      expect(entry).toBeDefined();
+      expect(entry).not.toHaveProperty("clientBundle");
+    },
+    async expectRecoveredWithoutRetransmission() {
+      await this.expectCatalogWithoutRetransmission();
+      await expect
+        .poll(() => messages.some((message) => message.type === "fetch_agent_timeline_response"))
+        .toBe(true);
+    },
+  };
+}
+
+export async function reconnectPluginChat(
+  page: Page,
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+) {
+  await gate.drop();
+  await gate.waitForBlockedConnection();
+  await expectReconnectingToastVisible(page);
+  gate.restore();
+}
 export const ASSISTANT_TEXT =
   "Skill header\n\n# Instructions\n\nRead every paragraph and preserve the full message while this response is still streaming.";
 

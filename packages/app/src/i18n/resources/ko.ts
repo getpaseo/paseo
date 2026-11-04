@@ -75,6 +75,7 @@ export const ko: TranslationResources = {
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
       daemonClientDisconnected: "데몬 클라이언트 연결이 끊어졌습니다",
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
+      folderOutsideWorkspace: "{{path}}은(는) 이 워크스페이스 밖에 있습니다",
       unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
@@ -625,6 +626,7 @@ export const ko: TranslationResources = {
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
+      restoreRequiresUpdate: "터미널을 보려면 호스트를 업데이트하세요.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
       fileUploaded: "파일을 업로드했습니다",
       pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
@@ -1556,6 +1558,9 @@ export const ko: TranslationResources = {
       cli: {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
+        uninstallFailed: "Paseo CLI를 제거할 수 없습니다.",
+        keptForeign:
+          "Paseo가 설치하지 않은 paseo 명령은 그대로 두었습니다. 제거하려면 직접 삭제하세요.",
       },
     },
   },
@@ -1657,6 +1662,60 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "{{total}}단계 중 {{current}}단계",
+      skip: "설정 건너뛰기",
+      continue: "계속",
+      finish: "완료",
+      steps: {
+        appearance: {
+          label: "모양",
+          title: "Paseo에 오신 것을 환영합니다",
+          description: "먼저 모양을 골라 보세요",
+        },
+        providers: {
+          label: "제공자",
+          title: "에이전트",
+          description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
+        },
+        projects: {
+          label: "프로젝트",
+          title: "프로젝트 추가",
+          description: "에이전트가 어디에서 작업하길 원하나요",
+          addProject: "프로젝트 추가",
+          added: "추가됨",
+          suggestions: {
+            loading: "작업했던 폴더를 찾는 중",
+            empty: "최근 프로젝트를 찾지 못했습니다",
+            lastUsed: "마지막 사용 {{time}}",
+            addSelected_one: "프로젝트 {{count}}개 추가",
+            addSelected_other: "프로젝트 {{count}}개 추가",
+            adding: "추가하는 중…",
+            addFailed: "이 폴더를 추가하지 못했습니다",
+          },
+        },
+        orchestration: {
+          label: "오케스트레이션",
+          title: "에이전트가 Paseo를 사용하도록 허용",
+          description: "에이전트가 워크스페이스를 만들고 다른 에이전트와 대화하게 하세요",
+        },
+        phone: {
+          label: "모바일",
+          title: "어디서나 에이전트와 함께",
+          description:
+            "모든 기능을 갖춘 네이티브 모바일 앱으로 휴대폰에서 어떤 Paseo 컴퓨터든 제어할 수 있습니다",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "연결 방법 선택",
+          connectDocs: "문서",
+          openConnectDocs: "연결 문서 열기",
+          recommended: "권장",
+          relay: { title: "릴레이", hint: "엔드투엔드 암호화, QR 코드를 스캔하세요" },
+          tailscale: { title: "Tailscale", hint: "약간의 설정이 필요합니다" },
+        },
+      },
+    },
     title: "Paseo에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
@@ -1875,6 +1934,8 @@ export const ko: TranslationResources = {
       notNow: "지금은 아님",
       directConnectionHint:
         "릴레이 없이 TCP, Tailscale 또는 다른 VPN을 통해 직접 연결하세요. QR 코드가 생성되지 않습니다.",
+      tailscaleDocs: "Tailscale 설정",
+      tailscaleDocsAccessibility: "Tailscale로 연결하는 방법 읽기",
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
@@ -1931,7 +1992,6 @@ export const ko: TranslationResources = {
     parent: {
       backToParent: "상위 에이전트로 돌아가기",
       backTo: "{{label}}(으)로 돌아가기",
-      parent: "상위",
       parentAgent: "상위 에이전트",
       openParent: "상위 에이전트 열기",
     },
@@ -2031,7 +2091,6 @@ export const ko: TranslationResources = {
   toolCallDetails: {
     error: "오류",
     empty: "추가 세부 정보가 없습니다",
-    subAgentActivity: "서브에이전트 활동",
     input: "입력",
     output: "출력",
   },
@@ -2110,6 +2169,11 @@ export const ko: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "사용량 확인",
+    checkUsageHint: "모든 기기에서 {{host}}에 적용",
+    off: "{{host}}의 사용량 확인이 꺼져 있습니다.",
+    turnOn: "켜기",
+
     options: "설정",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
@@ -2157,6 +2221,7 @@ export const ko: TranslationResources = {
       days: "{{value}}일",
       hours: "{{value}}시간",
       minutes: "{{value}}분",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "마지막 업데이트: {{relativeTime}}",
@@ -2164,6 +2229,8 @@ export const ko: TranslationResources = {
       resetTimePassed: "초기화 시간이 지났습니다",
       resettingNow: "지금 재설정 중",
       resetsIn: "{{duration}} 후 재설정",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "지금 한도에 도달",
       runsOutIn: "{{duration}} 후 한도에 도달",
       justNow: "방금",
@@ -2332,6 +2399,11 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      setup: {
+        label: "초기 설정",
+        description: "모양, 제공자, 프로젝트, 휴대폰 페어링을 다시 진행합니다",
+        action: "설정 다시 보기",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2621,11 +2693,7 @@ export const ko: TranslationResources = {
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
-      },
-      actions: {
-        install: "설치",
-        installing: "설치 중...",
-        installed: "설치됨",
+        accessibilityLabel: "Paseo CLI 설치",
       },
     },
     permissions: {
@@ -2703,10 +2771,9 @@ export const ko: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "오케스트레이션 스킬",
         title: "오케스트레이션 스킬",
-        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
+        description: "에이전트에게 Paseo 도구 사용법을 알려 줍니다",
         updateAvailable: "업데이트 사용 가능",
         updateTitle: "Paseo 스킬을 업데이트할까요?",
-        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
         uninstallTitle: "Paseo 스킬을 제거할까요?",
         uninstallMessage:
           "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
@@ -2724,9 +2791,6 @@ export const ko: TranslationResources = {
         uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
         saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
         actions: {
-          install: "설치",
-          installing: "설치 중...",
-          installed: "설치됨",
           update: "업데이트",
           working: "작업 중...",
           remove: "제거",
@@ -2748,6 +2812,7 @@ export const ko: TranslationResources = {
           title: "Paseo 도구 활성화",
           hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
+          updateFailed: "Paseo 도구를 업데이트할 수 없습니다.",
         },
         systemPrompt: {
           title: "시스템 프롬프트",
@@ -2763,6 +2828,14 @@ export const ko: TranslationResources = {
       },
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
+        resumeOnStartup: {
+          title: "재시작 후 에이전트 재개",
+          info: "호스트가 중지될 때 작업 중이던 에이전트를 다시 열고 재개 메시지를 보냅니다. 정상 재시작과 비정상 종료 후 모두 적용됩니다.",
+          hint: "중단된 작업을 자동으로 계속합니다.",
+          prompt: "재개 메시지",
+          edit: "편집",
+          editAccessibilityLabel: "메시지 편집",
+        },
         idleRuntimeCleanup: {
           title: "유휴 에이전트 해제",
           hint: "1시간 동안 활동이 없으면 메모리를 확보합니다.",
@@ -2860,6 +2933,10 @@ export const ko: TranslationResources = {
           requestFailedTitle: "오류",
           requestFailedMessage:
             "재시작 요청을 보내지 못했습니다. Paseo가 자동으로 다시 연결하므로 호스트가 온라인으로 표시되면 다시 시도하세요.",
+          closeTerminals: "재시작하고 터미널 닫기",
+          closeTerminalsHint: "재시작하면서 이 호스트의 모든 터미널도 닫습니다.",
+          closeTerminalsConfirmMessage:
+            "데몬을 재시작하고 모든 터미널을 닫습니다. 터미널에서 실행 중인 프로그램은 종료됩니다. 앱은 자동으로 다시 연결됩니다.",
           dialogFailedMessage: "재시작 확인 대화 상자를 열 수 없습니다.",
         },
         update: {

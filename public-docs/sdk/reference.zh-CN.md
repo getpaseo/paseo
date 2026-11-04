@@ -59,7 +59,7 @@ nav: API 参考
 
 `parent` 接受主机本地的 Agent ID、`AgentAddress`（`{ serverId, agentId }`）或 Agent 句柄。句柄的 `address` 在断开连接后仍保留其主机身份。通过 `hosts.client(serverId)` 创建时，请传入父 Agent 句柄或完整地址；SDK 会把父级元数据带到目标主机。
 
-`background` 表示创建工作区的意图。它不能与已有的 `workspaceId` 一起使用。调用方继承规则和包含后台的发现方式见[后台工作区](./workspaces.md)。
+`background` 会创建一个[后台 Agent](./agents.md#run-a-helper-as-a-background-agent)。本次调用创建的工作区也是后台工作区。带 `parent` 且省略该值时，沿用父 Agent 自己的 `background`。包含后台的发现方式见[后台工作区](./workspaces.md)。
 
 `config` 接受：
 

@@ -273,6 +273,26 @@ Playwright dispatch lateness. Set `PASEO_PROFILE_TYPING_KEYS`, `PASEO_PROFILE_TY
 `PASEO_PROFILE_CPU_PATH` and `PASEO_PROFILE_TRACE_PATH` captures run separately after the latency
 measurements so profiling overhead does not contaminate them.
 
+For diff layout, two benchmarks share one corpus
+(`packages/app/src/git/diff-document/benchmark-corpus.ts`: a real source file, a changelog with
+600-character lines, generated code with ligature punctuation, and JSON). The node bench runs the
+shared document model with the web and native measurers replaced by counters, so it reports how
+many strings each backend would have to shape, which is the cost that survives the move to canvas
+or Skia:
+
+```bash
+cd packages/app && npx vitest bench --project unit src/git/diff-document/model.bench.ts
+```
+
+The browser benchmark opens the same corpus as a working diff, toggles line wrap from the toolbar,
+and reports pointer-down to painted latency, the longest main-thread task, and the `DiffDocument`
+React commit time for cold and warm toggles, then scroll frame times in both modes:
+
+```bash
+cd packages/app && PASEO_DIFF_PERF_E2E=1 npx playwright test --project=browser \
+  e2e/browser/diff-performance.spec.ts -g "toggling line wrap"
+```
+
 Set `PASEO_PROFILE_TYPING_SCENARIO=height-growth` to alternate `Shift+Enter` and printable input.
 That report includes input and composer height changes plus React work grouped into composer,
 stream, and ancestor/root scopes. Ancestor/root timings include descendant work because the Profiler
@@ -573,7 +593,8 @@ rerun passes only by landing elsewhere.
 
 To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
-replace that version in the lockfile and report the URL to npm so they purge it.
+replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
+version in root `overrides` and regenerate the lockfile. Report the URL to npm so they purge it.
 
 ## ACP provider catalog versions
 

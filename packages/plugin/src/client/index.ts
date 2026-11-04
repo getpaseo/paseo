@@ -71,7 +71,12 @@ export {
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
-export { useRpc } from "./rpc-context.js";
+export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
+export type {
+  PluginSubscribeOptions,
+  PluginSubscriptionClosed,
+  PluginSubscriptionHandle,
+} from "../rpc.js";
 import type { SettingsDefinition } from "../settings.js";
 import type { SettingsState } from "./contracts.js";
 import type { ZodType } from "zod";

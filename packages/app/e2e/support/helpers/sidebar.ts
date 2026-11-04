@@ -71,6 +71,15 @@ export async function focusWorkspaceRowWithKeyboard(
   await expect(row).toBeFocused();
 }
 
+export async function scrollWorkspaceList(page: Page): Promise<void> {
+  const list = page.getByTestId("sidebar-project-workspace-list-scroll");
+  const before = await list.evaluate((element) => element.scrollTop);
+  await list.evaluate((element) =>
+    element.scrollBy({ top: element.scrollTop > 0 ? -40 : 40, behavior: "instant" }),
+  );
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).not.toBe(before);
+}
+
 export async function expectWorkspaceHoverCardOpen(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
 }
