@@ -27,6 +27,7 @@ import { PromptFiles } from "./prompt.js";
 import {
   extractTargetPaths,
   inferToolName,
+  isNativeReadTool,
   isSafeAcceptEditsTool,
   mapAcpToolCall,
   mapAcpToolDetail,
@@ -986,17 +987,18 @@ export class Session {
     name: string,
     detail: ProviderToolCallDetail,
   ): boolean {
-    if (this.mode === "full-access" || this.isSessionImageRead(toolCall, detail)) return true;
+    if (this.mode === "full-access" || this.isSessionImageRead(toolCall, name, detail)) return true;
     if (matchesPreapprovedMcpTool(toolCall, name, this.options.config.toolPolicy)) return true;
     return this.mode === "accept-edits" && isSafeAcceptEditsTool(toolCall, name);
   }
 
   private isSessionImageRead(
     toolCall: AcpToolCallPayload,
+    name: string,
     detail: ProviderToolCallDetail,
   ): boolean {
     const imagesDir = this.files.directoryPath;
-    if (!imagesDir || (detail.type !== "read" && toolCall.kind !== "read")) return false;
+    if (!imagesDir || !isNativeReadTool(toolCall, name)) return false;
     const targets = extractTargetPaths(toolCall, detail);
     if (targets.length === 0) return false;
     const resolvedImagesDir = canonicalPath(imagesDir);

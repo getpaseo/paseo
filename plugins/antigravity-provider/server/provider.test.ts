@@ -15,16 +15,11 @@ import {
   type ProviderPersistence,
   type ProviderRegistration,
   type ProviderSessionConfig,
+  type ProviderTimelineItem,
 } from "@getpaseo/plugin/server/provider";
 import contribute from "../index.server.js";
 import { signalPlan } from "./internal/signals.js";
-import { matchesPreapprovedMcpTool } from "./internal/timeline.js";
 import { Usage, parseResetTimestamp } from "./internal/usage.js";
-import {
-  acpPromptResultSchema,
-  buildElicitationResponse,
-  parseElicitationQuestions,
-} from "./internal/wire.js";
 
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
@@ -427,6 +422,17 @@ it("never auto-approves external MCP tools with query arguments in accept-edits 
     permissionId: perm.request.id,
     response: { behavior: "deny" },
   });
+
+  const perm2 = await h.wait(
+    (event) =>
+      event.type === "session.permission" && event.request.name === "mcp__other__destructive",
+  );
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: perm2.request.id,
+    response: { behavior: "deny" },
+  });
   await h.completed(turn);
 
   expect(h.events).toContainEqual(
@@ -434,7 +440,7 @@ it("never auto-approves external MCP tools with query arguments in accept-edits 
       type: "timeline.item",
       item: expect.objectContaining({
         type: "assistant_message",
-        text: "MCP_RESULT:preapproved=true,danger=false\n",
+        text: "MCP_RESULT:preapproved=true,danger=false,spoofed=false,wrapper=true\n",
       }),
     }),
   );
@@ -1543,65 +1549,84 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     }
   });
 
-  it("rejects wrapper arguments for authorization when tool name is not a verified wrapper", () => {
-    const policy = {
-      preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],
-    };
-    // Attack scenario: tool is named mcp__other__destructive_action, but arguments contain serverName/toolName of preapproved tool.
-    const fakeTool = {
-      toolCallId: "call-1",
-      name: "mcp__other__destructive_action",
-      rawInput: { serverName: "hub", toolName: "finish_execution" },
-    };
-    expect(matchesPreapprovedMcpTool(fakeTool, "mcp__other__destructive_action", policy)).toBe(
-      false,
+  it("does not auto-approve unapproved MCP tools with image directory arguments", async () => {
+    const h = await harness();
+    await h.open();
+    const png = await readFile(
+      new URL("../test/fixtures/image-file-external.png", import.meta.url),
     );
-
-    // Verified wrapper scenario: tool name is call_mcp_tool
-    const wrapperTool = {
-      toolCallId: "call-2",
-      name: "call_mcp_tool",
-      rawInput: { serverName: "hub", toolName: "finish_execution" },
-    };
-    expect(matchesPreapprovedMcpTool(wrapperTool, "call_mcp_tool", policy)).toBe(true);
+    const turn = await h.message([
+      { type: "text", text: "WITH_MCP_UNAPPROVED" },
+      { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+    ]);
+    const perm = await h.wait(
+      (event) =>
+        event.type === "session.permission" && event.request.name === "mcp__external__delete_file",
+    );
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: perm.request.id,
+      response: { behavior: "deny" },
+    });
+    await h.completed(turn);
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "assistant_message",
+          text: "MCP_IMAGE_DENIED\n",
+        }),
+      }),
+    );
   });
 
-  it("normalizes ACP cachedReadTokens into cachedInputTokens at the wire boundary", () => {
-    const parsed = acpPromptResultSchema.parse({
-      stopReason: "end_turn",
-      usage: {
-        inputTokens: 100,
-        outputTokens: 50,
-        cachedReadTokens: 500,
-      },
-    });
-    expect(parsed.usage?.cachedInputTokens).toBe(500);
+  it("normalizes ACP cachedReadTokens into cachedInputTokens at the wire boundary", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("CACHED_READ_TOKENS_TURN");
+    await h.completed(turn);
+    const usage = h.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usage?.usage.cachedInputTokens).toBe(500);
   });
 
-  it("omits unanswered optional enum properties from elicitation responses", () => {
-    const questions = parseElicitationQuestions({
-      message: "Please choose",
-      requestedSchema: {
-        type: "object",
-        properties: {
-          requiredEnum: { type: "string", enum: ["Yes", "No"], title: "Required" },
-          optionalEnum: { type: "string", enum: ["Fast", "Slow", "Other"], title: "Optional" },
+  it("preserves primitive types and omits unanswered optional enum properties in elicitation", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("ASK_QUESTION_TYPES");
+    const questionPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "question",
+    );
+    if (questionPerm.type !== "session.permission") throw new Error("Expected question permission");
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: questionPerm.request.id,
+      response: {
+        behavior: "allow",
+        updatedInput: {
+          answers: {
+            approved: "false",
+            count: "3",
+            // optionalEnum omitted
+          },
         },
-        required: ["requiredEnum"],
       },
     });
-    const result = buildElicitationResponse(questions, {
-      behavior: "allow",
-      updatedInput: {
-        answers: {
-          requiredEnum: "Yes",
-          // optionalEnum omitted
-        },
+    await h.completed(turn);
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: 'QUESTION_TYPES_RESULT:{"action":"accept","content":{"approved":false,"count":3}}\n',
       },
     });
-    expect(result.action).toBe("accept");
-    expect(result.content).toEqual({ requiredEnum: "Yes" });
-    expect(result.content).not.toHaveProperty("optionalEnum");
   });
 
   it("allocates distinct plan identities across replayed turn boundaries", async () => {
@@ -1610,12 +1635,17 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
       restored: { version: 1, data: { conversationId: "conv-alpha-1" } },
       history: "replay",
     });
-    const todos = h.events.filter(
-      (event): event is Extract<ProviderEvent, { type: "timeline.item"; item: { type: "todo" } }> =>
-        event.type === "timeline.item" && event.item.type === "todo",
+    const timelineEvents = h.events.filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item",
     );
+    const todos = timelineEvents
+      .map((e) => e.item)
+      .filter(
+        (item): item is Extract<ProviderTimelineItem, { type: "todo" }> => item.type === "todo",
+      );
     expect(todos.length).toBe(2);
-    expect(todos[0]!.item.id).not.toBe(todos[1]!.item.id);
+    expect(todos[0]!.id).not.toBe(todos[1]!.id);
   });
 });
 

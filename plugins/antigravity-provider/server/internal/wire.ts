@@ -244,9 +244,17 @@ export interface ParsedElicitationQuestion {
   options: Array<{ label: string }>;
   rawEnum: string[];
   multiSelect: boolean;
+  valueType: "string" | "number" | "integer" | "boolean";
   allowOther: boolean;
   allowEmpty: boolean;
   otherFieldKey?: string;
+}
+
+function resolvePropertyValueType(type?: string): "string" | "number" | "integer" | "boolean" {
+  if (type === "boolean") return "boolean";
+  if (type === "number") return "number";
+  if (type === "integer") return "integer";
+  return "string";
 }
 
 export function parseElicitationQuestions(
@@ -264,6 +272,7 @@ export function parseElicitationQuestions(
         options: [],
         rawEnum: [],
         multiSelect: false,
+        valueType: "string",
         allowOther: true,
         allowEmpty: false,
       },
@@ -275,6 +284,7 @@ export function parseElicitationQuestions(
     const rawEnum = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
     const options = rawEnum.filter((item) => item !== "Other").map((label) => ({ label }));
     const otherFieldKey = `${key}_other` in properties ? `${key}_other` : undefined;
+    const valueType = resolvePropertyValueType(prop.type);
     return {
       id: key,
       header: prop.title?.trim() || (entries.length === 1 ? "Question" : `Question ${index + 1}`),
@@ -283,6 +293,7 @@ export function parseElicitationQuestions(
       options,
       rawEnum,
       multiSelect,
+      valueType,
       allowOther: Boolean(otherFieldKey) || rawEnum.includes("Other") || options.length === 0,
       allowEmpty: !required.has(key),
       otherFieldKey,
@@ -290,9 +301,12 @@ export function parseElicitationQuestions(
   });
 }
 
+const answerScalarSchema = z.union([z.string(), z.number(), z.boolean()]);
 const suppliedAnswersSchema = z
   .object({
-    answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+    answers: z
+      .record(z.string(), z.union([answerScalarSchema, z.array(answerScalarSchema)]))
+      .optional(),
   })
   .optional();
 
@@ -308,38 +322,50 @@ export function buildElicitationResponse(
   for (const question of questions) {
     const rawValue = answers[question.header] ?? answers[question.id] ?? answers[question.question];
     if (rawValue === undefined && question.allowEmpty) continue;
-    const values = normalizeAnswerValues(rawValue ?? "", question.multiSelect);
+    const values = normalizeAnswerValues(rawValue, question.multiSelect);
     if (values.length === 0 && question.allowEmpty) continue;
     const knownLabels = new Set(question.options.map((option) => option.label));
     if (question.multiSelect) {
       applyMultiSelectAnswer(content, question, values, knownLabels);
     } else {
-      applySingleSelectAnswer(content, question, values[0] ?? "", knownLabels);
+      applySingleSelectAnswer(content, question, values[0], knownLabels);
     }
   }
   return { action: "accept", content };
 }
 
-function normalizeAnswerValues(rawValue: string | string[], multiSelect: boolean): string[] {
-  if (Array.isArray(rawValue)) return rawValue.map((item) => item.trim()).filter(Boolean);
-  if (multiSelect) {
+function normalizeAnswerValues(
+  rawValue: unknown,
+  multiSelect: boolean,
+): Array<string | number | boolean> {
+  if (rawValue === undefined || rawValue === null) return [];
+  if (Array.isArray(rawValue)) {
     return rawValue
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
+      .map((item) => (typeof item === "string" ? item.trim() : item))
+      .filter((item) => item !== "" && item !== undefined && item !== null);
   }
-  const trimmed = rawValue.trim();
-  return trimmed ? [trimmed] : [];
+  if (typeof rawValue === "string") {
+    if (multiSelect) {
+      return rawValue
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    const trimmed = rawValue.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [rawValue as number | boolean];
 }
 
 function applyMultiSelectAnswer(
   content: Record<string, unknown>,
   question: ParsedElicitationQuestion,
-  values: string[],
+  values: Array<string | number | boolean>,
   knownLabels: Set<string>,
 ): void {
-  const selected = values.filter((v) => knownLabels.has(v));
-  const custom = values.filter((v) => !knownLabels.has(v));
+  const strValues = values.map(String);
+  const selected = strValues.filter((v) => knownLabels.has(v));
+  const custom = strValues.filter((v) => !knownLabels.has(v));
   if (custom.length > 0) {
     if (question.rawEnum.includes("Other")) selected.push("Other");
     if (question.otherFieldKey) content[question.otherFieldKey] = custom.join(", ");
@@ -348,27 +374,55 @@ function applyMultiSelectAnswer(
   content[question.id] = selected;
 }
 
+function convertSingleValue(
+  raw: string | number | boolean,
+  type: "string" | "number" | "integer" | "boolean",
+): string | number | boolean | null {
+  if (typeof raw === type) return raw;
+  if (type === "boolean") {
+    if (typeof raw === "boolean") return raw;
+    const str = String(raw).trim().toLowerCase();
+    if (str === "true" || str === "yes" || str === "1") return true;
+    if (str === "false" || str === "no" || str === "0") return false;
+    return null;
+  }
+  if (type === "number" || type === "integer") {
+    if (typeof raw === "number") return type === "integer" ? Math.round(raw) : raw;
+    const parsed = Number(raw);
+    if (!Number.isNaN(parsed)) return type === "integer" ? Math.round(parsed) : parsed;
+    return null;
+  }
+  return String(raw);
+}
+
 function applySingleSelectAnswer(
   content: Record<string, unknown>,
   question: ParsedElicitationQuestion,
-  single: string,
+  single: string | number | boolean | undefined,
   knownLabels: Set<string>,
 ): void {
-  if (!single) {
+  if (single === undefined || single === null || single === "") {
     if (question.allowEmpty) return;
-    content[question.id] = single;
+    content[question.id] = question.valueType === "string" ? "" : null;
     return;
   }
-  if (knownLabels.has(single) || question.options.length === 0) {
-    content[question.id] = single;
+  const converted = convertSingleValue(single, question.valueType);
+  if (converted === null) return;
+  if (question.valueType !== "string") {
+    content[question.id] = converted;
+    return;
+  }
+  const strVal = String(converted);
+  if (knownLabels.has(strVal) || question.options.length === 0) {
+    content[question.id] = strVal;
     return;
   }
   if (question.otherFieldKey) {
-    content[question.id] = question.rawEnum.includes("Other") ? "Other" : single;
-    content[question.otherFieldKey] = single;
+    content[question.id] = question.rawEnum.includes("Other") ? "Other" : strVal;
+    content[question.otherFieldKey] = strVal;
     return;
   }
-  content[question.id] = single;
+  content[question.id] = strVal;
 }
 
 export function classifyFailure(stderr: string, detail?: string): AntigravityError {
