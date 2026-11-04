@@ -16,6 +16,7 @@ import type {
   AgentRunOptions,
   AgentRunResult,
   AgentSession,
+  AgentSelectOption,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentSlashCommand,
@@ -38,6 +39,26 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 const TEST_FEATURE_ID = "test_feature";
+const TEST_THINKING_OPTIONS: AgentSelectOption[] = [
+  { id: "low", label: "Low", isDefault: true },
+  { id: "high", label: "High" },
+];
+
+const TEST_MODELS: Record<string, Array<{ id: string; label: string }>> = {
+  claude: [
+    { id: "haiku", label: "Haiku" },
+    { id: "sonnet", label: "Sonnet" },
+  ],
+  codex: [
+    { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+    { id: "gpt-5.4", label: "gpt-5.4" },
+  ],
+  opencode: [
+    { id: "test-model", label: "Test Model" },
+    { id: "test-model-alt", label: "Test Model Alt" },
+  ],
+};
+
 const TEST_MODES: AgentMode[] = [
   { id: "bypassPermissions", label: "Bypass", description: "No permissions" },
   { id: "default", label: "Default", description: "Ask for permissions" },
@@ -1280,30 +1301,18 @@ class FakeAgentClient implements AgentClient {
   async fetchCatalog(
     _options: FetchCatalogOptions,
   ): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
-    if (this.provider === "claude") {
-      return {
-        models: [
-          { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
-          { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
-        ],
-        modes: TEST_MODES,
-      };
-    }
-    if (this.provider === "codex") {
-      return {
-        models: [
-          {
-            provider: this.provider,
-            id: "gpt-5.4-mini",
-            label: "gpt-5.4-mini",
-            isDefault: true,
-          },
-        ],
-        modes: TEST_MODES,
-      };
-    }
+    // Every provider lists two models that each list thinking options, so the live model and
+    // thinking switches have listed values to switch between.
+    const listed = TEST_MODELS[this.provider] ?? TEST_MODELS.opencode;
     return {
-      models: [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }],
+      models: listed.map((model, index) => ({
+        provider: this.provider,
+        id: model.id,
+        label: model.label,
+        isDefault: index === 0,
+        thinkingOptions: TEST_THINKING_OPTIONS,
+        defaultThinkingOptionId: "low",
+      })),
       modes: TEST_MODES,
     };
   }
