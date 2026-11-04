@@ -7,6 +7,7 @@ import {
   WindowLayoutDivisionGap,
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,
+  resolveWorkspaceBarActions,
   type WindowLayout,
 } from "@/window-layout";
 import {
@@ -58,6 +59,11 @@ describe("desktop sidebar layout", () => {
     expect(resolveWorkspaceActionPlacement({ ...geometry, verticalBarEdge: "leading" })).toBe(
       "header",
     );
+  });
+
+  it("shows the tab count only for the compact header selection", () => {
+    expect(resolveWorkspaceBarActions("compact")).toEqual(["tab-count", "overflow", "explorer"]);
+    expect(resolveWorkspaceBarActions("full")).toEqual(["overflow", "explorer"]);
   });
 
   it("allocates both panels around a live division without clamping to saved sidebar widths", () => {

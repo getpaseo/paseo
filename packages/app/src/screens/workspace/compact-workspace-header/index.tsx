@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CompactHeader } from "@/components/headers/compact-header";
 import {
@@ -9,6 +9,7 @@ import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-
 import {
   useWindowLayout,
   resolveWorkspaceActionPlacement,
+  resolveWorkspaceBarActions,
   WindowLayoutActions,
 } from "@/window-layout";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
@@ -24,9 +25,10 @@ interface CompactWorkspaceHeaderProps {
   onToggleExplorer: () => void;
   explorerToggleLabel: string;
   explorerToggleAccessibilityState: { expanded: boolean };
-  /** Tab switcher and workspace menu, before the explorer toggle. */
+  tabSwitcher: ReactNode;
+  /** Workspace overflow menu. */
   children: ReactNode;
-  actionsOnly?: boolean;
+  headerVariant: "compact" | "full";
   actionsActive: boolean;
 }
 
@@ -40,8 +42,9 @@ export function CompactWorkspaceHeader({
   explorerToggleLabel,
   explorerToggleAccessibilityState,
   children,
+  tabSwitcher,
   serverId,
-  actionsOnly = false,
+  headerVariant,
   actionsActive,
 }: CompactWorkspaceHeaderProps) {
   const { t } = useTranslation();
@@ -56,9 +59,10 @@ export function CompactWorkspaceHeader({
     ),
     [subtitle, isSubtitleDistinct, serverId],
   );
-  const actions = (
-    <>
-      {children}
+  const symbols = {
+    "tab-count": tabSwitcher,
+    overflow: children,
+    explorer: (
       <WorkspaceExplorerToggle
         onPress={onToggleExplorer}
         label={explorerToggleLabel}
@@ -67,12 +71,15 @@ export function CompactWorkspaceHeader({
         accessibilityState={explorerToggleAccessibilityState}
         mobile
       />
-    </>
-  );
+    ),
+  };
+  const actions = resolveWorkspaceBarActions(headerVariant).map((symbol) => (
+    <Fragment key={symbol}>{symbols[symbol]}</Fragment>
+  ));
 
   return (
     <IconButtonChromeProvider value="header-island">
-      {actionsOnly ? null : (
+      {headerVariant === "compact" ? (
         <CompactHeader
           navigation="menu"
           title={title}
@@ -81,7 +88,7 @@ export function CompactWorkspaceHeader({
           loading={isLoading}
           actions={actionsInBar ? undefined : actions}
         />
-      )}
+      ) : null}
       <WindowLayoutActions active={actionsActive}>{actions}</WindowLayoutActions>
     </IconButtonChromeProvider>
   );

@@ -26,6 +26,14 @@ export function resolveWorkspaceActionPlacement(
     : "header";
 }
 
+export function resolveWorkspaceBarActions(
+  headerVariant: "compact" | "full",
+): readonly ("tab-count" | "overflow" | "explorer")[] {
+  return headerVariant === "compact"
+    ? ["tab-count", "overflow", "explorer"]
+    : ["overflow", "explorer"];
+}
+
 /** One book-like partition owns allocation; horizontal folds retain the normal flow. */
 export function resolveDesktopDivisionLayout(input: {
   geometry: WindowLayout | null;

@@ -7,7 +7,11 @@ import type { WindowLayout } from "./model";
 export { useWindowLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
-export { resolveDesktopDivisionLayout, resolveWorkspaceActionPlacement } from "./model";
+export {
+  resolveDesktopDivisionLayout,
+  resolveWorkspaceActionPlacement,
+  resolveWorkspaceBarActions,
+} from "./model";
 export type { DesktopDivisionLayout, WindowLayout, WindowLayoutRect } from "./model";
 
 const GeometryProbe = requireNativeViewManager<
