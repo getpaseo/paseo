@@ -114,6 +114,10 @@ async function handlePrompt(id, params) {
     handleTransientRetryPrompt(id);
     return;
   }
+  if (text.includes("MCP_QUERY_TOOL")) {
+    await handleMcpQueryToolPrompt(id);
+    return;
+  }
 
   notifyUpdate({
     sessionUpdate: "agent_message_chunk",
@@ -374,6 +378,32 @@ function handleTransientRetryPrompt(id) {
   respond(id, { stopReason: "end_turn" });
 }
 
+async function handleMcpQueryToolPrompt(id) {
+  const perm = await requestClient("session/request_permission", {
+    sessionId,
+    toolCall: {
+      toolCallId: "call-mcp-query-1",
+      title: "mcp__db__query",
+      status: "pending",
+      rawInput: { query: "DELETE FROM users" },
+    },
+    options: [
+      { optionId: "allow_always", name: "Always Allow", kind: "allow_always" },
+      { optionId: "allow_once", name: "Allow Once", kind: "allow_once" },
+      { optionId: "deny_once", name: "Deny", kind: "reject_once" },
+    ],
+  });
+  const allowed =
+    perm?.outcome?.outcome === "selected" && perm.outcome.optionId.startsWith("allow");
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: allowed ? "MCP_QUERY_ALLOWED\n" : "MCP_QUERY_DENIED\n" },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+let failedSetModelOnce = false;
+
 const lines = createInterface({ input: process.stdin });
 lines.on("line", async (line) => {
   if (!line.trim()) return;
@@ -456,6 +486,15 @@ lines.on("line", async (line) => {
   }
 
   if (method === "session/set_model") {
+    if (process.env.AGY_TEST_FAIL_SET_MODEL_ONCE === "yes" && !failedSetModelOnce) {
+      failedSetModelOnce = true;
+      writeMessage({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32603, message: "Model switch temporarily unavailable" },
+      });
+      return;
+    }
     currentModel = params.modelId;
     respond(id, {
       models: {

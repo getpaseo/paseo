@@ -144,12 +144,19 @@ export class DriverProcess {
   async stop(): Promise<void> {
     this.closing = true;
     if (this.hasExited) return;
+    if (process.platform === "win32") {
+      await this.signal("SIGKILL");
+      await this.exitedPromise;
+      return;
+    }
     await this.signal("SIGTERM");
     const timer = setTimeout(() => {
       void this.signal("SIGKILL");
     }, EXIT_WAIT_MS);
     await this.exitedPromise;
     clearTimeout(timer);
+    // A tool can keep running after its CLI leader exits.
+    await this.signal("SIGKILL", true);
   }
 
   private writeMessage(payload: Record<string, unknown>): void {
@@ -220,8 +227,8 @@ export class DriverProcess {
     }
   }
 
-  private async signal(signal: NodeJS.Signals): Promise<void> {
-    if (!this.child.pid || this.hasExited) return;
+  private async signal(signal: NodeJS.Signals, allowExited = false): Promise<void> {
+    if (!this.child.pid || (this.hasExited && !allowExited)) return;
     await signalProcess({ platform: process.platform, pid: this.child.pid, signal });
   }
 }
@@ -252,5 +259,5 @@ export async function probe(options: {
 }
 
 function childEnv(overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
-  return { ...process.env, ...overrides, NO_COLOR: "1" };
+  return { ...overrides, NO_COLOR: "1" };
 }

@@ -20,6 +20,7 @@ import {
   extractTargetPaths,
   inferToolName,
   isEditOrReadTool,
+  isNativeReadTool,
   mapAcpToolCall,
   mapAcpToolDetail,
   mergeAcpToolCall,
@@ -78,6 +79,7 @@ export class Session {
   private driver: DriverProcess | null = null;
   private conversationId: string | null;
   private model: string | null;
+  private defaultModel: string | null = null;
   private mode: AntigravityModeId;
   private modelDirty = false;
   private availableCommands: ProviderCommand[] = [];
@@ -161,21 +163,39 @@ export class Session {
       this.mode = changes.mode as AntigravityModeId;
       this.autoApproveEligiblePendingPermissions();
     }
-    if (changes.model !== undefined && changes.model !== this.model) {
-      this.model = changes.model;
-      if (this.model && this.driver?.isAlive && this.conversationId && !this.turn) {
-        const result = await this.driver.requestInit(
-          "session/set_model",
-          { sessionId: this.conversationId, modelId: this.model },
-          acpSessionResultSchema,
-        );
-        this.model = result.models?.currentModelId ?? this.model;
-        this.modelDirty = false;
-      } else {
-        this.modelDirty = true;
-      }
+    if (changes.model !== undefined) {
+      await this.applyModelChange(changes.model);
     }
     this.emitConfig();
+  }
+
+  private async applyModelChange(nextModel: string | null): Promise<void> {
+    const targetModel = nextModel ?? this.resolveDefaultModel();
+    if (nextModel === this.model && !this.modelDirty) return;
+
+    if (this.driver?.isAlive && this.conversationId && !this.turn) {
+      if (targetModel) {
+        const result = await this.driver.requestInit(
+          "session/set_model",
+          { sessionId: this.conversationId, modelId: targetModel },
+          acpSessionResultSchema,
+        );
+        this.model = nextModel === null ? null : (result.models?.currentModelId ?? targetModel);
+        this.modelDirty = false;
+        return;
+      }
+      await this.retireDriver();
+      this.model = null;
+      this.modelDirty = false;
+      return;
+    }
+
+    this.model = nextModel;
+    this.modelDirty = true;
+  }
+
+  private resolveDefaultModel(): string | null {
+    return this.defaultModel ?? this.options.catalog().models[0]?.id ?? null;
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
@@ -247,6 +267,11 @@ export class Session {
     } else {
       const result = buildElicitationResponse(pending.questions, response);
       this.driver?.respond(pending.rpcId, result);
+    }
+
+    if (response.behavior === "deny" && response.interrupt && this.turn && this.conversationId) {
+      this.turn.interrupted = true;
+      this.driver?.notify("session/cancel", { sessionId: this.conversationId });
     }
 
     this.options.emit({
@@ -413,13 +438,20 @@ export class Session {
   }
 
   private async syncDirtyModel(driver: DriverProcess): Promise<void> {
-    if (!this.modelDirty || !this.model || !this.conversationId) return;
+    if (!this.modelDirty || !this.conversationId) return;
+    const targetModel = this.model ?? this.resolveDefaultModel();
+    if (!targetModel) {
+      this.modelDirty = false;
+      return;
+    }
     const result = await driver.requestInit(
       "session/set_model",
-      { sessionId: this.conversationId, modelId: this.model },
+      { sessionId: this.conversationId, modelId: targetModel },
       acpSessionResultSchema,
     );
-    this.model = result.models?.currentModelId ?? this.model;
+    if (this.model !== null) {
+      this.model = result.models?.currentModelId ?? targetModel;
+    }
     this.modelDirty = false;
     this.emitConfig();
   }
@@ -442,6 +474,9 @@ export class Session {
 
     const sessionResult = await this.openOrLoadAcpSession(driver);
     const reportedModel = sessionResult.models?.currentModelId ?? null;
+    if (reportedModel && !this.defaultModel) {
+      this.defaultModel = reportedModel;
+    }
     if (this.model && this.model !== reportedModel) {
       const modelResult = await driver.requestInit(
         "session/set_model",
@@ -449,7 +484,7 @@ export class Session {
         acpSessionResultSchema,
       );
       this.model = modelResult.models?.currentModelId ?? this.model;
-    } else if (!this.model && reportedModel) {
+    } else if (!this.model && !this.modelDirty && reportedModel) {
       this.model = reportedModel;
     }
     this.modelDirty = false;
@@ -736,7 +771,7 @@ export class Session {
   ): boolean {
     if (this.mode === "full-access") return true;
     if (this.isSessionImageRead(toolCall, detail)) return true;
-    if (this.mode === "accept-edits" && isEditOrReadTool(toolCall, detail)) return true;
+    if (this.mode === "accept-edits" && isEditOrReadTool(toolCall)) return true;
     return false;
   }
 
@@ -746,7 +781,7 @@ export class Session {
   ): boolean {
     const imagesDir = this.files.directoryPath;
     if (!imagesDir) return false;
-    if (detail.type !== "read" && toolCall.kind !== "read") return false;
+    if (!isNativeReadTool(toolCall)) return false;
     const targets = extractTargetPaths(toolCall, detail);
     if (targets.length === 0) return false;
     const resolvedImagesDir = path.resolve(imagesDir);
@@ -875,11 +910,13 @@ function selectPermissionOption(
   }
   if (response.behavior === "allow") {
     return (
+      options.find((option) => option.kind === "allow_once") ??
       options.find((option) => option.kind.startsWith("allow")) ??
       options.find((option) => /allow/i.test(option.optionId))
     );
   }
   return (
+    options.find((option) => option.kind === "reject_once") ??
     options.find((option) => option.kind.startsWith("reject")) ??
     options.find((option) => /deny|reject/i.test(option.optionId))
   );

@@ -270,39 +270,80 @@ function buildReadDetail(
   };
 }
 
+const NATIVE_ACCEPT_EDITS_TOOLS = new Set([
+  "replace_file_content",
+  "multi_replace_file_content",
+  "edit_file",
+  "write_to_file",
+  "write_file",
+  "view_file",
+  "read_file",
+  "grep_search",
+  "find_by_name",
+  "list_dir",
+  "view_file_outline",
+  "view_code_item",
+]);
+
+const NATIVE_READ_TOOLS = new Set([
+  "view_file",
+  "read_file",
+  "view_file_outline",
+  "view_code_item",
+]);
+
+const ACCEPT_EDITS_KINDS = new Set(["edit", "write", "delete", "move", "read", "search"]);
+
 function trySearchDetail(
   tool: AcpToolCallPayload,
   name: string,
   rawInput: Record<string, unknown>,
 ): ProviderToolCallDetail | undefined {
+  const isSearchTool = tool.kind === "search" || name === "grep_search" || name === "find_by_name";
   const query =
     stringField(rawInput, "Query") ??
     stringField(rawInput, "Pattern") ??
     stringField(rawInput, "SearchPath") ??
     stringField(rawInput, "DirectoryPath") ??
-    stringField(rawInput, "query");
-  if (!query && tool.kind !== "search") return undefined;
+    (isSearchTool ? stringField(rawInput, "query") : undefined);
+  if (!query && !isSearchTool) return undefined;
   return {
     type: "search",
     query: query || tool.title?.trim() || name,
   };
 }
 
-export function isEditOrReadTool(
+function isExternalToolIdentity(
   tool: AcpToolCallPayload,
-  detail: ProviderToolCallDetail,
+  rawInput: Record<string, unknown> | undefined,
 ): boolean {
-  if (
-    detail.type === "edit" ||
-    detail.type === "write" ||
-    detail.type === "read" ||
-    detail.type === "search"
-  ) {
-    return true;
-  }
-  return (
-    tool.kind === "edit" || tool.kind === "write" || tool.kind === "read" || tool.kind === "search"
-  );
+  const explicit = rawInput
+    ? (stringField(rawInput, "toolName") ?? stringField(rawInput, "_toolName"))
+    : undefined;
+  if (explicit) return !NATIVE_ACCEPT_EDITS_TOOLS.has(explicit);
+  const title = tool.title?.trim();
+  if (!title) return false;
+  return /^mcp__/i.test(title) || /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(title);
+}
+
+export function isEditOrReadTool(tool: AcpToolCallPayload): boolean {
+  const rawInput = asRecord(tool.rawInput);
+  if (isExternalToolIdentity(tool, rawInput)) return false;
+  if (tool.kind) return ACCEPT_EDITS_KINDS.has(tool.kind);
+  const inferred = rawInput ? inferToolNameFromInput(rawInput) : undefined;
+  if (inferred) return NATIVE_ACCEPT_EDITS_TOOLS.has(inferred);
+  const title = tool.title?.trim();
+  return Boolean(title && NATIVE_ACCEPT_EDITS_TOOLS.has(title));
+}
+
+export function isNativeReadTool(tool: AcpToolCallPayload): boolean {
+  const rawInput = asRecord(tool.rawInput);
+  if (isExternalToolIdentity(tool, rawInput)) return false;
+  if (tool.kind) return tool.kind === "read";
+  const inferred = rawInput ? inferToolNameFromInput(rawInput) : undefined;
+  if (inferred) return NATIVE_READ_TOOLS.has(inferred);
+  const title = tool.title?.trim();
+  return Boolean(title && NATIVE_READ_TOOLS.has(title));
 }
 
 export function extractTargetPaths(
