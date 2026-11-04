@@ -1,13 +1,13 @@
 import { defineRpc } from "@getpaseo/plugin";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginAgentSnapshot, PluginWorkspaceSnapshot } from "@getpaseo/plugin";
 import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { queryClient } from "@/data/query-client";
 import { useDraftStore } from "@/stores/draft-store";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
+import { createPluginClientStateSource } from "../client-state/source";
 import { buildPluginCommandCenterContributions } from "../command-center/contributions";
 import { publishFocusedAgent } from "../focused-agent";
 import type { InstalledPlugin } from "../types";
@@ -167,40 +167,26 @@ describe("a plugin's composers by reference", () => {
 });
 
 describe("a Command Center item reaching an agent's composer by id", () => {
-  const snapshot: PluginAgentSnapshot = {
-    id: "agent-1",
-    workspaceId: "workspace-1",
-    provider: "claude",
-    status: "idle",
-    createdAt: "2026-08-16T10:00:00.000Z",
-    updatedAt: "2026-08-16T10:00:00.000Z",
-    lastActivityAt: "2026-08-16T10:00:00.000Z",
-    title: null,
-    cwd: "/repo",
-    model: null,
-    currentModeId: null,
-    thinkingOptionId: null,
-    requiresAttention: false,
-    attentionReason: null,
-    parentAgentId: null,
-    labels: {},
-    metadata: {},
-  };
-
-  const workspace: PluginWorkspaceSnapshot = {
+  // The real client-state source reads these stores. A lookup that came back empty would make the
+  // Command Center return before calling the item, and nothing would be reported.
+  const workspace: WorkspaceDescriptor = {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: "workspace-1",
     projectId: "project-1",
     projectDisplayName: "Repo",
     projectRootPath: "/repo",
-    directory: "/repo",
+    workspaceDirectory: "/repo",
     projectKind: "git",
-    kind: "checkout",
+    workspaceKind: "checkout",
     name: "Repo",
     title: null,
+    pinnedAt: null,
     status: "running",
     statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
+    scripts: [],
   };
 
   function markForReview(rejection?: Error) {
@@ -214,6 +200,7 @@ describe("a Command Center item reaching an agent's composer by id", () => {
     useSessionStore.getState().clearSession(serverId);
     useSessionStore.getState().initializeSession(serverId, client);
     useSessionStore.getState().setAgents(serverId, new Map([["agent-1", agent("agent-1")]]));
+    useSessionStore.getState().setWorkspaces(serverId, new Map([[workspace.id, workspace]]));
     const installed = plugin();
     installed.commandCenterItems = [
       {
@@ -231,11 +218,7 @@ describe("a Command Center item reaching an agent's composer by id", () => {
     const reported: unknown[] = [];
     const [item] = buildPluginCommandCenterContributions({
       plugins: [installed],
-      state: {
-        subscribe: () => () => {},
-        getWorkspace: () => workspace,
-        getAgent: () => snapshot,
-      },
+      state: createPluginClientStateSource(serverId),
       workspaceId: "workspace-1",
       agentId: "agent-1",
       navigation: {
