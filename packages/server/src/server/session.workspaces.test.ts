@@ -10277,3 +10277,77 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
     await gitService.dispose();
   }
 });
+
+test("path archive of an archived exact child leaves its active parent untouched", async () => {
+  const now = "2026-03-30T15:00:00.000Z";
+  const root = mkdtempSync(path.join(tmpdir(), "archive-exact-child-"));
+  const childPath = path.join(root, "sub");
+  mkdirSync(childPath);
+  const parent = createPersistedWorkspaceRecord({
+    workspaceId: "parent",
+    projectId: "project",
+    cwd: root,
+    kind: "directory",
+    displayName: "parent",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const child = createPersistedWorkspaceRecord({
+    workspaceId: "child",
+    projectId: "project",
+    cwd: childPath,
+    kind: "directory",
+    displayName: "child",
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: now,
+  });
+  const records = [parent, child];
+  const archivedAgents: string[] = [];
+  const archivedWorkspaces: string[] = [];
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      listAgents: () => [
+        makeManagedAgent({
+          id: "parent-agent",
+          cwd: root,
+          workspaceId: parent.workspaceId,
+          lifecycle: "idle",
+          updatedAt: now,
+        }),
+      ],
+      archiveAgent: async (id: string) => {
+        archivedAgents.push(id);
+        return { archivedAt: now };
+      },
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records.filter((record) => !record.archivedAt),
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async (id) => {
+        archivedWorkspaces.push(id);
+      },
+    },
+  });
+  try {
+    await session.handleMessage({
+      type: "paseo_worktree_archive_request",
+      requestId: "archive-exact",
+      worktreePath: childPath,
+    });
+    expect(archivedAgents).toEqual([]);
+    expect(archivedWorkspaces).toEqual([]);
+    expect(parent.archivedAt).toBeNull();
+    expect(existsSync(root)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -1114,7 +1114,8 @@ export async function createPaseoDaemon(
   // external path→workspace adapter, not ownership: archive-by-path requests that
   // arrive with a worktree path and no workspaceId (old clients / CLI).
   const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
-    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listActive());
+    // Explicit archive administration must prefer an archived exact match to an active ancestor.
+    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listAll());
   };
   const ensureWorkspaceForCreateExternal = async (
     cwd: string,

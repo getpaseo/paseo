@@ -5994,7 +5994,8 @@ export class Session {
   // than a workspaceId. This is a directory lookup for an archive target, not a
   // status/ownership attribution.
   private async findWorkspaceIdForCwd(cwd: string): Promise<string | null> {
-    const workspaces = await this.workspaceRegistry.listActive();
+    // Explicit archive administration must prefer an archived exact match to an active ancestor.
+    const workspaces = await this.workspaceRegistry.listAll();
     return resolveWorkspaceIdForPath(cwd, workspaces);
   }
 
