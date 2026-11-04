@@ -109,7 +109,10 @@ definition, no longer eligible to begin.
   in sidebar components. The wide left sidebar keeps the same content and gesture hosts when switching
   between dock and overlay. App chrome owns mounting and presentation; settled panel activity owns
   overlay work. A hidden dock is inactive with `display: none`; the sidebar tree stays mounted. Keep
-  the native overlay laid out while hidden, as on compact layouts.
+  the native overlay laid out while hidden, as on compact layouts. Give the switching host no
+  Reanimated layout props: a width keyed on the presentation reaches Android after React commits the
+  switch, and a lost update left the workspace at the dock width. The dock sizes to its content and
+  the overlay host fills the window.
 - The overlay's backdrop covers the whole window; safe-area padding applies to the sidebar and
   workspace content only. It closes by swiping back, tapping the backdrop, or picking a destination:
   every sidebar destination closes the overlay before it navigates.

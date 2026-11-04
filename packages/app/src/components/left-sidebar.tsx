@@ -727,12 +727,9 @@ function DesktopSidebar({
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
     width: divisionLayout?.sidebarWidth ?? resizeWidth.value,
   }));
-  // Percentage width excludes the shell's safe-area padding; the backdrop covers the whole window.
-  // Removing an animated width also leaves its last native value behind.
-  const frameAnimatedStyle = useAnimatedStyle(() => ({
-    width: overlay ? windowWidth : resizeWidth.value,
-  }));
-
+  // The panel host gets no width of its own: the dock sizes to this view and the overlay fills the
+  // window. A Reanimated width on the host reached Android after React had switched presentation,
+  // and a lost update left the workspace at the dock width after the dock collapsed.
   const desktopSidebarStyle = useMemo(
     () => [staticStyles.desktopSidebar, resizeAnimatedStyle],
     [resizeAnimatedStyle],
@@ -754,7 +751,6 @@ function DesktopSidebar({
       presentation={overlay ? "overlay" : "dock"}
       dockVisible={active}
       closeGesture={closeGesture}
-      frameStyle={frameAnimatedStyle}
     >
       <Animated.View style={desktopSidebarStyle}>
         <View style={desktopSidebarBorderStyle}>
