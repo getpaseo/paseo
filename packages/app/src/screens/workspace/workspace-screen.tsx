@@ -3447,6 +3447,7 @@ function WorkspaceScreenContent({
         >
           <WorkspaceHeaderMenuMobile
             pane={actions.pane}
+            onExitFocusMode={isFocusModeEnabled ? toggleFocusMode : undefined}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
             scripts={compactHeaderScripts}
@@ -3468,6 +3469,8 @@ function WorkspaceScreenContent({
     },
     [
       renderWorkspaceTabSwitcher,
+      isFocusModeEnabled,
+      toggleFocusMode,
       canOpenImportSheet,
       compactHeaderScripts,
       createTerminalDisabled,

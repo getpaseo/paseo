@@ -208,6 +208,7 @@ function HeaderMenuProfileItem({
 
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   pane?: WorkspaceCompactHeaderActions["pane"];
+  onExitFocusMode?: () => void;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
@@ -234,6 +235,7 @@ export function WorkspaceHeaderMenuMobile({
   onCreateTerminalWithProfile,
   onCreateBrowser,
   pane,
+  onExitFocusMode,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
   const paneId = pane?.id;
@@ -290,6 +292,11 @@ export function WorkspaceHeaderMenuMobile({
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        {onExitFocusMode ? (
+          <DropdownMenuItem onSelect={onExitFocusMode}>
+            {t("workspace.tabs.actions.exitFocusMode")}
+          </DropdownMenuItem>
+        ) : null}
         {pane?.splitRight ? (
           <DropdownMenuItem onSelect={pane.splitRight}>
             {t("workspace.tabs.actions.splitRight")}
