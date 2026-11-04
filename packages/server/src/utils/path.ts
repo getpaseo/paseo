@@ -72,11 +72,16 @@ export function stopPathContainmentMetrics(): number {
   return checks;
 }
 
+interface PathContainmentOptions {
+  roots: Iterable<string>;
+  compareAsWindows: boolean;
+}
+
 /** Compile lexical subtree membership without scanning unrelated roots per candidate. */
-export function createPathContainmentMatcher(
-  roots: Iterable<string>,
-  compareAsWindows: boolean,
-): (candidate: string) => boolean {
+export function createPathContainmentMatcher({
+  roots,
+  compareAsWindows,
+}: PathContainmentOptions): (candidate: string) => boolean {
   const pathApi = compareAsWindows ? nodePath.win32 : nodePath.posix;
   const indexed = new Set(
     Array.from(roots, (root) => normalizePathForComparison(root, compareAsWindows)),

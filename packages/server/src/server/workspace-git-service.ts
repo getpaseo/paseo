@@ -2045,10 +2045,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private pruneKnownDirectories(target: WorkingTreeWatchTarget): void {
-    const isIgnored = createPathContainmentMatcher(
-      target.ignoredDirectories,
-      looksLikeDefiniteWindowsPath(target.watchPath),
-    );
+    const isIgnored = createPathContainmentMatcher({
+      roots: target.ignoredDirectories,
+      compareAsWindows: looksLikeDefiniteWindowsPath(target.watchPath),
+    });
     for (const directory of target.knownDirectories) {
       if (isIgnored(directory)) {
         target.knownDirectories.delete(directory);

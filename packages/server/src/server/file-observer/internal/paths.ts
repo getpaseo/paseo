@@ -53,7 +53,7 @@ export function createObserverPaths(platform: NodeJS.Platform): ObserverPaths {
     isInside,
     collapse,
     createIgnoreMatcher(roots) {
-      return createPathContainmentMatcher(roots, platform === "win32");
+      return createPathContainmentMatcher({ roots, compareAsWindows: platform === "win32" });
     },
     normalizeIgnoredRoots(root, paths) {
       const inside = paths

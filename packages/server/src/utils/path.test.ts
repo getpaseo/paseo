@@ -101,7 +101,10 @@ describe("path equivalence", () => {
 
 describe("indexed path containment", () => {
   test("preserves POSIX case and component boundaries", () => {
-    const matches = createPathContainmentMatcher(["/repo/Build/", "/repo/cache"], false);
+    const matches = createPathContainmentMatcher({
+      roots: ["/repo/Build/", "/repo/cache"],
+      compareAsWindows: false,
+    });
     expect(matches("/repo/Build/nested/file")).toBe(true);
     expect(matches("/repo/cache")).toBe(true);
     expect(matches("/repo/Build-sibling/file")).toBe(false);
@@ -110,10 +113,10 @@ describe("indexed path containment", () => {
   });
 
   test("normalizes Windows case, separators and extended namespaces", () => {
-    const matches = createPathContainmentMatcher(
-      ["C:/Repo/Build", String.raw`\\server\share\cache`],
-      true,
-    );
+    const matches = createPathContainmentMatcher({
+      roots: ["C:/Repo/Build", String.raw`\\server\share\cache`],
+      compareAsWindows: true,
+    });
     expect(matches(String.raw`\\?\C:\REPO\build\file`)).toBe(true);
     expect(matches(String.raw`\\?\UNC\SERVER\SHARE\Cache\file`)).toBe(true);
     expect(matches("C:/Repo/Build-Sibling/file")).toBe(false);
@@ -121,8 +124,14 @@ describe("indexed path containment", () => {
   });
 
   test("handles filesystem roots and empty sets", () => {
-    expect(createPathContainmentMatcher(["/"], false)("/repo/file")).toBe(true);
-    expect(createPathContainmentMatcher(["C:/"], true)("c:/repo/file")).toBe(true);
-    expect(createPathContainmentMatcher([], false)("/repo/file")).toBe(false);
+    expect(
+      createPathContainmentMatcher({ roots: ["/"], compareAsWindows: false })("/repo/file"),
+    ).toBe(true);
+    expect(
+      createPathContainmentMatcher({ roots: ["C:/"], compareAsWindows: true })("c:/repo/file"),
+    ).toBe(true);
+    expect(createPathContainmentMatcher({ roots: [], compareAsWindows: false })("/repo/file")).toBe(
+      false,
+    );
   });
 });

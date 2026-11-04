@@ -81,7 +81,10 @@ export class GitObservationPaths {
         excluded.push(this.windows ? subtree.toLowerCase() : subtree);
       }
     }
-    const isExcluded = createPathContainmentMatcher(excluded, this.windows);
+    const isExcluded = createPathContainmentMatcher({
+      roots: excluded,
+      compareAsWindows: this.windows,
+    });
     return (candidate) => {
       const normalized = this.normalizeEventPath(candidate);
       const comparable = this.windows ? normalized.toLowerCase() : normalized;
