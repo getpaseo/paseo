@@ -1,12 +1,13 @@
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
+  createAgentMessageDelivery,
   prepareAgentMessage,
   formatAgentMessage,
   formatSystemNotificationPrompt,
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -1393,6 +1394,103 @@ test("orders a concurrent replacement after a pending accepted steer", async () 
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each(["before dispatch", "during fallback", "during provider admission"])(
+  "diagnostic #8679: retains queued steer when the turn completes %s",
+  async (timing) => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    class CompletingSteerSession extends SteeringTestSession {
+      override async steerActiveTurn(
+        prompt: AgentPromptInput,
+        options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+      ): Promise<import("./agent-sdk-types.js").SteerResult> {
+        if (timing === "during provider admission") {
+          this.pushEvent({
+            type: "turn_completed",
+            provider: "codex",
+            turnId: options.expectedTurnId,
+          });
+          return { status: "unavailable" };
+        }
+        return super.steerActiveTurn(prompt, options);
+      }
+    }
+    const session = new CompletingSteerSession({ provider: "codex", cwd: process.cwd() });
+    session.steerResult = "unavailable";
+    const artifacts = join(process.cwd(), ".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const workdir = mkdtempSync(join(artifacts, "steer-completion-"));
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession() {
+            return session;
+          }
+        })(),
+      },
+      beforeSteerUnavailableFallback: async () => {
+        if (timing === "during fallback") {
+          entered.resolve();
+          await release.promise;
+        }
+      },
+      logger,
+    });
+    let flush = () => {};
+    const errors: unknown[] = [];
+    const delivery = createAgentMessageDelivery({
+      schedule: (_delay, callback) => {
+        flush = callback;
+        return () => {};
+      },
+      dispatch: async (batch) => {
+        const result = await startAgentRun(manager, batch.recipientId, batch.prompt, logger, {
+          activeTurnBehavior: batch.activeTurnBehavior,
+          replaceRunning: true,
+          runOptions: { clientMessageId: batch.messageIds[0] },
+        });
+        return result.disposition;
+      },
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      const run = manager.streamAgent(agent.id, "initial");
+      const consumed = drainAsyncGenerator(run);
+      await manager.waitForAgentRunStart(agent.id);
+      const receipt = delivery.enqueue({
+        recipientId: agent.id,
+        messageId: "completion-race",
+        source: { kind: "agent-message", agentId: "sender" },
+        prompt: "Answer OK after the current turn",
+      });
+      expect(receipt.status).toBe("queued");
+      if (timing !== "before dispatch") flush();
+      if (timing === "during fallback") await entered.promise;
+      if (timing !== "during provider admission") {
+        session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+      }
+      await consumed;
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+      if (timing === "before dispatch") flush();
+      release.resolve();
+      await expect(receipt.dispatched).resolves.toBe("turn_started");
+      expect(errors).toEqual([]);
+      await manager.waitForAgentRunStart(agent.id);
+      expect(session.startCount).toBe(2);
+    } finally {
+      release.resolve();
+      await delivery.close();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("does not replace a newer foreground turn after unavailable steer fallback is admitted", async () => {
   const entered = deferred<void>();
