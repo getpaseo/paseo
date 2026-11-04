@@ -86,3 +86,11 @@ export function canDesktopAppSidebarShare(input: {
     input.contentMinimumWidth
   );
 }
+
+export function resolveSidebarActivity(
+  visible: boolean,
+  compact: boolean,
+  mobileActive: boolean,
+): boolean {
+  return visible && (!compact || mobileActive);
+}

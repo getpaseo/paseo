@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Portal, PortalHost } from "@gorhom/portal";
 import { StyleSheet, View } from "react-native";
+import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
 import { useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement } from "./model";
 
@@ -19,11 +20,7 @@ export function WindowLayoutActions({
   active: boolean;
 }) {
   const layout = useWindowLayout();
-  if (
-    !active ||
-    resolveWorkspaceActionPlacement(layout) !== "vertical-bar" ||
-    !layout?.verticalBar
-  ) {
+  if (resolveWorkspaceActionPlacement(layout) !== "vertical-bar" || !layout?.verticalBar) {
     return null;
   }
   const bar = layout.verticalBar;
@@ -31,15 +28,20 @@ export function WindowLayoutActions({
     <Portal hostName={HOST}>
       <View
         testID="workspace-vertical-actions"
-        style={[styles.bar, { left: bar.x, top: bar.y, width: bar.width, height: bar.height }]}
+        style={[
+          styles.bar,
+          { left: bar.x, top: bar.y, width: bar.width, height: bar.height },
+          !active && styles.hidden,
+        ]}
         pointerEvents="box-none"
       >
-        {children}
+        <IconButtonChromeProvider value="header-island">{children}</IconButtonChromeProvider>
       </View>
     </Portal>
   );
 }
 
 const styles = StyleSheet.create({
+  hidden: { display: "none" },
   bar: { position: "absolute", alignItems: "center", gap: 8 },
 });
