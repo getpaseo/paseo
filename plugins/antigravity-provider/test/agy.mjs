@@ -27,6 +27,15 @@ if (args.includes("--version")) {
   process.exit(0);
 }
 
+if (args.includes("acp") && (args.includes("--help") || args.includes("-h"))) {
+  if (process.env.AGY_TEST_NO_ACP === "yes") {
+    process.stderr.write('unknown subcommand "acp"\n');
+    process.exit(1);
+  }
+  process.stdout.write("Usage: agy acp [flags]\n");
+  process.exit(0);
+}
+
 if (args.includes("models")) {
   if (process.env.AGY_TEST_MODELS_DELAY_MS) {
     await new Promise((resolve) =>

@@ -850,10 +850,15 @@ describe("discovery & usage", () => {
         launch: { ...missing.launch, command: path.join(missing.cwd, "missing-agy") },
       }),
     ).toMatchObject({ available: false, diagnostic: expect.stringContaining("ENOENT") });
-    const old = await harness({ AGY_TEST_VERSION: "1.1.14" });
+    const old = await harness({ AGY_TEST_VERSION: "1.2.13" });
     expect(await provider.status?.({ launch: old.launch })).toMatchObject({
       available: false,
-      diagnostic: expect.stringContaining("1.1.15"),
+      diagnostic: expect.stringContaining("1.4.0"),
+    });
+    const noAcp = await harness({ AGY_TEST_NO_ACP: "yes" });
+    expect(await provider.status?.({ launch: noAcp.launch })).toMatchObject({
+      available: false,
+      diagnostic: expect.stringContaining("agy acp --stdio"),
     });
     const unauthenticated = await harness({ AGY_TEST_AUTH: "missing" });
     expect(await provider.status?.({ launch: unauthenticated.launch })).toEqual({
@@ -1370,11 +1375,17 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     });
   });
 
-  it("matches session-scoped usage accounts when custom --app-data-dir launch args are used", async () => {
+  it("matches session-scoped usage accounts when both default and custom --app-data-dir stores exist under the same HOME", async () => {
     const customHome = await mkdtemp(path.join(os.tmpdir(), "agy-custom-home-"));
     temporary.push(customHome);
     const customStore = path.join(customHome, "custom-store");
     const usage = new Usage({ home: customHome });
+    // Remember default store first, then custom store under the same HOME.
+    usage.remember({
+      command: process.execPath,
+      args: [fake],
+      env: { HOME: customHome },
+    });
     usage.remember({
       command: process.execPath,
       args: [fake, "--app-data-dir", customStore],
@@ -1383,10 +1394,53 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     const discovered = await usage.registration().discover({
       kind: "session",
       provider: "antigravity",
+      args: [fake, "--app-data-dir", customStore],
       env: { HOME: customHome },
     });
     expect(discovered).toHaveLength(1);
     expect(discovered[0]?.key).toBe(usage.accountKey(["--app-data-dir", customStore], {}));
+  });
+
+  it("drains in-flight attachment preparation without spawning a leaked process on session.close", async () => {
+    const h = await harness();
+    await h.open();
+    const png = await readFile(
+      fileURLToPath(new URL("../test/fixtures/image-file-external.png", import.meta.url)),
+    );
+    const promptPromise = h.request({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId: "close-during-prep",
+        delivery: "auto",
+        input: {
+          type: "message",
+          content: [
+            { type: "text", text: "Close during image reload" },
+            { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+          ],
+        },
+      },
+    });
+    await h.request({ type: "session.close", requestId: "close-s", sessionId: "s" });
+    await promptPromise;
+    await h.wait((event) => event.type === "session.closed" && event.sessionId === "s");
+
+    const acpPids = (await h.records())
+      .filter((entry) => entry.args?.includes("acp") && typeof entry.pid === "number")
+      .map((entry) => entry.pid as number);
+    for (const pid of acpPids) {
+      await expect
+        .poll(() => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+        .toBe(false);
+    }
   });
 });
 

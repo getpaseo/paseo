@@ -144,15 +144,23 @@ export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus>
     if (!match)
       return {
         available: false,
-        diagnostic: "Could not read the Antigravity version. Update `agy` to 1.1.15 or later.",
+        diagnostic: "Could not read the Antigravity version. Update `agy` to 1.4.0 or later.",
       };
-    const [, major, minor, patch] = match.map(Number);
-    const supported = major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 15)));
+    const [, major, minor] = match.map(Number);
+    const supported = major > 1 || (major === 1 && minor >= 4);
     if (!supported)
       return {
         available: false,
-        diagnostic: `Antigravity ${version} is unsupported. Update \`agy\` to 1.1.15 or later.`,
+        diagnostic: `Antigravity ${version} is unsupported. Update \`agy\` to 1.4.0 or later.`,
       };
+    try {
+      await probe({ launch, args: ["acp", "--help"] });
+    } catch {
+      return {
+        available: false,
+        diagnostic: `Antigravity ${version} does not support \`agy acp --stdio\`. Update \`agy\` to 1.4.0 or later.`,
+      };
+    }
     await getCatalog(launch);
     return { available: true };
   } catch (error) {

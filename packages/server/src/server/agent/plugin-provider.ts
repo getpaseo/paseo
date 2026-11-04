@@ -134,6 +134,7 @@ class ProviderRuntime {
   private generation = 0;
   private closePromise: Promise<void> | null = null;
   private unsubscribe: (() => void) | null = null;
+  private connectedArgs: readonly string[] | undefined;
   private readonly sessions = new Map<string, ProviderRuntimeSession>();
   private readonly providerSessions = new Map<string, ProviderRuntimeSession>();
   private readonly sessionListeners = new Set<
@@ -193,6 +194,10 @@ class ProviderRuntime {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  get launchArgs(): readonly string[] | undefined {
+    return this.connectedArgs;
   }
 
   get isClosed(): boolean {
@@ -379,8 +384,10 @@ class ProviderRuntime {
   }
 
   private async establishConnection(generation: number): Promise<ProviderConnection> {
+    const launch = await this.resolveLaunch();
+    this.connectedArgs = launch ? [...launch.args] : undefined;
     const rawConnection = await this.registration.connect({
-      launch: await this.resolveLaunch(),
+      launch,
       versions: [PROVIDER_PROTOCOL_VERSION],
       capabilities: PROVIDER_CAPABILITIES,
     });
@@ -1142,6 +1149,7 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
       usageEnv,
+      this.runtime.launchArgs,
       input.config.model ?? undefined,
     );
     bind(bridge);
@@ -1234,6 +1242,7 @@ class PluginAgentSession implements AgentSession {
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     private readonly usageEnv: Record<string, string>,
+    private readonly usageArgs?: readonly string[],
     initialModel?: string,
   ) {
     this.currentModel = bridge.config.model ?? initialModel;
@@ -1252,6 +1261,7 @@ class PluginAgentSession implements AgentSession {
     return {
       provider: this.provider,
       model: this.currentModel,
+      ...(this.usageArgs ? { args: [...this.usageArgs] } : {}),
       env: this.usageEnv,
       sessionKey: this.usageSessionKey,
     };

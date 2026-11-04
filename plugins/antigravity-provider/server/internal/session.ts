@@ -354,9 +354,12 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    const activeTurn = this.turn;
     this.closed = true;
-    if (this.turn) this.turn.interrupted = true;
+    if (activeTurn) activeTurn.interrupted = true;
     this.cancelAllPermissions();
+    await this.retireDriver();
+    if (activeTurn) await activeTurn.settled;
     await this.retireDriver();
     await this.files.close();
   }
@@ -478,6 +481,9 @@ export class Session {
   }
 
   private async ensureDriver(history: "replay" | "skip"): Promise<ProviderEvent[]> {
+    if (this.closed) {
+      throw new AntigravityError("Antigravity ACP session is closed", "PROCESS_FAILED");
+    }
     if (this.driver?.isAlive) {
       await this.syncDirtyModel(this.driver);
       return [];
