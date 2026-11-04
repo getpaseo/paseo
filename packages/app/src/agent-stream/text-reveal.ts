@@ -185,10 +185,22 @@ export function isTextRevealSettled(state: TextRevealState): boolean {
  * stream as frames ending in a single regional indicator. Only fragments that
  * are certainly waiting on more input are withheld: a dangling high surrogate, a
  * trailing joiner, or an odd regional indicator.
+ *
+ * A trailing newline is the same kind of artifact. Markdown opens a new block
+ * on the blank line before the next sentence's first character exists to fill
+ * it, so the block's height jumps ahead of the text that is supposed to grow
+ * it. The newline carries no information about what, if anything, follows it,
+ * so it waits with the rest of the trailing fragment until real content
+ * arrives or the turn ends.
  */
-function trimIncompleteTrailingCluster(text: string): string {
+function trimIncompleteTrailingFragment(text: string): string {
   if (text.length === 0) {
     return text;
+  }
+
+  const withoutTrailingNewlines = text.replace(/(?:\r\n|\r|\n)+$/, "");
+  if (withoutTrailingNewlines.length !== text.length) {
+    return withoutTrailingNewlines;
   }
 
   const lastUnit = text.charCodeAt(text.length - 1);
@@ -234,7 +246,8 @@ export function visibleRevealedText(
   options?: { streaming?: boolean },
 ): string {
   if (state.revealed >= state.target.length) {
-    return options?.streaming ? trimIncompleteTrailingCluster(state.target) : state.target;
+    return options?.streaming ? trimIncompleteTrailingFragment(state.target) : state.target;
   }
-  return state.target.slice(0, clampToSafeRevealBoundary(state.target, state.revealed));
+  const slice = state.target.slice(0, clampToSafeRevealBoundary(state.target, state.revealed));
+  return options?.streaming ? trimIncompleteTrailingFragment(slice) : slice;
 }
