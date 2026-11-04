@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process";
+import { channel } from "node:diagnostics_channel";
 import { randomUUID } from "node:crypto";
 import { writeSync } from "node:fs";
 import {
@@ -1613,7 +1615,34 @@ export default function contribute() {
     ]);
   }, 120_000);
 
-  it("preserves dependencies and metadata, and reloads without npm", async () => {
+  it("preserves dependencies and metadata, and reloads without npm", async ({ onTestFinished }) => {
+    const processes = channel("child_process");
+    const observe = (event: unknown) => {
+      const child = (event as { process: ChildProcess }).process;
+      const began = performance.now();
+      child.on("message", (message: unknown) => {
+        if (
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "ready"
+        ) {
+          writeSync(
+            2,
+            `npm journey child: plugin ready; ${Math.round(performance.now() - began)}ms\n`,
+          );
+        }
+      });
+      child.once("close", () => {
+        const command = child.spawnargs.join(" ");
+        let kind = "other child";
+        if (command.includes("--version")) kind = "version probe";
+        else if (/\bnpm(?:\.cmd|\.exe)?(?:[" ]|$)/i.test(command)) kind = "npm command";
+        writeSync(2, `npm journey child: ${kind}; ${Math.round(performance.now() - began)}ms\n`);
+      });
+    };
+    processes.subscribe(observe);
+    onTestFinished(() => processes.unsubscribe(observe));
     const started = performance.now();
     let previous = started;
     const mark = (phase: string) => {
