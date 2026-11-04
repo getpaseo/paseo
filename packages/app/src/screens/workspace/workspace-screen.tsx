@@ -35,7 +35,7 @@ import {
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "expo-router/react-navigation";
-import { BackHandler, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -70,6 +70,8 @@ import { useToast } from "@/contexts/toast-context";
 import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/outside-folder";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import { subscribeCompactWorkspaceBack } from "@/screens/workspace/compact-workspace-back";
+import { systemBackPress } from "@/components/ui/isolated-bottom-sheet-modal/back-press";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   isExplorerSidebarOpen,
@@ -1263,6 +1265,7 @@ function WorkspaceScreenContent({
     checkoutState: workspaceHeaderCheckoutState,
   });
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
+  const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
 
   const isExplorerSidebarShowing = useIsExplorerSidebarOpen({
     isCompact: isMobile,
@@ -1284,20 +1287,18 @@ function WorkspaceScreenContent({
   );
 
   useEffect(() => {
-    // Back dismisses the compact overlay only. On a wide native layout the
-    // explorer is a tab, `showMobileAgent` has no rendered consumer, and
-    // returning true would swallow Back with nothing to show for it.
-    if (!isRouteFocused || isWeb || !isMobile || !isExplorerSidebarShowing) {
+    // Compact native layout only. On a wide native layout the explorer is a tab
+    // and the workspace list is the sidebar, so the mobile panels have no
+    // rendered consumer and Back keeps its default behavior.
+    if (!isRouteFocused || isWeb || !isMobile) {
       return;
     }
 
-    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
-      showMobileAgent();
-      return true;
+    return subscribeCompactWorkspaceBack(systemBackPress, {
+      current: () => usePanelStore.getState().mobilePanel.target,
+      show: (panel) => (panel === "agent-list" ? showMobileAgentList() : showMobileAgent()),
     });
-
-    return () => handler.remove();
-  }, [isExplorerSidebarShowing, isMobile, isRouteFocused, showMobileAgent]);
+  }, [isMobile, isRouteFocused, showMobileAgent, showMobileAgentList]);
 
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
