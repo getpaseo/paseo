@@ -3538,7 +3538,12 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
-    const agent = await this.ensureInteractiveSession(agentId);
+    let agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      agent = await this.ensureInteractiveSession(agentId);
+    }
+    // An interactive session must acquire its rewind lock without yielding.
+
     const submittedRow = this.timelineStore
       .getRows(agentId)
       .find(
