@@ -433,6 +433,16 @@ it("never auto-approves external MCP tools with query arguments in accept-edits 
     permissionId: perm2.request.id,
     response: { behavior: "deny" },
   });
+
+  const perm3 = await h.wait(
+    (event) => event.type === "session.permission" && event.request.name === "run_command",
+  );
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: perm3.request.id,
+    response: { behavior: "deny" },
+  });
   await h.completed(turn);
 
   expect(h.events).toContainEqual(
@@ -440,7 +450,7 @@ it("never auto-approves external MCP tools with query arguments in accept-edits 
       type: "timeline.item",
       item: expect.objectContaining({
         type: "assistant_message",
-        text: "MCP_RESULT:preapproved=true,danger=false,spoofed=false,wrapper=true\n",
+        text: "MCP_RESULT:preapproved=true,danger=false,spoofed=false,wrapper=true,titleSpoofed=false\n",
       }),
     }),
   );
@@ -1646,6 +1656,69 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
       );
     expect(todos.length).toBe(2);
     expect(todos[0]!.id).not.toBe(todos[1]!.id);
+  });
+
+  it("preserves plan identities across mid-turn tool calls", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("PLAN_ACROSS_TOOL_CALL");
+    await h.completed(turn);
+
+    const timelineEvents = h.events.filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item",
+    );
+    const todos = timelineEvents
+      .map((e) => e.item)
+      .filter(
+        (item): item is Extract<ProviderTimelineItem, { type: "todo" }> => item.type === "todo",
+      );
+    expect(todos.length).toBeGreaterThanOrEqual(2);
+    expect(todos[0]!.id).toBe(todos[1]!.id);
+  });
+
+  it("disambiguates duplicate titles in elicitation schemas so answers do not overwrite", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("ASK_QUESTION_DUPLICATE_TITLES");
+    const questionPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "question",
+    );
+    if (questionPerm.type !== "session.permission") throw new Error("Expected question permission");
+
+    expect(questionPerm.request.input).toMatchObject({
+      questions: [
+        expect.objectContaining({ id: "step1", header: "Confirmation (1)" }),
+        expect.objectContaining({ id: "step2", header: "Confirmation (2)" }),
+      ],
+    });
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: questionPerm.request.id,
+      response: {
+        behavior: "allow",
+        updatedInput: {
+          answers: {
+            "Confirmation (1)": true,
+            "Confirmation (2)": false,
+          },
+        },
+      },
+    });
+    await h.completed(turn);
+
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: 'DUPLICATE_TITLES_RESULT:{"action":"accept","content":{"step1":true,"step2":false}}\n',
+      },
+    });
   });
 });
 

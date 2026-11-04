@@ -699,7 +699,9 @@ export class Session {
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-      this.chunkIds.clear();
+      this.chunkIds.delete("agent_message_chunk");
+      this.chunkIds.delete("agent_thought_chunk");
+      this.chunkIds.delete("user_message_chunk");
       const merged = mergeAcpToolCall(this.turnTools.get(update.toolCallId), update);
       this.turnTools.set(update.toolCallId, merged);
       this.publishStreamEvent({

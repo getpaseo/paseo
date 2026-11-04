@@ -71,6 +71,8 @@ export const acpElicitationPropertySchema = z.object({
   items: z.object({ type: z.string().optional(), enum: z.array(z.string()).optional() }).optional(),
 });
 
+export type AcpElicitationProperty = z.infer<typeof acpElicitationPropertySchema>;
+
 export const acpElicitationParamsSchema = z.object({
   sessionId: z.string().optional(),
   mode: z.string().optional(),
@@ -257,6 +259,38 @@ function resolvePropertyValueType(type?: string): "string" | "number" | "integer
   return "string";
 }
 
+function makeUniqueHeaders(entries: Array<[string, AcpElicitationProperty]>): string[] {
+  const raw = entries.map(([, prop], index) => {
+    return prop.title?.trim() || (entries.length === 1 ? "Question" : `Question ${index + 1}`);
+  });
+  const counts = new Map<string, number>();
+  for (const h of raw) {
+    counts.set(h, (counts.get(h) ?? 0) + 1);
+  }
+
+  const result: string[] = [];
+  const used = new Set<string>();
+  const seen = new Map<string, number>();
+
+  for (const header of raw) {
+    const isDuplicate = (counts.get(header) ?? 0) > 1;
+    let candidate = header;
+    if (isDuplicate) {
+      const occurrence = (seen.get(header) ?? 0) + 1;
+      seen.set(header, occurrence);
+      candidate = `${header} (${occurrence})`;
+    }
+    while (used.has(candidate)) {
+      const occurrence = (seen.get(header) ?? 0) + 1;
+      seen.set(header, occurrence);
+      candidate = `${header} (${occurrence})`;
+    }
+    used.add(candidate);
+    result.push(candidate);
+  }
+  return result;
+}
+
 export function parseElicitationQuestions(
   params: AcpElicitationParams,
 ): ParsedElicitationQuestion[] {
@@ -279,6 +313,7 @@ export function parseElicitationQuestions(
     ];
   }
 
+  const headers = makeUniqueHeaders(entries);
   return entries.map(([key, prop], index) => {
     const multiSelect = prop.type === "array";
     const rawEnum = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
@@ -287,7 +322,7 @@ export function parseElicitationQuestions(
     const valueType = resolvePropertyValueType(prop.type);
     return {
       id: key,
-      header: prop.title?.trim() || (entries.length === 1 ? "Question" : `Question ${index + 1}`),
+      header: headers[index]!,
       question:
         prop.description?.trim() || prop.title?.trim() || params.message || `Question ${index + 1}`,
       options,
