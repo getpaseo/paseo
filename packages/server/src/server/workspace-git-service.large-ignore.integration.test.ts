@@ -46,18 +46,18 @@ test("a large ignored-directory listing establishes a working-tree watcher befor
       const service = new WorkspaceGitServiceImpl({
         logger: pino({ enabled: false }), paseoHome: process.argv[2],
       });
-      let maxTickMs = 0;
-      let previous = performance.now();
+      let maxTickCpuMs = 0;
+      let previous = process.cpuUsage();
       const timer = setInterval(() => {
-        const now = performance.now();
-        maxTickMs = Math.max(maxTickMs, now - previous);
-        previous = now;
+        const elapsed = process.cpuUsage(previous);
+        maxTickCpuMs = Math.max(maxTickCpuMs, (elapsed.user + elapsed.system) / 1000);
+        previous = process.cpuUsage();
       }, 10);
       const watch = await service.requestWorkingTreeWatch(process.argv[1], () => {});
       const active = service.getMetrics().fileObserver.activeObservationCount;
       await new Promise((resolve) => setTimeout(resolve, 100));
       clearInterval(timer);
-      console.log(JSON.stringify({ active, maxTickMs }));
+      console.log(JSON.stringify({ active, maxTickCpuMs }));
       if (active !== 1) process.exit(0);
       watch.unsubscribe();
       await service.dispose();
@@ -69,7 +69,9 @@ test("a large ignored-directory listing establishes a working-tree watcher befor
     );
     const measurement = JSON.parse(stdout.trim());
     expect(measurement.active).toBe(1);
-    expect(measurement.maxTickMs).toBeLessThan(2_000);
+    // CPU time excludes time descheduled by other parallel test/build processes.
+    // A linear ignored-root event filter alone burns over seven CPU seconds here.
+    expect(measurement.maxTickCpuMs).toBeLessThan(2_000);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
