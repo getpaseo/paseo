@@ -57,7 +57,7 @@ import {
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
-import type pino from "pino";
+import pino from "pino";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -1266,25 +1266,19 @@ test("create_agent_request launches from an exact subdirectory in a created work
 test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
+  const errors: string[] = [];
+  const logger = pino({ level: "error" }, { write: (entry) => errors.push(entry) });
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  const agentManager = new AgentManager({
+    clients: { codex: new CreateAgentTestClient() },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => "00000000-0000-4000-8000-000000000552",
+  });
   try {
     const cwd = path.join(workdir, "repo");
     mkdirSync(cwd, { recursive: true });
 
-    const logger = {
-      child: () => logger,
-      trace: vi.fn(),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
-    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
-      registry: agentStorage,
-      logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000552",
-    });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
       asSessionLogger(logger),
@@ -1388,9 +1382,14 @@ test("create_agent_request does not title an existing workspace from the agent p
       updatedAt: "2026-05-07T00:00:00.000Z",
     });
   } finally {
+    // Fake timers do not drain filesystem writes started by the initial prompt.
+    await agentManager.flush();
     vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
+  // Also catch writes that teardown would otherwise abandon after deleting their directory.
+  await agentManager.flush();
+  expect(errors).toEqual([]);
 });
 
 test("create_agent_request does not publish the pre-prompt snapshot after the prompt starts", async () => {
