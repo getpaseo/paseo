@@ -20,6 +20,7 @@ export function resolveExplorerSidebarWidth(input: {
 // Null pendingWidth means the gesture still owns the live resizeWidth instead.
 export interface ExplorerSidebarResize {
   sourceWidths: number[];
+  restoreWidth: number;
   containerWidth: number;
   pendingWidth: number | null;
 }
@@ -42,7 +43,8 @@ export function reconcileExplorerSidebarResize(
     !allocation.resizeEnabled ||
     allocation.containerWidth !== resize.containerWidth ||
     !resize.sourceWidths.includes(allocation.width) ||
-    allocation.width === resize.pendingWidth
+    (allocation.width === resize.pendingWidth &&
+      resize.sourceWidths.indexOf(allocation.width) === resize.sourceWidths.length - 1)
   ) {
     return null;
   }
@@ -62,7 +64,12 @@ export function beginExplorerSidebarResize(
   const sourceWidths = current ? [...current.sourceWidths] : [allocation.width];
   if (current && current.pendingWidth !== null && !sourceWidths.includes(current.pendingWidth))
     sourceWidths.push(current.pendingWidth);
-  return { sourceWidths, containerWidth: allocation.containerWidth, pendingWidth: null };
+  return {
+    sourceWidths,
+    restoreWidth: current ? (current.pendingWidth ?? current.restoreWidth) : allocation.width,
+    containerWidth: allocation.containerWidth,
+    pendingWidth: null,
+  };
 }
 
 export function finishExplorerSidebarResize(
@@ -73,9 +80,7 @@ export function finishExplorerSidebarResize(
   "worklet";
   if (!resize || resize.pendingWidth !== null) return resize;
   if (success) return { ...resize, pendingWidth: width };
-  return resize.sourceWidths.length > 1
-    ? { ...resize, pendingWidth: resize.sourceWidths[resize.sourceWidths.length - 1] }
-    : null;
+  return resize.sourceWidths.length > 1 ? { ...resize, pendingWidth: resize.restoreWidth } : null;
 }
 
 export function resolveExplorerSidebarFrameWidth(

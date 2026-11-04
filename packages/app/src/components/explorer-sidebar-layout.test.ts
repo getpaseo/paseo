@@ -34,6 +34,7 @@ describe("Explorer sidebar layout", () => {
     };
     const dragging: ExplorerSidebarResize = {
       sourceWidths: [allocation.width],
+      restoreWidth: allocation.width,
       containerWidth: allocation.containerWidth,
       pendingWidth: null,
     };
@@ -58,6 +59,50 @@ describe("Explorer sidebar layout", () => {
         expect(reconcileExplorerSidebarResize(released, { ...allocation, width: 600 })).toBeNull();
       },
     );
+
+    it("keeps a return to the minimum while an earlier wider release is acknowledged", () => {
+      const initial = { ...allocation, width: 240 };
+      const wider = finishExplorerSidebarResize(
+        beginExplorerSidebarResize(null, initial),
+        540,
+        true,
+      );
+      const returned = finishExplorerSidebarResize(
+        beginExplorerSidebarResize(wider, initial),
+        240,
+        true,
+      );
+      const awaiting = reconcileExplorerSidebarResize(returned, initial);
+      const intermediate = reconcileExplorerSidebarResize(awaiting, { ...initial, width: 540 });
+      expect(
+        resolveExplorerSidebarFrameWidth({
+          ...initial,
+          width: 540,
+          resize: intermediate,
+          resizeWidth: 240,
+        }),
+      ).toBe(240);
+      expect(reconcileExplorerSidebarResize(intermediate, initial)).toBeNull();
+    });
+
+    it("cancels back to the latest release when earlier widths repeat", () => {
+      const first = finishExplorerSidebarResize(dragging, 480, true);
+      const second = finishExplorerSidebarResize(
+        beginExplorerSidebarResize(first, allocation),
+        600,
+        true,
+      );
+      const third = finishExplorerSidebarResize(
+        beginExplorerSidebarResize(second, allocation),
+        480,
+        true,
+      );
+      const fourth = beginExplorerSidebarResize(third, allocation);
+      const canceled = finishExplorerSidebarResize(fourth, 700, false);
+      expect(
+        resolveExplorerSidebarFrameWidth({ ...allocation, resize: canceled, resizeWidth: 700 }),
+      ).toBe(480);
+    });
 
     it("cancels a newer gesture back to its last released width", () => {
       const first = finishExplorerSidebarResize(dragging, 480, true);
