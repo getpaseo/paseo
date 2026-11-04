@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, type RefObject, useCallback, useMemo } from "react";
 import { Gesture, PointerType, type GestureType } from "react-native-gesture-handler";
-import { useSharedValue } from "react-native-reanimated";
+import { useDerivedValue, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -21,6 +21,15 @@ function useGestureState() {
     touchStartX: useSharedValue(0),
     touchStartY: useSharedValue(0),
   };
+}
+
+/**
+ * Gates a sidebar pan on the UI thread. The sidebar flips between the dock and the overlay at
+ * runtime, and on Android flipping the handler's `.enabled()` config from false back to true left
+ * it inert until the app reloaded (RNGH 2.32), so `.enabled()` only carries the device capability.
+ */
+function useGestureGate(enabled: boolean) {
+  return useDerivedValue(() => enabled, [enabled]);
 }
 
 function useRevisionCommit(action: () => void) {
@@ -55,15 +64,16 @@ export function useOpenAgentListGesture(enabled: boolean) {
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const commit = useRevisionCommit(showMobileAgentList);
+  const gate = useGestureGate(enabled);
 
   return useMemo(
     () =>
       Gesture.Pan()
         .withRef(leftOpenGestureRef)
-        .enabled(enabled && hasTouchScreen)
+        .enabled(hasTouchScreen)
         .manualActivation(true)
         .onTouchesDown((event, stateManager) => {
-          if (event.pointerType !== PointerType.TOUCH) {
+          if (!gate.value || event.pointerType !== PointerType.TOUCH) {
             stateManager.fail();
             return;
           }
@@ -123,8 +133,8 @@ export function useOpenAgentListGesture(enabled: boolean) {
         }),
     [
       commit,
-      enabled,
       beginGesture,
+      gate,
       finishGesture,
       hasTouchScreen,
       horizontalScroll?.isAnyScrolledRight,
@@ -157,15 +167,16 @@ export function useCloseAgentListGesture(enabled = true) {
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
+  const gate = useGestureGate(enabled);
 
   const gesture = useMemo(
     () =>
       Gesture.Pan()
         .withRef(leftCloseGestureRef)
-        .enabled(enabled && hasTouchScreen)
+        .enabled(hasTouchScreen)
         .manualActivation(true)
         .onTouchesDown((event, stateManager) => {
-          if (event.pointerType !== PointerType.TOUCH) {
+          if (!gate.value || event.pointerType !== PointerType.TOUCH) {
             stateManager.fail();
             return;
           }
@@ -227,7 +238,7 @@ export function useCloseAgentListGesture(enabled = true) {
     [
       beginGesture,
       commit,
-      enabled,
+      gate,
       hasTouchScreen,
       finishGesture,
       leftCloseGestureRef,

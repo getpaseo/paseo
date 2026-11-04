@@ -802,7 +802,7 @@ function DesktopSidebar({
               onAddProject={handleOpenProject}
               onImportSession={handleImportSession}
               onWorkspacePress={closeSidebar}
-              parentGestureRef={overlay ? closeGestureRef : undefined}
+              parentGestureRef={closeGestureRef}
               dragGestureHostActive={active}
               listHeaderComponent={workspacesSectionHeaderElement}
             />
