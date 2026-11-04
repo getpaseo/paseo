@@ -22,7 +22,6 @@ import type { ITheme } from "@xterm/xterm";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {
-  TERMINAL_SURFACE_TOUCH_ACTION,
   TerminalEmulatorRuntime,
   type TerminalOutputData,
 } from "../terminal/runtime/terminal-emulator-runtime";
@@ -578,7 +577,7 @@ export default function TerminalEmulator({
       backgroundColor: xtermTheme.background ?? "#0b0b0b",
       overflow: "hidden",
       overscrollBehavior: "none",
-      touchAction: TERMINAL_SURFACE_TOUCH_ACTION,
+      touchAction: "pan-y",
     }),
     [xtermTheme.background],
   );

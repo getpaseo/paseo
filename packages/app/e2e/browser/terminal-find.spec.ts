@@ -1,3 +1,4 @@
+import { getServerId } from "../support/helpers/server-id";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
@@ -487,3 +488,83 @@ test("keeps the shared Find controls usable in a compact dark browser", async ({
   await page.getByRole("button", { name: "Close Find" }).click();
   await expect(input(page)).toBeFocused();
 });
+
+// A phone browser installs xterm's document-level touch gesture listener too.
+// Keep this journey touch-enabled so it catches duplicate scroll handling.
+test.describe("terminal history with a finger", () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test("scrolls history once per finger drag", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await expectSingleFingerScroll(page, 24);
+    await expectSingleFingerScroll(page, 1);
+    await expectMouseWheelScrollsHistory(page);
+  });
+});
+
+async function openPhoneTerminalHistory(page: Page) {
+  await harness.createTerminal({
+    name: "Finger scroll history",
+    command: "bash",
+    args: [
+      "--noprofile",
+      "--norc",
+      "-c",
+      "for i in $(seq 1 150); do echo HISTORY_$i; done; exec sleep 300",
+    ],
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  await page.getByTestId(`sidebar-workspace-row-${getServerId()}:${harness.workspaceId}`).click();
+  await expect(page.getByRole("textbox", { name: "Terminal input" })).toBeVisible();
+  await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toBeVisible();
+  await expect.poll(() => getTerminalBufferText(page)).toContain("HISTORY_150");
+}
+
+async function expectMouseWheelScrollsHistory(page: Page) {
+  const beforeWheel = (await viewport(page))!;
+  await page.mouse.move(200, 300);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(() => viewport(page)).toBeLessThan(beforeWheel);
+}
+
+async function expectSingleFingerScroll(page: Page, moves: number) {
+  await test.step(`Drag history with ${moves} touch moves`, async () => {
+    const screen = page
+      .getByTestId("terminal-surface")
+      .filter({ visible: true })
+      .locator(".xterm-screen");
+    const box = await screen.boundingBox();
+    if (!box) throw new Error("Terminal screen is not visible");
+    const rows = await page.evaluate(() => window.__paseoTerminal!.rows);
+    const lineHeight = box.height / rows;
+    const before = (await viewport(page))!;
+    const session = await page.context().newCDPSession(page);
+    try {
+      const start = { x: box.x + box.width / 2, y: box.y + box.height / 3 };
+      await session.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [{ ...start, id: 1 }],
+      });
+      for (let step = 1; step <= moves; step++) {
+        await session.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [{ x: start.x, y: start.y + (120 * step) / moves, id: 1 }],
+        });
+      }
+      // Assert before lifting the finger so xterm's inertial scrolling is excluded.
+      await expect.poll(async () => before - (await viewport(page))!).toBeGreaterThan(0);
+      const moved = before - (await viewport(page))!;
+      await test.info().attach("finger-scroll", {
+        body: JSON.stringify({ moves, distancePx: 120, lineHeight, rowsMoved: moved }),
+        contentType: "application/json",
+      });
+      expect(moved, "one gesture must not scroll twice its physical distance").toBeLessThanOrEqual(
+        Math.ceil(120 / lineHeight),
+      );
+    } finally {
+      await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await session.detach();
+    }
+  });
+}
