@@ -171,6 +171,23 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
+async function resolveResumePurpose(
+  record: StoredAgentRecord | null,
+  requested: AgentResumePurpose | undefined,
+  cwd: string,
+): Promise<AgentResumePurpose> {
+  if (!record) return requested ?? "interactive";
+  if (record.archivedAt) return "history";
+  if (requested !== "history") return "interactive";
+  try {
+    await stat(cwd);
+    return "interactive";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "history";
+    throw error;
+  }
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -783,6 +800,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly historySessions = new WeakSet<AgentSession>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
   private readonly collectingRuntimes = new Set<string>();
@@ -1501,9 +1519,7 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
-    // A read remains history-only even when the durable record is unarchived.
-    const purpose =
-      record?.archivedAt || resumeOptions?.purpose === "history" ? "history" : "interactive";
+    const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
     const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
     const launchEnv = record?.launchEnv;
@@ -1541,6 +1557,7 @@ export class AgentManager {
       launchContext,
       currentResumeOptions,
     );
+    if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -2654,7 +2671,7 @@ export class AgentManager {
         logger: this.logger,
       });
     }
-    const agent = this.requireSessionAgent(agentId);
+    const agent = await this.ensureInteractiveSession(agentId);
     // Providers parse slash commands from the raw text, so a command another agent sent
     // must reach them without its sender envelope.
     const agentMessage = typeof prompt === "string" ? parseAgentMessage(prompt) : null;
@@ -2783,6 +2800,24 @@ export class AgentManager {
     }
   }
 
+  private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      // Reload validates the directory before releasing the readable history session.
+      await this.reloadAgentSession(agentId);
+    }
+    return this.requireSessionAgent(agentId);
+  }
+
+  private async *streamAfterHistoryLoad(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    await this.ensureInteractiveSession(agentId);
+    yield* this.streamAgent(agentId, prompt, options);
+  }
+
   private async *streamAfterRuntimeCollection(
     agentId: string,
     prompt: AgentPromptInput,
@@ -2805,6 +2840,8 @@ export class AgentManager {
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options);
     const existingAgent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(existingAgent.session))
+      return this.streamAfterHistoryLoad(agentId, prompt, options);
     this.logger.trace(
       {
         agentId,

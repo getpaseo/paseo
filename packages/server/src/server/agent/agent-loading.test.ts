@@ -219,13 +219,48 @@ test("timeline requests read unarchived stored history with a deleted cwd", asyn
     const after = await ctx.client.fetchAgentTimeline(agent.id);
     expect(after.entries).toEqual(before.entries);
     expect(after.entries.length).toBeGreaterThan(0);
-    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
     await expect(ctx.client.sendMessage(agent.id, "continue")).rejects.toThrow(
       "Working directory does not exist",
     );
     await expect(ctx.client.createAgent({ provider: "codex", cwd })).rejects.toThrow(
       "Working directory does not exist",
     );
+    await mkdir(cwd);
+    await ctx.client.sendMessage(agent.id, "continue after restoring directory");
+    expect((await ctx.client.waitForFinish(agent.id, 15000)).status).toBe("idle");
+  } finally {
+    await ctx.cleanup();
+    await rm(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("timeline reads keep runnable unarchived agents interactive for the next prompt", async () => {
+  const { createDaemonTestContext } = await import("../test-utils/daemon-test-context.js");
+  const clients = createTestAgentClients();
+  const base = clients.codex!;
+  const purposes: Array<AgentResumeSessionOptions | undefined> = [];
+  const client: AgentClient = {
+    provider: base.provider,
+    capabilities: base.capabilities,
+    createSession: (config, context) => base.createSession(config, context),
+    resumeSession: (handle, overrides, context, options) => {
+      purposes.push(options);
+      return base.resumeSession(handle, overrides, context, options);
+    },
+    fetchCatalog: (options) => base.fetchCatalog(options),
+    isAvailable: () => base.isAvailable(),
+  };
+  const ctx = await createDaemonTestContext({ agentClients: { codex: client } });
+  const cwd = await mkdtemp(path.join(tmpdir(), "timeline-interactive-"));
+  try {
+    const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+    await ctx.daemon.daemon.agentManager.closeAgent(agent.id);
+    await ctx.client.fetchAgentTimeline(agent.id);
+    expect(purposes).toEqual([{ purpose: "interactive" }]);
+    await ctx.client.sendMessage(agent.id, "continue after opening history");
+    expect((await ctx.client.waitForFinish(agent.id, 15000)).status).toBe("idle");
+    const timeline = await ctx.client.fetchAgentTimeline(agent.id);
+    expect(timeline.entries.length).toBeGreaterThan(0);
   } finally {
     await ctx.cleanup();
     await rm(cwd, { recursive: true, force: true });
