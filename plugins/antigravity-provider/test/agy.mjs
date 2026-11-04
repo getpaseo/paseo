@@ -215,7 +215,7 @@ async function handlePrompt(id, params) {
     return;
   }
   if (text.includes("TOOLS")) {
-    await handleToolsPrompt(id);
+    await handleToolsPrompt(id, text);
     return;
   }
   if (text.includes("EDIT_AND_SHELL")) {
@@ -388,7 +388,34 @@ async function handleImagePrompt(id, text) {
   respond(id, { stopReason: "end_turn" });
 }
 
-async function handleToolsPrompt(id) {
+async function handleToolsPrompt(id, text = "") {
+  if (text.includes("TOOLS_PRIORITY")) {
+    const perm = await requestClient("session/request_permission", {
+      sessionId,
+      toolCall: {
+        toolCallId: "call-priority-1",
+        title: "printf PRIORITY",
+        kind: "execute",
+        status: "pending",
+        rawInput: { CommandLine: "printf PRIORITY" },
+      },
+      options: [
+        { optionId: "allow-always", name: "Always Allow", kind: "allow_always" },
+        { optionId: "allow-once", name: "Allow Once", kind: "allow_once" },
+        { optionId: "reject-always", name: "Reject Always", kind: "reject_always" },
+        { optionId: "reject-once", name: "Reject Once", kind: "reject_once" },
+      ],
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `PRIORITY_RESULT:${perm?.outcome?.optionId}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   notifyUpdate({
     sessionUpdate: "tool_call",
     toolCallId: "call-read-1",
@@ -607,6 +634,29 @@ async function handleMcpSecurityPrompt(id) {
 }
 
 async function handleAskQuestionPrompt(id, text = "") {
+  if (text.includes("ASK_QUESTION_LITERAL_OTHER")) {
+    const answer = await requestClient("elicitation/create", {
+      sessionId,
+      mode: "form",
+      message: "Literal Other test",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          choice: { type: "string", title: "Choice", enum: ["Yes", "No", "Other"] },
+        },
+        required: ["choice"],
+      },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `LITERAL_OTHER_RESULT:${JSON.stringify(answer)}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   if (text.includes("ASK_QUESTION_FALLBACK_COLLISION")) {
     const answer = await requestClient("elicitation/create", {
       sessionId,

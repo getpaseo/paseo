@@ -1788,6 +1788,129 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
       },
     });
   });
+
+  it("prefers one-shot permission options over lasting options regardless of wire order", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("TOOLS_PRIORITY");
+    const toolPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "tool",
+    );
+    if (toolPerm.type !== "session.permission") throw new Error("Expected tool permission");
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: toolPerm.request.id,
+      response: { behavior: "allow" },
+    });
+    await h.completed(turn);
+
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: "PRIORITY_RESULT:allow-once\n",
+      },
+    });
+  });
+
+  it("persists accumulated session cost across resumes when cost is estimated from tokens", async () => {
+    const h1 = await harness();
+    await h1.open();
+
+    const turn1Id = await h1.message([{ type: "text", text: "ESTIMATED_TOKENS_TURN_2" }]);
+    await h1.completed(turn1Id);
+
+    const persistence1 = h1.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence1?.persistence.data).toMatchObject({
+      conversationId: expect.any(String),
+      accumulatedCostUsd: 0.00225,
+    });
+    if (!persistence1) throw new Error("Expected session persistence event");
+    const conversationId = (persistence1.persistence.data as { conversationId: string })
+      .conversationId;
+    await h1.request({ type: "session.close", sessionId: "s", requestId: "close-1" });
+
+    const h2 = await harness();
+    await h2.open({ restored: persistence1?.persistence });
+
+    const turn2Id = await h2.message([{ type: "text", text: "ESTIMATED_TOKENS_TURN_2" }]);
+    await h2.completed(turn2Id);
+
+    const usageAfterTurn2 = h2.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+        event.type === "session.usage",
+    );
+    expect(usageAfterTurn2?.usage.totalCostUsd).toBe(0.0045);
+
+    const persistence2 = h2.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence2?.persistence.data).toMatchObject({
+      conversationId,
+      accumulatedCostUsd: 0.0045,
+    });
+    await h2.request({ type: "session.close", sessionId: "s", requestId: "close-2" });
+  });
+
+  it("preserves literal Other enum choices without a companion field as ordinary options", async () => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.prompt("ASK_QUESTION_LITERAL_OTHER");
+    const questionPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "question",
+    );
+    if (questionPerm.type !== "session.permission") throw new Error("Expected question permission");
+
+    expect(questionPerm.request).toMatchObject({
+      name: "ask_question",
+      kind: "question",
+      input: {
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            options: [{ label: "Yes" }, { label: "No" }, { label: "Other" }],
+            allowOther: false,
+          },
+        ],
+      },
+    });
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: questionPerm.request.id,
+      response: {
+        behavior: "allow",
+        updatedInput: {
+          answers: {
+            Choice: "Other",
+          },
+        },
+      },
+    });
+    await h.completed(turn);
+
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: 'LITERAL_OTHER_RESULT:{"action":"accept","content":{"choice":"Other"}}\n',
+      },
+    });
+  });
 });
 
 it.runIf(process.platform === "win32")(

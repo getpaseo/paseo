@@ -142,6 +142,10 @@ export class Session {
     this.requestedModel = options.config.model ?? persistedModel ?? null;
     this.effectiveModel = this.requestedModel;
     this.mode = (options.config.mode as AntigravityModeId | undefined) ?? DEFAULT_MODE;
+    if (typeof persisted?.accumulatedCostUsd === "number") {
+      this.accumulatedCostUsd = persisted.accumulatedCostUsd;
+      this.lastUsage = { totalCostUsd: persisted.accumulatedCostUsd };
+    }
   }
 
   canStopRuntime(): boolean {
@@ -747,6 +751,7 @@ export class Session {
   private emitUsageUpdate(
     update: Extract<AcpSessionUpdate, { sessionUpdate: "usage_update" }>,
   ): void {
+    const priorCost = this.accumulatedCostUsd;
     recordTurnUsageUpdate(this.turn, update);
     if (typeof update.cost?.amount === "number") {
       this.accumulatedCostUsd = update.cost.amount;
@@ -771,12 +776,16 @@ export class Session {
       ...(this.turn ? { turnId: this.turn.id } : {}),
       usage,
     });
+    if (this.accumulatedCostUsd !== priorCost) {
+      this.emitPersistence();
+    }
   }
 
   private emitPromptUsage(
     turn: ActiveTurn,
     raw: NonNullable<ReturnType<typeof acpPromptResultSchema.parse>["usage"]>,
   ): void {
+    const priorCost = this.accumulatedCostUsd;
     const contextWindowMaxTokens =
       turn.contextMax ??
       inferModelContextWindow(turn.model) ??
@@ -798,6 +807,9 @@ export class Session {
     });
     this.lastUsage = usage;
     this.options.emit({ type: "session.usage", sessionId: this.id, turnId: turn.id, usage });
+    if (this.accumulatedCostUsd !== priorCost) {
+      this.emitPersistence();
+    }
   }
 
   private resolveTurnTotalCostUsd(
@@ -1101,9 +1113,25 @@ export class Session {
   }
 
   private currentPersistence(): ProviderPersistence | undefined {
-    return this.conversationId
-      ? { version: 1, data: { conversationId: this.conversationId } }
-      : this.options.persistence;
+    if (!this.conversationId) return this.options.persistence;
+    return {
+      version: 1,
+      data: {
+        conversationId: this.conversationId,
+        ...(this.accumulatedCostUsd > 0
+          ? { accumulatedCostUsd: Math.round(this.accumulatedCostUsd * 1_000_000) / 1_000_000 }
+          : {}),
+        ...(this.requestedModel ? { model: this.requestedModel } : {}),
+      },
+    };
+  }
+
+  private emitPersistence(): void {
+    if (!this.options.config.persist || !this.conversationId) return;
+    const persistence = this.currentPersistence();
+    if (persistence) {
+      this.options.emit({ type: "session.persistence", sessionId: this.id, persistence });
+    }
   }
 
   private emitConfig(): void {
@@ -1178,7 +1206,7 @@ function mergeUsageSnapshot(base: ProviderUsage, incoming: Partial<ProviderUsage
 
 function parsePersistence(
   persistence: ProviderPersistence | undefined,
-): { conversationId: string | null; model?: string } | null {
+): { conversationId: string | null; model?: string; accumulatedCostUsd?: number } | null {
   if (!persistence) return null;
   const parsed = persistenceSchema.safeParse(persistence.data);
   if (!parsed.success) {
@@ -1190,6 +1218,9 @@ function parsePersistence(
   return {
     conversationId: parsed.data.conversationId ?? parsed.data.sessionId ?? null,
     ...(parsed.data.model ? { model: parsed.data.model } : {}),
+    ...(typeof parsed.data.accumulatedCostUsd === "number"
+      ? { accumulatedCostUsd: parsed.data.accumulatedCostUsd }
+      : {}),
   };
 }
 
@@ -1200,6 +1231,14 @@ function selectPermissionOption(
   if (response.selectedActionId) {
     const exact = options.find((option) => option.optionId === response.selectedActionId);
     if (exact) return exact;
+  }
+  const order =
+    response.behavior === "allow"
+      ? ["allow_once", "allow_always"]
+      : ["reject_once", "reject_always"];
+  for (const kind of order) {
+    const match = options.find((option) => option.kind === kind);
+    if (match) return match;
   }
   if (response.behavior === "allow") {
     return (
