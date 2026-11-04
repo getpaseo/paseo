@@ -2,7 +2,7 @@ import React, { type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { CountedCheckPresentation } from "@/git/check-presentation";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, mapLayout } from "@/components/ui/control-geometry";
 import {
   CheckPresentationIcon,
   getCheckPresentationTone,
@@ -164,10 +164,10 @@ export const sectionKitStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     // Fixed, not minHeight plus padding. A row's trailing slot holds an sm Button
-    // (28pt), which stacked on the vertical padding and made rows with an
+    // , which stacked on the vertical padding and made rows with an
     // "Add to chat" button taller than rows without one. The row is single-line by
     // construction, so it declares a height the button fits inside instead.
-    height: CONTROL_HEIGHTS.sm + theme.spacing[1],
+    height: mapLayout(CONTROL_HEIGHTS.sm, (height) => height + theme.spacing[1]),
   },
   checkName: {
     fontSize: theme.fontSize.base,
