@@ -234,10 +234,10 @@ function renderListEmptyComponent(input: {
 }
 
 // Live and retained rows use the same boundary so completion preserves the message
-// subtree, including measured diagrams and selections. FlatList recreates history
-// cells with fresh refs and shifted indexes on data changes. This boundary is
-// what stops that churn: a row renders again only when its stream item identity, its layout item
-// identity, or the renderer itself changes. Item identity is the revision signal the strategy
+// subtree, including measured diagrams and selections. LegendList renders every mounted row
+// again when `extraData` (the history renderer) changes, and history rows shift index when older
+// history loads. This boundary limits that pass: a row renders again only when its stream item
+// identity, its layout item identity, or the renderer itself changes. Item identity is the revision signal the strategy
 // already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
 const StreamRow = memo(function StreamRow({
   item,
