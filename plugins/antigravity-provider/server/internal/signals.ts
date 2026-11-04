@@ -23,7 +23,17 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
   try {
     process.kill(plan.pid, plan.signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    if (hasErrorCode(error, "ESRCH")) return;
+    if (hasErrorCode(error, "EPERM")) {
+      try {
+        process.kill(options.pid, plan.signal);
+        return;
+      } catch (fallbackError) {
+        if (hasErrorCode(fallbackError, "ESRCH") || hasErrorCode(fallbackError, "EPERM")) return;
+        throw fallbackError;
+      }
+    }
+    throw error;
   }
 }
 
@@ -32,6 +42,10 @@ async function killTree(plan: Extract<SignalPlan, { type: "tree" }>): Promise<vo
     await execCommand(plan.command, plan.args, { shell: false });
   } catch (error) {
     // taskkill reports an already-exited PID with exit code 128.
-    if (!(error instanceof Error && "code" in error && error.code === 128)) throw error;
+    if (!hasErrorCode(error, 128)) throw error;
   }
+}
+
+function hasErrorCode(error: unknown, expected: string | number): boolean {
+  return error instanceof Error && "code" in error && error.code === expected;
 }
