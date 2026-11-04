@@ -15,6 +15,7 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import {
+  beginExplorerSidebarResize,
   finishExplorerSidebarResize,
   reconcileExplorerSidebarResize,
   resolveExplorerSidebarFrameWidth,
@@ -62,7 +63,12 @@ export function useExplorerGeometry({
             resize: resize.value,
             resizeWidth: resizeWidth.value,
           });
-          resize.value = { sourceWidth: width, containerWidth, pendingWidth: null };
+          resize.value = beginExplorerSidebarResize(resize.value, {
+            width,
+            containerWidth,
+            overlay,
+            resizeEnabled,
+          });
           startWidth.value = currentWidth + event.translationX;
           resizeWidth.value = currentWidth;
         })

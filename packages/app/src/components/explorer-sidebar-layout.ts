@@ -19,7 +19,7 @@ export function resolveExplorerSidebarWidth(input: {
 // A release keeps its UI width until React acknowledges it or replaces its allocation.
 // Null pendingWidth means the gesture still owns the live resizeWidth instead.
 export interface ExplorerSidebarResize {
-  sourceWidth: number;
+  sourceWidths: number[];
   containerWidth: number;
   pendingWidth: number | null;
 }
@@ -41,12 +41,28 @@ export function reconcileExplorerSidebarResize(
     allocation.overlay ||
     !allocation.resizeEnabled ||
     allocation.containerWidth !== resize.containerWidth ||
-    allocation.width !== resize.sourceWidth ||
+    !resize.sourceWidths.includes(allocation.width) ||
     allocation.width === resize.pendingWidth
   ) {
     return null;
   }
-  return resize;
+  const acknowledgedIndex = resize.sourceWidths.indexOf(allocation.width);
+  return acknowledgedIndex > 0
+    ? { ...resize, sourceWidths: resize.sourceWidths.slice(acknowledgedIndex) }
+    : resize;
+}
+
+export function beginExplorerSidebarResize(
+  previous: ExplorerSidebarResize | null,
+  allocation: ExplorerSidebarAllocation,
+): ExplorerSidebarResize {
+  "worklet";
+  const current = reconcileExplorerSidebarResize(previous, allocation);
+  // Released widths remain expected allocations while a newer gesture owns the frame.
+  const sourceWidths = current ? [...current.sourceWidths] : [allocation.width];
+  if (current && current.pendingWidth !== null && !sourceWidths.includes(current.pendingWidth))
+    sourceWidths.push(current.pendingWidth);
+  return { sourceWidths, containerWidth: allocation.containerWidth, pendingWidth: null };
 }
 
 export function finishExplorerSidebarResize(
@@ -56,7 +72,10 @@ export function finishExplorerSidebarResize(
 ): ExplorerSidebarResize | null {
   "worklet";
   if (!resize || resize.pendingWidth !== null) return resize;
-  return success ? { ...resize, pendingWidth: width } : null;
+  if (success) return { ...resize, pendingWidth: width };
+  return resize.sourceWidths.length > 1
+    ? { ...resize, pendingWidth: resize.sourceWidths[resize.sourceWidths.length - 1] }
+    : null;
 }
 
 export function resolveExplorerSidebarFrameWidth(

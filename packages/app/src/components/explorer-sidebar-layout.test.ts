@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  beginExplorerSidebarResize,
   finishExplorerSidebarResize,
   reconcileExplorerSidebarResize,
   resolveExplorerSidebarDockSizes,
@@ -32,10 +33,41 @@ describe("Explorer sidebar layout", () => {
       resizeEnabled: true,
     };
     const dragging: ExplorerSidebarResize = {
-      sourceWidth: allocation.width,
+      sourceWidths: [allocation.width],
       containerWidth: allocation.containerWidth,
       pendingWidth: null,
     };
+
+    it.each([false, true])(
+      "keeps a second drag through the previous release acknowledgement (released=%s)",
+      (releaseSecond) => {
+        const first = finishExplorerSidebarResize(dragging, 480, true);
+        const second = beginExplorerSidebarResize(first, allocation);
+        const current = releaseSecond ? finishExplorerSidebarResize(second, 600, true) : second;
+        const acknowledged = reconcileExplorerSidebarResize(current, { ...allocation, width: 480 });
+        expect(
+          resolveExplorerSidebarFrameWidth({
+            ...allocation,
+            width: 480,
+            resize: acknowledged,
+            resizeWidth: 600,
+          }),
+        ).toBe(600);
+        const released = finishExplorerSidebarResize(acknowledged, 600, true);
+        expect(released?.pendingWidth).toBe(600);
+        expect(reconcileExplorerSidebarResize(released, { ...allocation, width: 600 })).toBeNull();
+      },
+    );
+
+    it("cancels a newer gesture back to its last released width", () => {
+      const first = finishExplorerSidebarResize(dragging, 480, true);
+      const second = beginExplorerSidebarResize(first, allocation);
+      const canceled = finishExplorerSidebarResize(second, 600, false);
+      expect(
+        resolveExplorerSidebarFrameWidth({ ...allocation, resize: canceled, resizeWidth: 600 }),
+      ).toBe(480);
+      expect(reconcileExplorerSidebarResize(canceled, { ...allocation, width: 480 })).toBeNull();
+    });
 
     it("keeps the drag width after release while the JS commit still has the old prop", () => {
       expect(
