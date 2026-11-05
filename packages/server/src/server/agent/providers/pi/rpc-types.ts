@@ -92,6 +92,8 @@ export interface PiSessionState {
   thinkingLevel: PiThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
+  /** Reported by Pi-compatible runtimes that track background work (e.g. senpi); absent in stock Pi. */
+  lifecycle?: { state?: string };
   autoCompactionEnabled?: boolean;
   sessionFile?: string;
   sessionId: string;
