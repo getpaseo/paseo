@@ -279,6 +279,17 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 收到 `{ request }`，只能修改 `env`、`tools` 和 `mcpServers`，修改只用于此次启动。其他字段只读。抛出错误、无效返回或超时会让打开操作失败。
 
+不要 await 对正在打开的 Agent 的写入，例如 `setMetadata`。该写入要等打开完成，而打开在等你的钩子，结果钩子超时，打开失败。启动写入但不要 await，它会在打开完成后立即执行：
+
+```ts
+server.addHook("agent.open.before", async ({ request }, { paseo }) => {
+  void paseo.agents
+    .ref(request.agentId)
+    .setMetadata({ "my.plugin": { openedBy: "hook" } })
+    .catch((error) => console.error(error));
+});
+```
+
 **`agent.open.before` 请求示例：**
 
 ```json

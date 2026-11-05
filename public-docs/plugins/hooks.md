@@ -283,6 +283,17 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
+Do not await a write to the agent being opened, such as `setMetadata`. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
+
+```ts
+server.addHook("agent.open.before", async ({ request }, { paseo }) => {
+  void paseo.agents
+    .ref(request.agentId)
+    .setMetadata({ "my.plugin": { openedBy: "hook" } })
+    .catch((error) => console.error(error));
+});
+```
+
 **`agent.open.before` request example:**
 
 ```json
