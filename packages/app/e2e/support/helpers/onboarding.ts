@@ -48,7 +48,7 @@ export async function recordFirstLaunch(page: Page): Promise<void> {
     const record: FirstLaunchRecord = { appBeforeSetup: false, setupOpacityOnArrival: null };
     Object.assign(window, { __firstLaunch: record });
     const observer = new MutationObserver(() => {
-      const setup = document.querySelector('[data-testid="onboarding-modal"]');
+      const setup = document.querySelector('[data-testid="onboarding-modal"] [role="dialog"]');
       if (setup) {
         record.setupOpacityOnArrival = Number(getComputedStyle(setup).opacity);
         observer.disconnect();
