@@ -1440,6 +1440,7 @@ export class DaemonClient {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
+  private backgroundHeartbeatSend: Promise<void> | null = null;
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
@@ -1797,6 +1798,34 @@ export class DaemonClient {
     void this.connect().catch((error: unknown) =>
       this.logger.debug({ err: error }, "Connection attempt ended"),
     );
+  }
+
+  /** Send a keepalive when a native scheduler runs while JS timers are suspended. */
+  sendBackgroundHeartbeat(): void {
+    if (
+      this.connectionState.status !== "connected" ||
+      !this.transport ||
+      this.backgroundHeartbeatSend
+    ) {
+      return;
+    }
+    try {
+      const pending = this.sendJsonMessage("ping", "ping", { type: "ping" });
+      this.backgroundHeartbeatSend = pending;
+      void pending.then(
+        () => {
+          if (this.backgroundHeartbeatSend === pending) this.backgroundHeartbeatSend = null;
+          return undefined;
+        },
+        (error: unknown) => {
+          if (this.backgroundHeartbeatSend === pending) this.backgroundHeartbeatSend = null;
+          this.logger.debug({ err: error }, "Background heartbeat send failed");
+          return undefined;
+        },
+      );
+    } catch (error) {
+      this.logger.debug({ err: error }, "Background heartbeat send failed");
+    }
   }
 
   private recordTransportActivity(): void {
@@ -6933,6 +6962,7 @@ export class DaemonClient {
   }
 
   private disposeTransport(code = 1001, reason = "Reconnecting"): void {
+    this.backgroundHeartbeatSend = null;
     this.chunkedTransport?.close();
     this.chunkedTransport = null;
     this.owned.disconnected();

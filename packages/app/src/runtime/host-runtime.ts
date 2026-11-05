@@ -866,6 +866,10 @@ export class HostRuntimeController {
     this.activeClient?.ensureConnected(options);
   }
 
+  sendBackgroundHeartbeat(): void {
+    this.activeClient?.sendBackgroundHeartbeat();
+  }
+
   markAgentDirectorySyncLoading(): void {
     const status = this.snapshot.hasEverLoadedAgentDirectory ? "revalidating" : "initial_loading";
     this.updateSnapshot({
@@ -2746,6 +2750,12 @@ export class HostRuntimeStore {
   ensureConnectedAll(options?: { verify?: boolean }): void {
     for (const controller of this.controllers.values()) {
       controller.ensureConnected(options);
+    }
+  }
+
+  sendBackgroundHeartbeats(): void {
+    for (const controller of this.controllers.values()) {
+      controller.sendBackgroundHeartbeat();
     }
   }
 

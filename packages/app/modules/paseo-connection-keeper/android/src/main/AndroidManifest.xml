@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <application>
+    <service
+      android:name="sh.paseo.connection.BackgroundConnectionService"
+      android:description="@string/paseo_connection_description"
+      android:exported="false"
+      android:foregroundServiceType="specialUse"
+      android:stopWithTask="true">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Maintain real-time connections to the user's Paseo hosts while switching apps" />
+    </service>
+  </application>
+</manifest>

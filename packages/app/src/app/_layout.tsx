@@ -86,6 +86,7 @@ import {
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
+import { bindPlatformBackgroundConnection } from "@/runtime/background-connection";
 import { useSettingsRouteEntry } from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -275,7 +276,12 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const store = getHostRuntimeStore();
-    return bindHostRuntimeAppState(store, AppState);
+    const unbindAppState = bindHostRuntimeAppState(store, AppState);
+    const unbindBackgroundConnection = bindPlatformBackgroundConnection(store);
+    return () => {
+      unbindBackgroundConnection();
+      unbindAppState();
+    };
   }, []);
 
   useEffect(() => {

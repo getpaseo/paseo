@@ -1,0 +1,5 @@
+<resources>
+  <string name="paseo_connection_channel">Server connection</string>
+  <string name="paseo_connection_notification">Maintaining server connections</string>
+  <string name="paseo_connection_description">Keeps your server connections active while switching apps.</string>
+</resources>

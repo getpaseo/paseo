@@ -2605,6 +2605,96 @@ test("keeps default connect timeout shorter than session RPC waiters", async () 
   }
 });
 
+test("background heartbeats keep using the same socket while JavaScript timers are paused", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "background-keepalive",
+    logger: noopLogger,
+    transportFactory: () => {
+      attempts += 1;
+      return daemon.transport;
+    },
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+
+  // Android's native scheduler invokes these without advancing JS timers.
+  for (let i = 0; i < 6; i++) {
+    client.sendBackgroundHeartbeat();
+    await Promise.resolve();
+  }
+
+  expect(daemon.pingTimestamps()).toHaveLength(6);
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+test("background heartbeats continue even when a foreground ping was already pending", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "background-pending-ping",
+    logger: noopLogger,
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  client.sendBackgroundHeartbeat();
+  await Promise.resolve();
+  client.sendBackgroundHeartbeat();
+  expect(daemon.pingTimestamps()).toEqual(["0s", "0s", "0s"]);
+
+  await client.close();
+  client.sendBackgroundHeartbeat();
+  expect(daemon.pingTimestamps()).toHaveLength(3);
+});
+
+test("does not queue background heartbeats behind a stalled send", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  const send = daemon.transport.send;
+  let finishSend: (() => void) | undefined;
+  let sent = 0;
+  daemon.transport.send = (data) => {
+    if (typeof data === "string" && JSON.parse(data).type === "ping") {
+      sent += 1;
+      return new Promise<void>((resolve) => {
+        finishSend = resolve;
+      });
+    }
+    return send(data);
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "background-stalled-send",
+    logger: noopLogger,
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.sendBackgroundHeartbeat();
+  client.sendBackgroundHeartbeat();
+  expect(sent).toBe(1);
+  finishSend?.();
+  await vi.waitFor(() => {
+    client.sendBackgroundHeartbeat();
+    expect(sent).toBe(2);
+  });
+});
+
 test("foreground checks a silently broken socket through two normal heartbeat misses", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();
@@ -8523,6 +8613,32 @@ function serveProtectedDaemon(
     }
   })();
 }
+
+test("sends background heartbeats over the existing protected relay connection", async () => {
+  const keys = generateKeyPair();
+  const received: unknown[] = [];
+  const links: ReturnType<typeof createRelayLink>[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "background-relay-keepalive",
+    e2ee: { enabled: true, daemonPublicKeyB64: exportPublicKey(keys.publicKey) },
+    reconnect: { enabled: false },
+    transportFactory: () => {
+      const link = createRelayLink();
+      links.push(link);
+      serveProtectedDaemon(link, keys, { relayProtectedSecurity: true }, received);
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+  await client.connect();
+  client.sendBackgroundHeartbeat();
+
+  await vi.waitFor(() => expect(received).toContain(JSON.stringify({ type: "ping" })));
+  expect(links).toHaveLength(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});
 
 test("connects in legacy mode to a daemon that only speaks the legacy construction", async () => {
   const keys = generateKeyPair();
