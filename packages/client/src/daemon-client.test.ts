@@ -9081,6 +9081,68 @@ describe("provider options across daemon versions", () => {
     await write;
   });
 
+  // The old Codex setter rejects a non-string `service_tier` and the old Claude setter reads
+  // `null` as off, so a reset is sent as the value the old API can represent.
+  async function resetOnLegacyDaemon(agent: Record<string, unknown>, patch: Record<string, null>) {
+    const { client, sentMessages, mock } = await connect({});
+    const reply = (message: Record<string, unknown>) =>
+      mock.triggerMessage(wrapSessionMessage(message as never));
+    const writing = client.setAgentOptions("agent-1", patch);
+    const [fetch] = sentMessages();
+    expect(fetch).toMatchObject({ type: "fetch_agent_request", agentId: "agent-1" });
+    reply({
+      type: "fetch_agent_response",
+      payload: { requestId: fetch.requestId, agent, project: null, error: null },
+    });
+    return { writing, sentMessages, reply };
+  }
+
+  test("a legacy daemon resets a choice to the default the old API names", async () => {
+    const { writing, sentMessages, reply } = await resetOnLegacyDaemon(
+      { ...agentSnapshot, provider: "codex", features: [speedFeature] },
+      { service_tier: null },
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const write = sentMessages()[1];
+    expect(write).toMatchObject({
+      type: "set_agent_feature_request",
+      featureId: "service_tier",
+      value: "default",
+    });
+    reply({
+      type: "set_agent_feature_response",
+      payload: { requestId: write.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await writing;
+  });
+
+  test("a legacy daemon resets a toggle to off", async () => {
+    const { writing, sentMessages, reply } = await resetOnLegacyDaemon(
+      {
+        ...agentSnapshot,
+        features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: true }],
+      },
+      { fast_mode: null },
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const write = sentMessages()[1];
+    expect(write).toMatchObject({ featureId: "fast_mode", value: false });
+    reply({
+      type: "set_agent_feature_response",
+      payload: { requestId: write.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await writing;
+  });
+
+  test("a legacy daemon cannot reset an option no control draws, and writes nothing", async () => {
+    const { writing, sentMessages } = await resetOnLegacyDaemon(
+      { ...agentSnapshot, features: [speedFeature] },
+      { token_budget: null },
+    );
+    await expect(writing).rejects.toThrow("Update the host to reset token_budget.");
+    expect(sentMessages()).toHaveLength(1);
+  });
+
   test("a current daemon takes option writes as one options patch", async () => {
     const { client, sentMessages, mock } = await connect({ providerOptionControls: true });
     const write = client.setAgentOptions("agent-1", { service_tier: null, sandbox_mode: "x" });

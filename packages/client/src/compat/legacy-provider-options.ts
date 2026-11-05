@@ -1,4 +1,5 @@
 import { controlsFromFeatures, optionsFromFeatures } from "@getpaseo/protocol/option-controls";
+import type { AgentOptionControl } from "@getpaseo/protocol/agent-types";
 import type {
   AgentProfile,
   AgentSnapshotPayload,
@@ -173,6 +174,27 @@ export class LegacyProviderOptions {
       default:
         return message;
     }
+  }
+
+  /**
+   * An options patch as feature writes. `null` removes an option, which the old API cannot say:
+   * its setters take a value, and the Codex one rejects anything but a choice id. A toggle goes
+   * off and a choice goes to its default; an option with no control to say what its default is
+   * cannot be reset, and nothing is written.
+   */
+  featureWrites(
+    patch: Record<string, unknown>,
+    controls: readonly AgentOptionControl[],
+  ): [string, unknown][] {
+    return Object.entries(patch).map(([key, value]) => {
+      if (value !== null) return [key, value];
+      const control = controls.find((candidate) => candidate.key === key);
+      if (control?.type === "toggle") return [key, false];
+      if (control?.type === "select" && control.defaultValue !== undefined) {
+        return [key, control.defaultValue];
+      }
+      throw new Error(`Update the host to reset ${key}.`);
+    });
   }
 
   /** The legacy answer to a controls listing, in the shape of the current response. */

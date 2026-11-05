@@ -4172,9 +4172,12 @@ export class DaemonClient {
     agentId: string,
     patch: Record<string, unknown>,
   ): Promise<AgentProviderNotice | null> {
-    if (this.legacyProviderOptions()) {
+    const legacy = this.legacyProviderOptions();
+    if (legacy) {
       // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
-      for (const [featureId, value] of Object.entries(patch)) {
+      const resets = Object.values(patch).includes(null);
+      const controls = resets ? ((await this.fetchAgent(agentId))?.agent.controls ?? []) : [];
+      for (const [featureId, value] of legacy.featureWrites(patch, controls)) {
         await this.setAgentFeature(agentId, featureId, value);
       }
       return null;
