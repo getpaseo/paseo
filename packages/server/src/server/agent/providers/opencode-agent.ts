@@ -238,11 +238,11 @@ function isOpenCodeAutoAcceptEnabled(config: AgentSessionConfig): boolean {
 }
 
 /** What opening changed in the options the caller gave: legacy `full-access` turns Auto Accept on. */
-function openCodeOpenOptionsPatch(
-  given: AgentSessionConfig,
-  opened: OpenCodeAgentConfig,
-): Record<string, unknown> {
-  return isOpenCodeAutoAcceptEnabled(opened) && !isOpenCodeAutoAcceptEnabled(given)
+function openCodeOpenOptionsPatch(input: {
+  given: AgentSessionConfig;
+  opened: OpenCodeAgentConfig;
+}): Record<string, unknown> {
+  return isOpenCodeAutoAcceptEnabled(input.opened) && !isOpenCodeAutoAcceptEnabled(input.given)
     ? { [OPENCODE_AUTO_ACCEPT_FEATURE_ID]: true }
     : {};
 }
@@ -1504,7 +1504,7 @@ export class OpenCodeAgentClient implements AgentClient {
         false,
         unbindBridge,
         connectServer,
-        openCodeOpenOptionsPatch(config, openCodeConfig),
+        openCodeOpenOptionsPatch({ given: config, opened: openCodeConfig }),
       );
     } catch (error) {
       await connection.release();
@@ -1560,7 +1560,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
         unbindBridge,
         connectServer,
-        openCodeOpenOptionsPatch(config, openCodeConfig),
+        openCodeOpenOptionsPatch({ given: config, opened: openCodeConfig }),
       );
     } catch (error) {
       await connection.release();
