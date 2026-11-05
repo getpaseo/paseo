@@ -60,11 +60,144 @@ if (args.includes("--model")) init.init.model = args[args.indexOf("--model") + 1
 emit(init);
 let interrupted = null;
 const turns = new Map();
+function emitErrorTurn(text) {
+  if (text.includes("RECOVERED_ERROR")) {
+    const recoveredCount = (turns.get("RECOVERED_ERROR") || 0) + 1;
+    turns.set("RECOVERED_ERROR", recoveredCount);
+    const reply = recoveredCount === 1 ? "RECOVERED_ANSWER\n" : "FOLLOWUP_AFTER_RECOVERY\n";
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: recoveredCount * 2,
+        state: "DONE",
+        step_type: "user_input",
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: recoveredCount * 2 + 1,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: reply.slice(0, -1),
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: recoveredCount * 2 + 1,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "\n",
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: reply,
+        error:
+          recoveredCount === 1
+            ? "The stream was interrupted. Please continue the task you were working on."
+            : "Antigravity turn failed",
+      },
+    });
+    return true;
+  }
+  if (text.includes("PARTIAL_ERROR")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: "PARTIAL_ONLY",
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "The stream was interrupted. Please continue the task you were working on.",
+      },
+    });
+    return true;
+  }
+  if (text.includes("TOOL_AFTER_RESPONSE_ERROR")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "Running tool...\n",
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 2,
+        state: "ERROR",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "false" },
+          output: "",
+          error: { type: "EXECUTION_ERROR", message: "Command exited with code 1" },
+        },
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "Running tool...\n",
+        error: "Antigravity turn failed",
+      },
+    });
+    return true;
+  }
+  if (text.includes("POST_RESPONSE_EMPTY_ERROR")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "Intermediate thought before crash\n",
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "Antigravity turn failed",
+      },
+    });
+    return true;
+  }
+  return false;
+}
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const input = JSON.parse(line);
   record({ input });
   const text = input.message.content;
+  if (emitErrorTurn(text)) return;
   let name = "text-turn";
   if (text.includes("Attached image: ")) name = "image-file-external";
   if (text.includes("TOOLS")) name = "tools-default";
