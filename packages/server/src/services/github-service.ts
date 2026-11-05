@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
   isGitHubHost,
-  parseGitHubRemoteUrl,
   parseGitRemoteLocation,
+  parseGitHubRemoteIdentity,
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
@@ -1162,7 +1162,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
-  // Rollup nodes for merged/closed PRs keyed by repo#number@headOid: their
+  // Rollup nodes for merged/closed PRs keyed by host:repo#number@headOid: their
   // checks can no longer change, so each is fetched at most once per daemon run.
   const frozenPullRequestChecksCache = new Map<string, unknown[]>();
   const pollRepositoryRedirects = new Map<
@@ -1637,7 +1637,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         headRef: entry.target.headRef,
       })),
     );
-    const args = ["api", "graphql", "-f", `query=${query}`];
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "--hostname",
+      getGitHubApiHost(firstEntry.host),
+    ];
     const response = await loadGitHubPollBatchResponse({
       entries: addressedEntries,
       firstEntry,
@@ -1754,7 +1761,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
       const frozenKey =
         node.state !== "OPEN" && node.headRefOid.length > 0
-          ? `${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`
+          ? `${entry.host}\n${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`
           : null;
       const cachedRollup = frozenKey ? frozenPullRequestChecksCache.get(frozenKey) : undefined;
       if (frozenKey && cachedRollup) {
@@ -1846,7 +1853,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         number: item.node.number,
       })),
     );
-    const args = ["api", "graphql", "-f", `query=${query}`];
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "--hostname",
+      getGitHubApiHost(firstItem.entry.host),
+    ];
     let aliasData: Record<string, unknown>;
     let responseStdout: string;
     try {
@@ -2779,6 +2793,10 @@ function isGitHubStatusPending(status: CurrentPullRequestStatus | null): boolean
   return status.checks.some((check) => check.status === "pending");
 }
 
+function getGitHubApiHost(host: string): string {
+  return host || "github.com";
+}
+
 async function resolveGhPath(): Promise<string | null> {
   return findExecutable("gh");
 }
@@ -3221,7 +3239,11 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
   } catch {
     return null;
   }
-  return parseGitHubRemoteUrl(stdout.trim())?.repo ?? null;
+  const location = parseGitRemoteLocation(stdout.trim());
+  if (!location) {
+    return null;
+  }
+  return parseGitHubRemoteIdentity(location.path)?.repo ?? null;
 }
 
 async function getGitHubRepoView(options: {
