@@ -747,6 +747,88 @@ test("agents.create with internal fails before sending on a host without interna
   await client.close();
 });
 
+async function createWorkspaceHandle(features: Record<string, boolean>) {
+  const { client, ws } = await connectClient(features);
+  const creating = client.workspaces.create({
+    source: { kind: "directory", path: "/repo/sdk" },
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: createWorkspace({ id: "workspace_open" }),
+        setupTerminalId: null,
+        error: null,
+      },
+    }),
+  );
+  return { client, ws, workspace: await creating };
+}
+
+test("a background agent in an existing workspace fails before sending on a host without background agents", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+  const sentBefore = ws.sent.length;
+
+  await expect(
+    workspace.agents.create({ config: { provider: "codex/gpt-5.4" }, background: true }),
+  ).rejects.toThrow("Update the host to use background agents.");
+  expect(ws.sent).toHaveLength(sentBefore);
+
+  const creating = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    background: true,
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "create_agent_request",
+    background: true,
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).not.toHaveProperty("workspaceId");
+  creating.catch(() => {});
+  await client.close();
+});
+
+test("a background agent in an existing workspace is sent to a host with background agents", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+    backgroundAgents: true,
+  });
+
+  const creating = workspace.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    background: true,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "create_agent_request",
+    workspaceId: "workspace_open",
+    background: true,
+  });
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_background",
+        agent: createAgent({ id: "agent_background", workspaceId: "workspace_open" }),
+      },
+    }),
+  );
+  expect((await creating).id).toBe("agent_background");
+  await client.close();
+});
+
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();
   const createdAgent = createAgent();

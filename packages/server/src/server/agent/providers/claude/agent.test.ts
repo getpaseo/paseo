@@ -729,6 +729,196 @@ describe("ClaudeAgentSession features", () => {
     return { queryFactory, queryMock, launches };
   }
 
+  function createStreamingQueryMock() {
+    const mock = createQueryMock();
+    const messages: SDKMessage[] = [];
+    let pending: ((result: IteratorResult<SDKMessage, void>) => void) | null = null;
+    let ended = false;
+    const finish = () => {
+      ended = true;
+      pending?.({ done: true, value: undefined });
+      pending = null;
+    };
+    mock.queryMock.close.mockImplementation(finish);
+    mock.queryMock.return.mockImplementation(async () => finish());
+    mock.queryMock[Symbol.asyncIterator] = () => ({
+      next: async () => {
+        const message = messages.shift();
+        if (message) return { done: false, value: message };
+        if (ended) return { done: true, value: undefined };
+        return new Promise<IteratorResult<SDKMessage, void>>((resolve) => {
+          pending = resolve;
+        });
+      },
+    });
+    return {
+      ...mock,
+      push(message: SDKMessage) {
+        if (pending) {
+          pending({ done: false, value: message });
+          pending = null;
+        } else {
+          messages.push(message);
+        }
+      },
+    };
+  }
+
+  async function startToolForClosure() {
+    const mock = createStreamingQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory: mock.queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    let toolStarted!: () => void;
+    const running = new Promise<void>((resolve) => {
+      toolStarted = resolve;
+    });
+    const unsubscribe = session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "running"
+      )
+        toolStarted();
+    });
+    await session.startTurn("run the tool");
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000001",
+      parent_tool_use_id: null,
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "closure-tool", name: "Bash", input: {} },
+      },
+    });
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000002",
+      parent_tool_use_id: null,
+      event: { type: "content_block_stop", index: 0 },
+    });
+    await running;
+    return { ...mock, session, events, unsubscribe };
+  }
+
+  test("runtime close publishes tool cleanup without reporting a user turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.close();
+      expect(fixture.queryMock.close).toHaveBeenCalledTimes(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "turn_canceled" ||
+            event.type === "turn_completed" ||
+            event.type === "turn_failed",
+        ),
+      ).toEqual([]);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("explicit interruption still publishes tool cleanup and one turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.interrupt();
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(fixture.events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("runtime close resolves permissions once without reporting a user turn cancellation", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    const abort = new AbortController();
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      const permission = canUseTool(
+        "Bash",
+        { command: "printf test" },
+        { signal: abort.signal, toolUseID: "tool-closed" },
+      );
+      const rejected = expect(permission).rejects.toThrow("Claude session closed");
+      await session.close();
+      abort.abort();
+      await rejected;
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(events.filter(isPermissionResolvedEvent)).toHaveLength(1);
+      expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("runtime close prevents a query from launching after pending options resolve", async () => {
+    const { queryFactory } = createQueryMock();
+    let optionsStarted!: () => void;
+    let allowOptions!: () => void;
+    const started = new Promise<void>((resolve) => {
+      optionsStarted = resolve;
+    });
+    const allowed = new Promise<void>((resolve) => {
+      allowOptions = resolve;
+    });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        optionsStarted();
+        await allowed;
+        return "/test/claude/bin";
+      },
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const turn = session.startTurn("must not run after closure");
+    try {
+      await started;
+      await session.close();
+      allowOptions();
+      await turn;
+      expect(queryFactory).not.toHaveBeenCalled();
+    } finally {
+      allowOptions();
+      await turn;
+      await session.close();
+    }
+  });
+
   test("publishes a resolution when the SDK aborts a permission callback", async () => {
     const { queryFactory } = createQueryMock();
     const session = await new ClaudeAgentClient({

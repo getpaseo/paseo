@@ -41,22 +41,12 @@ export const KeyboardTranslationContext = createContext<KeyboardTranslationScope
   translation: { enabled: false, bottomClearance: 0 },
   measureAtRest: measureInWindow,
 });
-export const SettledKeyboardShiftContext = createContext<number | null>(null);
 
 /** Read the app-wide keyboard inset without loading its native provider implementation. */
 export function useKeyboardShift(): KeyboardShiftContextValue {
   const context = useContext(KeyboardShiftContext);
   if (!context) {
     throw new Error("useKeyboardShift must be used inside KeyboardShiftProvider");
-  }
-  return context;
-}
-
-/** Read the keyboard inset published after native keyboard motion has settled. */
-export function useSettledKeyboardShift(): number {
-  const context = useContext(SettledKeyboardShiftContext);
-  if (context === null) {
-    throw new Error("useSettledKeyboardShift must be used inside KeyboardShiftProvider");
   }
   return context;
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  resolveStreamKeyboardInset,
   shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardLift,
   resolveKeyboardShift,
@@ -29,30 +28,22 @@ describe("keyboard layout reservation", () => {
   });
 });
 
-describe("resolveStreamKeyboardInset", () => {
-  it("uses the native scroll inset on iOS without changing content size", () => {
-    expect(resolveStreamKeyboardInset({ platform: "ios", settledShift: 311 })).toEqual({
-      contentContainerPaddingBottom: 0,
-      contentInset: { bottom: 311 },
-    });
-  });
-
-  it("keeps Android's exact content-container padding behavior", () => {
-    expect(resolveStreamKeyboardInset({ platform: "android", settledShift: 311 })).toEqual({
-      contentContainerPaddingBottom: 311,
-      contentInset: undefined,
-    });
-  });
-
-  it("does not expose a negative inset", () => {
-    expect(resolveStreamKeyboardInset({ platform: "ios", settledShift: -1 })).toEqual({
-      contentContainerPaddingBottom: 0,
-      contentInset: { bottom: 0 },
-    });
-  });
-});
-
 describe("resolveKeyboardShift", () => {
+  it.each([0, -1])(
+    "ignores a rotation report with height %s and progress one",
+    (rawKeyboardHeight) => {
+      expect(
+        resolveKeyboardShift({
+          rawKeyboardHeight,
+          keyboardProgress: 1,
+          bottomInset: 24,
+          isIos: true,
+          iosMinHeight: 120,
+        }),
+      ).toBe(0);
+    },
+  );
+
   it("keeps the existing open-keyboard offset behavior", () => {
     expect(
       resolveKeyboardShift({
