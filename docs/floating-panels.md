@@ -172,6 +172,11 @@ slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
 band or a paused transition when the stream list updates its viewport.
 
+The docked composer rests at the larger of the safe-area bottom and 16pt. With
+the keyboard open it keeps 16pt above the keyboard through the translate view's
+`keyboardGap`, which rises further than the keyboard's safe-area overlap. Do not
+grow the composer's bottom padding with the keyboard instead.
+
 Do not animate a layout prop through the keyboard transition. On Android
 Fabric, each animated layout update clones the shadow tree and runs Yoga over
 the dock subtree. This measured about 10 ms per frame on the emulator and the

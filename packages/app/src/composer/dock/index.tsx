@@ -72,7 +72,7 @@ export function ComposerDock({
 const styles = StyleSheet.create((theme) => ({
   surface: { flex: 1, overflow: "hidden" },
   content: { flex: 1, justifyContent: "flex-end" },
-  composer: { width: "100%", flexShrink: 1 },
+  composer: { width: "100%", flexShrink: 1, paddingBottom: theme.spacing[4] },
   // Fixed, not absolute: a touch pan that starts inside an overflow-hidden ancestor
   // never reaches the zoomed visual viewport, while a fixed box chains to the viewport
   // directly. React Native Web renders `fixed`; React Native's style type omits it.
@@ -84,6 +84,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: HEADER_INNER_HEIGHT + 24,
   },
   form: { flexShrink: 1, width: "100%", maxWidth: theme.contentMaxWidth },
-  centeredComposer: { flexShrink: 0 },
+  centeredComposer: { flexShrink: 0, paddingBottom: theme.spacing[4] },
   setup: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
 }));

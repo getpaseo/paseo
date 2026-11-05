@@ -17,6 +17,7 @@ final class WindowLayoutView: ExpoView {
   private var divisions: [CGRect] = []
   private var barGuide: UILayoutGuide?
   private var barEdge = "none"
+  private var bottomBarGuide: UILayoutGuide?
   private var measuredBounds = CGRect.zero
 
   required init(appContext: AppContext? = nil) {
@@ -36,6 +37,7 @@ final class WindowLayoutView: ExpoView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     previousPayload = nil
+    bottomBarGuide = nil
     setNeedsUpdateConstraints()
     scheduleUpdate()
   }
@@ -66,6 +68,11 @@ final class WindowLayoutView: ExpoView {
       case .trailing: edge = "trailing"
       default: edge = "none"
       }
+      if bottomBarGuide == nil {
+        // Where a bottom bar rests: above the home indicator, refined to the
+        // screen's corners rather than the rectangular safe area.
+        bottomBarGuide = layoutGuide(for: .bar(onEdge: UIRectEdge.bottom, extent: 44))
+      }
       if edge != barEdge {
         barEdge = edge
         barGuide = edge == "none" ? nil : layoutGuide(
@@ -93,10 +100,17 @@ final class WindowLayoutView: ExpoView {
     let bar = barGuide?.layoutFrame
     var barPayload: Any = NSNull()
     if let bar, bar.width > 0, bar.height > 0 { barPayload = rect(bar) }
+    // Before UIKit resolves the guide its frame has no height: publish null (the
+    // system inset applies) rather than a false zero clearance.
+    var bottomClearance: Any = NSNull()
+    if let bottomBar = bottomBarGuide?.layoutFrame, bottomBar.height > 0 {
+      bottomClearance = max(0, bounds.maxY - bottomBar.maxY)
+    }
     let payload: [String: Any] = [
       "bounds": rect(bounds),
       "verticalBarEdge": barEdge,
       "verticalBar": barPayload,
+      "bottomClearance": bottomClearance,
       "divisions": divisions.map(rect)
     ]
     guard !NSDictionary(dictionary: payload).isEqual(to: previousPayload ?? [:]) else { return }
