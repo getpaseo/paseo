@@ -724,6 +724,11 @@ now means another project, because its identity changes every render. The store 
 and `metadata` on the same change in `syncInputs`, and a remounted item's mount effect sets them
 again.
 
+Known limit: an item that issues a command from `useLayoutEffect` on mount runs before the screen's
+`syncInputs` layout effect, so it is validated against the previous target's inputs and the reset
+can clear what it set. This applies to a project switch as well as a host switch, since items
+remount per `(serverId, project id)`. Passive effects are not affected.
+
 `ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a
 new branch (`startsNewBranch`, which mirrors the daemon: anything but a checkout, including no base
 at all on a detached HEAD), and its `metadata` on `workspace.create` when it is not empty. The
