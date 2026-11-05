@@ -2,16 +2,24 @@ import type { TFunction } from "i18next";
 import type { ComposerTrackPillSegment } from "@/composer/tracks";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { deriveSidebarStateBucket, STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
+import { subagentActivityStatus } from "./activity";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
 
 function presentationStatus(row: SubagentRow) {
   if (row.kind === "paseo") {
-    if (row.turn.phase === "open") return "running";
-    return row.status === "running" ? "idle" : row.status;
+    return subagentActivityStatus({
+      status: row.status === "running" ? "idle" : row.status,
+      isSelfActive: row.turn.phase === "open",
+      hasActiveDescendants: row.hasActiveDescendants,
+    });
   }
-  return providerSubagentLifecycleStatus(row.status);
+  return subagentActivityStatus({
+    status: providerSubagentLifecycleStatus(row.status),
+    isSelfActive: row.status === "running",
+    hasActiveDescendants: row.hasActiveDescendants,
+  });
 }
 
 export interface SubagentRowPresentationData {

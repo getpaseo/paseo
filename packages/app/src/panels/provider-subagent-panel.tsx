@@ -18,7 +18,12 @@ import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
 import type { SheetTab } from "@/stores/workspace-layout-store";
 import { ParentAgentCallout } from "@/subagents/parent";
-import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
+import {
+  type SubagentRow,
+  useSubagentsForParent,
+  useHasActiveDescendants,
+} from "@/subagents/select";
+import { subagentActivityStatus } from "@/subagents/activity";
 import { useSubagentSheetTab } from "@/subagents/sheet-tab";
 import { SubagentsTrack } from "@/subagents/track";
 import {
@@ -94,6 +99,11 @@ function useProviderSubagentDescriptor(
   const parentProvider = useSessionStore(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
+  const hasActiveDescendants = useHasActiveDescendants({
+    serverId: context.serverId,
+    parentAgentId: target.parentAgentId,
+    providerParentSubagentId: target.subagentId,
+  });
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
   // The task names the tab; the subagent type is supporting detail beside the provider.
   const subagentType = descriptor?.title?.trim();
@@ -108,7 +118,11 @@ function useProviderSubagentDescriptor(
     icon: useProviderIcon(provider, context.serverId),
     statusBucket: descriptor
       ? deriveSidebarStateBucket({
-          status: providerSubagentLifecycleStatus(descriptor.status),
+          status: subagentActivityStatus({
+            status: providerSubagentLifecycleStatus(descriptor.status),
+            isSelfActive: descriptor.status === "running",
+            hasActiveDescendants,
+          }),
           requiresAttention: descriptor.status === "failed",
         })
       : null,
