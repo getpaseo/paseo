@@ -107,12 +107,25 @@ describe("draft options model", () => {
 
     expect(ownDraftOptions(model.getState())).toEqual({ sandbox_mode: "read-only" });
 
-    // Back on the first model, the toggle is still on.
-    model.applyResolved(answer("claude", "opus-again", { fast_mode: true }, [FAST_MODE]));
+    // Back on a model that draws the control, the toggle applies again. The daemon's answer
+    // for the request without it said Fast was off; the request that carries it follows.
+    model.applyResolved(answer("claude", "opus-again", { fast_mode: false }, [FAST_MODE]));
     expect(ownDraftOptions(model.getState())).toEqual({
       sandbox_mode: "read-only",
       fast_mode: true,
     });
+  });
+
+  it("always sends an option no control has drawn", () => {
+    const FAST_MODE: AgentOptionControl = { type: "toggle", key: "fast_mode", label: "Fast" };
+    const model = openDraftOptions({ provider: "claude" });
+    model.applyResolved(answer("claude", "k1", {}, [FAST_MODE]));
+
+    model.setOption("token_budget", 5);
+
+    expect(ownDraftOptions(model.getState())).toEqual({ token_budget: 5 });
+    model.applyResolved(answer("claude", "k2", {}, []));
+    expect(ownDraftOptions(model.getState())).toEqual({ token_budget: 5 });
   });
 
   it("keeps a draft's seed when the first provider is chosen", () => {

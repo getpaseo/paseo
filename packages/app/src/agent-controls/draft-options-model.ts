@@ -31,6 +31,8 @@ export interface DraftOptionsState {
   remembered: ProviderOptions;
   edits: ProviderOptions;
   resolved: ResolvedDraftOptions | null;
+  /** Every key an answer for this provider has drawn as a control. */
+  drawn: ReadonlySet<string>;
 }
 
 export interface DraftOptionsModel {
@@ -54,6 +56,7 @@ export function openDraftOptions(input: {
     remembered: {},
     edits: {},
     resolved: null,
+    drawn: new Set(),
   };
   const listeners = new Set<() => void>();
 
@@ -77,7 +80,14 @@ export function openDraftOptions(input: {
         if (provider === current.provider) return current;
         // The first provider a draft picks does not discard what it was opened with.
         if (current.provider === null) return { ...current, provider };
-        return { ...current, provider, seed: {}, edits: {}, resolved: null };
+        return {
+          ...current,
+          provider,
+          seed: {},
+          edits: {},
+          resolved: null,
+          drawn: new Set(),
+        };
       }),
     applyProfile: (profile) =>
       publish((current) => ({
@@ -86,6 +96,7 @@ export function openDraftOptions(input: {
         seed: profile.options,
         edits: {},
         resolved: current.provider === profile.provider ? current.resolved : null,
+        drawn: current.provider === profile.provider ? current.drawn : new Set(),
       })),
     setRemembered: (remembered) => publish((current) => ({ ...current, remembered })),
     setOption: (key, value) =>
@@ -94,15 +105,22 @@ export function openDraftOptions(input: {
           ? current
           : { ...current, edits: { ...current.edits, [key]: value } },
       ),
-    applyResolved: (resolved) => publish((current) => ({ ...current, resolved })),
+    applyResolved: (resolved) =>
+      publish((current) => ({
+        ...current,
+        resolved,
+        drawn: new Set([...current.drawn, ...resolved.controls.map((control) => control.key)]),
+      })),
   };
 }
 
 /**
  * Everything the draft would create with, for the daemon to resolve. A last-used value applies
  * once the provider has told us it still draws a control for that key, and never over the seed.
- * A toggle made in this draft stops applying when the latest answer draws no control for it (the
- * model changed to one without that control) and applies again when a control for it returns.
+ * An edit of a key an earlier answer drew as a control stops applying when the latest answer
+ * draws none for it (the model changed to one without that control) and applies again when a
+ * control for it returns. An edit of a key no answer has drawn is an option without a control
+ * and always applies.
  */
 export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | undefined {
   const controlKeys = new Set((state.resolved?.controls ?? []).map((control) => control.key));
@@ -112,7 +130,7 @@ export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | und
     ),
   );
   const edits = Object.fromEntries(
-    Object.entries(state.edits).filter(([key]) => !state.resolved || controlKeys.has(key)),
+    Object.entries(state.edits).filter(([key]) => !state.drawn.has(key) || controlKeys.has(key)),
   );
   const own = { ...state.seed, ...remembered, ...edits };
   return Object.keys(own).length > 0 ? own : undefined;
