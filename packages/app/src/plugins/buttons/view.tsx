@@ -48,6 +48,7 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
+import { pluginButtonTestId } from "./test-id";
 import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
@@ -297,8 +298,11 @@ function ButtonControl({ view }: { view: ButtonView }) {
     () => ({ busy: entry.pending, disabled }),
     [entry.pending, disabled],
   );
+  // Stable semantic hook for app-wide styling plugins; action and menu buttons share it.
+  const testID = pluginButtonTestId(entry.key);
   const trigger = expanded ? (
     <MenuTrigger
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
@@ -309,6 +313,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
     </MenuTrigger>
   ) : (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
