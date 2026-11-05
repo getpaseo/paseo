@@ -2683,6 +2683,70 @@ test("foreground tears down a silently dead socket after two fresh five-second w
   expect(second.closesFromClient()).toEqual([]);
 });
 
+test("foreground replaces a stale connect attempt", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("foreground-stalled", [
+    stalled,
+    replacement,
+  ]);
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(client.getConnectionState().status).toBe("connecting");
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(2);
+  expect(stalled.closesFromClient()).toHaveLength(1);
+
+  replacement.openConnection();
+  await connection;
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("foreground keeps a connect attempt that just started", async () => {
+  useHeartbeatClock();
+  const pending = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("foreground-fresh", [pending]);
+  const connection = client.connect();
+  await vi.advanceTimersByTimeAsync(500);
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(1);
+  expect(pending.closesFromClient()).toEqual([]);
+
+  pending.openConnection();
+  await connection;
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("foreground resets the retry delay after failed connections in the background", async () => {
+  useHeartbeatClock();
+  const daemons = Array.from({ length: 7 }, () => new FakeDaemon());
+  const { client, attempts } = connectThroughReplacements("foreground-backoff", daemons);
+  const connection = client.connect();
+  daemons[0]!.openConnection();
+  await connection;
+
+  daemons[0]!.daemonClosesWith("network suspended");
+  for (let retry = 0; retry < 4; retry += 1) {
+    await vi.advanceTimersByTimeAsync(1_500 * 2 ** retry);
+    expect(attempts()).toBe(retry + 2);
+    daemons[retry + 1]!.daemonClosesWith("network suspended");
+  }
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(6);
+  daemons[5]!.daemonClosesWith("network still waking");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(6);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(7);
+  daemons[6]!.openConnection();
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
 test("foreground verification preserves a healthy socket and deduplicates simultaneous checks", async () => {
   useHeartbeatClock();
   const daemon = new FakeDaemon();

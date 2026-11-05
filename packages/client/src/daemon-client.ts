@@ -1161,6 +1161,7 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
+const FOREGROUND_STALE_CONNECT_MS = 3_000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
@@ -1458,6 +1459,7 @@ export class DaemonClient {
   private connectTimeout: ReturnType<typeof setTimeout> | null = null;
   private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private connectAttemptStartedAt = 0;
   private traceConnectionAttempt = 0;
   private shouldReconnect = true;
   private connectPromise: Promise<void> | null = null;
@@ -1666,6 +1668,7 @@ export class DaemonClient {
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
 
+      this.connectAttemptStartedAt = Date.now();
       this.updateConnectionState(
         {
           status: "connecting",
@@ -1863,7 +1866,23 @@ export class DaemonClient {
       if (options?.verify) this.verifyConnectionOnForeground();
       return;
     }
-    if (this.connectionState.status === "connecting") return;
+    if (options?.verify) this.reconnectAttempt = 0;
+    if (this.connectionState.status === "connecting") {
+      if (
+        options?.verify &&
+        this.config.reconnect?.enabled !== false &&
+        Date.now() - this.connectAttemptStartedAt >= FOREGROUND_STALE_CONNECT_MS
+      ) {
+        this.disposeTransport(1001, "Stale connection attempt");
+        this.scheduleReconnect({
+          reason: "Stale connection attempt",
+          event: "STALE_CONNECT_ON_FOREGROUND",
+          reasonCode: "connect_timeout",
+        });
+        void this.attemptConnect();
+      }
+      return;
+    }
     if (this.connectPromise) {
       this.attemptConnect();
       return;
