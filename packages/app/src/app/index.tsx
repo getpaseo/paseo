@@ -48,9 +48,16 @@ export default function Index() {
     isWaitingForSetup: bootstrapState.isWaitingForSetup,
   });
 
+  const splash = <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
   if (startupRoute.kind === "redirect") {
-    return <Redirect href={startupRoute.href} />;
+    // The loading screen stays up until the target route paints; a redirect alone renders nothing.
+    return (
+      <>
+        {splash}
+        <Redirect href={startupRoute.href} />
+      </>
+    );
   }
 
-  return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
+  return splash;
 }
