@@ -84,7 +84,8 @@ export class Session {
   private modelDirty = false;
   private availableCommands: ProviderCommand[] = [];
   private turn: ActiveTurn | null = null;
-  private suppressReplayUpdates = false;
+  private shouldReplayOnLoad: boolean;
+  private replayWindow: "replay" | "skip" | null = null;
   private turnSeq = 0;
   private itemSeq = 0;
   private permissionSeq = 0;
@@ -95,6 +96,7 @@ export class Session {
       id: string;
       config: ProviderSessionConfig;
       persistence?: ProviderPersistence;
+      history?: "replay" | "skip";
       catalog: () => ProviderCatalog;
       launch: ProviderLaunch;
       emit: (event: ProviderEvent) => void;
@@ -110,6 +112,8 @@ export class Session {
       options.catalog(),
     );
     this.conversationId = parsePersistenceId(options.persistence);
+    this.shouldReplayOnLoad =
+      this.conversationId !== null && (options.history ?? "replay") === "replay";
     this.model = options.config.model ?? null;
     this.mode = (options.config.mode as AntigravityModeId | undefined) ?? DEFAULT_MODE;
   }
@@ -501,7 +505,10 @@ export class Session {
       : undefined;
 
     if (this.conversationId) {
-      this.suppressReplayUpdates = true;
+      const replay = this.shouldReplayOnLoad;
+      this.shouldReplayOnLoad = false;
+      this.replayWindow = replay ? "replay" : "skip";
+      this.resetTurnState();
       try {
         return await driver.requestInit(
           "session/load",
@@ -514,7 +521,8 @@ export class Session {
           acpSessionResultSchema,
         );
       } finally {
-        this.suppressReplayUpdates = false;
+        this.replayWindow = null;
+        this.resetTurnState();
       }
     }
 
@@ -561,7 +569,7 @@ export class Session {
       return;
     }
 
-    if (this.suppressReplayUpdates) return;
+    if (this.replayWindow === "skip") return;
 
     if (update.sessionUpdate === "usage_update") {
       this.emitUsageUpdate(update);
@@ -618,7 +626,26 @@ export class Session {
     >,
   ): void {
     if (update.sessionUpdate === "user_message_chunk") {
-      this.chunkIds.clear();
+      if (this.replayWindow !== "replay") {
+        this.chunkIds.clear();
+        return;
+      }
+      this.chunkIds.delete("agent_message_chunk");
+      this.chunkIds.delete("agent_thought_chunk");
+      if (update.content.type !== "text" || !update.content.text) return;
+      const itemId = this.resolveChunkId("user_message_chunk", update.messageId);
+      const nextText = `${this.chunkTexts.get(itemId) ?? ""}${update.content.text}`;
+      this.chunkTexts.set(itemId, nextText);
+      this.options.emit({
+        type: "timeline.item",
+        sessionId: this.id,
+        item: {
+          type: "user_message",
+          id: itemId,
+          text: nextText,
+          ...(update.messageId ? { messageId: update.messageId } : {}),
+        },
+      });
       return;
     }
     this.chunkIds.delete(
@@ -626,6 +653,7 @@ export class Session {
         ? "agent_thought_chunk"
         : "agent_message_chunk",
     );
+    this.chunkIds.delete("user_message_chunk");
     if (update.content.type !== "text" || !update.content.text) return;
     const itemId = this.resolveChunkId(update.sessionUpdate, update.messageId);
     const nextText = `${this.chunkTexts.get(itemId) ?? ""}${update.content.text}`;
@@ -636,7 +664,12 @@ export class Session {
       item:
         update.sessionUpdate === "agent_thought_chunk"
           ? { type: "reasoning", id: itemId, text: nextText }
-          : { type: "assistant_message", id: itemId, text: nextText },
+          : {
+              type: "assistant_message",
+              id: itemId,
+              text: nextText,
+              ...(update.messageId ? { messageId: update.messageId } : {}),
+            },
     });
   }
 
@@ -853,7 +886,10 @@ export class Session {
   }
 
   private resolveChunkId(kind: string, messageId: string | null | undefined): string {
-    if (messageId) return `${kind}:${messageId}`;
+    if (messageId) {
+      this.chunkIds.delete(kind);
+      return `${kind}:${messageId}`;
+    }
     let existing = this.chunkIds.get(kind);
     if (!existing) {
       existing = `item-${++this.itemSeq}`;
