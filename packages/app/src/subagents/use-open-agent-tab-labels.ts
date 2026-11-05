@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
+import { selectAgentTabsNeedingOpenLabelKey } from "./open-tab-labels";
+
+const NO_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
 
 function increment(value: number): number {
   return value + 1;
@@ -16,9 +18,18 @@ export function useOpenAgentTabLabels(input: {
   tabs: WorkspaceTab[];
   enabled: boolean;
 }): void {
-  const agents = useSessionStore((state) => state.sessions[input.serverId]?.agents ?? null);
-  const agentDetails = useSessionStore(
-    (state) => state.sessions[input.serverId]?.agentDetails ?? null,
+  const [label, setLabel] = useState<string | null>(null);
+  // The workspace screen calls this hook, so it subscribes to the open tabs that still need a
+  // label rather than to the agent maps, which change on every agent update on the host.
+  const neededKey = useSessionStore((state) =>
+    label
+      ? selectAgentTabsNeedingOpenLabelKey({
+          session: state.sessions[input.serverId],
+          tabs: input.tabs,
+          label,
+          pendingAgentIds: NO_PENDING_AGENT_IDS,
+        })
+      : "",
   );
   const pendingAgentIdsRef = useRef(new Set<string>());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -34,6 +45,22 @@ export function useOpenAgentTabLabels(input: {
   );
 
   useEffect(() => {
+    let cancelled = false;
+    const resolveLabel = async () => {
+      try {
+        const clientId = await getOrCreateClientId();
+        if (!cancelled) setLabel(getOpenAgentTabLabel(clientId));
+      } catch (error) {
+        console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
+      }
+    };
+    void resolveLabel();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const client = input.client;
     if (!client || !input.enabled) {
       return;
@@ -47,40 +74,31 @@ export function useOpenAgentTabLabels(input: {
         pendingAgentIdsRef.current.delete(agentId);
       }
     }
-    if (openAgentIds.size === 0) {
+    if (!label || neededKey === "") {
       return;
     }
 
+    const agentIds = neededKey
+      .split("\n")
+      .filter((agentId) => !pendingAgentIdsRef.current.has(agentId));
     void (async () => {
-      try {
-        const clientId = await getOrCreateClientId();
-        const label = getOpenAgentTabLabel(clientId);
-        const agentIds = getAgentTabsNeedingOpenLabel({
-          tabs: input.tabs,
-          getAgent: (agentId) => agents?.get(agentId) ?? agentDetails?.get(agentId),
-          label,
-          pendingAgentIds: pendingAgentIdsRef.current,
-        });
-        for (const agentId of agentIds) {
-          pendingAgentIdsRef.current.add(agentId);
-          try {
-            await client.updateAgent(agentId, { labels: { [label]: "true" } });
-          } catch (error) {
-            console.warn("[OpenAgentTabLabels] Failed to mark open subagent tab", {
-              error,
-              agentId,
-            });
-            retryTimerRef.current ??= setTimeout(() => {
-              retryTimerRef.current = null;
-              setRetryVersion(increment);
-            }, 2_000);
-          } finally {
-            pendingAgentIdsRef.current.delete(agentId);
-          }
+      for (const agentId of agentIds) {
+        pendingAgentIdsRef.current.add(agentId);
+        try {
+          await client.updateAgent(agentId, { labels: { [label]: "true" } });
+        } catch (error) {
+          console.warn("[OpenAgentTabLabels] Failed to mark open subagent tab", {
+            error,
+            agentId,
+          });
+          retryTimerRef.current ??= setTimeout(() => {
+            retryTimerRef.current = null;
+            setRetryVersion(increment);
+          }, 2_000);
+        } finally {
+          pendingAgentIdsRef.current.delete(agentId);
         }
-      } catch (error) {
-        console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
       }
     })();
-  }, [agentDetails, agents, input.client, input.enabled, input.tabs, retryVersion]);
+  }, [input.client, input.enabled, input.tabs, label, neededKey, retryVersion]);
 }

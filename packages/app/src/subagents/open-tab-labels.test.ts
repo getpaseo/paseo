@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
+import {
+  getAgentTabsNeedingOpenLabel,
+  selectAgentTabsNeedingOpenLabelKey,
+} from "./open-tab-labels";
 
 const label = "paseo.open-agent-tab.client-1";
 
@@ -49,5 +52,40 @@ describe("getAgentTabsNeedingOpenLabel", () => {
         pendingAgentIds: new Set(["pending"]),
       }),
     ).toEqual([]);
+  });
+});
+
+describe("selectAgentTabsNeedingOpenLabelKey", () => {
+  const tabs = [tab("child", 1), tab("root", 2)];
+
+  function select(agents: Map<string, Agent>): string {
+    return selectAgentTabsNeedingOpenLabelKey({
+      session: { agents, agentDetails: new Map() },
+      tabs,
+      label,
+      pendingAgentIds: new Set(),
+    });
+  }
+
+  it("keeps the same value when an agent outside the open tabs updates", () => {
+    const before = new Map([
+      ["child", agent({ id: "child", parentAgentId: "parent" })],
+      ["root", agent({ id: "root" })],
+      ["elsewhere", agent({ id: "elsewhere" })],
+    ]);
+    const after = new Map(before);
+    after.set("elsewhere", agent({ id: "elsewhere", parentAgentId: "root" }));
+
+    expect(select(before)).toBe("child");
+    expect(select(after)).toBe(select(before));
+  });
+
+  it("changes once the open child carries the label", () => {
+    const agents = new Map([
+      ["child", agent({ id: "child", parentAgentId: "parent", open: true })],
+      ["root", agent({ id: "root" })],
+    ]);
+
+    expect(select(agents)).toBe("");
   });
 });
