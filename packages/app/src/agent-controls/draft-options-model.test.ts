@@ -72,7 +72,11 @@ describe("draft options model", () => {
 
   it("never pairs a manually chosen provider with the previous provider's options", () => {
     const model = openDraftOptions({ provider: "claude" });
-    model.applyResolved(answer("claude", "k1", { fast_mode: true }));
+    model.applyResolved(
+      answer("claude", "k1", { fast_mode: true }, [
+        { type: "toggle", key: "fast_mode", label: "Fast" },
+      ]),
+    );
     model.setOption("fast_mode", true);
     const form = { provider: "claude", cwd: "/repo" };
     expect(draftControlsRequest(model.getState(), form)).toMatchObject({
@@ -86,6 +90,29 @@ describe("draft options model", () => {
     model.observeProvider("opencode");
     const request = draftControlsRequest(model.getState(), { ...form, provider: "opencode" });
     expect(request).toEqual({ provider: "opencode", cwd: "/repo" });
+  });
+
+  it("stops sending a toggle once the model in use draws no control for it", () => {
+    const FAST_MODE: AgentOptionControl = { type: "toggle", key: "fast_mode", label: "Fast" };
+    const model = openDraftOptions({ provider: "claude", seed: { sandbox_mode: "read-only" } });
+    model.applyResolved(answer("claude", "opus", { fast_mode: false }, [FAST_MODE]));
+    model.setOption("fast_mode", true);
+    expect(ownDraftOptions(model.getState())).toEqual({
+      sandbox_mode: "read-only",
+      fast_mode: true,
+    });
+
+    // The form moves to a model without Fast; its answer lists no such control.
+    model.applyResolved(answer("claude", "haiku", {}, []));
+
+    expect(ownDraftOptions(model.getState())).toEqual({ sandbox_mode: "read-only" });
+
+    // Back on the first model, the toggle is still on.
+    model.applyResolved(answer("claude", "opus-again", { fast_mode: true }, [FAST_MODE]));
+    expect(ownDraftOptions(model.getState())).toEqual({
+      sandbox_mode: "read-only",
+      fast_mode: true,
+    });
   });
 
   it("keeps a draft's seed when the first provider is chosen", () => {

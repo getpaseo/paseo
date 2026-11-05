@@ -101,6 +101,8 @@ export function openDraftOptions(input: {
 /**
  * Everything the draft would create with, for the daemon to resolve. A last-used value applies
  * once the provider has told us it still draws a control for that key, and never over the seed.
+ * A toggle made in this draft stops applying when the latest answer draws no control for it (the
+ * model changed to one without that control) and applies again when a control for it returns.
  */
 export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | undefined {
   const controlKeys = new Set((state.resolved?.controls ?? []).map((control) => control.key));
@@ -109,7 +111,10 @@ export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | und
       ([key]) => controlKeys.has(key) && !(key in state.seed),
     ),
   );
-  const own = { ...state.seed, ...remembered, ...state.edits };
+  const edits = Object.fromEntries(
+    Object.entries(state.edits).filter(([key]) => !state.resolved || controlKeys.has(key)),
+  );
+  const own = { ...state.seed, ...remembered, ...edits };
   return Object.keys(own).length > 0 ? own : undefined;
 }
 
