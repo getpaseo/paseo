@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -338,6 +338,162 @@ describe("WorkspaceLaunchManager", () => {
       ).resolves.toMatchObject({ portBase: 42004, portCount: 4 });
     },
   );
+
+  it.each(["deleted", "moved"])(
+    "closes all block owners before reusing a %s worktree's ports and restarting",
+    async (removal) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-block-owner-cleanup-"));
+      tempDirs.push(directory);
+      const terminalManager = createTerminalManager();
+      const workspaceId = "removed-block-workspace";
+      const sourceBlock = { portBase: 42_000, portCount: 4 };
+      const owners = await Promise.all(
+        ["script", "service"].map((name) =>
+          terminalManager.manager.createTerminal({
+            cwd: directory,
+            workspaceId,
+            name,
+            workspacePortBlock: sourceBlock,
+          }),
+        ),
+      );
+      const plainShell = await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId,
+        name: "unrelated-shell",
+      });
+      const sibling = await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId: "sibling-block-workspace",
+        workspacePortBlock: { portBase: 42_004, portCount: 4 },
+      });
+      const environment = new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      });
+      const dependencies = {
+        terminalManager: terminalManager.manager,
+        serviceProxy: null,
+        getDaemonTcpPort: null,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        logger: pino({ level: "silent" }),
+      };
+      const manager = new WorkspaceLaunchManager({
+        ...dependencies,
+        workspaceRuntimeEnvironment: environment,
+      });
+      await manager.initialize([]);
+      if (removal === "deleted") {
+        rmSync(directory, { recursive: true, force: true });
+      } else {
+        const movedDirectory = `${directory}-moved`;
+        renameSync(directory, movedDirectory);
+        tempDirs.push(movedDirectory);
+      }
+
+      await manager.disposeWorkspace(workspaceId);
+      expect(terminalManager.killed.sort()).toEqual(owners.map((terminal) => terminal.id).sort());
+      expect(owners.map((terminal) => terminalManager.manager.getTerminal(terminal.id))).toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(terminalManager.manager.getTerminal(plainShell.id)).toBe(plainShell);
+      expect(terminalManager.manager.getTerminal(sibling.id)).toBe(sibling);
+      expect(environment.get(workspaceId)).toBeNull();
+      const replacement = await environment.ensure({
+        workspaceId: "replacement-block-workspace",
+        cwd: process.cwd(),
+        branchName: null,
+        allocation: { range: "42000-42003", blockSize: 4 },
+      });
+      await terminalManager.manager.createTerminal({
+        cwd: process.cwd(),
+        workspaceId: "replacement-block-workspace",
+        workspacePortBlock: { portBase: replacement.portBase, portCount: replacement.portCount },
+      });
+
+      const restartedEnvironment = new WorkspaceRuntimeEnvironmentService();
+      const restarted = new WorkspaceLaunchManager({
+        ...dependencies,
+        workspaceRuntimeEnvironment: restartedEnvironment,
+      });
+      await expect(restarted.initialize([])).resolves.toBeUndefined();
+      expect(restartedEnvironment.get(workspaceId)).toBeNull();
+      expect(restartedEnvironment.get("replacement-block-workspace")).toMatchObject(sourceBlock);
+      expect(restartedEnvironment.get(sibling.workspaceId)).toMatchObject({
+        portBase: 42_004,
+        portCount: 4,
+      });
+    },
+  );
+
+  it("retains the block until every owning terminal closes, including after a failed close", async () => {
+    const closeStarted = createDeferred();
+    const finishClose = createDeferred();
+    let failClose = true;
+    const terminalManager = createTerminalManager({
+      beforeKill: async () => {
+        if (failClose) {
+          closeStarted.resolve();
+          await finishClose.promise;
+          throw new Error("Terminal close failed");
+        }
+      },
+    });
+    const owner = await terminalManager.manager.createTerminal({
+      cwd: process.cwd(),
+      workspaceId: "closing-block-workspace",
+      workspacePortBlock: { portBase: 42_000, portCount: 4 },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: environment,
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    await manager.initialize([]);
+    const disposal = manager.disposeWorkspace(owner.workspaceId);
+    const failedDisposal = expect(disposal).rejects.toThrow("Terminal close failed");
+    try {
+      await closeStarted.promise;
+      expect(environment.get(owner.workspaceId)).toMatchObject({ portBase: 42_000, portCount: 4 });
+      expect(terminalManager.manager.getTerminal(owner.id)).toBe(owner);
+      await expect(
+        environment.ensure({
+          workspaceId: "waiting-for-block",
+          cwd: process.cwd(),
+          branchName: null,
+          allocation: { range: "42000-42003", blockSize: 4 },
+        }),
+      ).rejects.toThrow("No available workspace port block");
+    } finally {
+      finishClose.resolve();
+    }
+    await failedDisposal;
+    expect(environment.get(owner.workspaceId)).toMatchObject({ portBase: 42_000, portCount: 4 });
+    expect(terminalManager.manager.getTerminal(owner.id)).toBe(owner);
+
+    failClose = false;
+    await manager.disposeWorkspace(owner.workspaceId);
+    expect(terminalManager.manager.getTerminal(owner.id)).toBeUndefined();
+    expect(environment.get(owner.workspaceId)).toBeNull();
+    await expect(
+      environment.ensure({
+        workspaceId: "waiting-for-block",
+        cwd: process.cwd(),
+        branchName: null,
+        allocation: { range: "42000-42003", blockSize: 4 },
+      }),
+    ).resolves.toMatchObject({ portBase: 42_000, portCount: 4 });
+  });
 
   it("reserves every surviving launch block before a different workspace starts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-startup-reservations-"));
@@ -1638,7 +1794,12 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function createTerminalManager(managerOptions: { unavailableError?: Error } = {}): {
+function createTerminalManager(
+  managerOptions: {
+    unavailableError?: Error;
+    beforeKill?: (terminalId: string) => Promise<void>;
+  } = {},
+): {
   manager: TerminalManager;
   created: Array<{
     env: Record<string, string> | undefined;
@@ -1734,6 +1895,7 @@ function createTerminalManager(managerOptions: { unavailableError?: Error } = {}
     },
     killTerminalAndWait: async (id: string, options?: { preserveSession?: boolean }) => {
       killed.push(id);
+      await managerOptions.beforeKill?.(id);
       const terminal = sessions.get(id) as (TerminalSession & { __exit?: () => void }) | undefined;
       terminal?.__exit?.();
       if (!options?.preserveSession) sessions.delete(id);

@@ -404,17 +404,33 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
 
   private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
     const runtimes = this.runtimes.get(workspaceId);
-    if (runtimes) {
-      await Promise.all(
-        Array.from(runtimes.values(), async (runtime) => {
-          if (runtime.lifecycle === "running") {
-            await this.stopRuntime(runtime);
-          }
-          if (runtime.terminalId) {
-            this.deps.terminalManager?.killTerminal(runtime.terminalId);
-          }
-        }),
+    const terminalManager = this.deps.terminalManager;
+    if (terminalManager) {
+      const unavailableError = terminalManager.getUnavailableError?.();
+      if (unavailableError) throw unavailableError;
+      const terminalIds = new Set<string>();
+      for (const runtime of runtimes?.values() ?? []) {
+        if (runtime.terminalId) terminalIds.add(runtime.terminalId);
+      }
+      const terminalLists = await Promise.all(
+        terminalManager
+          .listDirectories()
+          .map((directory) => terminalManager.getTerminals(directory, { workspaceId })),
       );
+      for (const terminal of terminalLists.flat()) {
+        if (terminal.workspaceId !== workspaceId) continue;
+        if (terminal.workspacePortBlock || terminal.workspaceLaunch) {
+          terminalIds.add(terminal.id);
+        }
+      }
+      // A persistent script shell also owns its block. Wait for worker-side
+      // removal of every owner before another workspace can lease these ports.
+      await Promise.all(
+        Array.from(terminalIds, (terminalId) => terminalManager.killTerminalAndWait(terminalId)),
+      );
+    }
+    for (const runtime of runtimes?.values() ?? []) {
+      this.markStopped(runtime, runtime.exitCode);
     }
     this.runtimes.delete(workspaceId);
     this.activeLaunches.delete(workspaceId);
