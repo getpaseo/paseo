@@ -653,3 +653,102 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     });
   });
 });
+
+// #8766 and #8784: on these Windows machines every Windows PowerShell query fails. The
+// inspector runs the Windows queries (no session walk) against real local processes. Cleanup
+// signals nothing it cannot identify, and still retires what is gone.
+describe.skipIf(isPlatform("win32"))("terminal worker reaper without process identity", () => {
+  const noIdentity = createTerminalWorkerProcessInspector({
+    platform: "win32",
+    commandRunner: { exec: () => Promise.reject(new Error("spawn UNKNOWN")) },
+  });
+
+  // A live process standing in for a worker that cannot answer: it listens on the record's
+  // socket and never replies to the hello.
+  async function spawnSilentListener(socketPath: string): Promise<ChildProcess> {
+    const listener = spawnIdle(`
+      require("node:net").createServer(() => {}).listen(${JSON.stringify(socketPath)}, () => {
+        process.stdout.write("listening\\n");
+      });
+    `);
+    await new Promise((resolve) => listener.stdout!.once("data", resolve));
+    return listener;
+  }
+
+  it("retires the record of a gone worker and its gone programs without the identity query", async () => {
+    const home = makeHome();
+    const recordPath = writeRecord(home, {
+      pid: await goneProcessPid(),
+      identity: { unavailable: "spawn UNKNOWN" },
+      terminals: [{ id: "t1", pid: await goneProcessPid(), startedAt: null }],
+    });
+
+    const result = await reapTerminalWorkers({ paseoHome: home, inspector: noIdentity });
+
+    expect(result).toEqual({ records: 1, retired: 1, signaled: [] });
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it("never signals a live worker it cannot identify that does not answer, and keeps the cleanup unconfirmed", async () => {
+    const home = makeHome();
+    const socketPath = path.join(home, "w.sock");
+    const listener = await spawnSilentListener(socketPath);
+    writeRecord(home, {
+      pid: listener.pid!,
+      identity: { unavailable: "spawn UNKNOWN" },
+      socketPath,
+    });
+
+    await expect(
+      reapTerminalWorkers({ paseoHome: home, inspector: noIdentity, gracefulMs: 300 }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+
+    expect(isAlive(listener.pid!)).toBe(true);
+    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
+      expect.objectContaining({
+        pid: listener.pid!,
+        role: "worker",
+        reason: "inspection failed",
+        detail: expect.stringContaining("could not read its own identity: spawn UNKNOWN"),
+      }),
+    ]);
+    // The next stop or start retries it the same way.
+    await expect(retryUnconfirmedTerminalCleanup(home)).rejects.toBeInstanceOf(
+      TerminalCleanupNotConfirmedError,
+    );
+    expect(isAlive(listener.pid!)).toBe(true);
+  });
+
+  it("treats a live pid with nothing on the worker's socket as another process, signals it never, and retires the record", async () => {
+    const home = makeHome();
+    const reusedWorkerPid = spawnIdle().pid!;
+    const recordPath = writeRecord(home, {
+      pid: reusedWorkerPid,
+      identity: { unavailable: "spawn UNKNOWN" },
+    });
+
+    const result = await reapTerminalWorkers({ paseoHome: home, inspector: noIdentity });
+
+    expect(result).toEqual({ records: 1, retired: 1, signaled: [] });
+    expect(isAlive(reusedWorkerPid)).toBe(true);
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it("never signals a live terminal program recorded without a birth time", async () => {
+    const home = makeHome();
+    const program = spawnIdle();
+    writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: program.pid!, startedAt: null }],
+    });
+
+    await expect(
+      reapTerminalWorkers({ paseoHome: home, inspector, confirmMs: 200 }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+
+    expect(isAlive(program.pid!)).toBe(true);
+    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
+      expect.objectContaining({ pid: program.pid!, role: "terminal program" }),
+    ]);
+  });
+});

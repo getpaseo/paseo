@@ -344,7 +344,33 @@ describe("system managed process table", () => {
       },
     ]);
   });
+
+  // #8766 (Get-CimInstance cannot load) and #8784 (powershell.exe cannot be created): the
+  // identity query fails on every call, and a process that is gone must still read as gone.
+  test.each(["win32", "linux"] as const)(
+    "tells a gone process from a live one when the %s identity query cannot run",
+    async (platform) => {
+      const processTable = createSystemManagedProcessTable({
+        platform,
+        commandRunner: { exec: () => Promise.reject(new Error("spawn UNKNOWN")) },
+      });
+
+      expect(await processTable.inspect(await exitedProcessPid())).toEqual({
+        status: "not-found",
+      });
+      expect(await processTable.inspect(process.pid)).toMatchObject({
+        status: "error",
+        error: expect.objectContaining({ message: "spawn UNKNOWN" }),
+      });
+    },
+  );
 });
+
+async function exitedProcessPid(): Promise<number> {
+  const child = spawnProcess(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve) => child.once("exit", resolve));
+  return child.pid!;
+}
 
 describe("windowsPowerShellPath", () => {
   test("names Windows PowerShell under SystemRoot, whatever PATH holds", () => {

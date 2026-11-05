@@ -6,7 +6,7 @@ import { connectTerminalWorker } from "./terminal-worker-client.js";
 import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import {
   classifyTerminalProgramProcess,
-  classifyTerminalWorkerProcess,
+  identifyTerminalWorker,
   type ProcessOwnership,
 } from "./terminal-worker-ownership.js";
 import {
@@ -38,7 +38,8 @@ import {
 //    program's session joins only when its environment carries that terminal's id. When the
 //    table cannot be read, nothing in the record is signaled: ending a program would reparent
 //    the children only the table can find, and a retry could never reach them again.
-// 2. An owned worker gets an authenticated `shutdown`: it kills each terminal and waits for it.
+// 2. An owned worker, or one its process cannot identify, gets an authenticated `shutdown`: it
+//    kills each terminal and waits for it.
 // 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
 //    each signal.
 // 4. Succeed only when every candidate is gone or proven unrelated. Otherwise keep a record of
@@ -161,7 +162,7 @@ export interface ReapTerminalWorkersOptions {
 
 interface Candidate {
   pid: number;
-  startedAt: string;
+  startedAt: string | null;
   role: UnresolvedTerminalProcess["role"];
   terminalId: string;
   state: ProcessOwnership;
@@ -252,7 +253,7 @@ async function reapRecord(
     return { signaled: [], unresolved: [] };
   }
 
-  const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+  const worker = await identifyTerminalWorker(record, inspector);
   const discovery = await collectCandidates(record, inspector, log);
   const tracked: TrackedProcesses = {
     record,
@@ -265,13 +266,14 @@ async function reapRecord(
     return await keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
   }
 
-  if (tracked.worker.status === "owned" && input.gracefulMs > 0) {
+  // The shutdown request authenticates with the record's secret, so a worker that cannot be
+  // identified by its process is asked too: only the worker that wrote the record can answer.
+  // It is never signaled.
+  const askShutdown = isOpen(tracked.worker) && input.gracefulMs > 0;
+  if (askShutdown) {
     await requestWorkerShutdown(record, input.gracefulMs, log);
   }
-  await waitUntilSettled(
-    tracked,
-    Date.now() + (tracked.worker.status === "owned" ? input.gracefulMs : 0),
-  );
+  await waitUntilSettled(tracked, Date.now() + (askShutdown ? input.gracefulMs : 0));
 
   let signaled: number[] = [];
   if (!isSettled(tracked)) {
@@ -337,10 +339,7 @@ function isSettled(tracked: TrackedProcesses): boolean {
 
 async function refreshTracked(tracked: TrackedProcesses): Promise<void> {
   if (isOpen(tracked.worker)) {
-    tracked.worker = classifyTerminalWorkerProcess(
-      tracked.record,
-      await tracked.inspector.inspect(tracked.record.pid),
-    );
+    tracked.worker = await identifyTerminalWorker(tracked.record, tracked.inspector);
   }
   for (const candidate of tracked.candidates) {
     if (isOpen(candidate.state)) {
@@ -369,7 +368,7 @@ async function forceKillOwned(
   const { record, inspector } = tracked;
   const signaled: number[] = [];
   if (tracked.worker.status === "owned") {
-    tracked.worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    tracked.worker = await identifyTerminalWorker(record, inspector);
     if (tracked.worker.status === "owned") {
       await forceKillWorker(record.pid);
       signaled.push(record.pid);

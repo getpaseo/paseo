@@ -21,7 +21,7 @@ import { resolvePaseoCliExecutablePath } from "./paseo-cli-path.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
-import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
+import { identifyTerminalWorker } from "./terminal-worker-ownership.js";
 import {
   createTerminalWorkerProcessInspector,
   type TerminalWorkerProcessInspector,
@@ -1038,18 +1038,21 @@ export async function startWorkerTerminalManager(
       toReap.push(file.path);
       continue;
     }
-    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
-    if (worker.status === "owned") {
+    const worker = await identifyTerminalWorker(record, inspector);
+    if (worker.status === "owned" || worker.status === "unknown") {
+      if (worker.status === "unknown") {
+        // Its secret still proves it: only the worker that wrote the record can answer the
+        // hello below. Cleanup will not signal it, only ask it to shut down.
+        logger.warn(
+          { recordPath: file.path, pid: record.pid, reason: worker.reason },
+          "Cannot identify terminal worker by its process; reaching it over its socket",
+        );
+      }
       live.push({
         path: file.path,
         record,
         fit: classifyTerminalWorkerProtocol(record.protocolVersion),
       });
-    } else if (worker.status === "unknown") {
-      logger.warn(
-        { recordPath: file.path, pid: record.pid, reason: worker.reason },
-        "Cannot identify terminal worker; leaving its record",
-      );
     } else {
       // Its programs lost their PTY with the worker and cannot be adopted.
       toReap.push(file.path);
@@ -1142,10 +1145,7 @@ export async function startWorkerTerminalManager(
     const reconnect = () => {
       recovery ??= (async () => {
         while (!recoveryState.stopped) {
-          const ownership = classifyTerminalWorkerProcess(
-            record,
-            await inspector.inspect(record.pid),
-          );
+          const ownership = await identifyTerminalWorker(record, inspector);
           if (ownership.status === "gone" || ownership.status === "unrelated") {
             await reapTerminalWorkers({
               paseoHome: options.paseoHome,
@@ -1273,8 +1273,8 @@ export async function startWorkerTerminalManager(
         logger.warn(error.message);
       } else {
         // The daemon starts without terminals rather than not at all. A worker that cannot start
-        // here (its process identity query failed, say) is launched again by the first terminal
-        // creation, which reports the same error if it still cannot.
+        // here is launched again by the first terminal creation, which reports the same error
+        // if it still cannot.
         logger.error(
           { err: error },
           "Terminal worker did not start; terminals are unavailable until one starts",
@@ -1298,7 +1298,8 @@ export async function startWorkerTerminalManager(
 
 // Every worker that may still run in this home, one per record: a worker and its cleanup record
 // are listed as one. Unreadable records and workers that cannot be identified count; a worker
-// confirmed gone, or a pid reused by another process, does not.
+// confirmed gone, or a pid now running something else (another birth time, or nothing listening
+// on the worker's socket), does not.
 async function countRunningTerminalWorkers(
   paseoHome: string,
   inspector: TerminalWorkerProcessInspector,
@@ -1311,7 +1312,7 @@ async function countRunningTerminalWorkers(
     }
     const { record } = file;
     if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) continue;
-    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    const worker = await identifyTerminalWorker(record, inspector);
     if (worker.status === "owned" || worker.status === "unknown") running += 1;
   }
   return running;

@@ -7,12 +7,25 @@ import { writePrivateFileAtomicSync, writePrivateFileAtomic } from "../server/pr
 // Owner-only metadata a detached terminal worker leaves in $PASEO_HOME so the next daemon can
 // find, authenticate and adopt it, and so cleanup can identify every process it is allowed to
 // signal. Process identity is the birth time `ps`/Win32_Process report, never the pid alone.
+// Identity is best effort: where the query cannot run, the worker still records itself and
+// its terminals, and cleanup never signals what it cannot identify.
 
 const TerminalWorkerTerminalEntrySchema = z.object({
   id: z.string().min(1),
   pid: z.number().int().positive(),
-  startedAt: z.string().min(1),
+  // Null when the program's birth time could not be read: it is never signaled.
+  startedAt: z.string().min(1).nullable(),
 });
+
+const TerminalWorkerIdentitySchema = z.union([
+  z.object({
+    startedAt: z.string().min(1),
+    commandLine: z.string().min(1),
+  }),
+  // Why the worker could not read its own identity. Such a worker is driven and shut down only
+  // over its authenticated socket.
+  z.object({ unavailable: z.string().min(1) }),
+]);
 
 // One process a cleanup could not confirm gone, kept so a later caller (a retry, or a remote
 // client reading daemon status) can name it.
@@ -28,10 +41,7 @@ const TerminalWorkerRecordSchema = z.object({
   pid: z.number().int().positive(),
   bootId: z.string().nullable(),
   createdAt: z.string().min(1),
-  identity: z.object({
-    startedAt: z.string().min(1),
-    commandLine: z.string().min(1),
-  }),
+  identity: TerminalWorkerIdentitySchema,
   // Read loosely: a version this daemon cannot interpret marks a worker from a newer Paseo
   // (classifyTerminalWorkerProtocol), not an unreadable record.
   protocolVersion: z.union([z.number(), z.string()]),
@@ -48,6 +58,7 @@ const TerminalWorkerRecordSchema = z.object({
 });
 
 export type TerminalWorkerTerminalEntry = z.infer<typeof TerminalWorkerTerminalEntrySchema>;
+export type TerminalWorkerIdentity = z.infer<typeof TerminalWorkerIdentitySchema>;
 export type TerminalCleanupUnresolved = z.infer<typeof TerminalCleanupUnresolvedSchema>;
 export type TerminalWorkerRecord = z.infer<typeof TerminalWorkerRecordSchema>;
 

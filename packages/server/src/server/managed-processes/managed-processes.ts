@@ -148,13 +148,18 @@ class SystemManagedProcessTable implements ManagedProcessTable {
       return { status: "not-found" };
     }
 
+    let inspection: ManagedProcessInspection;
     try {
-      return this.platform === "win32"
-        ? await this.inspectWindows(pid)
-        : await this.inspectPosix(pid);
+      inspection =
+        this.platform === "win32" ? await this.inspectWindows(pid) : await this.inspectPosix(pid);
     } catch (error) {
-      return { status: "error", error };
+      inspection = { status: "error", error };
     }
+    // The identity query can fail on every call on some machines (a broken Windows PowerShell,
+    // a policy that refuses to start it). Whether the pid is running at all needs no query, so
+    // a gone process still reads as gone there and its records can be retired.
+    if (inspection.status === "error" && !processExists(pid)) return { status: "not-found" };
+    return inspection;
   }
 
   private async inspectPosix(pid: number): Promise<ManagedProcessInspection> {
@@ -449,6 +454,17 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return isNodeErrorWithCode(error, "EPERM");
+  }
+}
+
+// Signal 0 checks that the pid exists without signaling it: ESRCH means no such process, EPERM
+// means one that belongs to someone else.
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isNodeErrorWithCode(error, "ESRCH");
   }
 }
 
