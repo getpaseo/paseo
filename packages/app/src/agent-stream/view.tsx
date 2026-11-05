@@ -1399,12 +1399,18 @@ function ThoughtSlot({
   standalone,
 }: ThoughtSlotProps) {
   const revealedText = useRevealedText(text, status === "ready" ? "complete" : "streaming");
+  // Providers routinely end a reasoning segment with trailing whitespace (a
+  // blank line before the block closes). The pacing hook paces growth but
+  // never withholds content once a turn completes, so without this the
+  // completed panel keeps that trailing blank line forever — it never had
+  // anything to fill it in with.
+  const displayedText = revealedText.trimEnd();
   return (
     <ToolCallSlot
       itemId={itemId}
       onInlineDetailsExpandedChangeByItemId={onInlineDetailsExpandedChangeByItemId}
       toolName="thinking"
-      args={revealedText}
+      args={displayedText}
       status={status === "ready" ? "completed" : "executing"}
       isLastInSequence={isLastInSequence}
       defaultExpanded={defaultExpanded}
