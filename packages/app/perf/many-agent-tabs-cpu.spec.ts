@@ -1,4 +1,6 @@
-import { appendFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { loadavg } from "node:os";
 import type { CDPSession, Page, WebSocket } from "@playwright/test";
 import { expect, test } from "../e2e/support/fixtures";
 import { openAgentRoute } from "../e2e/support/helpers/mock-agent";
@@ -288,7 +290,47 @@ async function installCommitCounter(page: Page): Promise<void> {
   });
 }
 
+// macOS and other hosts without /proc: the daemon is the process listening on the e2e port.
+function daemonCpuSecondsFromPs(): number {
+  const port = process.env.E2E_DAEMON_PORT;
+  if (!port) throw new Error("E2E_DAEMON_PORT is not set");
+  const run = (cmd: string, args: string[]) =>
+    execFileSync(cmd, args, { encoding: "utf8" })
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+  const roots = run("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"]);
+  const pids = new Set<string>();
+  const visit = (pid: string) => {
+    if (pids.has(pid)) return;
+    pids.add(pid);
+    let children: string[] = [];
+    try {
+      children = run("pgrep", ["-P", pid]);
+    } catch {
+      // pgrep exits 1 when a process has no children.
+    }
+    for (const child of children) visit(child);
+  };
+  for (const root of roots) visit(root);
+  let seconds = 0;
+  for (const pid of pids) {
+    try {
+      const [time] = run("ps", ["-o", "cputime=", "-p", pid]);
+      // [[dd-]hh:]mm:ss[.cc]
+      const [days, rest] = time.includes("-") ? time.split("-") : ["0", time];
+      const parts = rest.split(":").map(Number);
+      while (parts.length < 3) parts.unshift(0);
+      seconds += Number(days) * 86_400 + parts[0] * 3_600 + parts[1] * 60 + parts[2];
+    } catch {
+      // The process exited between listing and reading.
+    }
+  }
+  return seconds;
+}
+
 function daemonCpuSeconds(): number {
+  if (!existsSync("/proc/self/stat")) return daemonCpuSecondsFromPs();
   const home = process.env.E2E_PASEO_HOME;
   if (!home) throw new Error("E2E_PASEO_HOME is not set");
   const marker = `PASEO_HOME=${home}\0`;
@@ -353,7 +395,9 @@ async function measureWindow(input: {
   const cpuBefore = await processCpu(browserSession);
   const metricsBefore = await performanceMetrics(pageSession);
   const daemonBefore = daemonCpuSeconds();
-  const loadBefore = readFileSync("/proc/loadavg", "utf8").split(" ").slice(0, 3).join(" ");
+  const loadBefore = loadavg()
+    .map((v) => v.toFixed(2))
+    .join(" ");
 
   await input.during();
 
@@ -362,7 +406,9 @@ async function measureWindow(input: {
   const cpuAfter = await processCpu(browserSession);
   const traffic = input.traffic.take();
   const wallSeconds = (Date.now() - startedAt) / 1000;
-  const loadAfter = readFileSync("/proc/loadavg", "utf8").split(" ").slice(0, 3).join(" ");
+  const loadAfter = loadavg()
+    .map((v) => v.toFixed(2))
+    .join(" ");
   if (input.profilePath) {
     const { profile } = await pageSession.send("Profiler.stop");
     writeFileSync(input.profilePath, JSON.stringify(profile));
