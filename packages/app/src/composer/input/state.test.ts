@@ -539,12 +539,17 @@ describe("resolveHardwareKeyboardSubmitEnabled", () => {
       isSendButtonDisabled: false,
       isDictating: false,
       isRealtimeVoiceForCurrentAgent: false,
+      isCompact: false,
       ...overrides,
     };
   }
 
-  it("enables the Android source with a focused composer", () => {
+  it("enables the Android source in a wide layout with a focused composer", () => {
     expect(resolveHardwareKeyboardSubmitEnabled(gateContext())).toBe(true);
+  });
+
+  it("keeps Return with the text control in a compact Android layout", () => {
+    expect(resolveHardwareKeyboardSubmitEnabled(gateContext({ isCompact: true }))).toBe(false);
   });
 
   it("disables the native source without focus, while sending is blocked, and during voice input", () => {

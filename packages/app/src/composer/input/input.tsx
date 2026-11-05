@@ -1900,6 +1900,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           isSendButtonDisabled,
           isDictating,
           isRealtimeVoiceForCurrentAgent,
+          isCompact,
         }),
       sendShortcut,
       onSubmit: handleHardwareKeyboardSubmit,

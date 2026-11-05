@@ -180,11 +180,12 @@ export interface HardwareKeyboardSubmitGateContext {
   isSendButtonDisabled: boolean;
   isDictating: boolean;
   isRealtimeVoiceForCurrentAgent: boolean;
+  isCompact: boolean;
 }
 
 /**
- * Keeps the Android source off without focus, while sending is blocked, during
- * dictation, and during realtime voice.
+ * Android takes hardware Return only in a wide layout, like desktop. A compact
+ * Android layout keeps the touch behavior, where Return inserts a newline.
  */
 export function resolveHardwareKeyboardSubmitEnabled(
   ctx: HardwareKeyboardSubmitGateContext,
@@ -193,7 +194,8 @@ export function resolveHardwareKeyboardSubmitEnabled(
     ctx.isInputFocused &&
     !ctx.isSendButtonDisabled &&
     !ctx.isDictating &&
-    !ctx.isRealtimeVoiceForCurrentAgent
+    !ctx.isRealtimeVoiceForCurrentAgent &&
+    !ctx.isCompact
   );
 }
 

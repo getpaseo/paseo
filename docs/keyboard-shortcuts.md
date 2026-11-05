@@ -26,7 +26,8 @@ Enter and arrows. Keep the stream as the sole shortcut emitter: a command-owned
 press is still observed by the window.
 
 Android consumes the composer's Return combinations in the window callback and emits the
-submit event with modifier state. Shift+Return, soft-keyboard Return, and non-send
+submit event with modifier state. It runs only in a wide layout, so its compact layout
+keeps Return with the text control. Shift+Return, soft-keyboard Return, and non-send
 combinations stay with the text control.
 
 The source spike used an iPad Pro 11-inch (M4) simulator on iOS 18.6 with a
