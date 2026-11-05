@@ -1369,7 +1369,7 @@ describe("PluginAgentClientRegistry", () => {
       const firstFailed = expect(first).rejects.toThrow("no");
       await pause();
       expect(lastConfigure(harness.inputs)).toMatchObject({
-        changes: { settings: { loud: true } },
+        changes: { providerOptions: { loud: true } },
       });
       const second = session.applyOptions?.({ voice: "other" });
       // The second request does not start until the first has ended, so it cannot settle first.
