@@ -236,6 +236,9 @@ export const ja: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "会話の先頭を読み込み中…",
+    openStartFailed:
+      "会話の先頭を開けませんでした。再試行してください。履歴の移動に対応していない場合は、ホストを更新してください。",
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
@@ -2465,6 +2468,11 @@ export const ja: TranslationResources = {
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+      },
+      chatOpenPosition: {
+        label: "チャットの開始位置",
+        description: "チャットを開いたときに表示する位置",
+        options: { end: "会話の末尾", start: "会話の先頭" },
       },
       chatDisplay: {
         label: "チャットの表示",

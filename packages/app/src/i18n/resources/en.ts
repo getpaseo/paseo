@@ -230,6 +230,9 @@ export const en = {
     },
   },
   agentStream: {
+    openingStart: "Opening the start of the conversation…",
+    openStartFailed:
+      "Couldn't open the start of this conversation. Retry, or update the host if it does not support timeline navigation.",
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
@@ -2569,6 +2572,11 @@ export const en = {
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      chatOpenPosition: {
+        label: "Open chat at",
+        description: "Where to begin when opening a chat",
+        options: { end: "End of conversation", start: "Start of conversation" },
       },
       chatDisplay: {
         label: "Chat display",

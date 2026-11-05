@@ -8,13 +8,26 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type ChatDisplay } from "@/hooks/use-settings";
+import { useAppSettings, type ChatDisplay, type ChatOpenPosition } from "@/hooks/use-settings";
 
 const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
+const CHAT_OPEN_POSITIONS: readonly ChatOpenPosition[] = ["end", "start"];
 
 export function ChatSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
+  const chatOpenPositionOptions = useMemo(
+    () =>
+      CHAT_OPEN_POSITIONS.map((value) => ({
+        value,
+        label: t(`settings.general.chatOpenPosition.options.${value}`),
+      })),
+    [t],
+  );
+  const changeChatOpenPosition = useCallback(
+    (chatOpenPosition: ChatOpenPosition) => void updateSettings({ chatOpenPosition }),
+    [updateSettings],
+  );
 
   const chatDisplayOptions = useMemo(
     () =>
@@ -42,6 +55,13 @@ export function ChatSection() {
     <View>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
         <SettingsCard>
+          <SettingsSelect
+            label={t("settings.general.chatOpenPosition.label")}
+            hint={t("settings.general.chatOpenPosition.description")}
+            value={settings.chatOpenPosition}
+            options={chatOpenPositionOptions}
+            onValueChange={changeChatOpenPosition}
+          />
           <SettingsSwitch
             label={t("settings.general.autoExpandReasoning.label")}
             hint={t("settings.general.autoExpandReasoning.description")}
