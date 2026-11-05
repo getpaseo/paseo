@@ -1056,6 +1056,10 @@ async function runRegression({
   await page.screenshot({ path: path.join(artifactDir, "local-page-screenshot-selector.png") });
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
 
+  // This journey selects tabs from both pane rails. Keep both columns above the compact-header
+  // breakpoint; narrow panes deliberately replace their rail with a tab dropdown.
+  await resizeDesktopWindow(inspectorPort, { width: 1920, height: 1080 });
+  await page.waitForFunction(() => innerWidth >= 1920, null, { timeout: timeoutMs });
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
   await page.getByTestId("sidebar-search").click();
   await page.getByTestId("command-center-input").fill("Split pane right");

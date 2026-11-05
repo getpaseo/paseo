@@ -1,15 +1,15 @@
 import { createContext, useContext, useRef, type RefObject, useCallback, useMemo } from "react";
-import { Gesture, type GestureType } from "react-native-gesture-handler";
-import { useSharedValue } from "react-native-reanimated";
+import { Gesture, PointerType, type GestureType } from "react-native-gesture-handler";
+import { useDerivedValue, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
 import { resolveMobilePanelGestureIntent } from "./gesture-intent";
-
-const MOBILE_WEB_EDGE_SWIPE_WIDTH = 32;
 
 function isCurrentSelection(startedRevision: number): boolean {
   return usePanelStore.getState().mobilePanel.revision === startedRevision;
@@ -21,6 +21,15 @@ function useGestureState() {
     touchStartX: useSharedValue(0),
     touchStartY: useSharedValue(0),
   };
+}
+
+/**
+ * Gates a sidebar pan on the UI thread. The sidebar flips between the dock and the overlay at
+ * runtime, and on Android flipping the handler's `.enabled()` config from false back to true left
+ * it inert until the app reloaded (RNGH 2.32), so `.enabled()` only carries the device capability.
+ */
+function useGestureGate(enabled: boolean) {
+  return useDerivedValue(() => enabled, [enabled]);
 }
 
 function useRevisionCommit(action: () => void) {
@@ -39,24 +48,35 @@ export function useOpenAgentListGesture(enabled: boolean) {
     beginGesture,
     finishGesture,
     leftOpenGestureRef,
+    leftPanelWidth: width,
     motionState,
     openGesturesBlocked,
     position,
     updateGesture,
     windowWidth,
   } = useMobilePanelsRuntime();
+  const { touchScreen: hasTouchScreen } = usePointerCapabilities();
+  // Phone web keeps interior swipes for the page's horizontal scrollers; the wide overlay opens
+  // from anywhere in the workspace.
+  const isCompact = useIsCompactFormFactor();
+  const openFromEdgeOnly = isWeb && isCompact;
   const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const commit = useRevisionCommit(showMobileAgentList);
+  const gate = useGestureGate(enabled);
 
   return useMemo(
     () =>
       Gesture.Pan()
         .withRef(leftOpenGestureRef)
-        .enabled(enabled)
+        .enabled(hasTouchScreen)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
+          if (!gate.value || event.pointerType !== PointerType.TOUCH) {
+            stateManager.fail();
+            return;
+          }
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
@@ -76,15 +96,16 @@ export function useOpenAgentListGesture(enabled: boolean) {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: gate.value,
             deltaX,
             deltaY,
             direction: 1,
             openGesturesBlocked: openGesturesBlocked.value,
+            openEdge: openFromEdgeOnly ? { startX: touchStartX.value, windowWidth } : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
             horizontalScroll?.isAnyScrolledRight.value ||
-            (isWeb && touchStartX.value > MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -98,10 +119,10 @@ export function useOpenAgentListGesture(enabled: boolean) {
           startedRevision.value = beginGesture({ origin: "agent" });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, -event.translationX / windowWidth);
+          updateGesture(startedRevision.value, -event.translationX / width);
         })
         .onEnd((event, success) => {
-          const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
+          const shouldOpen = event.translationX > width / 3 || event.velocityX > 500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldOpen ? "agent-list" : "agent",
@@ -113,43 +134,53 @@ export function useOpenAgentListGesture(enabled: boolean) {
         }),
     [
       commit,
-      enabled,
       beginGesture,
+      gate,
       finishGesture,
+      hasTouchScreen,
       horizontalScroll?.isAnyScrolledRight,
       leftOpenGestureRef,
       motionState,
+      openFromEdgeOnly,
       openGesturesBlocked,
       position,
       startedRevision,
       touchStartX,
       touchStartY,
       updateGesture,
+      width,
       windowWidth,
     ],
   );
 }
 
-export function useCloseAgentListGesture() {
+export function useCloseAgentListGesture(enabled = true) {
   const {
     beginGesture,
     finishGesture,
     leftCloseGestureRef,
+    leftPanelWidth: width,
     motionState,
     position,
     updateGesture,
-    windowWidth,
   } = useMobilePanelsRuntime();
+  const { touchScreen: hasTouchScreen } = usePointerCapabilities();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
+  const gate = useGestureGate(enabled);
 
   const gesture = useMemo(
     () =>
       Gesture.Pan()
         .withRef(leftCloseGestureRef)
+        .enabled(hasTouchScreen)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
+          if (!gate.value || event.pointerType !== PointerType.TOUCH) {
+            stateManager.fail();
+            return;
+          }
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
@@ -169,10 +200,12 @@ export function useCloseAgentListGesture() {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: gate.value,
             deltaX,
             deltaY,
             direction: -1,
             openGesturesBlocked: false,
+            openEdge: null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent-list", position.value) ||
@@ -191,10 +224,10 @@ export function useCloseAgentListGesture() {
           });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, -1 - event.translationX / windowWidth);
+          updateGesture(startedRevision.value, -1 - event.translationX / width);
         })
         .onEnd((event, success) => {
-          const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
+          const shouldClose = event.translationX < -width / 3 || event.velocityX < -500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldClose ? "agent" : "agent-list",
@@ -207,6 +240,8 @@ export function useCloseAgentListGesture() {
     [
       beginGesture,
       commit,
+      gate,
+      hasTouchScreen,
       finishGesture,
       leftCloseGestureRef,
       motionState,
@@ -215,7 +250,7 @@ export function useCloseAgentListGesture() {
       touchStartX,
       touchStartY,
       updateGesture,
-      windowWidth,
+      width,
     ],
   );
 
@@ -269,14 +304,15 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: enabled,
             deltaX,
             deltaY,
             direction: -1,
             openGesturesBlocked: openGesturesBlocked.value,
+            openEdge: isWeb ? { startX: touchStartX.value, windowWidth } : null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
-            (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -363,10 +399,12 @@ export function useCloseFileExplorerGesture(enabled = true) {
           }
 
           const panIntent = resolveMobilePanelGestureIntent({
+            enabled: enabled,
             deltaX,
             deltaY,
             direction: 1,
             openGesturesBlocked: false,
+            openEdge: null,
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "file-explorer", position.value) ||

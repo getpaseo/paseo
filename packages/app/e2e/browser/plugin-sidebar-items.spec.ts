@@ -317,7 +317,10 @@ test.describe("Plugin sidebar items", () => {
       const compactSync = footerItem(page, SHOWCASE_PLUGIN_ID, "sync");
       await expect(compactSync).toBeInViewport();
       await expectFooterRow(page, compactSync);
-      await expect(headerRow(page, SHOWCASE_PLUGIN_ID, "deploys")).toBeInViewport();
+      // The compact nav block is capped at half the sidebar and scrolls past it.
+      const compactDeploys = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+      await compactDeploys.scrollIntoViewIfNeeded();
+      await expect(compactDeploys).toBeInViewport();
       await qaScreenshot(page, "phase2-compact-sidebar");
       await qaScreenshot(page, "phase5-compact-footer", sidebarFooter(page));
       await compactSync.click();
