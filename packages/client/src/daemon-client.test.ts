@@ -605,6 +605,65 @@ test("finalizes local stream close even when sending Close fails", async () => {
   ).toThrow("already used");
 });
 
+test("closes the tunnel when a queued frame is refused after write returned", async () => {
+  const logger = createMockLogger();
+  const { client, transport, connecting } = createTunnelClient({ networkTunnel: true }, logger);
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "queued-write", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+
+  const send = transport.transport.send;
+  let drain!: () => void;
+  let holding = false;
+  transport.transport.send = (frame) => {
+    if (typeof frame === "string") return send(frame);
+    if (!holding) {
+      holding = true;
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+    }
+    throw new Error("capacity");
+  };
+  stream.write(new Uint8Array([1]));
+  stream.write(new Uint8Array([2]));
+  expect(closed).not.toHaveBeenCalled();
+  drain();
+
+  await vi.waitFor(() => {
+    expect(closed).toHaveBeenCalledWith("disconnected");
+  });
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.GeneralError);
+  expect(logger.warn).toHaveBeenCalledWith(
+    {
+      err: expect.objectContaining({ message: "capacity" }),
+      subscriptionId: tunnel.subscriptionId,
+    },
+    "Network tunnel frame was not sent",
+  );
+  await vi.waitFor(() => {
+    expect(parseSentFrame(transport.sent.at(-1))).toMatchObject({
+      type: "network.tunnel.close.request",
+      subscriptionId: tunnel.subscriptionId,
+    });
+  });
+  const request = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: { requestId: request.requestId, ok: true, subscriptionId: tunnel.subscriptionId },
+    }),
+  );
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
 test("asks for its own limits and uses the ones the daemon agreed to", async () => {
   const { client, transport, connecting } = createTunnelClient();
   await connecting;
