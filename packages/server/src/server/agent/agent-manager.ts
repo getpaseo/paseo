@@ -14,6 +14,7 @@ import {
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
 import {
+  ARCHIVED_PARENT_AGENT_ID_LABEL,
   getParentAgentIdFromLabels,
   hasOpenAgentTab,
   isDelegatedAgent,
@@ -759,8 +760,14 @@ function shouldDetachFromArchivedParent(
   return isCrossWorkspace || hasOpenAgentTab(child.labels);
 }
 
-function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatch {
+function detachedAgentLabelPatch(
+  labels: Record<string, string>,
+  archivedParentAgentId: string | null,
+): AgentLabelPatch {
   const patch: AgentLabelPatch = { [PARENT_AGENT_ID_LABEL]: null };
+  if (archivedParentAgentId) {
+    patch[ARCHIVED_PARENT_AGENT_ID_LABEL] = archivedParentAgentId;
+  }
   for (const label of Object.keys(labels)) {
     if (isOpenAgentTabLabel(label)) {
       patch[label] = null;
@@ -2112,7 +2119,7 @@ export class AgentManager {
           return;
         }
         if (shouldDetachFromArchivedParent(parent, currentChild)) {
-          await this.detachAgentUnlocked(currentChild.id);
+          await this.detachAgentUnlocked(currentChild.id, { parentArchived: true });
         } else if (this.agents.has(currentChild.id)) {
           await this.archiveAgentUnlocked(currentChild.id);
         } else {
@@ -2379,7 +2386,12 @@ export class AgentManager {
     return this.runLifecycleMutation(agentId, () => this.detachAgentUnlocked(agentId));
   }
 
-  private async detachAgentUnlocked(agentId: string): Promise<{
+  // An explicit detach severs the relationship. A detach caused by the parent's
+  // archive keeps a provenance-only record of the parent on the survivor.
+  private async detachAgentUnlocked(
+    agentId: string,
+    options: { parentArchived?: boolean } = {},
+  ): Promise<{
     record: StoredAgentRecord;
     live: boolean;
     previousParentAgentId: string | null;
@@ -2397,7 +2409,13 @@ export class AgentManager {
         return { record, live: true, previousParentAgentId: null };
       }
 
-      const { record } = await this.writeLabels(agentId, detachedAgentLabelPatch(liveAgent.labels));
+      const { record } = await this.writeLabels(
+        agentId,
+        detachedAgentLabelPatch(
+          liveAgent.labels,
+          options.parentArchived ? previousParentAgentId : null,
+        ),
+      );
       if (!record) {
         throw new Error(`Agent not found in storage after detach: ${agentId}`);
       }
@@ -2413,9 +2431,18 @@ export class AgentManager {
       return { record, live: false, previousParentAgentId: null };
     }
 
-    const result = await this.writeLabels(agentId, detachedAgentLabelPatch(record.labels));
+    const result = await this.writeLabels(
+      agentId,
+      detachedAgentLabelPatch(record.labels, options.parentArchived ? previousParentAgentId : null),
+    );
     if (!result.record) {
       throw new Error(`Agent not found in storage after detach: ${agentId}`);
+    }
+    // No session answers a parent-archive detach, so every subscriber learns of
+    // a closed survivor here, as a stored-only archive does in markRecordArchived.
+    // An explicit detach is emitted by the session that requested it.
+    if (options.parentArchived) {
+      this.dispatchStoredAgentState(result.record);
     }
     return { record: result.record, live: false, previousParentAgentId };
   }

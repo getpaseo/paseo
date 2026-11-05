@@ -134,7 +134,11 @@ every managed subagent present in its tabs with `paseo.open-agent-tab.<client-id
 generic agent metadata update. This includes background and restored tabs; navigation does not own
 the marker. Closing a tab sets that client's label to `false`. Any `true` client label keeps the child
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
-normal root agent immediately, and closing its still-open tab archives it.
+normal root agent immediately, and closing its still-open tab archives it. A detach caused by
+parent archive also sets `paseo.archived-parent-agent-id` to the archived parent so boards and
+plugins can still show where the survivor came from. That label is provenance only: no subagent
+track, archive cascade, tab-close policy or finish notification reads it. An explicit detach does
+not set it. Agents detached before this label existed have no record of their former parent.
 
 Agent-scoped workspace creation records the caller's workspace as `parentWorkspaceId`.
 This is informational ancestry for future workspace grouping. It does not change placement,
@@ -408,6 +412,7 @@ Each agent is a single JSON file. Fields relevant to this doc:
 | `archivedAt`                                 | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
 | `labels["paseo.parent-agent-id"]`            | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
 | `labels["paseo.open-agent-tab.<client-id>"]` | `string?`     | `"true"` protects an open tab on that client; detach clears every matching label   |
+| `labels["paseo.archived-parent-agent-id"]`   | `string?`     | Former parent whose archive detached this agent; provenance only                   |
 | `lastStatus`                                 | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.
