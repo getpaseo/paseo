@@ -33,7 +33,7 @@ import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import { createNativeDisclosureHold } from "./native-disclosure-hold";
-import { createNativeStartHold } from "./native-start-hold";
+import { createNativeStartHold, type NativeStartHold } from "./native-start-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
@@ -162,6 +162,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const isReleasedAtEndRef = useRef(false);
   const programmaticScrollEventBudgetRef = useRef(0);
+  // Set once the start hold exists; the bottom scroll below is created before it.
+  const startHoldRef = useRef<NativeStartHold | null>(null);
   const historyStartReadyRef = useRef(false);
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
     createHistoryStartPaginationState,
@@ -272,6 +274,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const scrollToBottom = useCallback(
     (animated: boolean) => {
+      // A bottom scroll is a newer request than an "open at start" jump; the hold must not pull the
+      // list back to the top on its next frame.
+      startHoldRef.current?.cancel();
       programmaticScrollEventBudgetRef.current = 3;
       const metrics = streamViewportMetricsRef.current;
       // The native scroll view finds its end from the content it has mounted, and the end pin holds
@@ -349,6 +354,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollToStart: scrollListToStart,
     }),
   );
+  startHoldRef.current = startHold;
   useEffect(() => () => startHold.cancel(), [startHold]);
   // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
   // has end following off and LegendList anchoring on the held row. The row's measurement trigger
