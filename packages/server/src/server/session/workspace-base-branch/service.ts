@@ -49,7 +49,7 @@ export function createWorkspaceBaseBranchService(deps: Dependencies) {
     return withCheckoutLock(root, async () => {
       const current = await deps.workspaceRegistry.get(input.workspaceId);
       if (!current || current.archivedAt) throw new Error("Workspace is unavailable");
-      const records = await deps.workspaceRegistry.listActive();
+      const records = await deps.workspaceRegistry.listAll();
       const matching = records.filter(
         (record) =>
           record.workspaceId === input.workspaceId ||

@@ -368,6 +368,28 @@ test("a managed workspace restores its changed base after archival removes the c
   );
 });
 
+test("an archived sibling restores the base changed after it was archived", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "archived-sibling", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  const siblingId = await createLocalWorkspace(workspace.workspaceDirectory, "Sibling");
+  expect((await ctx.client.archiveWorkspace(workspace.id)).error).toBe(null);
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: siblingId,
+    baseRef: "refs/heads/release",
+  });
+  expect((await ctx.client.archiveWorkspace(siblingId)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+  await ctx.client.restoreWorkspace(workspace.id);
+  expect((await readPaseoWorktreeMetadata(workspace.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/release",
+  );
+});
+
 test.each(["worktree", "workspace"] as const)(
   "%s archive immediately removes the deleted worktree from a warm CLI listing",
   async (command) => {
