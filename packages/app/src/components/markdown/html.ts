@@ -98,9 +98,9 @@ export function normalizeMarkdownHtml(source: string): string {
     if (EMPHASIS[name]) return EMPHASIS[name];
     if (name === "br") {
       if (closing) return "";
-      // A Unicode line separator renders a break without ending the GFM row.
+      // A Unicode line separator keeps the row intact; its space ends GFM autolinks.
       return tableRanges.some(({ start, end }) => offset >= start && offset < end)
-        ? "\u2028"
+        ? " \u2028"
         : "  \n";
     }
     const boundary = layoutBoundary(name, source, raw, offset, closing, startsAfterBoundary);

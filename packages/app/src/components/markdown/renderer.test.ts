@@ -57,9 +57,9 @@ describe("shared Markdown source adaptation", () => {
       (node.content ?? "") + (node.children?.map(text).join("") ?? "");
     expect(rows.map((row) => row.children?.map(text))).toEqual([
       ["A", "B"],
-      ["1", "first\u2028second"],
-      ["2", "first\u2028second"],
-      ["3", "first\u2028second"],
+      ["1", "first \u2028second"],
+      ["2", "first \u2028second"],
+      ["3", "first \u2028second"],
     ]);
   });
   it("keeps table breaks inside a details wrapper without a blank line", async () => {
@@ -78,12 +78,16 @@ describe("shared Markdown source adaptation", () => {
     expect(tables).toHaveLength(1);
     expect(tables[0].attributes?.bodyRowCount).toBe("1");
     expect(tables[0].children?.[1]?.children?.[0]?.children?.[1]?.children).toEqual([
-      { type: "Text", content: "first\u2028second" },
+      { type: "Text", content: "first \u2028second" },
     ]);
   });
-  it("recognizes file links separately on either side of a table break", async () => {
+  it.each([
+    ["src/first.ts", "src/second.ts"],
+    ["https://example.com/first", "src/second.ts"],
+    ["https://example.com/first", "https://example.com/second"],
+  ])("keeps %s and %s separate across a table break", async (first, second) => {
     const prepared = prepareMarkdownSource(
-      "| A | B |\n|---|---|\n| 1 | src/first.ts<br>src/second.ts |",
+      `| A | B |\n|---|---|\n| 1 | ${first}<br>${second} |`,
       "/repo",
     );
     const tree = recognizeTextLinks(
@@ -97,17 +101,17 @@ describe("shared Markdown source adaptation", () => {
       node.children?.forEach(collect);
     };
     collect(tree);
-    expect(links).toEqual(["src/first.ts", "src/second.ts"]);
+    expect(links).toEqual([first, second]);
   });
   it.each([
-    ["| A<br>B | C |\n|---|---|\n| x | y |", "| A\u2028B | C |\n|---|---|\n| x | y |"],
+    ["| A<br>B | C |\n|---|---|\n| x | y |", "| A \u2028B | C |\n|---|---|\n| x | y |"],
     [
       "> | A | B |\n> |---|---|\n> | x | first<br>second |",
-      "> | A | B |\n> |---|---|\n> | x | first\u2028second |",
+      "> | A | B |\n> |---|---|\n> | x | first \u2028second |",
     ],
     [
       "| A | B |\n|---|---|\n| `<br>` | **first<br><BR />second** |",
-      "| A | B |\n|---|---|\n| `<br>` | **first\u2028\u2028second** |",
+      "| A | B |\n|---|---|\n| `<br>` | **first \u2028 \u2028second** |",
     ],
     [
       "| A | B |\n|---|---|\n| x | \\<br> &lt;br&gt; |",
