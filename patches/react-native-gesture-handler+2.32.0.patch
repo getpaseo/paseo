@@ -194,10 +194,37 @@ index 96c5227..cbf1a88 100644
  
    //
 diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
-index 76eb808..7c40526 100644
+index 76eb808..75a9d75 100644
 --- a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
 +++ b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
-@@ -58,7 +58,14 @@ class PointerEventManager extends _EventManager.default {
+@@ -35,9 +35,6 @@ class PointerEventManager extends _EventManager.default {
+     }
+     const adaptedEvent = this.mapEvent(event, _interfaces.EventTypes.DOWN);
+     const target = event.target;
+-    if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.setPointerCapture(adaptedEvent.pointerId);
+-    }
+     this.markAsInBounds(adaptedEvent.pointerId);
+     this.trackedPointers.add(adaptedEvent.pointerId);
+     if (++this.activePointersCounter > 1) {
+@@ -46,6 +43,16 @@ class PointerEventManager extends _EventManager.default {
+     } else {
+       this.onPointerDown(adaptedEvent);
+     }
++
++    // Capture only a pointer the handler still tracks after seeing it. A handler that fails
++    // the pointer on down (a touch-only pan rejecting the mouse) resets, and a capture it kept
++    // would confine the browser's text selection to the pressed element.
++    if (
++      this.trackedPointers.has(adaptedEvent.pointerId) &&
++      !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)
++    ) {
++      target.setPointerCapture(adaptedEvent.pointerId);
++    }
+   };
+   pointerUpCallback = event => {
+     // When we call reset on gesture handlers, it also resets their event managers
+@@ -58,7 +65,14 @@ class PointerEventManager extends _EventManager.default {
      const adaptedEvent = this.mapEvent(event, _interfaces.EventTypes.UP);
      const target = event.target;
      if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
@@ -213,6 +240,15 @@ index 76eb808..7c40526 100644
      }
      this.markAsOutOfBounds(adaptedEvent.pointerId);
      this.trackedPointers.delete(adaptedEvent.pointerId);
+@@ -85,7 +99,7 @@ class PointerEventManager extends _EventManager.default {
+     // incorporating it here seems stupid), so we just call it again here, every time
+     // pointer moves until it succeeds.
+     // God, I do love web development.
+-    if (!target?.hasPointerCapture(event.pointerId) && !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
++    if (this.trackedPointers.has(event.pointerId) && !target?.hasPointerCapture(event.pointerId) && !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+       target.setPointerCapture(event.pointerId);
+     }
+     const inBounds = (0, _utils.isPointerInBounds)(this.view, {
 diff --git a/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js b/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js
 index 0791c66..2f41c77 100644
 --- a/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js
@@ -229,10 +265,37 @@ index 0791c66..2f41c77 100644
  
    //
 diff --git a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
-index 6ce3b8f..8fe28bc 100644
+index 6ce3b8f..65cc6c8 100644
 --- a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
 +++ b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
-@@ -53,7 +53,14 @@ export default class PointerEventManager extends EventManager {
+@@ -30,9 +30,6 @@ export default class PointerEventManager extends EventManager {
+     }
+     const adaptedEvent = this.mapEvent(event, EventTypes.DOWN);
+     const target = event.target;
+-    if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.setPointerCapture(adaptedEvent.pointerId);
+-    }
+     this.markAsInBounds(adaptedEvent.pointerId);
+     this.trackedPointers.add(adaptedEvent.pointerId);
+     if (++this.activePointersCounter > 1) {
+@@ -41,6 +38,16 @@ export default class PointerEventManager extends EventManager {
+     } else {
+       this.onPointerDown(adaptedEvent);
+     }
++
++    // Capture only a pointer the handler still tracks after seeing it. A handler that fails
++    // the pointer on down (a touch-only pan rejecting the mouse) resets, and a capture it kept
++    // would confine the browser's text selection to the pressed element.
++    if (
++      this.trackedPointers.has(adaptedEvent.pointerId) &&
++      !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)
++    ) {
++      target.setPointerCapture(adaptedEvent.pointerId);
++    }
+   };
+   pointerUpCallback = event => {
+     // When we call reset on gesture handlers, it also resets their event managers
+@@ -53,7 +60,14 @@ export default class PointerEventManager extends EventManager {
      const adaptedEvent = this.mapEvent(event, EventTypes.UP);
      const target = event.target;
      if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
@@ -248,6 +311,15 @@ index 6ce3b8f..8fe28bc 100644
      }
      this.markAsOutOfBounds(adaptedEvent.pointerId);
      this.trackedPointers.delete(adaptedEvent.pointerId);
+@@ -80,7 +94,7 @@ export default class PointerEventManager extends EventManager {
+     // incorporating it here seems stupid), so we just call it again here, every time
+     // pointer moves until it succeeds.
+     // God, I do love web development.
+-    if (!target?.hasPointerCapture(event.pointerId) && !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
++    if (this.trackedPointers.has(event.pointerId) && !target?.hasPointerCapture(event.pointerId) && !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+       target.setPointerCapture(event.pointerId);
+     }
+     const inBounds = isPointerInBounds(this.view, {
 diff --git a/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts b/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts
 index ddb79a3..4e1274c 100644
 --- a/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts
@@ -264,10 +336,38 @@ index ddb79a3..4e1274c 100644
  
    //
 diff --git a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts b/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
-index 18d3627..769b0fe 100644
+index 18d3627..106b97c 100644
 --- a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
 +++ b/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
-@@ -67,7 +67,14 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
+@@ -39,10 +39,6 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
+     const adaptedEvent: AdaptedEvent = this.mapEvent(event, EventTypes.DOWN);
+     const target = event.target as HTMLElement;
+ 
+-    if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
+-      target.setPointerCapture(adaptedEvent.pointerId);
+-    }
+-
+     this.markAsInBounds(adaptedEvent.pointerId);
+     this.trackedPointers.add(adaptedEvent.pointerId);
+ 
+@@ -52,6 +48,16 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
+     } else {
+       this.onPointerDown(adaptedEvent);
+     }
++
++    // Capture only a pointer the handler still tracks after seeing it. A handler that fails
++    // the pointer on down (a touch-only pan rejecting the mouse) resets, and a capture it kept
++    // would confine the browser's text selection to the pressed element.
++    if (
++      this.trackedPointers.has(adaptedEvent.pointerId) &&
++      !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)
++    ) {
++      target.setPointerCapture(adaptedEvent.pointerId);
++    }
+   };
+ 
+   private pointerUpCallback = (event: PointerEvent) => {
+@@ -67,7 +73,14 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
      const target = event.target as HTMLElement;
  
      if (!POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)) {
@@ -283,3 +383,11 @@ index 18d3627..769b0fe 100644
      }
  
      this.markAsOutOfBounds(adaptedEvent.pointerId);
+@@ -98,6 +111,7 @@ export default class PointerEventManager extends EventManager<HTMLElement> {
+     // pointer moves until it succeeds.
+     // God, I do love web development.
+     if (
++      this.trackedPointers.has(event.pointerId) &&
+       !target?.hasPointerCapture(event.pointerId) &&
+       !POINTER_CAPTURE_EXCLUDE_LIST.has(target.tagName)
+     ) {

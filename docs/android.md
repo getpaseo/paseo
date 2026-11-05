@@ -187,18 +187,18 @@ When validating a font change, compare both `iiiiiiii` and `WWWWWWWW` on the aff
 device, including bold and italic text. Verify the visible command and output alongside measured
 widths; a valid family name alone does not prove monospace rendering.
 
-## Inverted timeline input
+## Scroll view corrections
 
-Android focus and selection visibility requests must not reposition inverted timelines. The
-`modules/paseo-scroll` package keeps React Native's scroll manager interface and returns zero for
-child-reveal scroll calculations when the view's transform matrix inverts the vertical axis. React
-Native's Android list uses `scale: -1`, which decomposes into a 180-degree rotation with positive
-`scaleY`; checking the scale property alone misses it. Dragging and explicit scroll
-commands still work; non-inverted scroll views keep Android's default behavior.
+`modules/paseo-scroll` replaces React Native's vertical scroll view with `PaseoScrollView`, which
+keeps React Native's scroll manager interface and corrects `maintainVisibleContentPosition` for the
+chat timeline. [agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections)
+lists the corrections and the React Native issues they work around. Its instrumentation test,
+`VisibleContentPositionClampTest`, mounts through React Native's own mounting manager:
 
-Mouse wheel axes also bypass the inversion transform. The same module reverses the vertical
-wheel axis for inverted scroll views before delegating to Android, preserving native scroll
-bounds and React Native's scroll events and disabled-scroll behavior.
+```bash
+cd packages/app/android
+./gradlew :paseo-scroll:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
 
 Register this package before React Native's core package through its Expo config plugin. Normal
 Android builds use the prebuilt `react-android` library, so patching Java under `node_modules` does

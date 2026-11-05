@@ -56,6 +56,16 @@ describe("reading anchor", () => {
     ).toBe(1100);
   });
 
+  it("keeps a pinned row in place instead of the row under the reading line", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    anchor.pin(rows[2]!);
+    // The row being read grows; only the pinned row below it holds its position.
+    expect(
+      anchor.reconcile(600, [rows[0]!, { ...rows[1]!, height: 800 }, { ...rows[2]!, top: 1300 }]),
+    ).toBe(900);
+  });
+
   it("leaves expansion of the row being read in place", () => {
     const anchor = createReadingAnchor();
     anchor.reconcile(600, rows);
