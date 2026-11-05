@@ -117,6 +117,8 @@ export interface ResolveIndexStartupRouteInput extends ResolveStartupRouteBaseIn
   workspaceSelectionStatus: WorkspaceSelectionStatus;
   isWorkspaceSelectionLoaded: boolean;
   hasGivenUpWaitingForHost: boolean;
+  /** Setup may still open over the empty home; see `useIsSetupDecisionPending`. */
+  isWaitingForSetup: boolean;
 }
 
 export interface ResolveHostStartupRouteInput extends ResolveStartupRouteBaseInput {
@@ -196,6 +198,12 @@ function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): St
       kind: "redirect",
       href: buildHostRootRoute(input.workspaceSelection.serverId),
     };
+  }
+
+  // Without a workspace to restore, startup lands on the empty home. A new user's setup opens
+  // over it, so hold the splash until that is known instead of flashing the home first.
+  if (input.isWaitingForSetup) {
+    return { kind: "splash" };
   }
 
   if (input.anyOnlineHostServerId) {

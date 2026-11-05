@@ -232,6 +232,20 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 const WEB_EXIT_DURATION_MS = 160;
+const WEB_ENTER_DURATION_MS = 160;
+const WEB_ENTER_ANIMATION_NAME = "paseo-modal-enter";
+
+// The desktop overlay fades in as it fades out. A CSS animation runs from the overlay's first
+// paint, so a dialog that opens on its own, like first-run setup, never pops in.
+function ensureWebEnterKeyframes() {
+  if (!isWeb || typeof document === "undefined") return;
+  if (document.getElementById(WEB_ENTER_ANIMATION_NAME)) return;
+  const style = document.createElement("style");
+  style.id = WEB_ENTER_ANIMATION_NAME;
+  style.textContent = `@keyframes ${WEB_ENTER_ANIMATION_NAME} { from { opacity: 0; } to { opacity: 1; } }`;
+  document.head.appendChild(style);
+}
+ensureWebEnterKeyframes();
 
 /** The compact sheet's surface: Gorhom's `backgroundComponent` for every bottom sheet. */
 export function SheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -671,6 +685,9 @@ export function AdaptiveModalSheet({
       isWeb && {
         zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
+        animationName: WEB_ENTER_ANIMATION_NAME,
+        animationDuration: `${WEB_ENTER_DURATION_MS}ms`,
+        animationTimingFunction: "ease-out",
         transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
         transitionProperty: "opacity",
         transitionTimingFunction: "ease",
