@@ -587,6 +587,16 @@ it("does not link an extensionless slash phrase or swallow CJK punctuation", () 
   ]);
 });
 
+it("keeps an ideographic iteration mark inside a Unicode filename", () => {
+  const source = "Open 日々の記録.md and docs/日々の記録.md. 见（日々の記録.md）这里。";
+  const prepared = prepareMarkdownSource(source);
+  expect([...source.matchAll(prepared.linkRecognition.text)].map(([text]) => text)).toEqual([
+    "日々の記録.md",
+    "docs/日々の記録.md",
+    "日々の記録.md",
+  ]);
+});
+
 it("recognizes bare Unicode filenames and preserves inline-code URLs", () => {
   const prepared = prepareMarkdownSource("Read 说明.md, or `https://example.com`.");
   expect([..."说明.md,".matchAll(prepared.linkRecognition.text)].map(([text]) => text)).toEqual([

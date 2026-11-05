@@ -12,7 +12,8 @@ import type { Link, Nodes, Paragraph, PhrasingContent, Root } from "mdast";
 // The Unicode flag makes Metro expand it to escapes rejected by native engines.
 // Letters and digits only. A `\u0080-\uFFFF` class also matches CJK punctuation, so a
 // slash token such as PB/YP/Blue swallows the surrounding sentence into one link.
-const PATH_UNICODE = String.raw`\u00C0-\u024F\u0300-\u036F\u0370-\u1FFF\u2C00-\u2DFF\u3040-\u30FF\u31F0-\u31FF\u3400-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\uFF66-\uFF9D`;
+// U+3005–U+3007 keeps 々〆〇 inside a filename. 、。 and fullwidth （）， stay outside.
+const PATH_UNICODE = String.raw`\u00C0-\u024F\u0300-\u036F\u0370-\u1FFF\u2C00-\u2DFF\u3005-\u3007\u3040-\u30FF\u31F0-\u31FF\u3400-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\uFF66-\uFF9D`;
 const PATH_CHARACTER = String.raw`[a-zA-Z0-9${PATH_UNICODE}_@.%+-]`;
 const PATH_LETTER = String.raw`[a-zA-Z]`;
 const PATH_SEGMENT = String.raw`${PATH_CHARACTER}*[a-zA-Z0-9${PATH_UNICODE}_@%+-]`;
