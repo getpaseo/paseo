@@ -922,6 +922,9 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",

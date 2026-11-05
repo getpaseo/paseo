@@ -937,6 +937,9 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "기준 브랜치",
+        },
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",

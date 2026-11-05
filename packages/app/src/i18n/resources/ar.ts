@@ -930,6 +930,9 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "الفرع الأساسي",
+        },
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",

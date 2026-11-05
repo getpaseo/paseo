@@ -953,6 +953,9 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branch base",
+        },
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
