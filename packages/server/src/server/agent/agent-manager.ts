@@ -5300,24 +5300,12 @@ export class AgentManager {
       return;
     }
 
-    // Skip if already requires attention
-    if (agent.attention.requiresAttention) {
-      return;
-    }
-
-    // Check if agent transitioned from running to idle (finished)
-    if (previousStatus === "running" && currentStatus === "idle") {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "finished",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "finished");
-      return;
-    }
-
-    // Check if agent entered error state
+    // An error outranks an unread finish: the failed state is only shown while its
+    // attention is unread, so a failure that kept the finished attention would look green.
     if (previousStatus !== "error" && currentStatus === "error") {
+      if (agent.attention.requiresAttention && agent.attention.attentionReason !== "finished") {
+        return;
+      }
       agent.attention = {
         requiresAttention: true,
         attentionReason: "error",
@@ -5325,6 +5313,19 @@ export class AgentManager {
       };
       this.broadcastAgentAttention(agent, "error");
       return;
+    }
+
+    if (agent.attention.requiresAttention) {
+      return;
+    }
+
+    if (previousStatus === "running" && currentStatus === "idle") {
+      agent.attention = {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date(),
+      };
+      this.broadcastAgentAttention(agent, "finished");
     }
   }
 

@@ -2801,6 +2801,44 @@ test("closing during reload leaves the replacement closed", async () => {
   }
 });
 
+test("a failed reload replaces unread finished attention with error attention", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-error-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+    onAgentAttention: ({ reason }) => attentionReasons.push(reason),
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.markAgentUnread(created.id);
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      attentionReason: "finished",
+    });
+
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("error");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error"]);
+    client.finishClosing();
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retrying a timed-out reload waits for the original close to finish", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

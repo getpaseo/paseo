@@ -39,6 +39,28 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("failed");
   });
 
+  it("treats an errored agent whose error was read as done", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("done");
+  });
+
+  it("treats an errored agent with unread error attention as failed", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+    ).toBe("failed");
+  });
+
   it("treats unread finished agents as attention", () => {
     expect(
       deriveAgentStateBucket({
@@ -83,10 +105,21 @@ describe("getAgentStatusPriority", () => {
   it("prioritizes pending permissions before errors and running agents", () => {
     const permission = getAgentStatusPriority({ status: "running", pendingPermissionCount: 1 });
     expect(permission).toBeLessThan(
-      getAgentStatusPriority({ status: "error", pendingPermissionCount: 0 }),
+      getAgentStatusPriority({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
     );
     expect(permission).toBeLessThan(
       getAgentStatusPriority({ status: "running", pendingPermissionCount: 0 }),
+    );
+  });
+
+  it("ranks an errored agent with a read error alongside completed agents", () => {
+    expect(getAgentStatusPriority({ status: "error", requiresAttention: false })).toBe(
+      getAgentStatusPriority({ status: "idle" }),
     );
   });
 });
