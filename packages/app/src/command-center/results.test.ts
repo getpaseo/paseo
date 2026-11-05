@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CommandCenterContribution } from "./contributions";
 import { COMMAND_CENTER_LIST_METRICS } from "./list-metrics";
 import {
+  agentSearchFields,
   buildContributionSections,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
@@ -593,5 +594,52 @@ describe("joinSubtitleParts", () => {
     expect(joinSubtitleParts(["host", "paseo", "master"])).toBe("host · paseo · master");
     // No branch: degrades to project (or host · project).
     expect(joinSubtitleParts([null, "paseo", null])).toBe("paseo");
+  });
+});
+
+describe("agent ID search", () => {
+  const target = {
+    title: "Investigate retry handling",
+    subtitle: "Laptop · API workspace",
+    activityAt: null,
+    agent: {
+      id: "a1b2c3d4-1111-4222-8333-444455556666",
+      cwd: "/work/retry-project",
+    },
+  };
+  const other = {
+    ...target,
+    agent: { ...target.agent, id: "99998888-7777-4666-8555-444433332222" },
+  };
+
+  it.each([
+    "a1b2c3d4-1111-4222-8333-444455556666",
+    "a1b2c3d4",
+    "1111-4222",
+    "A1B2C3D4",
+    "  a1b2c3d4  ",
+  ])("finds the target by ID query %s", (query) => {
+    expect(filterAndRankBuiltInResults([other, target], query, agentSearchFields)).toEqual([target]);
+  });
+
+  it.each(["Investigate", "API workspace", "/work/retry-project"])(
+    "preserves text search for %s",
+    (query) => {
+      expect(filterAndRankBuiltInResults([target], query, agentSearchFields)).toEqual([target]);
+    },
+  );
+
+  it("rejects an unrelated ID", () => {
+    expect(
+      filterAndRankBuiltInResults([target], "eeeeffff-aaaa-4bbb-8ccc-ddddeeeeffff", agentSearchFields),
+    ).toEqual([]);
+  });
+
+  it("ranks visible title matches ahead of hidden ID matches", () => {
+    const titleMatch = { ...other, title: "a1b2c3d4", activityAt: new Date(0) };
+    const idMatch = { ...target, activityAt: new Date(1000) };
+    expect(
+      filterAndRankBuiltInResults([idMatch, titleMatch], "a1b2c3d4", agentSearchFields),
+    ).toEqual([titleMatch, idMatch]);
   });
 });

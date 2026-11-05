@@ -138,6 +138,17 @@ export interface CommandCenterSearchFields {
   hidden: readonly string[];
 }
 
+export function agentSearchFields(
+  result: Pick<CommandCenterAgentResult, "title" | "subtitle"> & {
+    agent: Pick<AggregatedAgent, "id" | "cwd">;
+  },
+): CommandCenterSearchFields {
+  return {
+    visible: [result.title, result.subtitle],
+    hidden: [result.agent.cwd, result.agent.id],
+  };
+}
+
 /**
  * The one definition of "how well did this row match", shared by every scored row kind. Null
  * means the row is filtered out, so scoring and filtering are the same pass — a separate boolean
