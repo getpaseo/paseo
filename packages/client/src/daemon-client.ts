@@ -1494,9 +1494,14 @@ export class DaemonClient {
     close: (subscriptionId) => this.closeNetworkTunnelSubscription(subscriptionId),
     createStreamId: () => crypto.randomUUID(),
     closeProtocolViolation: (subscriptionId) => {
-      void this.closeNetworkTunnelSubscription(subscriptionId).catch((error) => {
-        this.logger.warn({ err: error, subscriptionId }, "Failed to close invalid network tunnel");
-      });
+      this.closeNetworkTunnelInBackground(subscriptionId, "Failed to close invalid network tunnel");
+    },
+    closeSendFailure: (subscriptionId, error) => {
+      this.logger.warn({ err: error, subscriptionId }, "Network tunnel frame was not sent");
+      this.closeNetworkTunnelInBackground(
+        subscriptionId,
+        "Failed to close network tunnel after a send failure",
+      );
     },
     handlerError: (error, handler) => {
       this.logger.error({ err: error, handler }, "Network tunnel handler failed");
@@ -7358,6 +7363,12 @@ export class DaemonClient {
   private legacyProviderOptions(): LegacyProviderOptions | null {
     const info = this.lastServerInfoMessage;
     return info && usesLegacyProviderOptions(info) ? this.legacyOptions : null;
+  }
+
+  private closeNetworkTunnelInBackground(subscriptionId: string, failureMessage: string): void {
+    void this.closeNetworkTunnelSubscription(subscriptionId).catch((error) => {
+      this.logger.warn({ err: error, subscriptionId }, failureMessage);
+    });
   }
 
   private async closeNetworkTunnelSubscription(subscriptionId: string): Promise<void> {

@@ -102,10 +102,12 @@ export class NetworkTunnelRpcError extends Error {
 }
 
 interface NetworkTunnelConnection {
-  send(frame: Uint8Array): void;
+  /** Throws when the frame is refused now; rejects when a frame queued behind another send is refused. */
+  send(frame: Uint8Array): Promise<void>;
   close(subscriptionId: string): Promise<void>;
   createStreamId(): string;
   closeProtocolViolation(subscriptionId: string): void;
+  closeSendFailure(subscriptionId: string, error: unknown): void;
   handlerError(error: unknown, handler: string): void;
 }
 
@@ -427,7 +429,7 @@ class NetworkTunnelImpl implements NetworkTunnel {
     );
     this.streams.set(streamId, stream);
     try {
-      this.connection.send(openFrame);
+      this.transmit(openFrame);
     } catch (error) {
       this.streams.delete(streamId);
       throw error;
@@ -508,7 +510,7 @@ class NetworkTunnelImpl implements NetworkTunnel {
     }
     this.finish("protocol_error", TunnelCloseReason.ProtocolError);
     try {
-      if (closeFrame) this.connection.send(closeFrame);
+      if (closeFrame) this.transmit(closeFrame);
     } finally {
       this.connection.closeProtocolViolation(this.subscriptionId);
     }
@@ -516,7 +518,18 @@ class NetworkTunnelImpl implements NetworkTunnel {
 
   private send(frame: TunnelFrame): void {
     if (!this.active) throw new NetworkTunnelError("closed", "Network tunnel is closed");
-    this.connection.send(encodeTunnelFrame(frame));
+    this.transmit(encodeTunnelFrame(frame));
+  }
+
+  // A refusal thrown now reaches the caller. A frame queued behind another send is refused
+  // later, without closing the connection, after its stream already spent credit or changed
+  // state. The daemon never saw that frame, so no stream on this tunnel can continue.
+  private transmit(frame: Uint8Array): void {
+    void this.connection.send(frame).catch((error: unknown) => {
+      if (!this.active) return;
+      this.finish("disconnected", TunnelCloseReason.GeneralError);
+      this.connection.closeSendFailure(this.subscriptionId, error);
+    });
   }
 
   private finish(reason: NetworkTunnelClosedReason, streamReason: number): void {
