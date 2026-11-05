@@ -255,7 +255,7 @@ const WEB_ENTER_STYLE = {
   animationName: WEB_ENTER_ANIMATION_NAME,
   animationDuration: `${WEB_ENTER_DURATION_MS}ms`,
   animationTimingFunction: "ease-out",
-};
+} as unknown as ViewStyle;
 
 /** The compact sheet's surface: Gorhom's `backgroundComponent` for every bottom sheet. */
 export function SheetBackground({ style }: BottomSheetBackgroundProps) {
