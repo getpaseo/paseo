@@ -53,6 +53,7 @@ import {
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
+  userScrollsTimelineToHistoryStart,
   scrollTimelineUntilOlderHistoryIsReachable,
 } from "../support/helpers/timeline-pagination";
 import {
@@ -986,7 +987,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("keeps one prompt when its provider echo crosses the bounded tail", async ({
+  test("keeps one prompt when a delayed provider echo belongs to a large whole turn", async ({
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({
@@ -1003,8 +1004,10 @@ test.describe("Agent message submission", () => {
       await expectVisibleAgentSurfacesIdle(page);
       await page.reload();
 
-      await expect(submittedPrompt).toHaveCount(0);
-      await scrollTimelineUntilOlderHistoryIsReachable(page, prompt);
+      // The complete turn arrives on reload; scrolling mounts its oldest rows
+      // without requiring another page or an increase in total content height.
+      await userScrollsTimelineToHistoryStart(page);
+      await expect(submittedPrompt).toBeVisible();
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
     } finally {

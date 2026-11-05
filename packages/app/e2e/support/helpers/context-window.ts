@@ -54,12 +54,15 @@ export async function leaveContextWindowMeter(page: Page): Promise<void> {
   await expect(contextWindowDetails(page)).toHaveCount(0);
 }
 
-/** Compact screens open the meter's details in a sheet. */
-export async function pressContextWindowMeter(page: Page, name = METER_NAME): Promise<Locator> {
+/** Clicking the meter opens its details in the active layout. */
+export async function pressContextWindowMeter(
+  page: Page,
+  name: string | RegExp = METER_NAME,
+): Promise<Locator> {
   await page.getByRole("button", { name, exact: true }).click({ timeout: 30_000 });
-  const sheet = contextWindowDetails(page);
-  await expect(sheet).toBeVisible();
-  return sheet;
+  const details = contextWindowDetails(page);
+  await expect(details).toBeVisible();
+  return details;
 }
 
 export async function closeContextWindowSheet(page: Page): Promise<void> {

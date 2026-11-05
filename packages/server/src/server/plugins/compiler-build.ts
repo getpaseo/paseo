@@ -257,6 +257,22 @@ function makeHermesInteropEager(code: string): string {
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
+async function minifyClientBundle(code: string): Promise<string> {
+  const { transform } = loadEsbuild();
+  // Minify after the eager replace. Whitespace minify rewrites the getter this
+  // replace matches, and identifier minify can delete the helper entirely.
+  const result = await transform(code, {
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    target: "es2020",
+    supported: { "async-await": false },
+    charset: "ascii",
+    legalComments: "inline",
+  });
+  return result.code;
+}
+
 function runtimeSpecifierError(
   specifier: string,
   target: PluginBuildTarget | "shared",
@@ -368,7 +384,10 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
-  return wrapCommonJsBundle(makeHermesInteropEager(output));
+  const eager = makeHermesInteropEager(output);
+  let prepared = eager;
+  if (target === "client") prepared = await minifyClientBundle(eager);
+  return wrapCommonJsBundle(prepared);
 }
 
 export async function compilePlugin(entryPaths: {

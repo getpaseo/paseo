@@ -1,6 +1,6 @@
+import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { performance } from "node:perf_hooks";
 import pino from "pino";
 import { createPaseoDaemon } from "../bootstrap.js";
 import { loadConfig } from "../config.js";
@@ -231,21 +231,12 @@ test("password-protected config reload preserves startup auth and session constr
     await client.fetchAgents({ subscribe: {} });
     const configPath = path.join(home, "config.json");
     await writeFile(configPath, JSON.stringify({ daemon: { browserTools: { enabled: true } } }));
-    let longestGap = 0;
-    let previous = performance.now();
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - previous);
-      previous = now;
-    }, 1);
-    try {
-      const reloaded = await client.reloadDaemonConfig();
-      longestGap = Math.max(longestGap, performance.now() - previous);
-      expect(reloaded.appliedPaths).toContain("daemon.browserTools.enabled");
-      expect(longestGap).toBeLessThan(50);
-    } finally {
-      clearInterval(probe);
-    }
+    const { result: reloaded, blockingMs } = await measureMainThreadWork(
+      "daemon config reload main-thread work",
+      () => client.reloadDaemonConfig(),
+    );
+    expect(reloaded.appliedPaths).toContain("daemon.browserTools.enabled");
+    expect(blockingMs).toBeLessThan(50);
     expect((await client.getDaemonConfig()).config.browserTools.enabled).toBe(true);
     // A new physical session uses ready daemon state; corrupt config is reported only by an explicit read.
     await writeFile(configPath, "invalid JSON");

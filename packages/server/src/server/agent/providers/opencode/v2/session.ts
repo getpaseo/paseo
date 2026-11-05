@@ -100,7 +100,11 @@ export class OpenCodeV2Session implements AgentSession {
         ),
       clearPermissions: async () => {
         for (const request of this.permissions.list())
-          await this.permissions.respondToPermission(request.id, { behavior: "deny" });
+          await this.permissions.respondToPermission(request.id, {
+            behavior: "deny",
+            message:
+              "The user answered with a message instead of approving. Their message follows.",
+          });
       },
     });
     this.usage = new SessionUsage({
@@ -131,7 +135,7 @@ export class OpenCodeV2Session implements AgentSession {
     await this.configureConnection();
     const location = { directory: this.config.cwd };
     this.modes = modesFromV2((await this.client.agent.list({ location })).data);
-    this.timeline.messages(await messages(this.client, this.id));
+    await this.timeline.messages(await messages(this.client, this.id), () => {});
     await this.startStream();
     await this.children.reconcile(this.id);
   }
@@ -146,6 +150,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   private async configureConnection() {
     const location = { directory: this.config.cwd };
+    await this.connection.bindSession(this.id, this.config.cwd);
     await waitForLocationReady({ client: this.client, location, signal: this.abort.signal });
     if (this.requiresPaseoPlugin)
       await awaitPaseoPlugin({ client: this.client, location, signal: this.abort.signal });
@@ -207,6 +212,11 @@ export class OpenCodeV2Session implements AgentSession {
     if (!this.acquire) throw new Error("OpenCode helper server exited");
     await this.stream;
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     const next = await this.acquire();
     if (this.closed) {
       await next.release();
@@ -232,6 +242,10 @@ export class OpenCodeV2Session implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void) {
     this.listeners.add(callback);
+    // Reopening can adopt an execution during initialization, before its caller
+    // can subscribe. Deliver that live turn so it remains visible and interruptible.
+    if (this.turns.id)
+      callback({ type: "turn_started", provider: "opencode", turnId: this.turns.id });
     return () => {
       this.listeners.delete(callback);
     };
@@ -261,7 +275,11 @@ export class OpenCodeV2Session implements AgentSession {
   async *streamHistory() {
     await this.reconnectIfExited();
     const history = new V2Timeline(false);
-    yield* history.messages(await messages(this.client, this.id));
+    const events: AgentStreamEvent[] = [];
+    await history.messages(await messages(this.client, this.id), (event) => {
+      events.push(event);
+    });
+    yield* events;
   }
   async getRuntimeInfo() {
     await this.reconnectIfExited();
@@ -382,6 +400,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions) {
     await this.reconnectIfExited();
+    await this.connection.bindSession(this.id, this.config.cwd);
     return this.turns.startTurn(prompt, options);
   }
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
@@ -417,7 +436,7 @@ export class OpenCodeV2Session implements AgentSession {
     ]);
     this.info = info;
     this.history = history;
-    for (const event of this.timeline.messages(history)) this.emitTimeline(event);
+    await this.timeline.messages(history, (event) => this.emitTimeline(event));
     await this.permissions.reconcile(this.id);
   }
   private async reconcile() {
@@ -432,6 +451,7 @@ export class OpenCodeV2Session implements AgentSession {
     }
   }
   private async reconcileConnection() {
+    await this.connection.bindSession(this.id, this.config.cwd);
     // Session environments are process-local. Reapply this agent's snapshot before
     // reconciling a new connection, including event-stream reconnections.
     if (this.launchEnv)
@@ -556,6 +576,11 @@ export class OpenCodeV2Session implements AgentSession {
     await this.stream;
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     this.unbind?.();
     try {
       if (!this.persist) await this.client.session.remove({ sessionID: this.id });

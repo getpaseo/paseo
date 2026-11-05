@@ -6,8 +6,6 @@ import { deriveWorkspacePaneState } from "./workspace-pane-state";
 export function selectVisibleAgentIds(input: {
   layout: WorkspaceLayout | null;
   tabs: WorkspaceTab[];
-  /** The workspace sheet's tab, shown over the panes. */
-  sheetTab?: WorkspaceTab | null;
   routeFocused: boolean;
   focusedPaneOnly: boolean;
   explorerPaneId?: string | null;
@@ -29,7 +27,6 @@ export function selectVisibleAgentIds(input: {
       .target;
     return target ? [target] : [];
   });
-  if (input.sheetTab) targets.push(input.sheetTab.target);
   return [
     ...new Set(targets.flatMap((target) => (target.kind === "agent" ? [target.agentId] : []))),
   ].sort();
@@ -38,7 +35,6 @@ export function selectVisibleAgentIds(input: {
 export function useVisibleAgentIds(input: {
   layout: WorkspaceLayout | null;
   tabs: WorkspaceTab[];
-  sheetTab: WorkspaceTab | null;
   routeFocused: boolean;
   focusedPaneOnly: boolean;
   explorerPaneId?: string | null;

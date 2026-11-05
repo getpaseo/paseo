@@ -1,3 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import { describe, expect, it } from "vitest";
 
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
@@ -194,4 +200,30 @@ describe("Claude workflow replay", () => {
       expect(parseClaudeWorkflowRun(contents)).toBeNull();
     },
   );
+});
+
+it("awaits image materialization before publishing replay observations", async () => {
+  const bytes = Buffer.from("async replay image fixture");
+  const convertEntry = async () => {
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
+      { data: bytes.toString("base64"), mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+    return item ? [item] : [];
+  };
+  const observations = await observeReplayWorkflows({
+    workflows: [{ runId: RUN_ID, status: "completed" }],
+    parentEntries: parentEntries(),
+    entriesByRunId: new Map([[RUN_ID, [{ type: "assistant", message: { content: [] } }]]]),
+    convertEntry,
+  });
+  const image = observations.find(
+    (observation) =>
+      observation.kind === "timeline" && observation.item.type === "assistant_message",
+  );
+  if (!image || image.kind !== "timeline" || image.item.type !== "assistant_message")
+    throw new Error("Expected replay image");
+  const source = image.item.text.match(/!\[Image\]\(([^)]+)\)/)?.[1];
+  expect(source).toBeTruthy();
+  expect(await readFile(fileURLToPath(source!))).toEqual(bytes);
 });
