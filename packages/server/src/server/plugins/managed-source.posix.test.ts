@@ -575,3 +575,53 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
     else process.env.npm_config_userconfig = previous;
   }
 }, 30_000);
+
+it("installs a registry npm pin through the configured npm mirror", async () => {
+  const { startNpmRegistry, npmPluginPackages } =
+    await import("../../../../../scripts/test-support/npm-registry.mjs");
+  const { readNpmArtifact, resolveNpm } = await import("./managed-source/npm.js");
+  const mirror = await startNpmRegistry(npmPluginPackages());
+  const previous = process.env.npm_config_userconfig;
+  process.env.npm_config_userconfig = mirror.userconfig;
+  // The public registry pins npmjs.org tarball URLs, which a mirror does not serve at the same path.
+  const pin = {
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/paseo-fixture-plugin/-/paseo-fixture-plugin-1.0.0.tgz",
+    integrity: "",
+  };
+  const server = createServer((_request, response) => {
+    response.end(
+      JSON.stringify({
+        id: "acme/example",
+        artifact: { kind: "npm", package: "paseo-fixture-plugin", ...pin },
+      }),
+    );
+  });
+  try {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-npm-mirror-"));
+    roots.push(home);
+    pin.integrity = (await resolveNpm("paseo-fixture-plugin", "1.0.0", home)).integrity;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
+    const sources = new ManagedPluginSources(home, {
+      defaultUrl: `http://127.0.0.1:${address.port}`,
+    });
+    const candidate = await sources.place(
+      "example",
+      await sources.prepareInstall({ source: "acme/example" }),
+    );
+    await sources.verifyCandidate("example", candidate);
+    sources.commit("example", candidate.record);
+    expect((await sources.describe("example", candidate.directory)).currentRevision).toBe("1.0.0");
+    expect(
+      await readNpmArtifact(path.resolve(candidate.directory, "../.."), "paseo-fixture-plugin"),
+    ).toEqual({ ...pin, resolved: `${mirror.url}/artifacts/1.tgz` });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await mirror.close();
+    if (previous === undefined) delete process.env.npm_config_userconfig;
+    else process.env.npm_config_userconfig = previous;
+  }
+}, 30_000);
