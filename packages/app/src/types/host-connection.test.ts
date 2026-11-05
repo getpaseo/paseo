@@ -5,6 +5,7 @@ import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   pinRelayProtectedSecurityInProfiles,
+  pruneRoutesMissingFromDirectory,
   relayConnectionFromOffer,
   resolveActiveHostServerId,
   upsertHostConnectionInProfiles,
@@ -313,6 +314,88 @@ describe("upsertHostConnectionInProfiles", () => {
     expect("password" in profile.connections[0]!).toBe(false);
     expect(profile.password).toBe("new-secret");
     expect(profile.preferredConnectionId).toBe(replacement.id);
+  });
+});
+
+describe("a host discovered through another daemon", () => {
+  const route: HostConnection = { id: "via:srv_a", type: "routed", originServerId: "srv_a" };
+  const discover = (profiles: HostProfile[], label: string) =>
+    upsertHostConnectionInProfiles({ profiles, serverId: "srv_b", label, connection: route });
+
+  it("follows the label its daemon gives it", () => {
+    const [profile] = discover(discover([], "spare"), "nice");
+
+    expect(profile).toMatchObject({ label: "nice", discoveredLabel: "nice" });
+  });
+
+  it("keeps a label the user chose", () => {
+    const [found] = discover([], "spare");
+    const [profile] = discover([{ ...found, label: "Mine" }], "nice");
+
+    expect(profile.label).toBe("Mine");
+  });
+
+  it("saved before it remembered its daemon's label, follows when it was only ever discovered", () => {
+    const legacy: HostProfile = {
+      ...makeHost("srv_b"),
+      label: "spare",
+      connections: [route],
+      preferredConnectionId: route.id,
+    };
+    const direct: HostConnection = { id: "direct:b:6767", type: "directTcp", endpoint: "b:6767" };
+    const addedByHand: HostProfile = { ...legacy, label: "My B", connections: [direct, route] };
+
+    expect(discover([legacy], "nice")[0]?.label).toBe("nice");
+    expect(discover([addedByHand], "nice")[0]?.label).toBe("My B");
+  });
+
+  it("remembers its daemon's label across storage", () => {
+    const [found] = discover([], "nice");
+
+    expect(normalizeStoredHostProfile(JSON.parse(JSON.stringify(found)))).toMatchObject({
+      label: "nice",
+      discoveredLabel: "nice",
+    });
+  });
+});
+
+describe("pruneRoutesMissingFromDirectory", () => {
+  const viaA: HostConnection = { id: "via:srv_a", type: "routed", originServerId: "srv_a" };
+  const viaZ: HostConnection = { id: "via:srv_z", type: "routed", originServerId: "srv_z" };
+  const direct: HostConnection = { id: "direct:c:6767", type: "directTcp", endpoint: "c:6767" };
+  const host = (serverId: string, connections: HostConnection[]): HostProfile => ({
+    ...makeHost(serverId),
+    connections,
+    preferredConnectionId: connections[0]?.id ?? null,
+  });
+
+  it("removes a host its daemon no longer lists, and keeps what the user added", () => {
+    const profiles = [
+      host("srv_a", [direct]),
+      host("srv_b", [viaA]),
+      host("srv_c", [viaA, direct]),
+      host("srv_d", [viaZ]),
+      host("srv_e", [viaA]),
+    ];
+
+    const pruned = pruneRoutesMissingFromDirectory({
+      profiles,
+      originServerId: "srv_a",
+      listedServerIds: new Set(["srv_e"]),
+    });
+
+    expect(pruned.removedServerIds).toEqual(["srv_b"]);
+    expect(pruned.profiles.map((profile) => profile.serverId)).toEqual(["srv_a", "srv_c", "srv_d", "srv_e"]);
+    expect(pruned.profiles[1]).toMatchObject({ connections: [direct], preferredConnectionId: direct.id });
+  });
+
+  it("returns the same profiles when every routed host is still listed", () => {
+    const profiles = [host("srv_b", [viaA])];
+
+    expect(
+      pruneRoutesMissingFromDirectory({ profiles, originServerId: "srv_a", listedServerIds: new Set(["srv_b"]) })
+        .profiles,
+    ).toBe(profiles);
   });
 });
 
