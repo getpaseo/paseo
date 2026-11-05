@@ -124,7 +124,7 @@ function emitErrorTurn(text) {
       result: {
         conversation_id: conversationId,
         status: "ERROR",
-        response: "",
+        response: "PARTIAL_ONLY",
         error: "The stream was interrupted. Please continue the task you were working on.",
       },
     });
