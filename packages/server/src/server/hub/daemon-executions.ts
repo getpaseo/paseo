@@ -288,7 +288,11 @@ export class DaemonExecutions implements HubExecutionAgents {
       agent: live
         ? serializeAgentSnapshot(live)
         : {
-            ...buildStoredAgentPayload(record, this.agentManager.getRegisteredProviderIds()),
+            ...buildStoredAgentPayload(
+              record,
+              this.agentManager.getRegisteredProviderIds(),
+              (provider, own) => this.agentManager.effectiveOptionsFor(provider, own),
+            ),
             status: "closed",
           },
     };

@@ -2133,6 +2133,7 @@ function createToolCatalog(
       const structuredSnapshot = buildStoredAgentPayload(
         record,
         new Set(providerSnapshotManager.listRegisteredProviderIds()),
+        (provider, own) => agentManager.effectiveOptionsFor(provider, own),
       );
       return {
         content: [],
@@ -2188,6 +2189,7 @@ function createToolCatalog(
           buildStoredAgentPayload(
             record,
             new Set(providerSnapshotManager.listRegisteredProviderIds()),
+            (provider, own) => agentManager.effectiveOptionsFor(provider, own),
           ),
         isProviderVisible: () => true,
         isStoredProviderAvailable: (record) =>

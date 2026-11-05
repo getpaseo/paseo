@@ -2427,10 +2427,8 @@ export class AgentManager {
     return input.client.effectiveOptions?.(input.own) ?? input.own ?? {};
   }
 
-  private effectiveOptionsFor(
-    provider: AgentProvider,
-    own: ProviderOptions | undefined,
-  ): ProviderOptions {
+  /** What an agent of this provider runs with, given its own options: the defaults under them. */
+  effectiveOptionsFor(provider: AgentProvider, own: ProviderOptions | undefined): ProviderOptions {
     const client = this.clients.get(provider);
     return client ? this.launchOptionsFor({ client, own }) : (own ?? {});
   }

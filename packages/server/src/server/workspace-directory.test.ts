@@ -921,7 +921,8 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       projectLive: async () => {
         throw new Error("Unexpected live projection");
       },
-      projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+      projectStored: (record) =>
+        buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
       isProviderVisible: () => true,
       isStoredProviderAvailable: () => true,
     });

@@ -17,6 +17,9 @@ import type {
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
 
+/** A provider with no defaults of its own: the effective options are the agent's own. */
+const ownOptionsOnly = (_provider: string, own: Record<string, unknown> | undefined) => own ?? {};
+
 type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPermissions"> & {
   config?: Partial<AgentSessionConfig>;
   pendingPermissions?: Map<string, AgentPermissionRequest>;
@@ -381,7 +384,7 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"]);
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
 
     expect(record.persistence?.metadata).toEqual({
       conversationId: "conversation-stored",
@@ -422,7 +425,7 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"]);
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
 
     expect(payload.status).toBe("closed");
     expect(payload.controls).toEqual(controls);
@@ -441,15 +444,37 @@ describe("toAgentPayload", () => {
     ]);
   });
 
+  it("projects a closed agent's options with the provider defaults under its own, like a live one", () => {
+    const record = toStoredAgentRecord(
+      createManagedAgent({
+        provider: "claude",
+        lifecycle: "closed",
+        controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+        config: { provider: "claude", providerOptions: {} },
+      }),
+    );
+    const withConfigDefaults = (_provider: string, own: Record<string, unknown> | undefined) => ({
+      fast_mode: true,
+      ...own,
+    });
+
+    const payload = buildStoredAgentPayload(record, ["claude"], withConfigDefaults);
+
+    expect(payload.options).toEqual({ fast_mode: true });
+    expect(payload.features).toEqual([
+      { type: "toggle", id: "fast_mode", label: "Fast", value: true },
+    ]);
+  });
+
   it("carries a stored lastError onto the payload", () => {
     const record = toStoredAgentRecord(
       createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
     );
 
-    expect(buildStoredAgentPayload(record, ["codex"]).lastError).toBe("boom");
-    expect(buildStoredAgentPayload({ ...record, lastError: null }, ["codex"])).not.toHaveProperty(
-      "lastError",
-    );
+    expect(buildStoredAgentPayload(record, ["codex"], ownOptionsOnly).lastError).toBe("boom");
+    expect(
+      buildStoredAgentPayload({ ...record, lastError: null }, ["codex"], ownOptionsOnly),
+    ).not.toHaveProperty("lastError");
   });
 
   it("omits lastUsage when not available", () => {

@@ -2183,7 +2183,9 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds);
+    return buildStoredAgentPayload(record, registeredProviderIds, (provider, own) =>
+      this.agentManager.effectiveOptionsFor(provider, own),
+    );
   }
 
   private isProviderVisibleToClient(provider: string): boolean {

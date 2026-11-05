@@ -225,17 +225,24 @@ function visibilityFlags(agent: {
   };
 }
 
+/** The options an agent runs with, given the options it owns; see `toAgentPayload`. */
+export type EffectiveOptionsResolver = (
+  provider: AgentProvider,
+  own: ProviderOptions | undefined,
+) => ProviderOptions;
+
 function buildStoredOptionControls(
   record: StoredAgentRecord,
+  effectiveOptionsFor: EffectiveOptionsResolver,
 ): Pick<AgentSnapshotPayload, "features" | "options" | "controls"> {
   const controls = normalizeControls(record.controls);
-  const options = record.config?.providerOptions
-    ? sanitizeEffectiveOptions(record.config.providerOptions)
-    : undefined;
+  const options = sanitizeEffectiveOptions(
+    effectiveOptionsFor(record.provider, record.config?.providerOptions ?? undefined),
+  );
   return {
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
     features: featuresFromControls({ controls, options }),
-    ...(options ? { options } : {}),
+    options,
     controls,
   };
 }
@@ -243,6 +250,7 @@ function buildStoredOptionControls(
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
+  effectiveOptionsFor: EffectiveOptionsResolver,
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -261,7 +269,7 @@ export function buildStoredAgentPayload(
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
-  const optionControls = buildStoredOptionControls(record);
+  const optionControls = buildStoredOptionControls(record, effectiveOptionsFor);
   const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
   const persistence = projectPersistenceHandleForWire(
     buildStoredPersistenceHandle(record, validProviders),

@@ -2097,7 +2097,8 @@ test("workspace mark unread selects a finished cross-workspace child with scoped
     projectLive: async () => {
       throw new Error("No live agents");
     },
-    projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
     isProviderVisible: () => true,
     isStoredProviderAvailable: () => true,
   });
