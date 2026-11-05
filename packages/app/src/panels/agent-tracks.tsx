@@ -1,7 +1,6 @@
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { memo, useCallback, type ReactElement } from "react";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
-import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
 import { ComposerTrackBar } from "@/composer/tracks";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -40,7 +39,6 @@ export const AgentTracks = memo(function AgentTracks({
   tasks,
   archiveFinishedStatus,
   onArchiveFinished,
-  hasPluginComposerPills,
 }: {
   serverId: string;
   workspaceId: string;
@@ -50,10 +48,8 @@ export const AgentTracks = memo(function AgentTracks({
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
-  hasPluginComposerPills: boolean;
-}): ReactElement | null {
+}): ReactElement {
   const { tabId } = usePaneContext();
-  const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const isCompact = useIsCompactFormFactor();
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
@@ -112,19 +108,6 @@ export const AgentTracks = memo(function AgentTracks({
     });
   }, [isCompact, openInSidePane, workspaceKey]);
 
-  if (
-    !hasWorkspaceDiffStat &&
-    !hasAgentTracks({
-      parentAgentId,
-      subagentRows,
-      tasks,
-      archiveFinishedStatus,
-      hasPluginComposerPills,
-    })
-  ) {
-    return null;
-  }
-
   return (
     <ComposerTrackBar>
       {parentAgentId ? <ParentAgentPill serverId={serverId} parentAgentId={parentAgentId} /> : null}
@@ -154,25 +137,3 @@ export const AgentTracks = memo(function AgentTracks({
     </ComposerTrackBar>
   );
 });
-
-export function hasAgentTracks({
-  parentAgentId,
-  subagentRows,
-  tasks,
-  archiveFinishedStatus,
-  hasPluginComposerPills = false,
-}: {
-  parentAgentId: string | null;
-  subagentRows: readonly SubagentRow[];
-  tasks: readonly TodoEntry[] | undefined;
-  archiveFinishedStatus: ArchiveFinishedStatus;
-  hasPluginComposerPills?: boolean;
-}): boolean {
-  return (
-    parentAgentId !== null ||
-    subagentRows.length > 0 ||
-    Boolean(tasks?.length) ||
-    archiveFinishedStatus.kind !== "idle" ||
-    hasPluginComposerPills
-  );
-}

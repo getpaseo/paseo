@@ -36,11 +36,9 @@ export function deriveWorkspaceAgentVisibility(input: {
       continue;
     }
     if (!agent.archivedAt) {
+      // A background agent stays active so a tab opened by id isn't pruned, but never auto-opens.
       activeAgentIds.add(agent.id);
-      const parentAgent = agent.parentAgentId
-        ? (sessionAgents?.get(agent.parentAgentId) ?? agentDetails?.get(agent.parentAgentId))
-        : undefined;
-      if (isWorkspaceRootAgent(agent, parentAgent)) {
+      if (shouldAutoOpenAgent({ agent, sessionAgents, agentDetails })) {
         autoOpenAgentIds.add(agent.id);
       }
     }
@@ -55,6 +53,21 @@ export function deriveWorkspaceAgentVisibility(input: {
     }
   }
   return { activeAgentIds, autoOpenAgentIds, foreignAgentIds };
+}
+
+function shouldAutoOpenAgent(input: {
+  agent: Agent;
+  sessionAgents: Map<string, Agent> | undefined;
+  agentDetails: Map<string, Agent> | undefined;
+}): boolean {
+  const { agent, sessionAgents, agentDetails } = input;
+  if (agent.background) {
+    return false;
+  }
+  const parentAgent = agent.parentAgentId
+    ? (sessionAgents?.get(agent.parentAgentId) ?? agentDetails?.get(agent.parentAgentId))
+    : undefined;
+  return isWorkspaceRootAgent(agent, parentAgent);
 }
 
 interface AgentMapsSnapshot {

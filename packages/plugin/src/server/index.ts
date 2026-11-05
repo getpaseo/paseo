@@ -11,6 +11,7 @@ export type {
   PluginServerContribution,
   PluginSettings,
   PluginSettingsState,
+  PluginSubscriptionContext,
 } from "./contracts.js";
 export type {
   PluginHooks,
@@ -21,6 +22,7 @@ export type {
   PluginHookContext,
   PluginHookWorkspace,
   PluginHookWorktree,
+  PluginWorktreeCreateRequest,
   PluginHookAgent,
   PluginSessionOpenRequest,
   PluginTurnOutcome,

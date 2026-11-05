@@ -171,10 +171,12 @@ function findOutlineDrawerGestureConflicts(): OutlineDrawerConflict[] {
     for (let dy = -30; dy <= 40; dy += 1) {
       const scrub = resolveOutlineScrubIntent(dx, dy);
       const drawer = resolveMobilePanelGestureIntent({
+        enabled: true,
         deltaX: dx,
         deltaY: dy,
         direction: 1,
         openGesturesBlocked: false,
+        openEdge: null,
       });
       if (scrub === "activate" && drawer !== "fail") conflicts.push({ dx, dy, scrub, drawer });
       if (drawer === "activate" && scrub !== "fail") conflicts.push({ dx, dy, scrub, drawer });

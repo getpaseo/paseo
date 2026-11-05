@@ -1,3 +1,4 @@
+import { flushGitCommandTrace } from "../utils/git-command-trace.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -5,7 +6,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
-import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
+import {
+  getCheckoutStatus as readCheckoutStatus,
+  type CheckoutSnapshotFacts,
+  type CheckoutStatusGit,
+} from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -58,6 +63,49 @@ afterEach(async () => {
     await cleanup.pop()?.();
   }
 });
+
+test.each([false, true])(
+  "disposal waits for an admitted Git refresh after observation ends (unsubscribed: %s)",
+  async (unsubscribeBeforeDisposal) => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = realpathSync(mkdtempSync(path.join(artifacts, "git-refresh-shutdown-")));
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const service = new WorkspaceGitServiceImpl({
+      logger: pino({ enabled: false }),
+      paseoHome: path.join(root, "home"),
+      deps: {
+        getCheckoutStatus: async (...args) => {
+          entered.resolve();
+          await release.promise;
+          return readCheckoutStatus(...args);
+        },
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: root }, () => {});
+    try {
+      await entered.promise;
+      if (unsubscribeBeforeDisposal) subscription.unsubscribe();
+      let disposed = false;
+      const closing = service.dispose().then(() => {
+        disposed = true;
+        return undefined;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(disposed).toBe(false);
+      release.resolve();
+      await closing;
+      expect(disposed).toBe(true);
+    } finally {
+      release.resolve();
+      subscription.unsubscribe();
+      await service.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("a fresh checkout read makes a newly initialized repository available to cached readers", async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-checkout-init-")));
@@ -536,7 +584,6 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
   const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
   const source = `
     import assert from 'node:assert/strict';
-    import { measureMainThreadWork } from './packages/server/src/test-utils/main-thread-work.ts';
     import { write } from 'node:fs';
     import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
     import { tmpdir } from 'node:os';
@@ -577,23 +624,54 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       await writeFile(join(worktree, 'ignored', 'noise'), 'noise');
       await symlink(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
       const subscription = await service.requestWorkingTreeWatch(alias, () => { notifications++; });
-      const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: join(i % 2 ? alias : worktree, 'ignored', 'noise') }));
+      // The observer hashes and coalesces paths in a Map before delivery. Reuse
+      // two prepared strings instead of constructing 10,000 equal-valued strings.
+      const noisePaths = [join(worktree, 'ignored', 'noise'), join(alias, 'ignored', 'noise')];
+      const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: noisePaths[i % 2] }));
       let fsCalls = 0;
       const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
+      // Collect repository setup and event-fixture garbage before measuring
+      // the cold filter. Allocations made by the filter still count.
+      global.gc();
       await tick();
-      const { blockingMs } = await measureMainThreadWork('Git filter main-thread work', async () => {
-        await marker('FILTER_START');
-        hook.enable();
-        try {
-          callback(null, events);
-        } finally {
-          hook.disable();
-          await marker('FILTER_END');
+      await marker('FILTER_START');
+      // Schedule the control only after marker IO settles, so it cannot run
+      // and allocate garbage before the cold filter starts. No await may
+      // separate this scheduling from the synchronous measurement.
+      const threadCpuUsage = Reflect.get(process, 'threadCpuUsage');
+      let unrelatedWorkStarted = false;
+      const unrelatedWork = tick().then(() => {
+        unrelatedWorkStarted = true;
+        const started = threadCpuUsage();
+        while (true) {
+          const cpu = threadCpuUsage(started);
+          if (cpu.user + cpu.system >= 80000) break;
         }
       });
+      assert.equal(unrelatedWorkStarted, false, 'control work must not contaminate the cold filter');
+      hook.enable();
+      let blockingMs;
+      let elapsedMs;
+      let cpu;
+      try {
+        // This callback is synchronous: measure its own span, without waiting
+        // for marker IO, loader messages or other event-loop callbacks.
+        const startedAt = performance.now();
+        const startedCpu = threadCpuUsage();
+        callback(null, events);
+        cpu = threadCpuUsage(startedCpu);
+        // Cap coarse Windows CPU accounting by elapsed time; exclude descheduling.
+        elapsedMs = performance.now() - startedAt;
+        blockingMs = Math.min(elapsedMs, (cpu.user + cpu.system) / 1000);
+      } finally {
+        hook.disable();
+        await marker('FILTER_END');
+      }
+      await unrelatedWork;
+      assert.equal(unrelatedWorkStarted, true, 'control work must run outside the filter span');
       assert.equal(fsCalls, 0, "filesystem calls");
       assert.equal(notifications, 0, "ignored event notification");
-      assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
+      assert.ok(blockingMs < 20, 'blocking filter work: ' + JSON.stringify({ blockingMs, elapsedMs, cpu }));
       console.log(JSON.stringify({ blockingMs, fsCalls }));
       // Alias identity remains useful after deletion: no per-event realpath can recover this file.
       callback(null, [{ type: 'delete', path: join(worktree, 'tracked.txt') }]);
@@ -614,6 +692,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
       [
+        "--expose-gc",
         "--import",
         "tsx",
         ...(tracing ? ["--trace-sync-io"] : []),
@@ -634,7 +713,9 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       const output = stderr.split(`${phase}_START\n`)[1]?.split(`${phase}_END\n`)[0];
       expect(output, `${phase}: synchronous filesystem IO`).toBe("");
     }
-    expect(JSON.parse(stdout.trim().split("\n")[0])).toMatchObject({ fsCalls: 0 });
+    const measurement = JSON.parse(stdout.trim().split("\n")[0]);
+    console.info("Git filter budget", { tracing, ...measurement });
+    expect(measurement).toMatchObject({ fsCalls: 0 });
   }
 }, 60_000);
 
@@ -703,3 +784,119 @@ test("Git event identity retains a symlink's literal target before canonicalizin
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform !== "linux")(
+  "missing folders stop degraded Git polling and explicit refreshes, then recover",
+  async () => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = mkdtempSync(path.join(artifacts, "workspace-git-missing-"));
+    const cwd = path.join(root, "repo");
+    const initializeRepo = (branch: string) => {
+      mkdirSync(cwd);
+      execFileSync("git", ["init", "-b", branch], { cwd, stdio: "pipe" });
+      writeFileSync(path.join(cwd, "README.md"), "fixture\n");
+      execFileSync("git", ["add", "."], { cwd, stdio: "pipe" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "-m",
+          "fixture",
+        ],
+        { cwd, stdio: "pipe" },
+      );
+    };
+    initializeRepo("main");
+    // Exceed the real Linux observer's directory limit to enter degraded polling.
+    // No watcher errors or Git responses are injected.
+    for (let index = 0; index < 5100; index++) {
+      mkdirSync(path.join(cwd, `generated-${index}`));
+    }
+    const trace = path.join(root, "git.jsonl");
+    writeFileSync(trace, "");
+    const previousTrace = process.env.PASEO_GIT_TRACE_FILE;
+    process.env.PASEO_GIT_TRACE_FILE = trace;
+    let degraded = false;
+    let suspended = false;
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line) {
+          const message = JSON.parse(line).msg;
+          if (message === "Failed to start working tree watcher; using degraded polling")
+            degraded = true;
+          if (
+            message ===
+            "Workspace folder no longer exists; suspended git observation until it is back"
+          )
+            suspended = true;
+        },
+      },
+    );
+    const service = new WorkspaceGitServiceImpl({ logger, paseoHome: path.join(root, "home") });
+    const subscription = service.registerWorkspace({ cwd }, () => {});
+    const commandCount = async () => {
+      await flushGitCommandTrace();
+      return readFileSync(trace, "utf8").trim().split("\n").filter(Boolean).length;
+    };
+    try {
+      await expect
+        .poll(
+          () => {
+            const metrics = service.getMetrics();
+            // Metadata observation writes a canary after the working tree degrades.
+            return (
+              degraded &&
+              metrics.workspaceRefreshInFlightCount === 0 &&
+              metrics.workspaceObservationSetupInFlightCount === 0
+            );
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+      rmSync(cwd, { recursive: true, force: true });
+      await expect.poll(() => suspended, { timeout: 15_000 }).toBe(true);
+      await expect.poll(() => service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+      const commandsWhileMissing = await commandCount();
+      await service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "refresh-button",
+      });
+      await service.refresh(cwd);
+      expect(await commandCount()).toBe(commandsWhileMissing);
+      await new Promise((resolve) => setTimeout(resolve, 16_000));
+      expect(await commandCount()).toBe(commandsWhileMissing);
+
+      initializeRepo("restored");
+      const snapshot = await service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "refresh-button",
+      });
+      expect(snapshot.git).toMatchObject({ isGit: true, currentBranch: "restored" });
+      await expect
+        .poll(() => service.getMetrics(), { timeout: 15_000 })
+        .toMatchObject({
+          repositoryWorkspaceLinkCount: 1,
+          workspaceObservationSetupInFlightCount: 0,
+        });
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+      // The diagnostic sink outlives Git commands and owns writes into this fixture.
+      await flushGitCommandTrace();
+      if (previousTrace === undefined) delete process.env.PASEO_GIT_TRACE_FILE;
+      else process.env.PASEO_GIT_TRACE_FILE = previousTrace;
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);

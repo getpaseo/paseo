@@ -287,6 +287,11 @@ Paseo refreshes an agent by closing its current provider session and opening it 
 configuration and persistence. Re-read credentials, environment, global configuration, and MCP
 servers during `session.open`. There is no separate reload operation.
 
+Conversation and combined rewind require a core-restored session with persistence. After a
+successful rewind, Paseo closes the session and reopens its latest persistence value with
+`history: "replay"`. Publish the retained native branch before `session.ready`, including its
+children. File-only rewind keeps the current session and conversation history.
+
 Use `restoration: "core"` when Paseo can reopen a session from persistence. A provider-owned child
 uses `restoration: "parent"`; emit it as another `session.opened` event with `parentSessionId` and
 recreate it while restoring the parent.

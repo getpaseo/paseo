@@ -729,6 +729,196 @@ describe("ClaudeAgentSession features", () => {
     return { queryFactory, queryMock, launches };
   }
 
+  function createStreamingQueryMock() {
+    const mock = createQueryMock();
+    const messages: SDKMessage[] = [];
+    let pending: ((result: IteratorResult<SDKMessage, void>) => void) | null = null;
+    let ended = false;
+    const finish = () => {
+      ended = true;
+      pending?.({ done: true, value: undefined });
+      pending = null;
+    };
+    mock.queryMock.close.mockImplementation(finish);
+    mock.queryMock.return.mockImplementation(async () => finish());
+    mock.queryMock[Symbol.asyncIterator] = () => ({
+      next: async () => {
+        const message = messages.shift();
+        if (message) return { done: false, value: message };
+        if (ended) return { done: true, value: undefined };
+        return new Promise<IteratorResult<SDKMessage, void>>((resolve) => {
+          pending = resolve;
+        });
+      },
+    });
+    return {
+      ...mock,
+      push(message: SDKMessage) {
+        if (pending) {
+          pending({ done: false, value: message });
+          pending = null;
+        } else {
+          messages.push(message);
+        }
+      },
+    };
+  }
+
+  async function startToolForClosure() {
+    const mock = createStreamingQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory: mock.queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    let toolStarted!: () => void;
+    const running = new Promise<void>((resolve) => {
+      toolStarted = resolve;
+    });
+    const unsubscribe = session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "running"
+      )
+        toolStarted();
+    });
+    await session.startTurn("run the tool");
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000001",
+      parent_tool_use_id: null,
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "closure-tool", name: "Bash", input: {} },
+      },
+    });
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000002",
+      parent_tool_use_id: null,
+      event: { type: "content_block_stop", index: 0 },
+    });
+    await running;
+    return { ...mock, session, events, unsubscribe };
+  }
+
+  test("runtime close publishes tool cleanup without reporting a user turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.close();
+      expect(fixture.queryMock.close).toHaveBeenCalledTimes(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "turn_canceled" ||
+            event.type === "turn_completed" ||
+            event.type === "turn_failed",
+        ),
+      ).toEqual([]);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("explicit interruption still publishes tool cleanup and one turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.interrupt();
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(fixture.events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("runtime close resolves permissions once without reporting a user turn cancellation", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    const abort = new AbortController();
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      const permission = canUseTool(
+        "Bash",
+        { command: "printf test" },
+        { signal: abort.signal, toolUseID: "tool-closed" },
+      );
+      const rejected = expect(permission).rejects.toThrow("Claude session closed");
+      await session.close();
+      abort.abort();
+      await rejected;
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(events.filter(isPermissionResolvedEvent)).toHaveLength(1);
+      expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("runtime close prevents a query from launching after pending options resolve", async () => {
+    const { queryFactory } = createQueryMock();
+    let optionsStarted!: () => void;
+    let allowOptions!: () => void;
+    const started = new Promise<void>((resolve) => {
+      optionsStarted = resolve;
+    });
+    const allowed = new Promise<void>((resolve) => {
+      allowOptions = resolve;
+    });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        optionsStarted();
+        await allowed;
+        return "/test/claude/bin";
+      },
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const turn = session.startTurn("must not run after closure");
+    try {
+      await started;
+      await session.close();
+      allowOptions();
+      await turn;
+      expect(queryFactory).not.toHaveBeenCalled();
+    } finally {
+      allowOptions();
+      await turn;
+      await session.close();
+    }
+  });
+
   test("publishes a resolution when the SDK aborts a permission callback", async () => {
     const { queryFactory } = createQueryMock();
     const session = await new ClaudeAgentClient({
@@ -884,6 +1074,68 @@ describe("ClaudeAgentSession features", () => {
     });
 
     expect(launches[0]?.options.extraArgs).toEqual({ chrome: null, model: "x" });
+    await session.close();
+  });
+
+  test("keeps an extraArgs settings file when Paseo sets Claude flag settings", async () => {
+    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-settings-"));
+    const settingsPath = path.join(settingsDir, "settings.json");
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "false" }, permissions: { deny: ["Monitor"] } }),
+    );
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5-5",
+      providerOptions: {
+        extraArgs: { chrome: null, settings: settingsPath },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({ chrome: null });
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      permissions: { deny: ["Monitor"] },
+      fastMode: false,
+    });
+    await session.close();
+    await fs.rm(settingsDir, { recursive: true, force: true });
+  });
+
+  test("keeps inline extraArgs settings JSON for internal agents", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+      providerOptions: {
+        extraArgs: { settings: '{"env":{"ENABLE_TOOL_SEARCH":"false"}}' },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({});
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      disableAllHooks: true,
+    });
     await session.close();
   });
 
@@ -1162,16 +1414,17 @@ describe("ClaudeAgentSession features", () => {
       const iterator = input[Symbol.asyncIterator]();
       await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
 
-      await expect(
-        session.steerActiveTurn?.("same turn follow-up", {
-          expectedTurnId: turnId,
-          clientMessageId: "steer-client-id",
-        }),
-      ).resolves.toEqual({ status: "accepted" });
+      const admission = await session.steerActiveTurn?.("same turn follow-up", {
+        expectedTurnId: turnId,
+        clientMessageId: "steer-client-id",
+      });
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      if (admission?.status !== "accepted") throw new Error("Expected steer admission");
       await expect(iterator.next()).resolves.toMatchObject({
         value: {
           type: "user",
           priority: "next",
+          uuid: admission.providerMessageId,
           message: { content: [{ type: "text", text: "same turn follow-up" }] },
         },
       });
@@ -1229,7 +1482,7 @@ describe("ClaudeAgentSession features", () => {
           expectedTurnId: turnId,
           clearPendingPermissions: true,
         }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       await expect(firstPermission).resolves.toMatchObject({
         behavior: "deny",
         interrupt: undefined,
@@ -1288,7 +1541,7 @@ describe("ClaudeAgentSession features", () => {
       const permission = internal.handlePermissionRequest("Write", {}, { toolUseID: "tool-1" });
       await expect(
         session.steerActiveTurn?.("system notification", { expectedTurnId: turnId }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       expect(session.getPendingPermissions()).toHaveLength(1);
       const requestId = session.getPendingPermissions()[0]!.id;
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });

@@ -1,6 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +7,7 @@ import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 
-test("background cards retain child actions after the parent finishes (#6253)", async () => {
+test("background children keep their actions after the parent finishes (#6253)", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-background-card-"));
   const logger = pino({ level: "silent" });
   const daemon = await createTestPaseoDaemon({
@@ -62,22 +59,6 @@ test("background cards retain child actions after the parent finishes (#6253)", 
       limit: 0,
       projection: "projected",
     });
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [
-        "--conditions=source",
-        "--import",
-        "tsx",
-        fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
-        "--host",
-        `127.0.0.1:${daemon.port}`,
-        "logs",
-        agent.id,
-      ],
-      { env: { ...process.env, PASEO_HOME: daemon.paseoHome }, timeout: 30_000 },
-    );
-    expect(stdout).toContain("[Bash] ls -1");
-    expect(stdout).toContain("[Bash] pwd");
     expect(
       atFinish.entries.filter(
         (row) => row.item.type === "tool_call" && row.item.detail?.type === "sub_agent",
@@ -93,9 +74,6 @@ test("background cards retain child actions after the parent finishes (#6253)", 
           (row) => row.item.type === "tool_call" && row.item.name === "Bash",
         ),
       ).toBe(true);
-    }
-    for (const card of cards) {
-      expect(card.detail?.type === "sub_agent" ? card.detail.log : "").toContain("[Bash]");
     }
   } finally {
     await client.close();

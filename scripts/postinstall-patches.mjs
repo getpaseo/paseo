@@ -24,7 +24,13 @@ const patchedPackages = [
   },
   // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
   // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
+  // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
+  // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
+  // Layout constraints: backport of https://github.com/jpudysz/react-native-unistyles/pull/1357
+  // (commit from the root the commit hands us, so a concurrent window-size commit is kept).
+  // Remove the ShadowTreeManager hunk when the installed release includes that PR.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
@@ -37,10 +43,18 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // The native chat timeline. The patch's header lists its hunks and the upstream issue.
+  {
+    nodeModulesPath: "node_modules/@legendapp/list",
+    patchPrefix: "@legendapp+list+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
+  // Web pointer capture: capture only pointers the handler still tracks after pointer-down, so a
+  // touch-only pan that fails the mouse leaves browser text selection alone. Keep until upstream
+  // stops capturing pointers a handler has rejected.
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
@@ -56,6 +70,8 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
     patchPrefix: "@gorhom+bottom-sheet+",
   },
+  // Android resize: retain until upstream clears descendant geometry when the SVG canvas resizes.
+  // The native pixel regression is included in the patch; preserve the separate transform hunks.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",

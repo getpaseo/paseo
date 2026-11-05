@@ -1,6 +1,6 @@
 # Lifecycle logger
 
-Registers all eleven server lifecycle hooks and logs their data as JSON. It observes agent creation,
+Registers agent, workspace, and worktree hooks and logs their data as JSON. It observes agent creation,
 session opening, turns, permissions, archive, and workspace creation/archive. Before hooks return
 the request unchanged. Environment values are redacted; prompts and timeline content are logged.
 

@@ -463,7 +463,7 @@ ${options.hooks ?? ""}
 
 test("a clean daemon shutdown leaves a completed plugin-provider agent without an error", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-shutdown-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -507,7 +507,7 @@ test("a clean daemon shutdown leaves a completed plugin-provider agent without a
 
 test("reloading a plugin leaves a completed plugin-provider agent without an error", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-reload-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -556,7 +556,7 @@ test("reloading a plugin leaves a completed plugin-provider agent without an err
 
 test("a provider that never acknowledges session.close does not hold the daemon open", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-stuck-close-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root, { acknowledgeClose: false });
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -752,9 +752,36 @@ test.each([false, true])(
       ],
       { cwd: repository, stdio: "pipe" },
     );
+    execFileSync("git", ["checkout", "-b", "plugin-base"], { cwd: repository, stdio: "pipe" });
+    await writeFile(path.join(repository, "from-plugin-base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: repository, stdio: "pipe" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "plugin base",
+      ],
+      { cwd: repository, stdio: "pipe" },
+    );
+    execFileSync("git", ["checkout", "main"], { cwd: repository, stdio: "pipe" });
     const orderFile = path.join(root, "order.jsonl");
     const pluginDirectory = await createProviderPlugin(root, {
+      acknowledgeClose: true,
       hooks: `
+  server.addHook("worktree.create.before", async ({ request }) => {
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(${JSON.stringify(orderFile)}, JSON.stringify({ hook: "worktree.create.before", request }) + "\\n");
+    return { ...request, path: ${JSON.stringify(path.join(root, "elsewhere"))} + "/" + request.slug,
+      branch: request.branch === "accept-hook" ? "plugin-branch" : request.branch,
+      baseRef: request.branch === "accept-hook" ? "plugin-base" : request.baseRef };
+  });
   server.addHook("worktree.create.after", async ({ worktree }) => {
     const { appendFile, writeFile } = await import("node:fs/promises");
     await appendFile(${JSON.stringify(orderFile)}, JSON.stringify({ hook: "worktree.create.after", worktree }) + "\\n");
@@ -778,8 +805,11 @@ test.each([false, true])(
     return request;
   });`,
     });
-    const daemon = await createTestPaseoDaemon();
-    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    let daemon = await createTestPaseoDaemon({
+      paseoHomeRoot: path.join(root, "state"),
+      cleanup: false,
+    });
+    let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     try {
       await client.connect();
       await client.patchDaemonConfig({ pluginsEnabled: true });
@@ -805,6 +835,23 @@ test.each([false, true])(
       });
       expect(created.error).toBeNull();
       const cwd = created.workspace!.workspaceDirectory;
+      expect(created.workspace!.gitRuntime?.currentBranch).toBe("plugin-branch");
+      const persisted = JSON.parse(
+        await readFile(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+      );
+      expect(persisted).toContainEqual(
+        expect.objectContaining({
+          workspaceId: created.workspace!.id,
+          branch: "plugin-branch",
+          baseBranch: "refs/heads/plugin-base",
+          worktreeRoot: cwd,
+        }),
+      );
+      expect(cwd).toBe(path.join(await realpath(root), "elsewhere", "accept-hook"));
+      expect(await readFile(path.join(cwd, "from-plugin-base.txt"), "utf8")).toBe("base");
+      expect(
+        execFileSync("git", ["branch", "--show-current"], { cwd, encoding: "utf8" }).trim(),
+      ).toBe("plugin-branch");
       expect(await readFile(path.join(cwd, "plugin-ready.txt"), "utf8")).toBe("ready");
       const firstAgent = withFirstAgentContext
         ? created.agent!
@@ -835,18 +882,40 @@ test.each([false, true])(
         .split("\n")
         .map((line) => JSON.parse(line));
       expect(records.map((record) => record.hook)).toEqual([
+        "worktree.create.before",
         "worktree.create.after",
         "workspace.create.after",
         "agent.create.before",
       ]);
       expect({
-        ...records[0].worktree,
-        sourceCheckout: await realpath(records[0].worktree.sourceCheckout),
+        ...records[1].worktree,
+        sourceCheckout: await realpath(records[1].worktree.sourceCheckout),
       }).toEqual({
         path: cwd,
-        branch: "accept-hook",
+        branch: "plugin-branch",
         sourceCheckout: await realpath(repository),
       });
+      expect((await client.fetchWorkspaces()).entries.map((workspace) => workspace.id)).toContain(
+        created.workspace!.id,
+      );
+      await client.archiveWorkspace(created.workspace!.id);
+      await expect(stat(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+      const hookRecordsBeforeRestore = await readFile(orderFile, "utf8");
+      await client.close();
+      await daemon.close();
+      daemon = await createTestPaseoDaemon({
+        paseoHomeRoot: path.join(root, "state"),
+        cleanup: false,
+        pluginsEnabled: true,
+        plugins: {
+          "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+        },
+      });
+      client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      await client.connect();
+      await client.restoreWorkspace(created.workspace!.id);
+      expect(await readFile(path.join(cwd, "from-plugin-base.txt"), "utf8")).toBe("base");
+      expect(await readFile(orderFile, "utf8")).toBe(hookRecordsBeforeRestore);
       const beforeFailure = await client.fetchWorkspaces();
       const worktreesBeforeFailure = execFileSync("git", ["worktree", "list", "--porcelain"], {
         cwd: repository,
@@ -882,11 +951,175 @@ test.each([false, true])(
     } finally {
       await client.close();
       await daemon.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   },
   60_000,
 );
+
+test("worktree before hook rejects unsafe destinations with plugin attribution before creating branches", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-before-invalid-"));
+  const repository = path.join(root, "repository");
+  execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repository, stdio: "pipe" },
+  );
+  const occupied = path.join(root, "occupied");
+  await mkdir(occupied);
+  const destinations = [
+    occupied,
+    "relative/path",
+    repository,
+    path.join(repository, ".git", "worktree"),
+    root,
+    path.parse(root).root,
+    (await import("node:os")).homedir(),
+  ];
+  const pluginDirectory = await createProviderPlugin(root, {
+    acknowledgeClose: true,
+    hooks: `
+  server.addHook("worktree.create.before", async ({ request }) => {
+    if (request.branch === "throws") throw new Error("creation denied");
+    if (request.branch === "readonly") return { ...request, repoRoot: "/different-repository" };
+    return { ...request, path: ${JSON.stringify(destinations)}[Number(request.branch.slice(4))] };
+  });`,
+  });
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(pluginDirectory);
+    for (const branchName of [
+      ...destinations.map((_, index) => `bad-${index}`),
+      "throws",
+      "readonly",
+    ]) {
+      const created = await client.createWorkspace({
+        source: { kind: "worktree", cwd: repository, branchName, worktreeSlug: branchName },
+      });
+      expect(created.workspace).toBeNull();
+      expect(created.error).toContain(
+        "Plugin shutdown-provider-plugin worktree.create.before failed:",
+      );
+      expect(
+        execFileSync("git", ["branch", "--format=%(refname:short)"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("main");
+      expect(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).match(/^worktree /gm),
+      ).toHaveLength(1);
+    }
+    expect((await client.fetchWorkspaces()).entries).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("the placement example creates a sibling worktree, opens its first agent there, lists and archives it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-placement-example-"));
+  const repository = path.join(root, "repository");
+  execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repository, stdio: "pipe" },
+  );
+  const providerDirectory = await createProviderPlugin(root, {
+    acknowledgeClose: true,
+    reportOpen: true,
+  });
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(providerDirectory);
+    const installed = await client.installDirectoryPlugin(
+      fileURLToPath(new URL("../../../../../plugin-examples/worktree-placement", import.meta.url)),
+    );
+    expect(installed.status).toBe("running");
+    const created = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        branchName: "feature/x",
+        worktreeSlug: "feature-x",
+      },
+    });
+    expect(created.error).toBeNull();
+    const cwd = path.join(await realpath(root), "repository.feature-x");
+    expect(created.workspace!.workspaceDirectory).toBe(cwd);
+    expect((await stat(cwd)).isDirectory()).toBe(true);
+    expect((await client.fetchWorkspaces()).entries.map((workspace) => workspace.id)).toContain(
+      created.workspace!.id,
+    );
+    const worktrees = await client.getPaseoWorktreeList({ cwd: repository });
+    expect(worktrees.error).toBeNull();
+    expect(worktrees.worktrees).toContainEqual(
+      expect.objectContaining({ worktreePath: cwd, branchName: "feature/x" }),
+    );
+    const collision = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        branchName: "feature/x",
+        worktreeSlug: "another-slug",
+      },
+    });
+    expect(collision.workspace).toBeNull();
+    expect(collision.error).toContain("Plugin worktree-placement worktree.create.before failed:");
+    expect(collision.error).toContain("already exists");
+    const agent = await client.createAgent({
+      provider: PROVIDER_ID,
+      cwd,
+      workspaceId: created.workspace!.id,
+    });
+    expect(agent.cwd).toBe(cwd);
+    const logs = await client.getPluginLogs("shutdown-provider-plugin");
+    const opened = logs
+      .filter((entry) => entry.message.startsWith('{"hook":"provider.open"'))
+      .map((entry) => JSON.parse(entry.message));
+    expect(opened.map((entry) => entry.config.cwd)).toContain(cwd);
+    await client.archiveWorkspace(created.workspace!.id);
+    await expect(stat(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
 
 test("worktree includes reach the first agent without copying tracked or unignored files", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-include-"));
@@ -1071,6 +1304,6 @@ test("worktree includes reach the first agent without copying tracked or unignor
   } finally {
     await client.close();
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);

@@ -33,6 +33,11 @@ export function createReadingAnchor() {
     reset() {
       anchor = null;
     },
+    // A disclosure names the row that owns its trigger. That row keeps its top
+    // through the toggle, even when another row sits under the reading line.
+    pin(row: Pick<RowGeometry, "id" | "top">) {
+      anchor = { id: row.id, top: row.top };
+    },
     scroll(scrollTop: number) {
       const next = readingRow(scrollTop);
       anchor = next ? { id: next.id, top: next.top } : null;
