@@ -276,7 +276,7 @@ function ToastCard({
         </View>
       )}
       {/* A toast without a duration reports something ongoing; it ends when that does. */}
-      {toast.durationMs === null ? null : (
+      {toast.durationMs !== null && (
         <ToolbarButton
           compact
           round

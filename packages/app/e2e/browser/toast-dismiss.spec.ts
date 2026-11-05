@@ -12,6 +12,11 @@ async function openDiagnostic(page: Page): Promise<void> {
   ).toBeEnabled();
 }
 
+/** The toast's close button, found by its accessible name. */
+function dismissButton(page: Page) {
+  return page.getByTestId("app-toast").getByRole("button", { name: "Dismiss" });
+}
+
 /** Copy diagnostic shows a timed toast. */
 async function showCopiedToast(page: Page): Promise<void> {
   await page
@@ -31,17 +36,15 @@ test("a timed toast closes from its button and waits while the pointer rests on 
 
   await test.step("the close button closes the toast at once", async () => {
     await showCopiedToast(page);
-    const dismiss = page.getByTestId("app-toast-dismiss");
-    await expect(dismiss).toBeVisible();
-    await dismiss.click();
+    await expect(dismissButton(page)).toBeVisible();
+    await dismissButton(page).click();
     await expect(page.getByTestId("app-toast-message")).toHaveCount(0, { timeout: 1_000 });
   });
 
   await test.step("a pointer on the toast keeps it past its duration; leaving lets it close", async () => {
     await showCopiedToast(page);
-    const box = await page.getByTestId("app-toast-dismiss").boundingBox();
-    if (!box) throw new Error("close button not on screen");
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    // A real pointer move onto the button, inside the toast's hover target.
+    await dismissButton(page).hover();
     await page.waitForTimeout(5_000);
     await expect(page.getByTestId("app-toast-message")).toBeVisible();
 
