@@ -28,6 +28,7 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
   name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
   appearance: z.enum(["light", "dark"]),
+  swatch: hexColorSchema.optional(),
   colors: z.strictObject({
     background: hexColorSchema,
     foreground: hexColorSchema,
@@ -37,6 +38,9 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
     accent: hexColorSchema.optional(),
     mutedForeground: hexColorSchema,
     ring: hexColorSchema,
+    sidebar: hexColorSchema.optional(),
+    sidebarHover: hexColorSchema.optional(),
+    sidebarSelected: hexColorSchema.optional(),
   }),
 });
 
@@ -69,7 +73,9 @@ function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
       surface3: colors.border,
       surface4: colors.ring,
       surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.background,
+      surfaceSidebar: colors.sidebar ?? colors.background,
+      surfaceSidebarHover: colors.sidebarHover,
+      surfaceSidebarSelected: colors.sidebarSelected,
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
       foregroundExtraMuted: colors.ring,
@@ -97,7 +103,9 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
       surface3: colors.border,
       surface4: colors.ring,
       surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.control,
+      surfaceSidebar: colors.sidebar ?? colors.control,
+      surfaceSidebarHover: colors.sidebarHover,
+      surfaceSidebarSelected: colors.sidebarSelected,
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
       foregroundExtraMuted: colors.ring,
@@ -149,7 +157,7 @@ export function collectPluginThemes(
       id,
       serverId: target.serverId,
       name: target.plugin.i18n.resolve(target.contribution.name, target.plugin.locale),
-      swatch: target.contribution.colors.background,
+      swatch: target.contribution.swatch ?? target.contribution.colors.background,
       theme: buildPluginTheme(target.contribution),
     };
   });

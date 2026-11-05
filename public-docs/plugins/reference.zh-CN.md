@@ -1051,6 +1051,7 @@ export default function contribute(client: PluginClientContext) {
     id: "mocha",
     name: "Catppuccin Mocha",
     appearance: "dark",
+    swatch: "#cba6f7",
     colors: {
       background: "#1e1e2e",
       foreground: "#cdd6f4",
@@ -1060,6 +1061,9 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
     },
   });
   return () => {};
@@ -1068,16 +1072,21 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色              | 用作                                                 |
+| ----------------- | ---------------------------------------------------- |
+| `background`      | 应用、工作区和终端的背景                             |
+| `foreground`      | 主要文字、终端前景色和光标                           |
+| `raised`          | 卡片、弹出框以及深色主题默认的侧边栏悬停状态         |
+| `control`         | 输入框、次要填充、浅色主题侧边栏和深色主题选中状态   |
+| `border`          | 边框、最高层凸起表面色调和浅色主题侧边栏悬停状态     |
+| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。    |
+| `mutedForeground` | 次要文字                                             |
+| `ring`            | 焦点环、滚动条、终端的亮黑色以及浅色主题默认选中状态 |
+| `sidebar`         | 侧边栏背景。可选；省略时从基础调色板推导。           |
+| `sidebarHover`    | 悬停的侧边栏行。可选；省略时从基础调色板推导。       |
+| `sidebarSelected` | 选中的侧边栏行。可选；省略时从基础调色板推导。       |
+
+`swatch` 可选地设置“外观”选择器中主题旁边显示的颜色。它默认为 `background`，且不会改变应用后的主题。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 

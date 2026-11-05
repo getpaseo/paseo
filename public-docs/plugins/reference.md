@@ -1259,6 +1259,7 @@ export default function contribute(client: PluginClientContext) {
     id: "mocha",
     name: "Catppuccin Mocha",
     appearance: "dark",
+    swatch: "#cba6f7",
     colors: {
       background: "#1e1e2e",
       foreground: "#cdd6f4",
@@ -1268,6 +1269,9 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
     },
   });
   return () => {};
@@ -1278,16 +1282,22 @@ Every color is a hex string; anything else fails to load. Paseo expands the pale
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Color             | Becomes                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| `background`      | App, workspace, and terminal background                                     |
+| `foreground`      | Primary text, terminal foreground and cursor                                |
+| `raised`          | Cards, popovers, and the default dark-theme sidebar hover                   |
+| `control`         | Inputs, secondary fills, default light sidebar, and default dark selection  |
+| `border`          | Borders, the highest raised tint, and the default light-theme sidebar hover |
+| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted.           |
+| `mutedForeground` | Secondary text                                                              |
+| `ring`            | Focus rings, scrollbars, terminal bright black, and default light selection |
+| `sidebar`         | Sidebar background. Optional; derived from the base palette if omitted.     |
+| `sidebarHover`    | Hovered sidebar rows. Optional; derived from the base palette if omitted.   |
+| `sidebarSelected` | Selected sidebar row. Optional; derived from the base palette if omitted.   |
+
+`swatch` optionally sets the color shown beside the theme in the Appearance picker. It defaults to
+`background` and does not change the applied theme.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
