@@ -1,3 +1,3 @@
 export const usesDesktopBindings = true;
-// Native composer Return retains its existing submit path in this feature.
-export const supportsConfigurableComposerSendKeys = false;
+// Android shows the selector with a hardware keyboard; iOS keeps its existing Return path.
+export const supportsConfigurableComposerSendKeys = true;

@@ -14,9 +14,9 @@ Keyboard navigation needs the sidebar's filtered workspace model even when its v
 panel is hidden. Retain that model while keyboard navigation is active; gating it on
 panel visibility leaves number shortcuts with no targets after a compact startup.
 
-Composer send-key customization remains a separate capability. Native retains its
-existing Return submission path; advertising its web-only customization would expose
-settings the native composer does not implement.
+Composer send-key customization is available on desktop and Android. The selector appears
+only with a hardware keyboard; the active shortcut is passed to the Android key source so
+the combinations that are not sends still reach the text control.
 
 ## Native sources
 
