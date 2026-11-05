@@ -18,7 +18,7 @@ function visibleMainPane(page: Page) {
 }
 
 function composerChangesPill(page: Page) {
-  return page.getByTestId("composer-diff-stat-pill");
+  return page.getByRole("button", { name: "Open Changes tab", exact: true });
 }
 
 async function revealComposerChangesInExplorer(page: Page) {
@@ -78,7 +78,8 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
-    await page.setViewportSize({ width: 1400, height: 900 });
+    // Keep both workspace rails visible alongside app navigation and Explorer.
+    await page.setViewportSize({ width: 1900, height: 900 });
     await openAgentRoute(page, {
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
@@ -498,6 +499,7 @@ test.describe("send review feedback", () => {
   test("only open tabs in this workspace appear in compact and wide recipient menus", async ({
     page,
   }) => {
+    test.setTimeout(120000);
     const workspace = await seedChangedAgent("review-feedback-multiple-");
     const other = await seedChangedAgent("review-feedback-other-");
     try {

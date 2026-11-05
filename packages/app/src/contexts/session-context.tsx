@@ -455,10 +455,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },
-      schedule: (task, delayMs) => {
-        const timeout = setTimeout(task, delayMs);
-        return () => clearTimeout(timeout);
-      },
     });
     viewedTimelineSyncRef.current = sync;
     setViewedTimelineSync(serverId, sync);

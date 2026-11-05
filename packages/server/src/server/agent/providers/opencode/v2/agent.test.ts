@@ -17,6 +17,26 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("refreshes the existing location before reading a forced catalog", async () => {
+    const harness = new V2Harness();
+    const refreshed: string[] = [];
+    harness.connection.refreshLocation = async (directory) => {
+      refreshed.push(directory);
+    };
+    harness.api.model.list = async () => ({ location: harness.info.location, data: [] });
+    harness.api.provider.list = async () => ({
+      location: harness.info.location,
+      data: [{ id: "test", name: "Test", activation: "enabled", package: "test" }],
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/project", force: true });
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/project", force: false });
+    expect(refreshed).toEqual(["/tmp/project"]);
+    await client.shutdown();
+  });
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();
     harness.prompt = async (input) => {

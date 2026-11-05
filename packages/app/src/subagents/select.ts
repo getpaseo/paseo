@@ -82,6 +82,7 @@ export function selectSubagentsForParent(
       const parent = getParentAddressFromLabels(agent.labels, serverId);
       if (
         agent.archivedAt ||
+        agent.background ||
         pendingArchiveIds.has(`${serverId}:${agent.id}`) ||
         parent?.serverId !== params.serverId ||
         parent.agentId !== params.parentAgentId
