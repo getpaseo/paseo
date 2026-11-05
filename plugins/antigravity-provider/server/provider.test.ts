@@ -78,13 +78,18 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s", mode?: string) {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    mode?: string,
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -403,7 +408,7 @@ it("stays alive and completes turn when Antigravity logs transient API retry mes
   expect(launches).toHaveLength(1);
 });
 
-it("streams reasoning, usage updates, and resumes session via session/load without replaying history", async () => {
+it("streams reasoning, usage updates, and resumes session via session/load with history replay or skip", async () => {
   const h = await harness();
   await h.open();
   await h.completed(await h.prompt("MULTI"));
@@ -421,12 +426,32 @@ it("streams reasoning, usage updates, and resumes session via session/load witho
 
   const second = await harness();
   await second.open(persistence);
-  // Historical chunks emitted during session/load must be suppressed
-  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+  expect(
+    second.events
+      .filter((event) => event.type === "timeline.item")
+      .map((event) => (event.type === "timeline.item" ? event.item : null)),
+  ).toEqual([
+    {
+      type: "user_message",
+      id: "user_message_chunk:replay-u1",
+      messageId: "replay-u1",
+      text: "REPLAYED_USER",
+    },
+    {
+      type: "assistant_message",
+      id: "agent_message_chunk:replay-a1",
+      messageId: "replay-a1",
+      text: "REPLAYED_ASSISTANT",
+    },
+  ]);
   await second.completed(await second.prompt("RESUME"));
   expect(second.events.findLast((event) => event.type === "session.usage")).toMatchObject({
     usage: { inputTokens: 11815 },
   });
+
+  const third = await harness();
+  await third.open(persistence, "s", undefined, "skip");
+  expect(third.events.filter((event) => event.type === "timeline.item")).toEqual([]);
 });
 
 it("maps subagent steps to a tool carrying the child conversation ID", async () => {
@@ -484,6 +509,14 @@ it("stops an unresponsive driver that ignores session/cancel and signals, then r
     process.platform === "win32" ? [] : [{ signal: "SIGINT" }, { signal: "SIGTERM" }],
   );
   await h.completed(await h.prompt("HELLO"));
+  expect(
+    h.events.some(
+      (event) =>
+        event.type === "timeline.item" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.text.startsWith("REPLAYED_"),
+    ),
+  ).toBe(false);
   const records = await h.records();
   expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(2);
   expect(records.some((entry) => entry.rpc?.method === "session/load")).toBe(true);
@@ -499,6 +532,14 @@ it("switches models dynamically via session/set_model without respawning the pro
     changes: { model: "gemini-3.8-flash-low", mode: "accept-edits" },
   });
   await h.completed(await h.prompt("HELLO"));
+  expect(
+    h.events.some(
+      (event) =>
+        event.type === "timeline.item" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.text.startsWith("REPLAYED_"),
+    ),
+  ).toBe(false);
   const records = await h.records();
   expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(1);
   expect(records.find((entry) => entry.rpc?.method === "session/set_model")?.rpc?.params).toEqual({
