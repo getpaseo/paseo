@@ -120,6 +120,58 @@ test("a new user goes from the loading screen straight into setup", async ({ pag
   }
 });
 
+test("with reduced motion, setup appears without fading in", async ({ page }) => {
+  const host = await startSetupHost("reduced-motion");
+
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await recordFirstLaunch(page);
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+
+    expect((await readFirstLaunch(page)).setupOpacityOnArrival).toBe(1);
+  } finally {
+    await host.close();
+  }
+});
+
+test("changing the theme keeps the setup window in place on every step", async ({ page }) => {
+  const host = await startSetupHost("theme-change");
+
+  try {
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+    const setupWindow = await setupModal(page).elementHandle();
+
+    for (const title of [
+      "Welcome to Paseo",
+      "Your agents",
+      "Add your projects",
+      "Let agents use Paseo",
+      "Take your agents with you",
+    ]) {
+      if (title !== "Welcome to Paseo") await continueSetup(page);
+      await expectSetupStep(page, title);
+      const heading = setupModal(page).getByRole("heading", { name: title });
+      const headingNode = await heading.elementHandle();
+      const lightColor = await heading.evaluate((node) => getComputedStyle(node).color);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(heading).not.toHaveCSS("color", lightColor);
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(heading).toHaveCSS("color", lightColor);
+      expect(await setupWindow?.evaluate((node) => node.isConnected), title).toBe(true);
+      expect(await headingNode?.evaluate((node) => node.isConnected), title).toBe(true);
+    }
+
+    await goToSetupStep(page, "Appearance");
+    await pickTheme(page, "Midnight");
+    await pickTheme(page, "Light");
+    expect(await setupWindow?.evaluate((node) => node.isConnected)).toBe(true);
+  } finally {
+    await host.close();
+  }
+});
+
 test("the loading screen stays up while the setup host loads its workspaces", async ({ page }) => {
   const host = await startSetupHost("slow-workspaces");
   const gate = await installDaemonWebSocketGate(page, { port: host.port });
