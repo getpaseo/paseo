@@ -504,6 +504,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /** Creates a background agent. A workspace this request creates inherits it. */
   background?: CreateAgentRequestMessage["background"];
   /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   worktreeName?: string;
@@ -2891,6 +2892,28 @@ export class DaemonClient {
     });
   }
 
+  /** Finds one workspace by id across pages, background ones included when the host has them. */
+  async findWorkspace(
+    workspaceId: string,
+    options?: { requestId?: string },
+  ): Promise<FetchWorkspacesEntry | null> {
+    const filter = this.supportsBackgroundWorkspaces() ? { includeBackground: true } : {};
+    let cursor: string | undefined;
+    let requestId = options?.requestId;
+    do {
+      const result = await this.fetchWorkspaces({
+        requestId,
+        filter,
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      const match = result.entries.find((entry) => entry.id === workspaceId);
+      if (match) return match;
+      cursor = result.pageInfo.nextCursor ?? undefined;
+      requestId = undefined;
+    } while (cursor);
+    return null;
+  }
+
   listWorkspaceLabels(
     options: {
       sync?: { generation: string; afterSeq: number };
@@ -3293,13 +3316,24 @@ export class DaemonClient {
     return this.lastServerInfoMessage?.features?.backgroundWorkspaces === true;
   }
 
+  // Background on a request that creates its workspace predates background agents: older hosts
+  // apply it to the new workspace. Placing a background agent in an existing workspace, or
+  // under a caller, needs a host that knows background agents.
+  private requireBackgroundCreation(options: CreateAgentRequestOptions): void {
+    if (options.workspaceId === undefined && options.callerAgentId === undefined) {
+      this.requireBackgroundWorkspaces();
+    } else if (this.lastServerInfoMessage?.features?.backgroundAgents !== true) {
+      throw new Error("Update the host to use background agents.");
+    }
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
     if (options.git !== undefined || options.worktreeName !== undefined) {
       throw new Error(
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
       );
     }
-    if (options.background !== undefined) this.requireBackgroundWorkspaces();
+    if (options.background !== undefined) this.requireBackgroundCreation(options);
     const result = await this.creations.createAgent({
       ...options,
       config: resolveAgentConfig(options),

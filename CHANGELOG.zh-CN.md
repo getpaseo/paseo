@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1 - 2026-11-05
+
+### 修复
+
+- 修复终端工作进程无法读取自身进程标识时 daemon 无法启动的问题；此前在 Windows PowerShell 5.1 无法运行 `Get-CimInstance` 的 Windows 机器上，Paseo 桌面版因此没有可用的 daemon ([#8810](https://github.com/getpaseo/paseo/pull/8810))
+
 ## 0.15.0 - 2026-11-03
 
 daemon 重启后，终端中的程序继续运行。开启 Agent 恢复后，被中断的 Agent 会在原有会话中恢复工作。

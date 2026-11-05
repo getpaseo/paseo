@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { ComposerFullscreenBody, ComposerFullscreenFooter } from "@/composer/dock";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { isWeb } from "@/constants/platform";
-import { ICON_SIZE } from "@/styles/theme";
+import {
+  iconSizeFor,
+  TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_CONTROL_SIZES,
+  type ControlSizing,
+} from "@/components/ui/control-geometry";
 import { StyleSheet } from "react-native-unistyles";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
-
-const CONTROL_SIZE = 28;
-const FULLSCREEN_GLYPH_SIZE = ICON_SIZE.md;
 
 function keepEditorFocused(event: import("react-native").PointerEvent) {
   if (isWeb) event.preventDefault();
@@ -27,6 +29,7 @@ function keepEditorFocused(event: import("react-native").PointerEvent) {
  */
 export function ComposerInputPresentation({
   fullscreen,
+  controlSizing,
   sendIconSize,
   surface,
   toolbar,
@@ -42,6 +45,8 @@ export function ComposerInputPresentation({
   overlay,
 }: {
   fullscreen: boolean;
+  /** The sizing the toolbar's stylesheet resolves to; see `resolveControlSizing`. */
+  controlSizing: ControlSizing;
   sendIconSize: number;
   surface: ReactNode;
   toolbar: ReactNode;
@@ -61,18 +66,19 @@ export function ComposerInputPresentation({
   // action (Escape, hardware back) belongs only to the pane the user is in.
   const { isActiveComposer } = useComposerKeyboardScope();
   const exitScopeRef = useComposerFullscreenExit(fullscreen && isActiveComposer, onExit);
+  const glyphSize = iconSizeFor("md")[controlSizing];
   const railOffset = resolveGlyphRailOffset({
-    controlSize: CONTROL_SIZE,
+    controlSize: TOOLBAR_CONTROL_SIZES[controlSizing],
     sendIconSize,
-    glyphIconSize: FULLSCREEN_GLYPH_SIZE,
+    glyphIconSize: glyphSize,
   });
   const maximizeIcon = useCallback(
-    (color: string) => <Maximize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
-    [],
+    (color: string) => <Maximize2 color={color} size={glyphSize} />,
+    [glyphSize],
   );
   const minimizeIcon = useCallback(
-    (color: string) => <Minimize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
-    [],
+    (color: string) => <Minimize2 color={color} size={glyphSize} />,
+    [glyphSize],
   );
   // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
   const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
@@ -141,8 +147,8 @@ const styles = StyleSheet.create((theme) => ({
   inline: { flexShrink: 1, position: "relative" },
   inlineTextSurface: { flexShrink: 1, position: "relative" },
   iconButton: {
-    width: CONTROL_SIZE,
-    height: CONTROL_SIZE,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,
@@ -150,8 +156,8 @@ const styles = StyleSheet.create((theme) => ({
   enterButton: {
     position: "absolute",
     top: 0,
-    width: CONTROL_SIZE,
-    height: CONTROL_SIZE,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,
