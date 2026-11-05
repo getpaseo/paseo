@@ -36,7 +36,9 @@ import {
   buildElicitationResponse,
   parseElicitationQuestions,
   persistenceSchema,
+  type AcpElicitationParams,
   type AcpPermissionOption,
+  type AcpRequestPermissionParams,
   type AcpSessionUpdate,
   type AcpToolCallPayload,
   type JsonValue,
@@ -710,7 +712,7 @@ export class Session {
   private handleToolPermissionRequest(
     driver: DriverProcess,
     rpcId: string | number,
-    request: { sessionId: string; toolCall: AcpToolCallPayload; options: AcpPermissionOption[] },
+    request: AcpRequestPermissionParams,
   ): void {
     const mergedTool = mergeAcpToolCall(
       this.turnTools.get(request.toolCall.toolCallId),
@@ -765,10 +767,7 @@ export class Session {
     });
   }
 
-  private handleElicitationRequest(
-    rpcId: string | number,
-    params: ReturnType<typeof acpElicitationParamsSchema.parse>,
-  ): void {
+  private handleElicitationRequest(rpcId: string | number, params: AcpElicitationParams): void {
     const questions = parseElicitationQuestions(params);
     const permissionId = `question-${++this.permissionSeq}`;
     this.pendingPermissions.set(permissionId, {

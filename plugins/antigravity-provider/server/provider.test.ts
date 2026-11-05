@@ -152,6 +152,35 @@ async function harness(env: Record<string, string> = {}) {
       throw new Error("Missing persistence");
     return opened.persistence;
   }
+  async function acpLaunches() {
+    return (await records()).filter((entry) => entry.args?.includes("acp"));
+  }
+  async function modelChanges() {
+    return (await records())
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params as { sessionId: string; modelId: string });
+  }
+  async function selectedPermissionOptions() {
+    return (await records())
+      .filter((entry) => entry.rpc?.result?.outcome?.outcome === "selected")
+      .map((entry) => entry.rpc.result.outcome.optionId as string);
+  }
+  async function hasRpcMethod(method: string) {
+    return (await records()).some((entry) => entry.rpc?.method === method);
+  }
+  async function allowPermission(name?: string, sessionId = "s") {
+    const perm = (await wait(
+      (event) =>
+        event.type === "session.permission" && (name === undefined || event.request.name === name),
+    )) as Extract<ProviderEvent, { type: "session.permission" }>;
+    await connection.send({
+      type: "session.permission",
+      sessionId,
+      permissionId: perm.request.id,
+      response: { behavior: "allow" },
+    });
+    return perm.request;
+  }
   return {
     connection,
     events,
@@ -165,6 +194,11 @@ async function harness(env: Record<string, string> = {}) {
     completed,
     records,
     persistence,
+    acpLaunches,
+    modelChanges,
+    selectedPermissionOptions,
+    hasRpcMethod,
+    allowPermission,
   };
 }
 
@@ -489,10 +523,8 @@ it.each(["HANG", "TOOL_HANG"])(
     await h.request({ type: "session.interrupt", requestId: "interrupt", sessionId: "s" });
     expect(await h.completed(message)).toMatchObject({ state: "canceled" });
     await h.completed(await h.prompt("HELLO"));
-    const records = await h.records();
-    const launches = records.filter((entry) => entry.args?.includes("acp"));
-    expect(launches).toHaveLength(1);
-    expect(records.some((entry) => entry.rpc?.method === "session/cancel")).toBe(true);
+    expect(await h.acpLaunches()).toHaveLength(1);
+    expect(await h.hasRpcMethod("session/cancel")).toBe(true);
   },
 );
 
@@ -517,9 +549,8 @@ it("stops an unresponsive driver that ignores session/cancel and signals, then r
         event.item.text.startsWith("REPLAYED_"),
     ),
   ).toBe(false);
-  const records = await h.records();
-  expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(2);
-  expect(records.some((entry) => entry.rpc?.method === "session/load")).toBe(true);
+  expect(await h.acpLaunches()).toHaveLength(2);
+  expect(await h.hasRpcMethod("session/load")).toBe(true);
 });
 
 it("switches models dynamically via session/set_model without respawning the process, and rejects invalid models/modes", async () => {
@@ -540,12 +571,13 @@ it("switches models dynamically via session/set_model without respawning the pro
         event.item.text.startsWith("REPLAYED_"),
     ),
   ).toBe(false);
-  const records = await h.records();
-  expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(1);
-  expect(records.find((entry) => entry.rpc?.method === "session/set_model")?.rpc?.params).toEqual({
-    sessionId: "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
-    modelId: "gemini-3.8-flash-low",
-  });
+  expect(await h.acpLaunches()).toHaveLength(1);
+  expect(await h.modelChanges()).toEqual([
+    {
+      sessionId: "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
+      modelId: "gemini-3.8-flash-low",
+    },
+  ]);
 
   await h.request({
     type: "session.configure",
@@ -553,11 +585,10 @@ it("switches models dynamically via session/set_model without respawning the pro
     sessionId: "s",
     changes: { model: null },
   });
-  expect(
-    (await h.records())
-      .filter((entry) => entry.rpc?.method === "session/set_model")
-      .map((entry) => entry.rpc.params.modelId),
-  ).toEqual(["gemini-3.8-flash-low", "gemini-4-argon-medium"]);
+  expect((await h.modelChanges()).map((change) => change.modelId)).toEqual([
+    "gemini-3.8-flash-low",
+    "gemini-4-argon-medium",
+  ]);
 
   await h.request({
     type: "session.configure",
@@ -615,33 +646,20 @@ it("keeps the previous model when session/set_model fails so a retry succeeds", 
       requestId: "set-model-retry",
     }),
   );
-  const records = await h.records();
-  expect(records.filter((entry) => entry.args?.includes("acp"))).toHaveLength(1);
-  expect(
-    records
-      .filter((entry) => entry.rpc?.method === "session/set_model")
-      .map((entry) => entry.rpc.params.modelId),
-  ).toEqual(["gemini-3.8-flash-low", "gemini-3.8-flash-low"]);
+  expect(await h.acpLaunches()).toHaveLength(1);
+  expect((await h.modelChanges()).map((change) => change.modelId)).toEqual([
+    "gemini-3.8-flash-low",
+    "gemini-3.8-flash-low",
+  ]);
 });
 
 it("prompts for external MCP tools with a query field in accept-edits mode and prefers allow_once", async () => {
   const h = await harness();
   await h.open(undefined, "s", "accept-edits");
   const id = await h.prompt("MCP_QUERY_TOOL");
-  const perm = (await h.wait(
-    (event) => event.type === "session.permission" && event.request.name === "mcp__db__query",
-  )) as Extract<ProviderEvent, { type: "session.permission" }>;
-  await h.connection.send({
-    type: "session.permission",
-    sessionId: "s",
-    permissionId: perm.request.id,
-    response: { behavior: "allow" },
-  });
+  await h.allowPermission("mcp__db__query");
   await h.completed(id);
-  const rpcResponse = (await h.records()).find(
-    (entry) => entry.rpc?.result?.outcome?.outcome === "selected",
-  );
-  expect(rpcResponse?.rpc?.result?.outcome?.optionId).toBe("allow_once");
+  expect(await h.selectedPermissionOptions()).toEqual(["allow_once"]);
 });
 
 it.each(["auth", "exit", "stderr"])(
