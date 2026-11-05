@@ -93,6 +93,27 @@ async function dragTouchSidebar(page: Page, testID: string, delta: number) {
   await expect(grip).toHaveCSS("opacity", idleOpacity);
 }
 
+async function cancelSettingsSidebarDrag(page: Page, initialWidth: number) {
+  const box = await page.getByTestId("settings-sidebar-resize-handle").boundingBox();
+  if (!box) throw new Error("Expected the touch resize target to be visible.");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const session = await page.context().newCDPSession(page);
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+  for (const progress of [0.125, 0.375, 0.75, 1]) {
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: x + 100 * progress, y }],
+    });
+  }
+  await expect(page.getByTestId("settings-sidebar-resize-handle-grip")).toHaveCSS("opacity", "0.3");
+  await expect
+    .poll(async () => (await page.getByTestId("settings-sidebar").boundingBox())?.width ?? 0)
+    .toBeGreaterThan(initialWidth + 30);
+  await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+  await session.detach();
+}
+
 async function openWorkspace(
   page: import("@playwright/test").Page,
   workspace: { workspaceId: string },
@@ -103,6 +124,19 @@ async function openWorkspace(
 
 test.describe("Settings shared sidebar width on touch tablets", () => {
   test.use({ hasTouch: true, viewport: { width: 1366, height: 1024 } });
+
+  test("cancelling an active settings resize preserves the saved width", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    const before = await savedSidebarWidth(page);
+    const sidebar = page.getByTestId("settings-sidebar");
+    const initialWidth = await sidebar.evaluate((element) => element.getBoundingClientRect().width);
+    await cancelSettingsSidebarDrag(page, initialWidth);
+    await expect(sidebar).toHaveCSS("width", `${initialWidth}px`);
+    expect(await savedSidebarWidth(page)).toBe(before);
+    await page.reload();
+    await expect(sidebar).toHaveCSS("width", `${initialWidth}px`);
+  });
 
   test("touch resizing stays discoverable and settings preserve the saved width", async ({
     page,
@@ -170,6 +204,22 @@ test("settings sidebar mouse resizing preserves limits and compact navigation", 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(handle).toHaveCount(0);
   await expectSettingsBackButton(page);
+});
+
+test("settings fits its available space without overwriting the saved width", async ({ page }) => {
+  await gotoAppShell(page);
+  await openSettings(page);
+  const sidebar = page.getByTestId("settings-sidebar");
+  const detail = page.getByTestId("settings-detail-pane");
+  const savedWidth = await savedSidebarWidth(page);
+  const initialWidth = await sidebar.evaluate((element) => element.getBoundingClientRect().width);
+  const row = detail.locator("..");
+  await row.evaluate((element) => (element.style.maxWidth = "550px"));
+  await expect(sidebar).toHaveCSS("width", "150px");
+  await expect(detail).toHaveCSS("width", "400px");
+  expect(await savedSidebarWidth(page)).toBe(savedWidth);
+  await row.evaluate((element) => (element.style.maxWidth = ""));
+  await expect(sidebar).toHaveCSS("width", `${initialWidth}px`);
 });
 
 test.describe("Settings sidebar scroll position", () => {

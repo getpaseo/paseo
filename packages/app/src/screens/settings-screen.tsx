@@ -10,6 +10,7 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
@@ -961,6 +962,7 @@ interface SettingsSidebarProps {
   onBackToWorkspace: () => void;
   activeHostServerId: string | null;
   layout: "desktop" | "mobile";
+  viewportWidth?: number;
 }
 
 function SettingsSidebar({
@@ -972,6 +974,7 @@ function SettingsSidebar({
   onBackToWorkspace,
   activeHostServerId,
   layout,
+  viewportWidth: containerWidth,
 }: SettingsSidebarProps) {
   const { theme, rt } = useUnistyles();
   const { t } = useTranslation();
@@ -990,7 +993,7 @@ function SettingsSidebar({
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: windowWidth } = useWindowDimensions();
-  const viewportWidth = windowWidth - insets.left - insets.right;
+  const viewportWidth = containerWidth ?? windowWidth - insets.left - insets.right;
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
     viewportWidth,
@@ -1024,7 +1027,9 @@ function SettingsSidebar({
             viewportWidth,
           });
         })
-        .onEnd(() => runOnJS(setSidebarWidth)(resizeWidth.value))
+        .onEnd((_event, success) => {
+          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
+        })
         .onFinalize((_event, success) => {
           if (!success) resizeWidth.value = visibleSidebarWidth;
           scheduleOnRN(hideResizeGrip);
@@ -1182,6 +1187,10 @@ export interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ view }: SettingsScreenProps) {
+  const [desktopWidth, setDesktopWidth] = useState<number>();
+  const handleDesktopLayout = useCallback((event: LayoutChangeEvent) => {
+    setDesktopWidth(event.nativeEvent.layout.width);
+  }, []);
   const router = useRouter();
   const { t } = useTranslation();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
@@ -1458,7 +1467,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // selected section provides.
   return (
     <View style={styles.container}>
-      <View style={desktopStyles.row}>
+      <View style={desktopStyles.row} onLayout={handleDesktopLayout}>
         <WindowChromeRegion corners="top-left">
           <SettingsSidebar
             view={view}
@@ -1469,6 +1478,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             onBackToWorkspace={handleBackToWorkspace}
             activeHostServerId={activeHostServerId}
             layout="desktop"
+            viewportWidth={desktopWidth}
           />
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
@@ -1553,7 +1563,7 @@ const desktopStyles = StyleSheet.create({
 });
 
 const resizeStyles = RNStyleSheet.create({
-  container: { position: "relative", flexShrink: 0, zIndex: 1 },
+  container: { position: "relative", flexShrink: 1, zIndex: 1 },
 });
 
 const sidebarStyles = StyleSheet.create((theme) => ({
