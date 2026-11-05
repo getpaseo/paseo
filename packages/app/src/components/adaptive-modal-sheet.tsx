@@ -235,8 +235,9 @@ const WEB_EXIT_DURATION_MS = 160;
 const WEB_ENTER_DURATION_MS = 160;
 const WEB_ENTER_ANIMATION_NAME = "paseo-modal-enter";
 
-// The desktop overlay fades in as it fades out. A CSS animation runs from the overlay's first
-// paint, so a dialog that opens on its own, like first-run setup, never pops in.
+// The desktop card fades in; the dim lands at once, so the screen behind is never seen undimmed
+// while the dialog arrives. A CSS animation runs from the card's first paint, so a dialog that opens
+// on its own, like first-run setup, never pops in. Closing fades the whole overlay.
 function ensureWebEnterKeyframes() {
   if (!isWeb || typeof document === "undefined") return;
   if (document.getElementById(WEB_ENTER_ANIMATION_NAME)) return;
@@ -246,6 +247,11 @@ function ensureWebEnterKeyframes() {
   document.head.appendChild(style);
 }
 ensureWebEnterKeyframes();
+const WEB_ENTER_STYLE = {
+  animationName: WEB_ENTER_ANIMATION_NAME,
+  animationDuration: `${WEB_ENTER_DURATION_MS}ms`,
+  animationTimingFunction: "ease-out",
+};
 
 /** The compact sheet's surface: Gorhom's `backgroundComponent` for every bottom sheet. */
 export function SheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -676,6 +682,7 @@ export function AdaptiveModalSheet({
       styles.desktopCard,
       desktopHeight != null && { height: desktopHeight },
       desktopMaxWidth != null && { maxWidth: desktopMaxWidth },
+      isWeb && WEB_ENTER_STYLE,
     ],
     [desktopMaxWidth, desktopHeight],
   );
@@ -685,9 +692,6 @@ export function AdaptiveModalSheet({
       isWeb && {
         zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
-        animationName: WEB_ENTER_ANIMATION_NAME,
-        animationDuration: `${WEB_ENTER_DURATION_MS}ms`,
-        animationTimingFunction: "ease-out",
         transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
         transitionProperty: "opacity",
         transitionTimingFunction: "ease",

@@ -114,7 +114,7 @@ test("a new user goes from the loading screen straight into setup", async ({ pag
     const launch = await readFirstLaunch(page);
     expect(launch.appBeforeSetup).toBe(false);
     expect(launch.setupOpacityOnArrival).toBeLessThan(1);
-    await expect(page.getByTestId("onboarding-modal")).toHaveCSS("opacity", "1");
+    await expect(setupModal(page)).toHaveCSS("opacity", "1");
   } finally {
     await host.close();
   }
