@@ -39,7 +39,8 @@ import {
 //    table cannot be read, nothing in the record is signaled: ending a program would reparent
 //    the children only the table can find, and a retry could never reach them again.
 // 2. An owned worker, or one its process cannot identify, gets an authenticated `shutdown`: it
-//    kills each terminal and waits for it.
+//    kills each terminal and waits for it. A worker that cannot be identified gets it even when
+//    the caller skips the grace period, since nothing else can stop it.
 // 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
 //    each signal.
 // 4. Succeed only when every candidate is gone or proven unrelated. Otherwise keep a record of
@@ -266,14 +267,11 @@ async function reapRecord(
     return await keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
   }
 
-  // The shutdown request authenticates with the record's secret, so a worker that cannot be
-  // identified by its process is asked too: only the worker that wrote the record can answer.
-  // It is never signaled.
-  const askShutdown = isOpen(tracked.worker) && input.gracefulMs > 0;
-  if (askShutdown) {
-    await requestWorkerShutdown(record, input.gracefulMs, log);
+  const shutdownMs = shutdownWindow(tracked.worker, input.gracefulMs);
+  if (shutdownMs > 0) {
+    await requestWorkerShutdown(record, shutdownMs, log);
   }
-  await waitUntilSettled(tracked, Date.now() + (askShutdown ? input.gracefulMs : 0));
+  await waitUntilSettled(tracked, Date.now() + shutdownMs);
 
   let signaled: number[] = [];
   if (!isSettled(tracked)) {
@@ -282,6 +280,17 @@ async function reapRecord(
   }
 
   return await keepUnresolved(input, tracked, signaled, null);
+}
+
+// How long the worker gets to answer an authenticated `shutdown` and exit. An owned worker gets
+// the grace period before SIGKILL, and none when the caller skips it. The request authenticates
+// with the record's secret, so a worker its process cannot identify is asked too: only the worker
+// that wrote the record can answer. It is never signaled, so it is asked on every cleanup,
+// retries without a grace period included.
+function shutdownWindow(worker: ProcessOwnership, gracefulMs: number): number {
+  if (worker.status === "owned") return gracefulMs;
+  if (worker.status === "unknown") return Math.max(gracefulMs, DEFAULT_GRACEFUL_MS);
+  return 0;
 }
 
 // Retires the record when every process it names is settled; otherwise writes the cleanup
@@ -460,8 +469,12 @@ async function collectCandidates(
   // already gone: the kernel keeps a session id reserved while a member lives, so a job the
   // shell left behind is still found. A pid reused by another process (unrelated) leads someone
   // else's session and is never walked.
+  // A program recorded without a birth time is never walked: the worker could not read the
+  // process table when it started it, so the walk would only keep the cleanup unconfirmed.
   const roots = Array.from(candidates.values()).filter(
-    (c) => c.state.status === "owned" || (c.state.status === "gone" && inspector.reportsSessions),
+    (c) =>
+      c.state.status === "owned" ||
+      (c.state.status === "gone" && c.startedAt !== null && inspector.reportsSessions),
   );
   if (roots.length === 0) return { candidates: Array.from(candidates.values()), tableError: null };
 

@@ -734,6 +734,26 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper without process ide
     expect(existsSync(recordPath)).toBe(false);
   });
 
+  it("does not look up the children of a gone program recorded without a birth time", async () => {
+    const home = makeHome();
+    const recordPath = writeRecord(home, {
+      pid: await goneProcessPid(),
+      identity: { unavailable: "ps unavailable" },
+      terminals: [{ id: "t1", pid: await goneProcessPid(), startedAt: null }],
+    });
+    // Linux reports sessions, so a gone program with a birth time would be walked through the
+    // process table, which this machine cannot read.
+    const linuxWithoutPs = createTerminalWorkerProcessInspector({
+      platform: "linux",
+      commandRunner: { exec: () => Promise.reject(new Error("spawn ps ENOENT")) },
+    });
+
+    const result = await reapTerminalWorkers({ paseoHome: home, inspector: linuxWithoutPs });
+
+    expect(result).toEqual({ records: 1, retired: 1, signaled: [] });
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
   it("never signals a live terminal program recorded without a birth time", async () => {
     const home = makeHome();
     const program = spawnIdle();

@@ -61,6 +61,7 @@ import {
   listTerminalWorkerRecords,
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
+  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   writeTerminalWorkerRecord,
   type TerminalWorkerRecord,
@@ -74,7 +75,7 @@ import {
   TerminalWorkerIncompatibleError,
 } from "./terminal-worker-pool.js";
 import { connectTerminalWorker } from "./terminal-worker-client.js";
-import { launchTerminalWorker } from "./terminal-worker-launch.js";
+import { launchTerminalWorker, TerminalWorkerLaunchError } from "./terminal-worker-launch.js";
 import { currentBootId } from "../server/pid-lock.js";
 import { spawn } from "node:child_process";
 
@@ -2689,6 +2690,24 @@ it.each([false, true])(
   45000,
 );
 
+// #8810: a worker that cannot start must not take the daemon down. The launcher cannot open its
+// log here (a directory sits at its path), so the launch fails before any worker runs.
+it("starts without a worker when the worker cannot start, and launches one once it can", async () => {
+  const paseoHome = createTemporaryHome();
+  const logPath = terminalWorkerLogPath(paseoHome);
+  mkdirSync(logPath);
+
+  manager = await startRealWorkerManager({ paseoHome });
+  expect(await workerRecords(paseoHome)).toEqual([]);
+  await expect(
+    manager.createTerminal({ workspaceId: "ws-no-worker", cwd: paseoHome }),
+  ).rejects.toThrow(TerminalWorkerLaunchError);
+
+  rmSync(logPath, { recursive: true });
+  trackTerminal(await manager.createTerminal({ workspaceId: "ws-no-worker", cwd: paseoHome }));
+  expect(await workerRecords(paseoHome)).toHaveLength(1);
+}, 30000);
+
 // Both Windows reports (#8766, #8784): the process identity query (Windows PowerShell there,
 // `ps` here) cannot run at all. Terminals work anyway; only what cleanup may signal degrades.
 // The fake `ps` dies by a signal, so the query fails the way a process that cannot be created
@@ -2805,6 +2824,37 @@ it.skipIf(isPlatform("win32"))(
       await stopping.closeTerminals();
 
       // The worker closed its terminals before it answered; it stops listening as it exits.
+      expect(isProcessAlive(programPid)).toBe(false);
+      expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
+      await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
+    } finally {
+      restorePath();
+    }
+  },
+  30000,
+);
+
+// A retry of an unconfirmed cleanup, and startup cleanup, run without a grace period. For a
+// worker that cannot be identified the shutdown request is the only way it can be stopped.
+it.skipIf(isPlatform("win32"))(
+  "closes a worker whose identity is unavailable from a cleanup without a grace period",
+  async () => {
+    const paseoHome = createTemporaryHome();
+    const restorePath = withoutProcessIdentity();
+    try {
+      const previous = await startRealWorkerManager({ paseoHome });
+      await previous.createTerminal({
+        workspaceId: "ws-no-identity",
+        cwd: paseoHome,
+        ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+      });
+      const [record] = await workerRecords(paseoHome);
+      const programPid = record!.terminals[0]!.pid;
+      await previous.detach();
+
+      const result = await reapTerminalWorkers({ paseoHome, gracefulMs: 0 });
+
+      expect(result.signaled).toEqual([]);
       expect(isProcessAlive(programPid)).toBe(false);
       expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
       await waitForCondition(() => !isProcessAlive(record!.pid), 5000);

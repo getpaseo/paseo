@@ -158,7 +158,7 @@ class SystemManagedProcessTable implements ManagedProcessTable {
     // The identity query can fail on every call on some machines (a broken Windows PowerShell,
     // a policy that refuses to start it). Whether the pid is running at all needs no query, so
     // a gone process still reads as gone there and its records can be retired.
-    if (inspection.status === "error" && !processExists(pid)) return { status: "not-found" };
+    if (inspection.status === "error" && !isProcessAlive(pid)) return { status: "not-found" };
     return inspection;
   }
 
@@ -448,18 +448,9 @@ export function createPidTarget(pid: number): TreeKillTarget {
   };
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isNodeErrorWithCode(error, "EPERM");
-  }
-}
-
 // Signal 0 checks that the pid exists without signaling it: ESRCH means no such process, EPERM
 // means one that belongs to someone else.
-function processExists(pid: number): boolean {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
