@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyDictationTranscript,
   computeCanStartDictation,
+  type HardwareKeyboardSubmitGateContext,
   type MessageInputEnterContext,
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
+  resolveHardwareKeyboardSubmitEnabled,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
   resolveAlternateSendAction,
@@ -525,6 +527,37 @@ describe("resolveMessageInputEnterAction", () => {
         expect(sendAction.calls).toEqual(["send"]);
       },
     );
+  });
+});
+
+describe("resolveHardwareKeyboardSubmitEnabled", () => {
+  function gateContext(
+    overrides: Partial<HardwareKeyboardSubmitGateContext> = {},
+  ): HardwareKeyboardSubmitGateContext {
+    return {
+      isInputFocused: true,
+      isSendButtonDisabled: false,
+      isDictating: false,
+      isRealtimeVoiceForCurrentAgent: false,
+      ...overrides,
+    };
+  }
+
+  it("enables the Android source with a focused composer", () => {
+    expect(resolveHardwareKeyboardSubmitEnabled(gateContext())).toBe(true);
+  });
+
+  it("disables the native source without focus, while sending is blocked, and during voice input", () => {
+    expect(resolveHardwareKeyboardSubmitEnabled(gateContext({ isInputFocused: false }))).toBe(
+      false,
+    );
+    expect(resolveHardwareKeyboardSubmitEnabled(gateContext({ isSendButtonDisabled: true }))).toBe(
+      false,
+    );
+    expect(resolveHardwareKeyboardSubmitEnabled(gateContext({ isDictating: true }))).toBe(false);
+    expect(
+      resolveHardwareKeyboardSubmitEnabled(gateContext({ isRealtimeVoiceForCurrentAgent: true })),
+    ).toBe(false);
   });
 });
 

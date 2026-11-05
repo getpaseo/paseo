@@ -1,11 +1,16 @@
+import type {
+  HardwareKeyboardSendShortcut,
+  HardwareKeyboardSubmitEvent,
+} from "@/native/hardware-keyboard-submit.types";
+
 export interface HardwareKeyboardSubmitListenerPort {
-  addListener(handler: () => void): { remove: () => void };
-  setEnabled(enabled: boolean): void;
+  addListener(handler: (event: HardwareKeyboardSubmitEvent) => void): { remove: () => void };
+  setEnabled(enabled: boolean, sendShortcut: HardwareKeyboardSendShortcut): void;
 }
 
 export interface HardwareKeyboardSubmitController {
-  setOnSubmit(handler: () => void): void;
-  enable(): void;
+  setOnSubmit(handler: (event: HardwareKeyboardSubmitEvent) => void): void;
+  enable(sendShortcut: HardwareKeyboardSendShortcut): void;
   disable(): void;
 }
 
@@ -13,20 +18,23 @@ export function createHardwareKeyboardSubmitController(
   port: HardwareKeyboardSubmitListenerPort,
 ): HardwareKeyboardSubmitController {
   let subscription: { remove: () => void } | null = null;
-  let onSubmit: () => void = () => {};
+  let onSubmit: (event: HardwareKeyboardSubmitEvent) => void = () => {};
+  let sendShortcut: HardwareKeyboardSendShortcut = "enter";
 
   return {
     setOnSubmit(handler) {
       onSubmit = handler;
     },
-    enable() {
-      if (subscription) return;
-      subscription = port.addListener(() => onSubmit());
-      port.setEnabled(true);
+    enable(nextSendShortcut) {
+      sendShortcut = nextSendShortcut;
+      if (!subscription) {
+        subscription = port.addListener((event) => onSubmit(event));
+      }
+      port.setEnabled(true, sendShortcut);
     },
     disable() {
       if (!subscription) return;
-      port.setEnabled(false);
+      port.setEnabled(false, sendShortcut);
       subscription.remove();
       subscription = null;
     },

@@ -175,6 +175,28 @@ export function resolveMessageInputEnterAction(
   return "default-send";
 }
 
+export interface HardwareKeyboardSubmitGateContext {
+  isInputFocused: boolean;
+  isSendButtonDisabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+}
+
+/**
+ * Keeps the Android source off without focus, while sending is blocked, during
+ * dictation, and during realtime voice.
+ */
+export function resolveHardwareKeyboardSubmitEnabled(
+  ctx: HardwareKeyboardSubmitGateContext,
+): boolean {
+  return (
+    ctx.isInputFocused &&
+    !ctx.isSendButtonDisabled &&
+    !ctx.isDictating &&
+    !ctx.isRealtimeVoiceForCurrentAgent
+  );
+}
+
 export function runMessageInputKeyboardAction(
   action: MessageInputKeyboardActionKind,
   actions: MessageInputKeyboardActions,
