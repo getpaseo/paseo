@@ -1,5 +1,7 @@
 import { Parser } from "htmlparser2";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmTable } from "micromark-extension-gfm-table";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { decodeString } from "micromark-util-decode-string";
 import type { Nodes } from "mdast";
 
@@ -34,12 +36,21 @@ const EMPHASIS: Readonly<Record<string, string>> = { b: "**", strong: "**", i: "
 export function normalizeMarkdownHtml(source: string): string {
   if (!source.includes("<")) return source;
   const htmlRanges: { start: number; end: number }[] = [];
+  const tableRanges: { start: number; end: number }[] = [];
   function findHtml(node: Nodes) {
+    if (node.type === "table" && node.position) {
+      tableRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
+    }
     if (node.type === "html" && node.position) {
       htmlRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
     } else if ("children" in node) node.children.forEach(findHtml);
   }
-  findHtml(fromMarkdown(source));
+  findHtml(
+    fromMarkdown(source, {
+      extensions: [gfmTable()],
+      mdastExtensions: [gfmTableFromMarkdown()],
+    }),
+  );
   const codeRanges: { start: number; end: number }[] = [];
   // Disable HTML parsing so code inside <details> remains visible to the Markdown parser.
   const tree = fromMarkdown(source, {
@@ -84,6 +95,13 @@ export function normalizeMarkdownHtml(source: string): string {
       : /^\s*$/.test(source.slice(0, offset));
     previousTag = { name, end: offset + raw.length };
     if (EMPHASIS[name]) return EMPHASIS[name];
+    if (name === "br") {
+      if (closing) return "";
+      // A Unicode line separator renders a break without ending the GFM row.
+      return tableRanges.some(({ start, end }) => offset >= start && offset < end)
+        ? "\u2028"
+        : "  \n";
+    }
     const boundary = layoutBoundary(name, source, raw, offset, closing, startsAfterBoundary);
     if (boundary !== null) return boundary;
     if (name === "a") return markdownAnchor(raw, closing, links);
@@ -168,7 +186,6 @@ function layoutBoundary(
   closing: boolean,
   startsAfterBoundary: boolean,
 ): string | null {
-  if (name === "br") return closing ? "" : "  \n";
   if (name === "summary") return closing ? "**\n\n" : "**";
   if (name === "details")
     return (closing ? offset + raw.length === source.length : offset === 0) ? "" : "\n\n";

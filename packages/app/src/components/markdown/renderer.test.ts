@@ -39,6 +39,47 @@ it("resolves authored root-relative links only when the target is a known comman
 });
 
 describe("shared Markdown source adaptation", () => {
+  it("keeps HTML line breaks inside their Markdown table cells", async () => {
+    const source =
+      "| A | B |\n|---|---|\n| 1 | first<br/>second |\n| 2 | first<br />second |\n| 3 | first<br>second |";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const rows: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "TableRow") rows.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(rows).toHaveLength(4);
+    const text = (node: ASTNode): string =>
+      (node.content ?? "") + (node.children?.map(text).join("") ?? "");
+    expect(rows.map((row) => row.children?.map(text))).toEqual([
+      ["A", "B"],
+      ["1", "first\u2028second"],
+      ["2", "first\u2028second"],
+      ["3", "first\u2028second"],
+    ]);
+  });
+  it.each([
+    ["| A<br>B | C |\n|---|---|\n| x | y |", "| A\u2028B | C |\n|---|---|\n| x | y |"],
+    [
+      "> | A | B |\n> |---|---|\n> | x | first<br>second |",
+      "> | A | B |\n> |---|---|\n> | x | first\u2028second |",
+    ],
+    [
+      "| A | B |\n|---|---|\n| `<br>` | **first<br><BR />second** |",
+      "| A | B |\n|---|---|\n| `<br>` | **first\u2028\u2028second** |",
+    ],
+    [
+      "| A | B |\n|---|---|\n| x | \\<br> &lt;br&gt; |",
+      "| A | B |\n|---|---|\n| x | \\<br> &lt;br&gt; |",
+    ],
+    ["Not a table | first<br>second", "Not a table | first  \nsecond"],
+  ])("normalizes table breaks without changing literal tags: %s", (source, expected) => {
+    expect(normalizeMarkdownHtml(source)).toBe(expected);
+  });
   it("keeps paragraphs, fences and quotes together for the library", () => {
     const source = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
     expect(prepareMarkdownSource(source).render()).toBe(source);
