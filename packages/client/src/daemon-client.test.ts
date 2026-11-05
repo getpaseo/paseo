@@ -9143,6 +9143,61 @@ describe("provider options across daemon versions", () => {
     expect(sentMessages()).toHaveLength(1);
   });
 
+  test("a legacy daemon applies a config reset as the default the old API names", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const reply = (message: Record<string, unknown>) =>
+      mock.triggerMessage(wrapSessionMessage(message as never));
+    const applying = client.applyAgentConfig("agent-1", {
+      modeId: "plan",
+      options: { service_tier: null, sandbox_mode: "read-only" },
+    });
+    const [fetch] = sentMessages();
+    expect(fetch).toMatchObject({ type: "fetch_agent_request", agentId: "agent-1" });
+    reply({
+      type: "fetch_agent_response",
+      payload: {
+        requestId: fetch.requestId,
+        agent: { ...agentSnapshot, provider: "codex", features: [speedFeature] },
+        project: null,
+        error: null,
+      },
+    });
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const apply = sentMessages()[1];
+    expect(apply).toMatchObject({
+      type: "agent.config.apply.request",
+      config: {
+        modeId: "plan",
+        featureValues: { service_tier: "default", sandbox_mode: "read-only" },
+      },
+    });
+    expect(apply.config).not.toHaveProperty("options");
+    reply({
+      type: "agent.config.apply.response",
+      payload: { requestId: apply.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await applying;
+  });
+
+  test("a legacy daemon cannot apply a config reset it cannot name, and applies nothing", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const applying = client.applyAgentConfig("agent-1", { options: { token_budget: null } });
+    const [fetch] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_agent_response",
+        payload: {
+          requestId: fetch.requestId,
+          agent: { ...agentSnapshot, features: [speedFeature] },
+          project: null,
+          error: null,
+        },
+      } as never),
+    );
+    await expect(applying).rejects.toThrow("Update the host to reset token_budget.");
+    expect(sentMessages()).toHaveLength(1);
+  });
+
   test("a current daemon takes option writes as one options patch", async () => {
     const { client, sentMessages, mock } = await connect({ providerOptionControls: true });
     const write = client.setAgentOptions("agent-1", { service_tier: null, sandbox_mode: "x" });

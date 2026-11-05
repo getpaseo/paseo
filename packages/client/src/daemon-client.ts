@@ -144,6 +144,7 @@ import type {
   AgentSkillsSaveResult,
 } from "@getpaseo/protocol/messages";
 import type {
+  AgentOptionControl,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -4175,14 +4176,28 @@ export class DaemonClient {
     const legacy = this.legacyProviderOptions();
     if (legacy) {
       // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
-      const resets = Object.values(patch).includes(null);
-      const controls = resets ? ((await this.fetchAgent(agentId))?.agent.controls ?? []) : [];
+      const pending = this.legacyResetControls(agentId, patch);
+      const controls = pending ? await pending : [];
       for (const [featureId, value] of legacy.featureWrites(patch, controls)) {
         await this.setAgentFeature(agentId, featureId, value);
       }
       return null;
     }
     return this.applyAgentConfig(agentId, { options: patch });
+  }
+
+  /**
+   * COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
+   * A reset (`null`) on a daemon without `providerOptionControls` is written as the value its
+   * control resets to, which takes the agent's controls. Without a reset nothing is fetched, so
+   * the write is not delayed.
+   */
+  private legacyResetControls(
+    agentId: string,
+    patch: Record<string, unknown>,
+  ): Promise<AgentOptionControl[]> | null {
+    if (!Object.values(patch).includes(null)) return null;
+    return this.fetchAgent(agentId).then((result) => result?.agent.controls ?? []);
   }
 
   async setAgentThinkingOption(
@@ -4227,11 +4242,18 @@ export class DaemonClient {
     agentId: string,
     config: AgentConfigApply,
   ): Promise<AgentProviderNotice | null> {
+    let wireConfig = config;
+    const legacy = this.legacyProviderOptions();
+    if (legacy && config.options) {
+      // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
+      const pending = this.legacyResetControls(agentId, config.options);
+      wireConfig = legacy.featureValuesConfig(config, pending ? await pending : []);
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "agent.config.apply.request",
       agentId,
-      config,
+      config: wireConfig,
       requestId,
     });
     const payload = await this.sendRequest({

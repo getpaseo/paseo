@@ -1,6 +1,7 @@
 import { controlsFromFeatures, optionsFromFeatures } from "@getpaseo/protocol/option-controls";
 import type { AgentOptionControl } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentConfigApply,
   AgentProfile,
   AgentSnapshotPayload,
   MutableDaemonConfig,
@@ -143,14 +144,6 @@ export class LegacyProviderOptions {
   /** Sends options as `featureValues`, which is where a legacy daemon reads them. */
   prepare(message: SessionInboundMessage): SessionInboundMessage {
     switch (message.type) {
-      case "agent.config.apply.request": {
-        const { options, ...config } = message.config;
-        if (!options) return message;
-        return {
-          ...message,
-          config: { ...config, featureValues: { ...config.featureValues, ...options } },
-        };
-      }
       case "list_commands_request": {
         if (!message.draftConfig?.providerOptions) return message;
         const { providerOptions, ...draftConfig } = message.draftConfig;
@@ -195,6 +188,22 @@ export class LegacyProviderOptions {
       }
       throw new Error(`Update the host to reset ${key}.`);
     });
+  }
+
+  /** A config apply with its `options` as `featureValues`, the way a daemon without them takes it. */
+  featureValuesConfig(
+    config: AgentConfigApply,
+    controls: readonly AgentOptionControl[],
+  ): AgentConfigApply {
+    const { options, ...rest } = config;
+    if (!options) return config;
+    return {
+      ...rest,
+      featureValues: {
+        ...rest.featureValues,
+        ...Object.fromEntries(this.featureWrites(options, controls)),
+      },
+    };
   }
 
   /** The legacy answer to a controls listing, in the shape of the current response. */
