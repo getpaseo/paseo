@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "license": "Apache-2.0",
   "files": [
     "dist",
