@@ -159,6 +159,22 @@ test("a setup host that never loads its workspaces still lands on the home", asy
   }
 });
 
+test("a setup host that drops while loading still lands on the home", async ({ page }) => {
+  const host = await startSetupHost("dropped-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await gate.drop();
+    await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+    await expect(setupModal(page)).toHaveCount(0);
+  } finally {
+    await host.close();
+  }
+});
+
 test("an unreachable setup host lands on the home without setup", async ({ page }) => {
   const host = await startSetupHost("unreachable");
   await host.close();
