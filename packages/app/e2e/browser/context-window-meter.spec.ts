@@ -429,6 +429,32 @@ test("context details support keyboard entry and dismiss when the viewport moves
   await expect(details).toHaveCount(0);
 });
 
+test("context details stay open while the chat streams", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize(DESKTOP);
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "context-window-streaming-",
+    title: "Context details while streaming",
+    model: "ten-second-stream",
+  });
+  try {
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await submitMessageWithButton(page, "Stream while the context details are open.");
+    const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
+    await expect(stop).toBeVisible();
+    const details = await pressContextWindowMeter(page, /^Context window/);
+    await expect(stop).toBeVisible();
+    await qaScreenshot(page, "context-details-while-streaming");
+
+    await expect(stop).toHaveCount(0, { timeout: 30_000 });
+    await expect(details).toBeVisible();
+    await qaScreenshot(page, "context-details-after-streaming");
+  } finally {
+    await session.cleanup();
+  }
+});
+
 test("pointer hovering context details preserves composer focus", async ({ page, agent }) => {
   const usage = await scriptAgentUsage(page);
   await page.setViewportSize(DESKTOP);

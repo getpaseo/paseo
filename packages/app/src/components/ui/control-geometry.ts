@@ -1,5 +1,14 @@
 import type { StyleProp, ViewStyle } from "react-native";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import {
+  bySizing,
+  controlSizingForLayout,
+  mapLayout,
+  TOUCH_TARGET,
+  type ControlSizing,
+  type LayoutValue,
+  type SizingValue,
+} from "./control-sizing";
 
 /**
  * Controls come in two sizes. `md` is the default and the right size almost everywhere;
@@ -26,46 +35,78 @@ export interface ControlInteractionStyleMap {
   controlDisabled?: StyleProp<ViewStyle>;
 }
 
-const SMALL_CONTROL_HEIGHT = 28;
-// The default control keeps a full touch target in the compact layout and tightens where a
-// pointer drives it.
-const DEFAULT_CONTROL_HEIGHT_COMPACT_LAYOUT = 44;
-const DEFAULT_CONTROL_HEIGHT_WIDE_LAYOUT = 32;
-export const HEADER_CONTROL_HEIGHT = 26;
+export {
+  bySizing,
+  controlSizingForLayout,
+  mapLayout,
+  resolveControlSizing,
+  TOUCH_TARGET,
+  type ControlSizing,
+  type ControlSizingFacts,
+  type LayoutValue,
+  type SizingValue,
+} from "./control-sizing";
+
+// Touch `md` is the iOS HIG's 44pt default control; touch `sm` stays above its 28pt minimum.
+const CONTROL_SIZES = {
+  sm: { touch: 32, pointer: 28 },
+  md: { touch: TOUCH_TARGET, pointer: 32 },
+} satisfies Record<ControlSize, SizingValue>;
+
+/** Pointer-sized header controls run tighter than `sm` so they fit the 36pt header. */
+const POINTER_HEADER_CONTROL_HEIGHT = 26;
 const SEGMENTED_INSET = 2;
 const CONTROL_FOCUS_RING_WIDTH = 2;
 const CONTROL_FOCUS_RING_OFFSET = 1;
 const FIELD_TEXT_LINE_HEIGHT_RATIO = 1.4;
 
-/** A Unistyles breakpoint value: one number in the compact layout, another from `md` up. */
-// A mapped type, not an interface: Unistyles checks breakpoint objects against an index
-// signature, which interfaces never satisfy.
-export type LayoutValue = Record<"xs" | "md", number>;
-
-function byLayout(compact: number, wide: number): LayoutValue {
-  return { xs: compact, md: wide };
-}
-
-function mapLayout(value: LayoutValue, map: (height: number) => number): LayoutValue {
-  return byLayout(map(value.xs), map(value.md));
-}
-
 /**
  * The height of every button, field, and segmented control of a size. Exported so a row that
  * hosts one of those controls can size itself from the same numbers instead of guessing a
- * height the control then outgrows. `md` depends on the layout, so it only works inside a
- * Unistyles stylesheet.
+ * height the control then outgrows. Breakpoint values, so they only work inside a Unistyles
+ * stylesheet.
  */
 export const CONTROL_HEIGHTS = {
-  sm: SMALL_CONTROL_HEIGHT,
-  md: byLayout(DEFAULT_CONTROL_HEIGHT_COMPACT_LAYOUT, DEFAULT_CONTROL_HEIGHT_WIDE_LAYOUT),
-} satisfies Record<ControlSize, number | LayoutValue>;
+  sm: bySizing(CONTROL_SIZES.sm),
+  md: bySizing(CONTROL_SIZES.md),
+} satisfies Record<ControlSize, LayoutValue>;
+
+/** A framed control in a header row, such as a split button. Touch-sized it is an `sm` control. */
+export const HEADER_CONTROL_HEIGHT = bySizing({
+  touch: CONTROL_SIZES.sm.touch,
+  pointer: POINTER_HEADER_CONTROL_HEIGHT,
+});
+
+/**
+ * Square icon-only buttons. Touch-sized, every icon button is one touch target; pointer-sized,
+ * header buttons are larger than toolbar buttons.
+ */
+export const ICON_BUTTON_SIZES = {
+  large: { touch: TOUCH_TARGET, pointer: POINTER_HEADER_CONTROL_HEIGHT },
+  small: { touch: TOUCH_TARGET, pointer: 20 },
+} satisfies Record<"large" | "small", SizingValue>;
+
+/**
+ * A control in a dense toolbar row, such as the composer's: an icon-only square or a labelled
+ * pill. Touch-sized it is one touch target.
+ */
+export const TOOLBAR_CONTROL_SIZES = { touch: TOUCH_TARGET, pointer: 28 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_HEIGHT = bySizing(TOOLBAR_CONTROL_SIZES);
+
+/**
+ * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body
+ * text, so each step is larger.
+ */
+export type IconSize = keyof typeof ICON_SIZE;
+export const TOUCH_ICON_SIZE: Record<IconSize, number> = { xs: 14, sm: 18, md: 20, lg: 24 };
+
+export function iconSizeFor(size: IconSize): SizingValue {
+  return { touch: TOUCH_ICON_SIZE[size], pointer: ICON_SIZE[size] };
+}
 
 /** The height of a control of `size`, for code that has to compute with it outside a stylesheet. */
 export function controlHeightForLayout(size: ControlSize, isCompact: boolean): number {
-  const height = CONTROL_HEIGHTS[size];
-  if (typeof height === "number") return height;
-  return isCompact ? height.xs : height.md;
+  return CONTROL_SIZES[size][controlSizingForLayout(isCompact)];
 }
 
 export const controlIconSize: Record<ControlSize, number> = {
@@ -96,7 +137,8 @@ const SWITCH_TOUCH = switchSize(44, 26, 22);
  * animation, so the size is resolved to plain numbers here instead of a stylesheet breakpoint.
  */
 export function switchGeometryForLayout(size: ControlSize, isCompact: boolean): SwitchGeometry {
-  const track = size === "md" && isCompact ? SWITCH_TOUCH : SWITCH_POINTER;
+  const touchSized = controlSizingForLayout(isCompact) === "touch";
+  const track = size === "md" && touchSized ? SWITCH_TOUCH : SWITCH_POINTER;
   return { ...track, reservedHeight: controlHeightForLayout(size, isCompact) };
 }
 
@@ -225,10 +267,8 @@ export function createControlGeometry(theme: Theme) {
   const fieldControlSm = {
     minHeight: CONTROL_HEIGHTS.sm,
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: fieldVerticalPadding(
-      CONTROL_HEIGHTS.sm,
-      fieldTextSmLineHeight,
-      controlBorderWidth,
+    paddingVertical: mapLayout(CONTROL_HEIGHTS.sm, (height) =>
+      fieldVerticalPadding(height, fieldTextSmLineHeight, controlBorderWidth),
     ),
     borderRadius: theme.borderRadius.md,
   };
@@ -258,7 +298,7 @@ export function createControlGeometry(theme: Theme) {
     },
     buttonMd: {
       minHeight: CONTROL_HEIGHTS.md,
-      paddingHorizontal: byLayout(theme.spacing[6], theme.spacing[4]),
+      paddingHorizontal: bySizing({ touch: theme.spacing[6], pointer: theme.spacing[4] }),
       borderRadius: theme.borderRadius.full,
     },
     // A button with only an icon is a circle of its size's height.
@@ -314,7 +354,7 @@ export function createControlGeometry(theme: Theme) {
       padding: 0,
     },
     segmentedSegmentSm: {
-      minHeight: CONTROL_HEIGHTS.sm - SEGMENTED_INSET * 2,
+      minHeight: mapLayout(CONTROL_HEIGHTS.sm, (height) => height - SEGMENTED_INSET * 2),
       paddingHorizontal: theme.spacing[2],
       borderRadius: theme.borderRadius.full,
     },

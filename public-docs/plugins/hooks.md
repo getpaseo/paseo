@@ -588,7 +588,7 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
-Agent hooks exclude the daemon's private disposable helpers. Public background workspaces and their ordinary agents use the same hooks.
+Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
 
 ## Ordering and returned values
 
