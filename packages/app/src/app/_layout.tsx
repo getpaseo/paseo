@@ -35,7 +35,7 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { ChangelogHost } from "@/changelog";
-import { OnboardingHost } from "@/onboarding";
+import { OnboardingHost, useIsSetupDecisionPending } from "@/onboarding";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/left-sidebar";
@@ -138,6 +138,7 @@ export interface HostRuntimeBootstrapState {
   splashError: string | null;
   retry: () => void;
   hasGivenUpWaitingForHost: boolean;
+  isWaitingForSetup: boolean;
   storeReady: boolean;
   startupBlocker: StartupBlocker;
 }
@@ -146,6 +147,7 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   splashError: null,
   retry: () => {},
   hasGivenUpWaitingForHost: false,
+  isWaitingForSetup: false,
   storeReady: false,
   startupBlocker: { kind: "none" },
 });
@@ -242,6 +244,9 @@ function useDaemonStartIsRunning(): boolean {
 }
 
 const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
+// How long the splash waits on top of host startup to learn whether setup opens. A slow host
+// lands on the home instead, and setup opens over it once it is decided.
+const STARTUP_SETUP_WAIT_TIMEOUT_MS = 3_000;
 
 async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
@@ -303,6 +308,23 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     };
   }, [shouldRunGiveUpTimer]);
 
+  const isSetupDecisionPending = useIsSetupDecisionPending();
+  const [hasGivenUpWaitingForSetup, setHasGivenUpWaitingForSetup] = useState(false);
+  const isWaitingForSetup = isSetupDecisionPending && !hasGivenUpWaitingForSetup;
+  const shouldRunSetupWaitTimer = isWaitingForSetup && startupBlocker.kind === "none";
+
+  useEffect(() => {
+    if (!shouldRunSetupWaitTimer) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      setHasGivenUpWaitingForSetup(true);
+    }, STARTUP_SETUP_WAIT_TIMEOUT_MS);
+    return () => {
+      clearTimeout(handle);
+    };
+  }, [shouldRunSetupWaitTimer]);
+
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
     void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
@@ -313,8 +335,15 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const storeReady = resolveStartupNavigationReady({ startupBlocker });
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker }),
-    [splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker],
+    () => ({
+      splashError,
+      retry,
+      hasGivenUpWaitingForHost,
+      isWaitingForSetup,
+      storeReady,
+      startupBlocker,
+    }),
+    [splashError, retry, hasGivenUpWaitingForHost, isWaitingForSetup, storeReady, startupBlocker],
   );
 
   return (

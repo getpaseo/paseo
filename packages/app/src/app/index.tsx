@@ -45,6 +45,7 @@ export default function Index() {
     }),
     isWorkspaceSelectionLoaded,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
+    isWaitingForSetup: bootstrapState.isWaitingForSetup,
   });
 
   if (startupRoute.kind === "redirect") {
