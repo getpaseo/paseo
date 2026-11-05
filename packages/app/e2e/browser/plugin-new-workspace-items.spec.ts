@@ -64,6 +64,24 @@ test("a branch and metadata chosen for one project are not sent for another", as
   );
 });
 
+test("an item's Issue list does not keep the previous project's results after a project switch", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await withNewWorkspaceIssuesExample(
+    page,
+    { compact: false, otherProject: true, searchesByProject: true },
+    async (screen) => {
+      await screen.openIssueList();
+      await screen.expectIssueListText(`Issue of ${screen.firstProjectName}`, true);
+      await screen.closeIssueList();
+      await screen.switchToOtherProject();
+      await screen.openIssueList();
+      await screen.expectIssueListText(`Issue of ${screen.firstProjectName}`, false);
+    },
+  );
+});
+
 test("an isolation set from a mount effect is remembered like a pick", async ({ page }) => {
   test.setTimeout(180_000);
   await withNewWorkspaceIssuesExample(

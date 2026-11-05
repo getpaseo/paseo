@@ -47,6 +47,41 @@ export default function contribute(client) {
   );
 }
 
+/**
+ * An item whose search depends on the project: it answers with the project's name, and never
+ * answers for the project named "other", so a list that still shows the first project's answer
+ * there is stale.
+ */
+async function replaceWithProjectSearchItem(directory: string) {
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `import { useNewWorkspace } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+function ProjectIssues() {
+  const { project } = useNewWorkspace();
+  const name = project?.name ?? "";
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={null}
+      search={() =>
+        name.includes("other")
+          ? new Promise(() => {})
+          : Promise.resolve([{ id: name, label: "Issue of " + name }])
+      }
+      onSelect={() => {}}
+    />
+  );
+}
+export default function contribute(client) {
+  client.addNewWorkspaceItem({ id: "project-issues", Component: ProjectIssues });
+  return () => {};
+}
+`,
+  );
+}
+
 type Client = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
 /** The daemon fills in the git runtime after it creates the workspace, so wait for the branch. */
@@ -72,6 +107,8 @@ export async function withNewWorkspaceIssuesExample(
     compact: boolean;
     detachedHead?: boolean;
     setsOnMount?: boolean;
+    /** Installs an item whose Issue list depends on the project instead of the example's. */
+    searchesByProject?: boolean;
     /** A second project the screen can switch to. */
     otherProject?: boolean;
   },
@@ -80,6 +117,12 @@ export async function withNewWorkspaceIssuesExample(
     chooseIssue(label: string): Promise<void>;
     createWorkspace(options?: { prompt?: string }): Promise<{ branch: string; metadata: unknown }>;
     switchToOtherProject(): Promise<void>;
+    openIssueList(): Promise<void>;
+    closeIssueList(): Promise<void>;
+    /** The Issue list shows `text`, or does not show it when `shown` is false. */
+    expectIssueListText(text: string, shown: boolean): Promise<void>;
+    /** The name the first project's items read as `project.name`. */
+    firstProjectName: string;
     expectIsolation(isolation: "local" | "worktree"): Promise<void>;
     /** Removes the plugin, leaves the screen, and opens New workspace for the project again. */
     reopenWithoutPlugin(): Promise<void>;
@@ -88,6 +131,7 @@ export async function withNewWorkspaceIssuesExample(
   const client = await connectNewWorkspaceDaemonClient();
   const previous = await client.getDaemonConfig();
   const example = await copyPluginExample("new-workspace-issues");
+  if (options.searchesByProject) await replaceWithProjectSearchItem(example.directory);
   if (options.setsOnMount) await replaceWithMountEffectItem(example.directory);
   const repo = await createTempGitRepo("new-workspace-issues-", { branches: ["main"] });
   const otherRepo = options.otherProject
@@ -117,6 +161,17 @@ export async function withNewWorkspaceIssuesExample(
         test.step(`choose the issue "${label}"`, async () => {
           await page.getByRole("button", { name: "Issue", exact: true }).click();
           await page.getByText(label, { exact: true }).click();
+        }),
+      firstProjectName: project.projectDisplayName,
+      openIssueList: () =>
+        test.step("open the Issue list", async () => {
+          await page.getByRole("button", { name: "Issue", exact: true }).click();
+        }),
+      closeIssueList: () => test.step("close the Issue list", () => page.keyboard.press("Escape")),
+      expectIssueListText: (text, shown) =>
+        test.step(`the Issue list ${shown ? "shows" : "does not show"} "${text}"`, async () => {
+          const list = page.getByTestId("combobox-desktop-container").last();
+          await expect(list.getByText(text, { exact: true })).toHaveCount(shown ? 1 : 0);
         }),
       switchToOtherProject: () =>
         test.step("switch to the other project", async () => {

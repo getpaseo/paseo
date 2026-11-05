@@ -717,6 +717,13 @@ remembering the isolation), so a command from a mount effect does the same as a 
 picker stays in the picker's own handler. Add a capability by extending the store;
 do not read screen state from a plugin component.
 
+The item host (`PluginNewWorkspaceItems`) keys the items by `(serverId, project id)`, so a change of
+project or host remounts them. That is what keeps an item's own state and a `Combobox`'s cached
+results from outliving their project: the `Combobox` cannot tell that an author's inline `search`
+now means another project, because its identity changes every render. The store clears `branch`
+and `metadata` on the same change in `syncInputs`, and a remounted item's mount effect sets them
+again.
+
 `ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a
 new branch (`startsNewBranch`, which mirrors the daemon: anything but a checkout, including no base
 at all on a detached HEAD), and its `metadata` on `workspace.create` when it is not empty. The

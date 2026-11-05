@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { PluginNewWorkspaceProvider } from "@getpaseo/plugin/client/host";
 import { withUnistyles } from "react-native-unistyles";
@@ -38,7 +38,9 @@ function useServerPlugins(serverId: string): InstalledPlugin[] {
 
 /**
  * The selected host's plugin items on the New workspace screen, drawn as setup fields. They read
- * the screen's choices and command them through the setup model.
+ * the screen's choices and command them through the setup model. Items are mounted for one
+ * project on one host: a change of either remounts them, so nothing an item fetched or chose for
+ * the previous target stays on screen, and an item that sets up on mount sets up for the new one.
  */
 export function PluginNewWorkspaceItems({
   serverId,
@@ -53,15 +55,17 @@ export function PluginNewWorkspaceItems({
   return (
     <ComposerControlSurfaceProvider value="field">
       <ComposerControlLockProvider value={screen.locked}>
-        {plugins.map((plugin) => (
-          <ThemedPluginNewWorkspaceItems
-            key={plugin.id}
-            plugin={plugin}
-            screen={screen}
-            setup={setup}
-            uniProps={pluginThemeMapping}
-          />
-        ))}
+        <Fragment key={`${serverId}\n${screen.project?.id ?? ""}`}>
+          {plugins.map((plugin) => (
+            <ThemedPluginNewWorkspaceItems
+              key={plugin.id}
+              plugin={plugin}
+              screen={screen}
+              setup={setup}
+              uniProps={pluginThemeMapping}
+            />
+          ))}
+        </Fragment>
       </ComposerControlLockProvider>
     </ComposerControlSurfaceProvider>
   );
