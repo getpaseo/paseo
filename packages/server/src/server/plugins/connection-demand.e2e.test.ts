@@ -8,7 +8,10 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 test("an RPC-only plugin receives no agent, project or provider data", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-quiet-plugin-"));
-  await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "quiet" }));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "quiet", requirements: { paseo: ">=0.8.0-beta.1" } }),
+  );
   await writeFile(
     path.join(directory, "index.server.ts"),
     `
@@ -33,6 +36,7 @@ export default function contribute(server) {
   const legacy = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     capabilities: {
+      owned_subscriptions: false,
       selective_agent_timeline: false,
       explicit_event_subscriptions: false,
       provider_snapshot_references: false,
@@ -65,7 +69,8 @@ export default function contribute(server) {
     await client.waitForFinish(agent.id);
     await client.refreshProvidersSnapshot({ cwd: directory });
     const counts = await client.invokePluginRpc("quiet", "counts", {});
-    expect(counts).toEqual({ status: 1 });
+    // The handshake precedes contribution setup; later server-info updates require a subscription.
+    expect(counts).toEqual({});
     await legacy.getDaemonConfig();
     expect(legacyTypes).toEqual(
       expect.arrayContaining(["project.update", "providers_snapshot_update", "agent_stream"]),
