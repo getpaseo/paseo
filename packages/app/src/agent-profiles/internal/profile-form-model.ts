@@ -7,6 +7,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import { withoutLostControls } from "@/agent-controls/lost-controls";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
@@ -102,6 +103,10 @@ export interface AgentProfileFormState {
   controls: AgentOptionControl[];
   /** What the controls show: the options the daemon resolved from `options`, then the edits. */
   controlOptions: ProviderOptions;
+  /** Every key an answer for this provider has drawn as a control. */
+  drawnControlKeys: ReadonlySet<string>;
+  /** The keys the latest answer draws as controls. */
+  answeredControlKeys: ReadonlySet<string>;
 
   providerDisplay: AgentProfileFormDisplay | null;
   modelDisplay: AgentProfileFormDisplay | null;
@@ -338,11 +343,21 @@ function buildControlsRequest(state: AgentProfileFormState): AgentProfileControl
   };
 }
 
-/** Everything the profile would save as its options; the daemon resolves them for the form. */
+/**
+ * Everything the profile would save as its options; the daemon resolves them for the form. A
+ * toggle the model in use does not draw is not saved (see `withoutLostControls`).
+ */
 function ownOptionsOf(
-  state: Pick<AgentProfileFormState, "options" | "optionEdits">,
+  state: Pick<
+    AgentProfileFormState,
+    "options" | "optionEdits" | "drawnControlKeys" | "answeredControlKeys"
+  >,
 ): ProviderOptions {
-  return { ...state.options, ...state.optionEdits };
+  return withoutLostControls(
+    { ...state.options, ...state.optionEdits },
+    state.drawnControlKeys,
+    state.answeredControlKeys,
+  );
 }
 
 /** The part of a request that decides which controls exist; options only change their values. */
@@ -435,6 +450,8 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     thinkingOptions: [],
     controls: [],
     controlOptions: {},
+    drawnControlKeys: new Set(),
+    answeredControlKeys: new Set(),
     providerDisplay: seedDisplay(provider),
     modelDisplay: seedDisplay(modelId),
     modeDisplay: seedDisplay(profile.modeId),
@@ -463,17 +480,23 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let resolvedScopeKey: string | null = null;
   let resolvedControls: AgentOptionControl[] = [];
   let resolvedOptions: ProviderOptions = {};
+  let drawnKeys: ReadonlySet<string> = new Set();
+  let answeredKeys: ReadonlySet<string> = new Set();
   let listeners = new Set<() => void>();
   let closed = false;
 
   function derive(incoming: AgentProfileFormState): AgentProfileFormState {
     const models = resolveModels(entries, incoming.provider);
     const modes = resolveModes(entries, incoming.provider);
-    const next = seedSelections(incoming, {
-      entry: findEntry(entries, incoming.provider),
-      models,
-      modes,
-    });
+    const next: AgentProfileFormState = {
+      ...seedSelections(incoming, {
+        entry: findEntry(entries, incoming.provider),
+        models,
+        modes,
+      }),
+      drawnControlKeys: drawnKeys,
+      answeredControlKeys: answeredKeys,
+    };
     const thinking = resolveThinkingOptions(entries, next.provider, next.modelId);
     const controlsRequest = buildControlsRequest(next);
     const controlsRequestKey = buildControlsRequestKey(controlsRequest);
@@ -588,6 +611,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       resolvedScopeKey = buildControlsScopeKey(state.controlsRequest);
       resolvedControls = [...resolved.controls];
       resolvedOptions = resolved.options;
+      answeredKeys = new Set(resolved.controls.map((control) => control.key));
+      drawnKeys = new Set([...drawnKeys, ...answeredKeys]);
       publish((current) => current);
     },
     applyControlsUnavailable: (requestKey) => {
@@ -612,6 +637,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         // Everything below the provider is provider-scoped: a model id, mode id,
         // thinking id or feature id from the old provider means nothing here.
         // Clearing them is enough — `derive` seeds the new provider's defaults.
+        drawnKeys = new Set();
+        answeredKeys = new Set();
         return {
           ...current,
           provider: providerId,

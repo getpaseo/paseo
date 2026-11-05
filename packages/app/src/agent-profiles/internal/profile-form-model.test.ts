@@ -70,6 +70,21 @@ function optionValues(options: readonly { value: string }[]): string[] {
   return options.map((option) => option.value);
 }
 
+const FAST = {
+  controls: [{ type: "toggle" as const, key: "fast_mode", label: "Fast" }],
+  options: { fast_mode: false },
+};
+const NO_CONTROLS = { controls: [], options: {} };
+
+function toggledOnOpus(): AgentProfileFormModel {
+  const model = openWithCatalog({ mode: "create" });
+  model.setName("Fast");
+  selectClaude(model);
+  model.applyControls(model.getState().controlsRequestKey ?? "", FAST);
+  model.setOption("fast_mode", true);
+  return model;
+}
+
 describe("openAgentProfileForm", () => {
   it("starts a create form empty and cannot submit", () => {
     const model = openWithCatalog({ mode: "create" });
@@ -520,6 +535,71 @@ describe("openAgentProfileForm", () => {
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
 
       expect(model.getState().controls).toEqual([]);
+    });
+
+    it("does not save a toggle once the model that drew it is replaced by one without it", () => {
+      const model = toggledOnOpus();
+      expect(model.getState().submitValue?.options).toEqual({ fast_mode: true });
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
+
+      expect(model.getState().submitValue?.options).toBeUndefined();
+      expect(model.getState().controlsRequest?.providerOptions).toBeUndefined();
+    });
+
+    it("saves a toggle again when the model that draws it returns", () => {
+      const model = toggledOnOpus();
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
+
+      model.setModel("claude-opus-5", { label: "Opus 5" });
+      model.applyControls(model.getState().controlsRequestKey ?? "", FAST);
+
+      expect(model.getState().submitValue?.options).toEqual({ fast_mode: true });
+    });
+
+    it("does not save a stored toggle profile either", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "Fast",
+          provider: "claude",
+          model: "claude-opus-5",
+          options: { fast_mode: true },
+        },
+      });
+      model.applyProviderCatalog(ENTRIES);
+      model.applyControls(model.getState().controlsRequestKey ?? "", FAST);
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
+
+      expect(model.getState().submitValue?.options).toBeUndefined();
+    });
+
+    it("never drops an option no control has drawn", () => {
+      const model = openWithCatalog({ mode: "create" });
+      model.setName("Fast");
+      selectClaude(model);
+      model.applyControls(model.getState().controlsRequestKey ?? "", FAST);
+      model.setOption("token_budget", 8000);
+      model.setOption("fast_mode", true);
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
+
+      expect(model.getState().submitValue?.options).toEqual({ token_budget: 8000 });
+    });
+
+    it("keeps a toggle when the daemon cannot list controls", () => {
+      const model = toggledOnOpus();
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyControlsUnavailable(model.getState().controlsRequestKey ?? "");
+
+      expect(model.getState().submitValue?.options).toEqual({ fast_mode: true });
     });
 
     it("resolves an unavailable feature listing without showing the field", () => {

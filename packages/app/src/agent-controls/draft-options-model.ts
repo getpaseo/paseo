@@ -3,6 +3,7 @@ import type {
   AgentSessionConfig,
   ProviderOptions,
 } from "@getpaseo/protocol/agent-types";
+import { withoutLostControls } from "./lost-controls";
 
 /**
  * The options of one draft agent, as a plain model (see docs/forms.md). It owns which layers
@@ -129,9 +130,7 @@ export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | und
       ([key]) => controlKeys.has(key) && !(key in state.seed),
     ),
   );
-  const edits = Object.fromEntries(
-    Object.entries(state.edits).filter(([key]) => !state.drawn.has(key) || controlKeys.has(key)),
-  );
+  const edits = withoutLostControls(state.edits, state.drawn, controlKeys);
   const own = { ...state.seed, ...remembered, ...edits };
   return Object.keys(own).length > 0 ? own : undefined;
 }
