@@ -28,7 +28,10 @@ function contains(outer, inner) {
  * while suggestions are open, so its callers read the composer from `reference`: a
  * snapshot in the same keyboard state with an empty input.
  */
-export function resolveAutocompletePlacement(snapshot, { expected, keyboardTop, reference }) {
+export function resolveAutocompletePlacement(
+  snapshot,
+  { expected, keyboardTop, reference, anchorGap },
+) {
   if (!snapshot.success || !snapshot.data?.nodes?.length) throw new Error("Empty device snapshot");
   const nodes = snapshot.data.nodes;
   const popover = findById(nodes, "composer-autocomplete-popover").rect;
@@ -40,6 +43,10 @@ export function resolveAutocompletePlacement(snapshot, { expected, keyboardTop, 
   const keyboardY =
     keyboardTop ?? nodes.find((node) => node.type === "Keyboard" && node.rect)?.rect.y;
   const popoverBottom = bottomOf(popover);
+  const gap = composer.y - popoverBottom;
+  if (anchorGap !== undefined && Math.abs(gap - anchorGap) > 1) {
+    throw new Error(`Autocomplete lost its anchor gap: gap=${gap}, expected=${anchorGap}`);
+  }
   if (popoverBottom > composer.y + 1) {
     throw new Error(
       `Autocomplete overlaps the composer: popover bottom=${popoverBottom}, composer top=${composer.y}`,

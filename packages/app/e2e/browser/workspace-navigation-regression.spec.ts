@@ -11,7 +11,10 @@ import {
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "../support/helpers/archive-tab";
-import { expectAgentAbsentFromWorkspaceLayout } from "../support/helpers/workspace-layout";
+import {
+  expectAgentAbsentFromWorkspaceLayout,
+  seedForeignPinnedAgentTab,
+} from "../support/helpers/workspace-layout";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -104,6 +107,83 @@ async function openWorkspaceTabUrl(page: Page, route: string): Promise<void> {
 
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
+
+  test("removes a foreign pinned agent when restoring a saved workspace layout", async ({
+    page,
+  }, testInfo) => {
+    const serverId = getServerId();
+    const firstWorkspace = await seedWorkspace({
+      repoPrefix: "workspace-owner-",
+      title: "Original workspace",
+    });
+    const secondWorkspace = await seedWorkspace({
+      repoPrefix: "workspace-restored-",
+      title: "Restored workspace",
+    });
+    try {
+      const firstAgent = await createMockIdleAgent(firstWorkspace.client, {
+        cwd: firstWorkspace.repoPath,
+        workspaceId: firstWorkspace.workspaceId,
+        title: "Original workspace agent",
+      });
+      const secondAgent = await createMockIdleAgent(secondWorkspace.client, {
+        cwd: secondWorkspace.repoPath,
+        workspaceId: secondWorkspace.workspaceId,
+        title: "Restored workspace agent",
+      });
+      await gotoAppShell(page);
+      await openWorkspaceWithAgents(page, [firstAgent, secondAgent]);
+      await seedForeignPinnedAgentTab(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
+
+      await page.reload();
+      await waitForSidebarHydration(page);
+      await waitForWorkspaceTabsVisible(page);
+      await expectWorkspaceHeader(page, {
+        title: secondWorkspace.workspaceName,
+        subtitle: secondWorkspace.projectDisplayName,
+      });
+      await testInfo.attach("hydrated-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("hydrated-workspace.png") }),
+        contentType: "image/png",
+      });
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
+      await expectOnlyWorkspaceAgentTabsVisible(page, [secondAgent.id]);
+      await testInfo.attach("restored-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("restored-workspace.png") }),
+        contentType: "image/png",
+      });
+
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId,
+        workspaceId: firstWorkspace.workspaceId,
+      });
+      await waitForWorkspaceTabsVisible(page);
+      await expectOnlyWorkspaceAgentTabsVisible(page, [firstAgent.id]);
+      const agents = await firstWorkspace.client.fetchAgents();
+      expect(
+        agents.entries.find(({ agent }) => agent.id === firstAgent.id)?.agent.workspaceId,
+      ).toBe(firstWorkspace.workspaceId);
+      expect(
+        agents.entries.find(({ agent }) => agent.id === secondAgent.id)?.agent.workspaceId,
+      ).toBe(secondWorkspace.workspaceId);
+      await testInfo.attach("original-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("original-workspace.png") }),
+        contentType: "image/png",
+      });
+    } finally {
+      await secondWorkspace.cleanup();
+      await firstWorkspace.cleanup();
+    }
+  });
 
   test("keeps an offline notification on the agent route until the host connects", async ({
     page,

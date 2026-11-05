@@ -13,6 +13,12 @@ const MAX_TOOL_SUMMARY_CHARS = 200;
 const MAX_FORK_CONTEXT_CHARS = 100_000;
 const MAX_FORK_METADATA_CHARS = 1_000;
 const FORK_HISTORY_OMITTED = "[Earlier chat history omitted]\n";
+// A fork copies only these kinds, so only they can make a checkpoint stale.
+const FORK_CONTEXT_KINDS: readonly AgentTimelineItem["type"][] = [
+  "user_message",
+  "assistant_message",
+  "tool_call",
+];
 
 interface ActivityCuratorOptions {
   maxItems?: number;
@@ -164,9 +170,6 @@ function curateProjectedActivityEntries(
           break;
         }
         entries.push(formatToolCallEntry(item, options));
-        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
-          entries.push(activityEntry(item.detail.log.trim()));
-        }
         break;
       }
       case "todo":
@@ -272,7 +275,14 @@ function selectForkContextRows(input: {
     );
   }
   const boundarySeq = projectedRows[boundaryIndex].seqEnd;
-  if (projectedRows.some((row) => row.seqStart <= boundarySeq && row.seqEnd > boundarySeq)) {
+  if (
+    projectedRows.some(
+      (row) =>
+        FORK_CONTEXT_KINDS.includes(row.item.type) &&
+        row.seqStart <= boundarySeq &&
+        row.seqEnd > boundarySeq,
+    )
+  ) {
     throw new Error(
       "This checkpoint changed after it was created. Fork from a later completed response instead.",
     );
@@ -352,7 +362,7 @@ export function buildAgentForkContextAttachment(input: {
   const entries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
     labelAssistantMessages: true,
-    includeKinds: ["user_message", "assistant_message", "tool_call"],
+    includeKinds: FORK_CONTEXT_KINDS,
     includeExternalToolInput: false,
   });
   const metadata = { agentTitle: input.agentTitle, cwd: input.cwd };
