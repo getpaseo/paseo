@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +24,10 @@ const gatedCiJobs = new Map([
     "server-integration-windows",
     { name: "server-integration (windows-latest)", contract: "server" },
   ],
-  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
+  [
+    "server-tests-macos",
+    { name: "server-tests (macos-latest, file observation)", contract: "server" },
+  ],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -647,5 +650,82 @@ process.exit(code);
         rmSync(directory, { recursive: true, force: true });
       }
     });
+  }
+});
+
+// GitHub retires macOS 14 on 2026-11-02; brownouts already reject these jobs.
+test("workflows avoid retired macOS 14 runners", () => {
+  for (const path of filesUnder(".github/workflows", (candidate) => /\.ya?ml$/.test(candidate))) {
+    assert.doesNotMatch(
+      readFileSync(new URL(path, repoRoot), "utf8"),
+      /macos-14(?:-large|-xlarge)?\b/,
+      path,
+    );
+  }
+});
+
+test("macOS jobs use latest runners while preserving release architectures", () => {
+  for (const [workflow, jobId] of [
+    [ciWorkflowPath, "server-tests-macos"],
+    [nixWorkflowPath, "build-desktop-darwin"],
+  ]) {
+    assert.match(
+      jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
+      /^    runs-on: macos-latest$/m,
+    );
+  }
+  const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  assert.match(release, /runner: macos-latest\n\s+electron_arch: arm64/);
+  // GitHub has no standard macos-latest-intel alias; use the newest Intel image.
+  assert.match(release, /runner: macos-26-intel\n\s+electron_arch: x64/);
+});
+
+test("macOS signing repair keeps certificate and keychain passwords separate", () => {
+  const workflow = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  const match = workflow.match(/<<'KEYCHAIN_FIX'\n([\s\S]*?)\n          KEYCHAIN_FIX/);
+  assert.ok(match, "the release workflow repairs the pinned signing tool");
+  const script = match[1].replace(/^          /gm, "");
+  const original = [
+    "return await importCerts(keychainFile, certPaths, cscPasswords);",
+    "async function importCerts(keychainFile, paths, keyPasswords) {",
+    '["import", paths[i], "-P", password]',
+    '["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychainFile]',
+    "}",
+  ].join("\n");
+  const directory = mkdtempSync(join(tmpdir(), "signing-repair-"));
+  try {
+    const packageDirectory = join(directory, "node_modules/app-builder-lib");
+    mkdirSync(join(packageDirectory, "out/codeSign"), { recursive: true });
+    const manifest = join(packageDirectory, "package.json");
+    const sourcePath = join(packageDirectory, "out/codeSign/macCodeSign.js");
+    for (const [version, source, succeeds] of [
+      ["26.8.1", original, true],
+      ["26.8.1", original.replace("cscPasswords);", "differentArguments);"), false],
+      ["26.18.0", original, false],
+    ]) {
+      writeFileSync(manifest, JSON.stringify({ name: "app-builder-lib", version }));
+      writeFileSync(sourcePath, source);
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      const actual = readFileSync(sourcePath, "utf8");
+      if (succeeds) {
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(
+          actual.includes("importCerts(keychainFile, certPaths, cscPasswords, keychainPassword)"),
+        );
+        assert.ok(
+          actual.includes("importCerts(keychainFile, paths, keyPasswords, keychainPassword)"),
+        );
+        assert.ok(actual.includes('["import", paths[i], "-P", password]'));
+        assert.ok(actual.includes('"-k", keychainPassword, keychainFile]'));
+      } else {
+        assert.notEqual(result.status, 0);
+        assert.equal(actual, source, "unexpected tool inputs must fail without a partial write");
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

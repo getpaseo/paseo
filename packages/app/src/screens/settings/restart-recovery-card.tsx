@@ -59,7 +59,7 @@ export function RestartRecoveryCard({ serverId }: { serverId: string }) {
 
   if (!isConnected || !isSupported || !config) return null;
 
-  const isEnabled = config.resumeOnStartup !== false;
+  const isEnabled = config.resumeOnStartup === true;
 
   return (
     <>

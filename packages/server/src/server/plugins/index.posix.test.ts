@@ -1071,27 +1071,65 @@ export default function contribute(plugin: unknown) {
       "second",
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
+    // Hold cleanup open so synchronous detach and queued recovery are tested
+    // independently of compiler/process startup speed on the runner.
+    let finishCleanup = () => undefined;
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const running = new Set<string>();
+    const runtime: TestPluginRuntime = {
+      ...emptyUsageRuntime,
+      catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
+      invoke: async (pluginId) => {
+        if (!running.has(pluginId)) throw new Error(`Plugin is not available: ${pluginId}`);
+        return pluginId;
+      },
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      startPlugin: async (pluginId, _path, canPublish) => {
+        if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
+        running.add(pluginId);
+      },
+      stopPluginById: async (pluginId) => {
+        const existed = running.delete(pluginId);
+        await cleanup;
+        return existed;
+      },
+      stopAll: async () => running.clear(),
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
     const store = createStore(home);
     const service = bindTestSessionHost(
-      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+      new PluginService(pino({ level: "silent" }), store, "0.4.0", { runtime }),
     );
-    await service.start();
-    await service.installDirectory({ path: first });
-    await service.installDirectory({ path: second });
+    try {
+      await service.start();
+      await service.installDirectory({ path: first });
+      await service.installDirectory({ path: second });
+      expect(catalogIds(service)).toEqual(["first", "second"]);
+      await store.patch({ pluginsEnabled: false });
 
-    await store.patch({ pluginsEnabled: false });
-
-    expect(service.catalog()).toEqual([]);
-    await expect(service.invokePluginRpc("second", "anything", {})).rejects.toThrow(
-      "Plugin is not available",
-    );
-    await store.patch({ pluginsEnabled: true });
-    await service.reloadPlugin("first");
-    expect((await service.listPlugins()).map(({ id, status }) => ({ id, status }))).toEqual([
-      { id: "first", status: "running" },
-      { id: "second", status: "running" },
-    ]);
-    await service.stopAllPlugins();
+      expect(service.catalog()).toEqual([]);
+      await expect(service.invokePluginRpc("second", "anything", {})).rejects.toThrow(
+        "Plugin is not available",
+      );
+      await store.patch({ pluginsEnabled: true });
+      expect(service.catalog()).toEqual([]);
+      finishCleanup();
+      // Observe recovery itself. Reloading here restarts a healthy plugin and
+      // would also conceal a failure to restart it after the global enable.
+      await expect
+        .poll(() => service.listPlugins(), { timeout: 10_000 })
+        .toMatchObject([
+          { id: "first", status: "running" },
+          { id: "second", status: "running" },
+        ]);
+    } finally {
+      finishCleanup();
+      await service.stopAllPlugins();
+    }
   }, 20_000);
 
   it("does not publish an in-flight start after a later global disable", async () => {

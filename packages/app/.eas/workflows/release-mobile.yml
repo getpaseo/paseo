@@ -42,6 +42,20 @@ jobs:
       build_id: ${{ needs.build_android.outputs.build_id }}
       profile: production
 
+  upload_android_screenshots:
+    name: Upload Google Play screenshots
+    needs: [build_android, submit_android]
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Upload screenshots
+        run: |
+          export ANDROID_VERSION_CODE="${{ needs.build_android.outputs.app_build_version }}"
+          bundle exec fastlane android upload_screenshots
+
   submit_ios_for_review:
     name: Submit iOS for App Store review
     needs: [build_ios, distribute_ios]

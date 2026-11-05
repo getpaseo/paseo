@@ -50,6 +50,7 @@ export class FrameDecoder {
 export interface FramedSocket {
   readonly socket: Socket;
   send(message: unknown, callback?: (error: Error | null) => void): boolean;
+  sendAndWait(message: unknown): Promise<void>;
   close(): void;
 }
 
@@ -90,6 +91,17 @@ export function attachFramedSocket(
         return false;
       }
       return socket.write(frame, (error) => callback?.(error ?? null));
+    },
+    sendAndWait(message) {
+      return new Promise<void>((resolve, reject) => {
+        this.send(message, (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
     },
     close() {
       socket.end(() => socket.destroy());

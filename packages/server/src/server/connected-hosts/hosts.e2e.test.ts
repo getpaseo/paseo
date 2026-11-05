@@ -2091,3 +2091,80 @@ test.each(["removed", "disabled"] as const)(
     ).toEqual([]);
   },
 );
+
+test(
+  "a 50 MiB timeline crosses a routed host without dropping content or the route",
+  { timeout: 30000 },
+  async () => {
+    const b = await daemon();
+    const a = await daemon();
+    const destination = await api(b);
+    const origin = await api(a);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const agent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Large history",
+    });
+    // Keep each row below the established item budget; exercise transport size across rows.
+    const text = "x".repeat(240 * 1024);
+    const rowCount = 220;
+    for (let index = 0; index < rowCount; index++) {
+      await b.daemon.agentManager.appendTimelineItem(agent.id, { type: "user_message", text });
+    }
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const serverId = (await online(origin.paseo)).hosts[0]!.serverId!;
+    const remote = await origin.paseo.hosts.client(serverId);
+    const response = await remote.agents.ref(agent.id).timeline.refetch({ limit: 0 });
+    const messages = response.entries.flatMap((row) =>
+      row.item.type === "user_message" ? [row.item.text] : [],
+    );
+    expect(messages).toHaveLength(rowCount);
+    expect(messages.every((message) => message === text)).toBe(true);
+    expect(
+      messages.reduce((bytes, message) => bytes + Buffer.byteLength(message), 0),
+    ).toBeGreaterThan(50 * 1024 * 1024);
+    expect((await remote.workspaces.list()).entries).toHaveLength(1);
+    await remote.dispose();
+  },
+);
+
+test("a pre-write host budget rejection leaves sibling routes connected", async () => {
+  const { HostTransportBudget } = await import("@getpaseo/client/node");
+  const b = await daemon();
+  const origin = createHostClient(
+    `127.0.0.1:${b.port}`,
+    { clientId: "budget-origin", reconnect: { enabled: false } },
+    new HostTransportBudget(1024 * 1024),
+  );
+  cleanup.push(() => origin.close());
+  await origin.connect();
+  const serverId = origin.getLastServerInfoMessage()!.serverId;
+  const routeIds = [
+    await origin.openHostLink("budget-first"),
+    await origin.openHostLink("budget-sibling"),
+  ];
+  const peers = routeIds.map(
+    (id, index) =>
+      new DaemonClient({
+        url: "ws://host-link/ws",
+        clientId: `budget-child-${index}`,
+        reconnect: { enabled: false },
+        transportFactory: createHostChannelTransport(origin, serverId, `budget-${index}`, id),
+      }),
+  );
+  for (const peer of peers) {
+    cleanup.push(() => peer.close());
+    await peer.connect();
+  }
+  await expect(async () =>
+    origin.sendHostFrame(routeIds[0]!, new Uint8Array(2 * 1024 * 1024)),
+  ).rejects.toMatchObject({ code: "resource_limit" });
+  await peers[1]!.ping({ timeoutMs: 2000 });
+  expect([origin.isConnected, ...peers.map((peer) => peer.isConnected)]).toEqual([
+    true,
+    true,
+    true,
+  ]);
+}, 30000);

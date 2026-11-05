@@ -1,3 +1,7 @@
+import {
+  FloatingHeaderOverlay,
+  useFloatingHeaderOverlayClearance,
+} from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -190,9 +194,11 @@ export function ToastViewport({
     return clearTimer;
   }, [clearTimer, durationMs, scheduleDismiss, toastId]);
 
+  const panelClearance = useFloatingHeaderOverlayClearance();
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const topOffset = placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : 0;
+  const topOffset =
+    placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
   const content = (
     <View
@@ -220,7 +226,7 @@ export function ToastViewport({
     return createPortal(content, getOverlayRoot());
   }
 
-  return content;
+  return placement === "panel" ? <FloatingHeaderOverlay>{content}</FloatingHeaderOverlay> : content;
 }
 
 function ToastCard({
