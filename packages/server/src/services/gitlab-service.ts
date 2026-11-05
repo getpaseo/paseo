@@ -168,7 +168,7 @@ const GitLabMergeRequestSchema = z
     description: z.string().nullable().optional(),
     labels: z.array(z.string()).optional(),
     updated_at: z.string().optional(),
-    references: z.object({ full: z.string().optional() }).passthrough().optional(),
+    references: z.object({ full: z.string().optional() }).passthrough().nullable().optional(),
     head_pipeline: GitLabPipelineSchema.nullable().optional(),
   })
   .passthrough();
