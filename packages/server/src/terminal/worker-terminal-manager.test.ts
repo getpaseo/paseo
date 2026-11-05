@@ -61,7 +61,6 @@ import {
   listTerminalWorkerRecords,
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
-  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   writeTerminalWorkerRecord,
   type TerminalWorkerRecord,
@@ -2690,20 +2689,23 @@ it.each([false, true])(
   45000,
 );
 
-// #8810: a worker that cannot start must not take the daemon down. The launcher cannot open its
-// log here (a directory sits at its path), so the launch fails before any worker runs.
+// #8810: a worker that cannot start must not take the daemon down. An override that is not a
+// protocol version makes the worker fail before it writes its record, on every platform.
 it("starts without a worker when the worker cannot start, and launches one once it can", async () => {
   const paseoHome = createTemporaryHome();
-  const logPath = terminalWorkerLogPath(paseoHome);
-  mkdirSync(logPath);
+  const previous = process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+  process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = "not-a-version";
+  try {
+    manager = await startRealWorkerManager({ paseoHome });
+    expect(await workerRecords(paseoHome)).toEqual([]);
+    await expect(
+      manager.createTerminal({ workspaceId: "ws-no-worker", cwd: paseoHome }),
+    ).rejects.toThrow(TerminalWorkerLaunchError);
+  } finally {
+    if (previous === undefined) delete process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+    else process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = previous;
+  }
 
-  manager = await startRealWorkerManager({ paseoHome });
-  expect(await workerRecords(paseoHome)).toEqual([]);
-  await expect(
-    manager.createTerminal({ workspaceId: "ws-no-worker", cwd: paseoHome }),
-  ).rejects.toThrow(TerminalWorkerLaunchError);
-
-  rmSync(logPath, { recursive: true });
   trackTerminal(await manager.createTerminal({ workspaceId: "ws-no-worker", cwd: paseoHome }));
   expect(await workerRecords(paseoHome)).toHaveLength(1);
 }, 30000);
