@@ -18,6 +18,13 @@ function usageEnabled(persisted: PersistedConfig): boolean {
   return persisted.daemon?.usage?.enabled !== false;
 }
 
+function idleRuntimeCleanupConfig(agents: NonNullable<PersistedConfig["agents"]>) {
+  return {
+    idleRuntimeCleanup: agents.idleRuntimeCleanup !== false,
+    idleRuntimeCleanupMinutes: agents.idleRuntimeCleanupMinutes ?? 60,
+  };
+}
+
 function reloadableConfig(
   persisted: PersistedConfig,
   options: { relayEnabledFallback?: boolean } = {},
@@ -37,7 +44,7 @@ function reloadableConfig(
     metadataGeneration: { providers: agents.metadataGeneration?.providers ?? [] },
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
-    idleRuntimeCleanup: agents.idleRuntimeCleanup !== false,
+    ...idleRuntimeCleanupConfig(agents),
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
     terminalProfiles: daemon.terminalProfiles,
     agentProfiles: daemon.agentProfiles,
@@ -1447,6 +1454,26 @@ describe("DaemonConfigStore reload", () => {
       overrideControlledPaths: [],
     });
     expect(store.get().idleRuntimeCleanup).toBe(false);
+  });
+
+  test("persists the idle runtime period and reloads file edits without a restart", async () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    const changes: unknown[] = [];
+    store.onFieldChange("idleRuntimeCleanupMinutes", (value) => changes.push(value));
+    expect((await store.patch({ idleRuntimeCleanupMinutes: 15 })).idleRuntimeCleanupMinutes).toBe(
+      15,
+    );
+    expect(loadPersistedConfig(paseoHome).agents?.idleRuntimeCleanupMinutes).toBe(15);
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanupMinutes).toBe(15);
+    writeConfig(paseoHome, { ...persisted, agents: { idleRuntimeCleanupMinutes: 240 } });
+    expect(await store.reload()).toEqual({
+      appliedPaths: ["agents.idleRuntimeCleanupMinutes"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(changes).toEqual([15, 240]);
+    await expect(store.patch({ idleRuntimeCleanupMinutes: 2 })).rejects.toThrow();
+    expect(store.get().idleRuntimeCleanupMinutes).toBe(240);
   });
 
   test("applies the global plugin switch in both directions", async () => {

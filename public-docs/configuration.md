@@ -94,7 +94,17 @@ for the entire host by turning off **Release idle agents** in **Settings → you
 { "agents": { "idleRuntimeCleanup": false } }
 ```
 
-This setting defaults to `true`. Changes in Settings apply immediately; config-file edits apply
+To change how long an agent stays idle before release, set `agents.idleRuntimeCleanupMinutes`
+(default `60`, from `5` to `1440`):
+
+```json
+{ "agents": { "idleRuntimeCleanupMinutes": 15 } }
+```
+
+An agent that was only reopened to read its timeline, with no prompt since, is released two minutes
+after the latest read.
+
+`idleRuntimeCleanup` defaults to `true`. Changes in Settings apply immediately; config-file edits apply
 on config reload. Re-enabling keeps existing idle timestamps. There is no per-agent setting. Providers without a runtime safety check use the same daemon baseline and one-hour idle
 period. Active work, descendants and pending finish notifications prevent cleanup. ACP adapters
 also retain runtimes with running ACP terminals, including silent ones; exited terminals do not
