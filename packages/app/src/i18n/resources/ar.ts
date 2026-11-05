@@ -2637,6 +2637,12 @@ export const ar: TranslationResources = {
         },
         moveUp: "نقل لأعلى",
         moveDown: "نقل لأسفل",
+        navLayout: {
+          title: "تخطيط القائمة",
+          description: "كيف تتسع قائمة الشريط الجانبي على الشاشات القصيرة",
+          scroll: "تمرير",
+          resizable: "قابل لتغيير الحجم",
+        },
       },
       fonts: {
         title: "الخطوط",

@@ -2640,6 +2640,12 @@ export const ptBR: TranslationResources = {
         },
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        navLayout: {
+          title: "Layout do menu",
+          description: "Como o menu da barra lateral cabe em telas baixas",
+          scroll: "Rolar",
+          resizable: "Redimensionável",
+        },
       },
       fonts: {
         title: "Fontes",

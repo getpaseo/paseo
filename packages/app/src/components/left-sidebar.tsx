@@ -10,16 +10,27 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   Pressable,
+  ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Gesture } from "react-native-gesture-handler";
+import { Gesture, ScrollView as GHScrollView } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -43,6 +54,9 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
+import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { isNative as platformIsNative } from "@/constants/platform";
+import { useAppSettings } from "@/hooks/use-settings";
 import { ResizableSidebarNav } from "@/components/sidebar/resizable-sidebar-nav";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
@@ -548,6 +562,66 @@ function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void
   );
 }
 
+interface MobileSidebarNavProps {
+  closeGestureRef: ComponentProps<typeof GHScrollView>["simultaneousHandlers"];
+  onBeforeNavigate: () => void;
+  firstRowTrailing: ReactNode;
+}
+
+/** The user picks the menu layout in Settings > Sidebar: a capped scroll, or a drag-to-size row count. */
+function MobileSidebarNav({
+  closeGestureRef,
+  onBeforeNavigate,
+  firstRowTrailing,
+}: MobileSidebarNavProps) {
+  const {
+    settings: { sidebarNavLayout },
+  } = useAppSettings();
+  if (sidebarNavLayout === "resizable") {
+    return (
+      <ResizableSidebarNav
+        style={styles.sidebarHeaderGroup}
+        onBeforeNavigate={onBeforeNavigate}
+        firstRowTrailing={firstRowTrailing}
+      />
+    );
+  }
+  const navRows = (
+    <SidebarNavRows
+      style={styles.mobileNavRowsGroup}
+      onBeforeNavigate={onBeforeNavigate}
+      firstRowTrailing={firstRowTrailing}
+    />
+  );
+  return (
+    <>
+      {platformIsNative ? (
+        <GHScrollView
+          // Same contract as the workspace list: vertical drags scroll the nav
+          // block, a clear horizontal intent still activates the close pan.
+          simultaneousHandlers={closeGestureRef}
+          style={styles.mobileNavScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {navRows}
+        </GHScrollView>
+      ) : (
+        <ScrollView
+          style={styles.mobileNavScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {navRows}
+        </ScrollView>
+      )}
+      <SidebarSeparator />
+    </>
+  );
+}
+
 function MobileSidebar({
   active,
   theme,
@@ -681,8 +755,8 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <ResizableSidebarNav
-          style={styles.sidebarHeaderGroup}
+        <MobileSidebarNav
+          closeGestureRef={closeGestureRef}
           onBeforeNavigate={closeSidebar}
           firstRowTrailing={closeButton}
         />
@@ -765,6 +839,9 @@ function DesktopSidebar({
   overlay,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
+  const {
+    settings: { sidebarNavLayout },
+  } = useAppSettings();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -893,7 +970,14 @@ function DesktopSidebar({
             ) : (
               <TitlebarDragRegion />
             )}
-            <ResizableSidebarNav style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+            {sidebarNavLayout === "resizable" ? (
+              <ResizableSidebarNav
+                style={sidebarHeaderGroupStyle}
+                onBeforeNavigate={closeSidebar}
+              />
+            ) : (
+              <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+            )}
           </View>
 
           <SidebarViewSlot dismiss={closeSidebar}>
@@ -992,6 +1076,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarHeaderGroupFlush: {
     paddingTop: 0,
+  },
+  // The nav block caps at half the sidebar; a long item list scrolls inside the
+  // cap instead of crowding the workspace list off a short screen.
+  mobileNavScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxHeight: "50%",
+  },
+  mobileNavRowsGroup: {
+    paddingTop: theme.spacing[2],
+    gap: 2,
+    paddingBottom: theme.spacing[1.5],
   },
   sidebarContent: {
     flex: 1,

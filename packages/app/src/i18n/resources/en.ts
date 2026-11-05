@@ -2728,6 +2728,12 @@ export const en = {
         },
         moveUp: "Move up",
         moveDown: "Move down",
+        navLayout: {
+          title: "Menu layout",
+          description: "How the sidebar menu fits on short screens",
+          scroll: "Scroll",
+          resizable: "Resizable",
+        },
       },
       fonts: {
         title: "Fonts",

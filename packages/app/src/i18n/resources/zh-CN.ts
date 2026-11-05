@@ -2573,6 +2573,12 @@ export const zhCN: TranslationResources = {
         },
         moveUp: "上移",
         moveDown: "下移",
+        navLayout: {
+          title: "菜单布局",
+          description: "侧边栏菜单在矮屏幕上的显示方式",
+          scroll: "滚动",
+          resizable: "可调整大小",
+        },
       },
       fonts: {
         title: "字体",

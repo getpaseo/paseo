@@ -52,6 +52,7 @@ import {
   type SendShortcut,
   type ServiceUrlBehavior,
   type Settings,
+  type SidebarNavLayout,
   type SidebarWorkspaceTrailing,
   type SettingsDeps,
   type WorkspaceTitleSource,
@@ -98,6 +99,7 @@ export type {
   ServiceUrlBehavior,
   Settings,
   SettingsDeps,
+  SidebarNavLayout,
   SidebarWorkspaceTrailing,
   WorkspaceTitleSource,
 };

@@ -2625,6 +2625,12 @@ export const ja: TranslationResources = {
         },
         moveUp: "上に移動",
         moveDown: "下に移動",
+        navLayout: {
+          title: "メニューのレイアウト",
+          description: "高さの低い画面でサイドバーのメニューを収める方法",
+          scroll: "スクロール",
+          resizable: "サイズ変更",
+        },
       },
       fonts: {
         title: "フォント",
