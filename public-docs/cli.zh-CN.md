@@ -270,10 +270,10 @@ paseo plugin remove my-plugin
 
 ```bash
 paseo ls                    # Non-archived agents in active workspaces
-paseo ls -a                 # Also include archived agents
+paseo ls -a                 # Also include archived and background agents, with a BACKGROUND column
 paseo ls -g                 # Non-archived agents across all workspaces
 paseo ls -a -g --json       # All agents, including archived, as JSON
-paseo ls --background       # Also include agents in background workspaces
+paseo ls --background       # Also include background agents and agents in background workspaces
 ```
 
 ## 流式输出 {#streaming-output}

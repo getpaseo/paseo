@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.15.0",
+  "version": "0.15.2",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -59,6 +59,7 @@
     "@getpaseo/protocol": "*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@gorhom/portal": "^1.0.14",
+    "@legendapp/list": "^3.7.1",
     "@marijn/find-cluster-break": "^1.0.2",
     "@mattermost/react-native-paste-input": "2.0.1",
     "@react-native-async-storage/async-storage": "2.2.0",

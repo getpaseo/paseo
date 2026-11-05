@@ -13,6 +13,7 @@ import {
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
+import { bySizing } from "@/components/ui/control-geometry";
 import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
 import { isWeb } from "@/constants/platform";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -29,8 +30,9 @@ import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
  * on every platform.
  *
  * The bar floats over the transcript with no background, so content remains visible underneath.
- * Its host gives the scroll viewport a small bottom inset only when the bar exists; that keeps
- * the final footer clear without turning the overlay into a layout band.
+ * Its host gives the scroll viewport a small bottom inset for as long as the bar is mounted, with
+ * or without pills: that keeps the final footer clear, and pills that come and go every turn do not
+ * move the transcript.
  */
 export function ComposerTrackBar({ children }: { children: ReactNode }): ReactElement {
   return (
@@ -342,16 +344,17 @@ const styles = StyleSheet.create((theme) => {
   // The rail every panel row sits on: inset from the panel edge so the fill is a rounded block
   // inside it, and tall enough that revealing an action button cannot resize the row.
   //
-  // Compact and desktop differ here and only here. A finger needs the taller row a menu row gets
-  // on compact; a pointer does not, and the popover keeps its density.
+  // Touch and pointer sizing differ here and only here. A finger needs the row a menu row gets
+  // on touch (`MENU_ITEM_HEIGHT` is always its touch value at `xs`); a pointer does not, and the
+  // popover keeps its density.
   const trackRow = {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    minHeight: { xs: MENU_ITEM_HEIGHT.xs, md: 32 },
+    minHeight: bySizing({ touch: MENU_ITEM_HEIGHT.xs, pointer: 32 }),
     marginHorizontal: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: { xs: theme.spacing[2], md: theme.spacing[1] },
+    paddingVertical: bySizing({ touch: theme.spacing[2], pointer: theme.spacing[1] }),
     borderRadius: theme.borderRadius.md,
   } as const;
 

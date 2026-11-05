@@ -264,7 +264,11 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
-  /** Visibility intent for a NEW workspace. Existing targets reject this option. */
+  /**
+   * Creates a background agent: hidden from default lists, tabs, the parent's subagent track
+   * and notifications, and still addressable by id. A workspace this call creates is
+   * background too. With a parent and no value, the parent's own background applies.
+   */
   background?: CreateAgentRequestMessage["background"];
   requestId?: string;
   labels?: Record<string, string>;
@@ -609,12 +613,14 @@ export function createPaseoApi(
     options: PaseoAgentCreateOptions,
     placement?: { workspaceId: string; cwd: string },
   ) => {
+    const serverId = daemonClient.getLastServerInfoMessage()?.serverId;
+    const foreignParent =
+      options.background === undefined ? foreignParentHandle(options.parent, serverId) : null;
+    const resolved = foreignParent
+      ? await inheritParentBackground(options, foreignParent)
+      : options;
     const agent = await daemonClient.createAgent(
-      toDaemonAgentCreateOptions(
-        options,
-        placement,
-        daemonClient.getLastServerInfoMessage()?.serverId,
-      ),
+      toDaemonAgentCreateOptions(resolved, placement, serverId),
     );
     return createAgentHandle(agent);
   };
@@ -819,25 +825,7 @@ function createWorkspaceHandleFactory(
     let current = typeof workspace === "string" ? null : workspace;
 
     const refresh = async (options?: { requestId?: string }) => {
-      let cursor: string | undefined;
-      let requestId = options?.requestId;
-      // A ref addresses one workspace by id, so a background one resolves too.
-      const filter = daemonClient.supportsBackgroundWorkspaces() ? { includeBackground: true } : {};
-      do {
-        const result = await daemonClient.fetchWorkspaces({
-          requestId,
-          filter,
-          page: { limit: 200, ...(cursor ? { cursor } : {}) },
-        });
-        const match = result.entries.find((entry) => entry.id === id);
-        if (match) {
-          current = match;
-          return current;
-        }
-        cursor = result.pageInfo.nextCursor ?? undefined;
-        requestId = undefined;
-      } while (cursor);
-      current = null;
+      current = await daemonClient.findWorkspace(id, options);
       return current;
     };
 
@@ -1064,6 +1052,24 @@ async function openWorkspace(
 
 function resolveWorkspaceId(workspace: string | PaseoWorkspaceHandle): string {
   return typeof workspace === "string" ? workspace : workspace.id;
+}
+
+function foreignParentHandle(
+  parent: PaseoAgentCreateOptions["parent"],
+  serverId: string | undefined,
+): PaseoAgentHandle | null {
+  if (!parent || typeof parent === "string" || !("address" in parent)) return null;
+  return parent.address.serverId === serverId ? null : parent;
+}
+
+// A host inherits background from a caller it can see. A parent on another host is invisible to
+// it, so a handle passes its own value on. A bare foreign address can't; pass background then.
+async function inheritParentBackground(
+  options: PaseoAgentCreateOptions,
+  parent: PaseoAgentHandle,
+): Promise<PaseoAgentCreateOptions> {
+  const snapshot = parent.current() ?? (await parent.refresh())?.agent;
+  return snapshot?.background ? { ...options, background: true } : options;
 }
 
 function encodeParent(
