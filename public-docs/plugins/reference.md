@@ -2033,7 +2033,7 @@ export default function contribute(client: PluginClientContext) {
 Commands follow the [composer item](#composer-items) rules: each one acts on the screen's state
 when it runs, so `await newWorkspace.setBranch(name)` followed by `newWorkspace.setMetadata(patch)`
 changes both, and its promise resolves once the change has taken effect. A command works from your component's first effect, including a mount effect. Payloads are JSON values.
-Your items are mounted for one project on one host. When the user changes either, Paseo remounts them and clears `branch` and `metadata`, so state and `Combobox` results for the previous project do not carry over; an item that sets up in a mount effect sets up again for the new project.
+Your items are mounted for one project on one host. When the user changes either, Paseo remounts them and clears `branch` and `metadata`, so state and `Combobox` results for the previous project do not carry over; an item that sets up in a mount effect sets up again for the new project. A command called after its project or host has been left, such as the end of a lookup the user abandoned by switching, rejects with "The New workspace screen moved to another project or host; this item belongs to the previous one." and changes nothing; the items mounted for the new project are not affected.
 `host`, `project`, `baseRef` and `metadata` are frozen. While the screen creates the workspace it is locked: your fields render
 disabled and every command rejects with "The New workspace screen is locked while the workspace is
 being created." A callback that returns a promise keeps the control disabled until it settles, and a

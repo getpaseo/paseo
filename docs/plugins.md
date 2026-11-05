@@ -724,9 +724,15 @@ now means another project, because its identity changes every render. The store 
 and `metadata` on the same change in `syncInputs`, and a remounted item's mount effect sets them
 again.
 
-Known limit: an item that issues a command from `useLayoutEffect` on mount runs before the screen's
-`syncInputs` layout effect, so it is validated against the previous target's inputs and the reset
-can clear what it set. This applies to a project switch as well as a host switch, since items
+An item's commands come from `setup.commandsFor({ serverId, projectId })`, bound to the target the
+item was mounted for. Once `syncInputs` reports another target they reject with a "moved" error, so
+a lookup that finishes after a project switch cannot write into the new project's choices. The
+reset only clears what was already written; this check covers what is written later. Rejecting, not
+ignoring, matches the lock: a command's promise resolves only when the change took effect.
+
+Known limit: an item that issues a command from `useLayoutEffect` on mount after a project or host
+switch runs before the screen's `syncInputs` layout effect, so its commands (bound to the new
+target) still see the previous target and reject as moved. This applies to a project switch as well as a host switch, since items
 remount per `(serverId, project id)`. Passive effects are not affected.
 
 `ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a

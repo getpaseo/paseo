@@ -34,6 +34,17 @@ export interface SetupInputs {
   supportsMetadata: boolean;
 }
 
+/** The project on the host a screen creates in; what an item is mounted for. */
+export interface SetupTarget {
+  serverId: string;
+  /** Null while the screen is still resolving its project. */
+  projectId: string | null;
+}
+
+export function setupTargetOf(input: Pick<SetupInputs, "serverId" | "project">): SetupTarget {
+  return { serverId: input.serverId, projectId: input.project?.id ?? null };
+}
+
 export interface SetupCommands {
   setIsolation(isolation: Isolation): Promise<void>;
   setBaseRef(ref: { type: "branch"; name: string }): Promise<void>;
@@ -51,7 +62,11 @@ export interface NewWorkspaceSetup {
   /** The isolation picker's entry, and the one `setIsolation` takes. */
   chooseIsolation(isolation: Isolation): void;
   syncInputs(inputs: SetupInputs): void;
-  commands: SetupCommands;
+  /**
+   * Commands for the items mounted for `target`. Once the screen is on another project or host
+   * they reject, so a lookup that finishes after the switch cannot write into the new choices.
+   */
+  commandsFor(target: SetupTarget): SetupCommands;
 }
 
 /** What a pick does beyond changing the model, the same for the picker and for a command. */
@@ -62,6 +77,8 @@ export interface SetupEffects {
   syncBaseAttachment(item: PickerItem): void;
 }
 
+const MOVED_MESSAGE =
+  "The New workspace screen moved to another project or host; this item belongs to the previous one.";
 const LOCKED_MESSAGE = "The New workspace screen is locked while the workspace is being created.";
 
 /**
@@ -82,15 +99,15 @@ export function createNewWorkspaceSetup(
     metadata: {},
   };
   let inputs = initial;
-  let target = initial.project ? `${initial.serverId}\n${initial.project.id}` : null;
+  let screenTarget = initial.project ? `${initial.serverId}\n${initial.project.id}` : null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<SetupState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
   };
-  const unlocked = (): SetupInputs => {
-    if (inputs.locked) throw new Error(LOCKED_MESSAGE);
-    return inputs;
+  const sameTarget = (target: SetupTarget) => {
+    const current = setupTargetOf(inputs);
+    return current.serverId === target.serverId && current.projectId === target.projectId;
   };
   const dispatchPicker = (event: PickerSelectionEvent) =>
     update({ pickerSelection: reducePickerSelection(state.pickerSelection, event) });
@@ -102,26 +119,13 @@ export function createNewWorkspaceSetup(
     update({ manualIsolation: isolation });
     effects.persistIsolation(isolation);
   };
-  return {
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSnapshot: () => state,
-    dispatchPicker,
-    chooseBase,
-    chooseIsolation,
-    syncInputs: (next) => {
-      inputs = next;
-      // A branch and metadata are chosen for one project on one host. A project id can repeat
-      // across hosts (a remote repository keeps its key everywhere), so the host is part of the
-      // target. An absent project is a screen that is still resolving, not a switch.
-      if (!next.project) return;
-      const nextTarget = `${next.serverId}\n${next.project.id}`;
-      if (target && target !== nextTarget) update({ branch: null, metadata: {} });
-      target = nextTarget;
-    },
-    commands: {
+  const commandsFor = (target: SetupTarget): SetupCommands => {
+    const unlocked = (): SetupInputs => {
+      if (!sameTarget(target)) throw new Error(MOVED_MESSAGE);
+      if (inputs.locked) throw new Error(LOCKED_MESSAGE);
+      return inputs;
+    };
+    return {
       async setIsolation(isolation) {
         const current = unlocked();
         if (isolation === "worktree" && !current.canCreateWorktree) {
@@ -152,7 +156,28 @@ export function createNewWorkspaceSetup(
         if (!current.supportsMetadata) throw new Error("Update the host to use metadata.");
         update({ metadata: applyMetadataPatch(state.metadata, patch) });
       },
+    };
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
+    getSnapshot: () => state,
+    dispatchPicker,
+    chooseBase,
+    chooseIsolation,
+    syncInputs: (next) => {
+      inputs = next;
+      // A branch and metadata are chosen for one project on one host. A project id can repeat
+      // across hosts (a remote repository keeps its key everywhere), so the host is part of the
+      // target. An absent project is a screen that is still resolving, not a switch.
+      if (!next.project) return;
+      const nextTarget = `${next.serverId}\n${next.project.id}`;
+      if (screenTarget && screenTarget !== nextTarget) update({ branch: null, metadata: {} });
+      screenTarget = nextTarget;
+    },
+    commandsFor,
   };
 }
 

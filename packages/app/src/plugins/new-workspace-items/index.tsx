@@ -60,6 +60,7 @@ export function PluginNewWorkspaceItems({
             <ThemedPluginNewWorkspaceItems
               key={plugin.id}
               plugin={plugin}
+              serverId={serverId}
               screen={screen}
               setup={setup}
               uniProps={pluginThemeMapping}
@@ -74,24 +75,31 @@ export function PluginNewWorkspaceItems({
 function PluginNewWorkspaceItemsHost({
   plugin,
   theme,
+  serverId,
   screen,
   setup,
 }: {
   plugin: InstalledPlugin;
+  serverId: string;
   theme: PluginHostProps["theme"];
   screen: NewWorkspaceItemsScreen;
   setup: NewWorkspaceSetup;
 }) {
   const { environment, props } = usePluginItemHost(plugin, theme);
   const { branch, metadata } = useNewWorkspaceSetupState(setup);
+  const projectId = screen.project?.id ?? null;
+  const commands = useMemo(
+    () => setup.commandsFor({ serverId, projectId }),
+    [setup, serverId, projectId],
+  );
   const newWorkspace = useMemo(
     () =>
       toPluginNewWorkspace({
         host: props.host,
         view: { ...screen, branch, metadata },
-        commands: setup.commands,
+        commands,
       }),
-    [branch, metadata, props.host, screen, setup.commands],
+    [branch, metadata, props.host, screen, commands],
   );
   return (
     <PluginEnvironmentProvider environment={environment}>

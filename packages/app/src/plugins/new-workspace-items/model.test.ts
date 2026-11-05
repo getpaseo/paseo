@@ -50,7 +50,7 @@ describe("the base ref a plugin reads", () => {
     const read = toPluginNewWorkspace({
       host: HOST,
       view: viewOf(origin),
-      commands: setup.commands,
+      commands: setup.commandsFor({ serverId: "host-a", projectId: "p" }),
     });
 
     expect(read.baseRef).toEqual({ type: "branch", name: "refs/remotes/origin/release" });
