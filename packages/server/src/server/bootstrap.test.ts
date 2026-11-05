@@ -77,6 +77,7 @@ function liveCleanupHost() {
       relay: { enabled: true },
       mcp: { injectIntoAgents: false },
       idleRuntimeCleanup: true,
+      idleRuntimeCleanupMinutes: 60,
     }),
     undefined,
     {
@@ -86,6 +87,7 @@ function liveCleanupHost() {
             relay: { enabled: true },
             mcp: { injectIntoAgents: false },
             idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+            idleRuntimeCleanupMinutes: persisted.agents?.idleRuntimeCleanupMinutes ?? 60,
           }),
           overrideControlledPaths: [],
         }),
@@ -193,4 +195,42 @@ test("disposing bootstrap's binding stops configuration delivery", async () => {
   host.unsubscribe();
   await host.store.patch({ idleRuntimeCleanup: false });
   expect((await host.sweep()).collected).toHaveLength(1);
+});
+
+test("bootstrap's binding applies the host idle period live from settings and config reloads", async () => {
+  const host = liveCleanupHost();
+  await host.store.patch({ idleRuntimeCleanupMinutes: 15 });
+  expect(loadPersistedConfig(host.home).agents?.idleRuntimeCleanupMinutes).toBe(15);
+  expect((await host.sweep(14)).collected).toEqual([]);
+  expect((await host.sweep(15)).collected).toHaveLength(1);
+
+  const reloaded = liveCleanupHost();
+  writeFileSync(
+    path.join(reloaded.home, "config.json"),
+    JSON.stringify({ version: 1, agents: { idleRuntimeCleanupMinutes: 90 } }),
+  );
+  await reloaded.store.reload();
+  expect((await reloaded.sweep(61)).collected).toEqual([]);
+  expect((await reloaded.sweep(90)).collected).toHaveLength(1);
+});
+
+test("bootstrap's binding starts the collector with the persisted idle period", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "paseo-live-cleanup-"));
+  onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+  const store = new DaemonConfigStore(
+    home,
+    MutableDaemonConfigSchema.parse({
+      relay: { enabled: true },
+      mcp: { injectIntoAgents: false },
+      idleRuntimeCleanupMinutes: 30,
+    }),
+    undefined,
+  );
+  const periods: number[] = [];
+  const unsubscribe = connectIdleRuntimeCleanupConfig(store, {
+    setEnabled: () => {},
+    setIdlePeriodMs: (value) => periods.push(value),
+  });
+  unsubscribe();
+  expect(periods).toEqual([30 * 60_000]);
 });

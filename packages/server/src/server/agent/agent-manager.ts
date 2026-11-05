@@ -862,6 +862,8 @@ export class AgentManager {
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly historySessions = new WeakSet<AgentSession>();
+  // Runtimes loaded to serve a read that have had no foreground use since: latest read time.
+  private readonly readOnlyRuntimes = new WeakMap<AgentSession, number>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly runtimeCleanupIdentities = new WeakMap<
     AgentSession,
@@ -1730,7 +1732,7 @@ export class AgentManager {
     );
     if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const registered = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
       ...options,
       // The caller read its metadata and attention before this turn in the lane; a setMetadata
@@ -1744,6 +1746,21 @@ export class AgentManager {
           : handle,
       restoring: true,
     });
+    // A read asks for history even when the directory exists and the runtime is interactive.
+    if (resumeOptions?.purpose === "history") this.readOnlyRuntimes.set(session, Date.now());
+    return registered;
+  }
+
+  /** Restart the read-only grace of a runtime that has served only reads since it loaded. */
+  noteHistoryRead(agentId: string): void {
+    const session = this.agents.get(agentId)?.session;
+    if (session && this.readOnlyRuntimes.has(session))
+      this.readOnlyRuntimes.set(session, Date.now());
+  }
+
+  private noteForegroundUse(agentId: string): void {
+    const session = this.agents.get(agentId)?.session;
+    if (session) this.readOnlyRuntimes.delete(session);
   }
 
   importProviderSession(input: {
@@ -2083,6 +2100,7 @@ export class AgentManager {
     const candidates: RuntimeCleanupCandidate[] = [];
     for (const agent of this.agents.values()) {
       const updatedAt = agent.updatedAt;
+      const readOnlySince = this.readOnlyRuntimes.get(agent.session);
       let identity = this.runtimeCleanupIdentities.get(agent.session);
       if (!identity) {
         identity = Object.freeze({ openedAt: Date.now() });
@@ -2091,6 +2109,7 @@ export class AgentManager {
       const isEligible = () =>
         this.agents.get(agent.id) === agent &&
         agent.updatedAt === updatedAt &&
+        this.readOnlyRuntimes.get(agent.session) === readOnlySince &&
         this.runtimeHasNoPendingWork(agent);
       candidates.push({
         identity,
@@ -2099,6 +2118,7 @@ export class AgentManager {
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? null,
         lastActivityAt: Math.max(updatedAt.getTime(), identity.openedAt),
+        readOnlySince,
         isEligible,
         canStopRuntime: agent.session.canStopRuntime?.bind(agent.session),
         closeIfEligible: async (revalidate) => {
@@ -3221,6 +3241,7 @@ export class AgentManager {
 
   /** Inside the agent's lane: a history session is upgraded before anything is applied to it. */
   private async ensureInteractiveSessionUnlocked(agentId: string): Promise<ActiveManagedAgent> {
+    this.noteForegroundUse(agentId);
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       const record = await this.registry?.get(agentId);
@@ -3267,6 +3288,7 @@ export class AgentManager {
     const existingAgent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(existingAgent.session))
       return this.streamAfterHistoryLoad(agentId, prompt, options, promptStart);
+    this.noteForegroundUse(agentId);
     this.logger.trace(
       {
         agentId,
@@ -3855,6 +3877,7 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+    this.noteForegroundUse(agentId);
     if (agent.inFlightPermissionResponses.has(requestId)) {
       throw new Error("A response to this permission request is already being submitted");
     }
@@ -4018,6 +4041,7 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    this.noteForegroundUse(agentId);
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       agent = await this.ensureInteractiveSession(agentId);

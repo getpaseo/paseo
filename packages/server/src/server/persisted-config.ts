@@ -19,6 +19,10 @@ import {
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "@getpaseo/protocol/agent-profile";
 import { PluginIdSchema, PluginSourceSchema } from "@getpaseo/protocol/plugin-config";
 import { TerminalProfileSchema } from "@getpaseo/protocol/terminal-profile";
+import {
+  IDLE_RUNTIME_CLEANUP_MINUTES_MAX,
+  IDLE_RUNTIME_CLEANUP_MINUTES_MIN,
+} from "@getpaseo/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
@@ -349,6 +353,12 @@ export const PersistedConfigSchema = z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
         idleRuntimeCleanup: z.boolean().optional(),
+        idleRuntimeCleanupMinutes: z
+          .number()
+          .int()
+          .min(IDLE_RUNTIME_CLEANUP_MINUTES_MIN)
+          .max(IDLE_RUNTIME_CLEANUP_MINUTES_MAX)
+          .optional(),
         resumeOnStartup: z.boolean().optional(),
         resumePrompt: z.string().optional(),
         catalogRefreshTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
