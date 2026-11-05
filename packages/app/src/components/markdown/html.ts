@@ -38,9 +38,6 @@ export function normalizeMarkdownHtml(source: string): string {
   const htmlRanges: { start: number; end: number }[] = [];
   const tableRanges: { start: number; end: number }[] = [];
   function findHtml(node: Nodes) {
-    if (node.type === "table" && node.position) {
-      tableRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
-    }
     if (node.type === "html" && node.position) {
       htmlRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
     } else if ("children" in node) node.children.forEach(findHtml);
@@ -52,18 +49,22 @@ export function normalizeMarkdownHtml(source: string): string {
     }),
   );
   const codeRanges: { start: number; end: number }[] = [];
-  // Disable HTML parsing so code inside <details> remains visible to the Markdown parser.
+  // Disable HTML parsing so code and tables inside <details> remain visible.
   const tree = fromMarkdown(source, {
-    extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }],
+    extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }, gfmTable()],
+    mdastExtensions: [gfmTableFromMarkdown()],
   });
-  function protectCode(node: Nodes) {
+  function findMarkdownRanges(node: Nodes) {
+    if (node.type === "table" && node.position) {
+      tableRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
+    }
     if (node.type === "code" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
-    } else if ("children" in node) node.children.forEach(protectCode);
+    } else if ("children" in node) node.children.forEach(findMarkdownRanges);
   }
-  protectCode(tree);
+  findMarkdownRanges(tree);
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number): string => {

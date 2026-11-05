@@ -62,6 +62,43 @@ describe("shared Markdown source adaptation", () => {
       ["3", "first\u2028second"],
     ]);
   });
+  it("keeps table breaks inside a details wrapper without a blank line", async () => {
+    const source =
+      "<details><summary>Results</summary>\n| A | B |\n|---|---|\n| 1 | first<br>second |\n</details>";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const tables: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Table") tables.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].attributes?.bodyRowCount).toBe("1");
+    expect(tables[0].children?.[1]?.children?.[0]?.children?.[1]?.children).toEqual([
+      { type: "Text", content: "first\u2028second" },
+    ]);
+  });
+  it("recognizes file links separately on either side of a table break", async () => {
+    const prepared = prepareMarkdownSource(
+      "| A | B |\n|---|---|\n| 1 | src/first.ts<br>src/second.ts |",
+      "/repo",
+    );
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { hardSoftBreaks: true, latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const links: string[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Link") links.push(String(node.attributes?.url));
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(links).toEqual(["src/first.ts", "src/second.ts"]);
+  });
   it.each([
     ["| A<br>B | C |\n|---|---|\n| x | y |", "| A\u2028B | C |\n|---|---|\n| x | y |"],
     [
