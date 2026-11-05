@@ -4432,6 +4432,41 @@ describe("createAgentStreamReducerQueue", () => {
     expect(scheduler.size).toBe(0);
   });
 
+  it("commits background events without waiting for a paused timer and resumes foreground batching", () => {
+    const scheduler = createManualScheduler();
+    const commits: string[] = [];
+    let background = false;
+    let currentHead: StreamItem[] = [];
+    const queue = createAgentStreamReducerQueue({
+      getSnapshot: () => ({ currentTail: [], currentHead, currentCursor: undefined }),
+      commit: (_agentId, result) => {
+        currentHead = result.head;
+        commits.push(result.head[0]?.kind === "assistant_message" ? result.head[0].text : "");
+      },
+      handleSideEffects: () => {},
+      scheduleFlush: scheduler.schedule,
+      cancelFlush: scheduler.cancel,
+      shouldFlushImmediately: () => background,
+    });
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("Hello"), 1));
+    expect(scheduler.size).toBe(1);
+    background = true;
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent(" world"), 2));
+    expect(commits).toEqual(["Hello world"]);
+    expect(scheduler.size).toBe(0);
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("!"), 3));
+    expect(commits).toEqual(["Hello world", "Hello world!"]);
+
+    background = false;
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent(" Again"), 4));
+    expect(scheduler.size).toBe(1);
+    expect(commits).toHaveLength(2);
+    scheduler.flushOne();
+    expect(commits).toEqual(["Hello world", "Hello world!", "Hello world! Again"]);
+  });
+
   it("flushes queued events synchronously for one agent before canonical history is applied", () => {
     const scheduler = createManualScheduler();
     const commits: string[] = [];

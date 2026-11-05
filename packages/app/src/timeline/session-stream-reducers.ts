@@ -1,5 +1,6 @@
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { AppState, Platform } from "react-native";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
@@ -1491,6 +1492,7 @@ export interface CreateAgentStreamReducerQueueInput {
   handleSideEffects: (agentId: string, sideEffects: AgentStreamReducerSideEffect[]) => void;
   scheduleFlush: (callback: () => void) => number;
   cancelFlush: (id: number) => void;
+  shouldFlushImmediately?: () => boolean;
 }
 
 function processTimelineSequencingGate(input: {
@@ -1783,7 +1785,11 @@ export function createAgentStreamReducerQueue(
       } else {
         pendingByAgentId.set(agentId, [event]);
       }
-      scheduleFlush();
+      if (input.shouldFlushImmediately?.()) {
+        flush();
+      } else {
+        scheduleFlush();
+      }
     },
     flush,
     flushAgent,
@@ -1855,7 +1861,8 @@ function clearScheduledReducerFlush(handle: ScheduledReducerFlush): void {
 // Commit deltas on a frame boundary so text lands in step with paint instead of on
 // an arbitrary timer that drifts on and off the display beat. A frame callback
 // never fires in a hidden tab, so a timer races it and wins when nothing is
-// painting — the store has to keep advancing either way.
+// painting. Android background events are committed directly instead: React
+// Native pauses both timer and frame callbacks when its activity pauses.
 function scheduleAgentStreamReducerFlush(callback: () => void): number {
   const id = nextScheduledReducerFlushId;
   nextScheduledReducerFlushId += 1;
@@ -1891,7 +1898,7 @@ export function createSessionAgentStreamReducerQueue(
   const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap, onCommitted } =
     input;
 
-  return createAgentStreamReducerQueue({
+  const queue = createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
       const session = useSessionStore.getState().sessions[serverId];
       const timeline = selectAgentTimelineState(session, agentId);
@@ -1959,5 +1966,22 @@ export function createSessionAgentStreamReducerQueue(
     },
     scheduleFlush: scheduleAgentStreamReducerFlush,
     cancelFlush: cancelAgentStreamReducerFlush,
+    shouldFlushImmediately: () => Platform.OS === "android" && AppState.currentState !== "active",
   });
+
+  const appStateSubscription =
+    Platform.OS === "android"
+      ? AppState.addEventListener("change", (state) => {
+          // A frame scheduled just before backgrounding may never fire there.
+          if (state !== "active") queue.flush();
+        })
+      : null;
+
+  return {
+    ...queue,
+    dispose(options) {
+      appStateSubscription?.remove();
+      queue.dispose(options);
+    },
+  };
 }
