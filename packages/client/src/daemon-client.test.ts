@@ -2596,6 +2596,111 @@ test("foreground verification replaces a silently broken socket without waiting 
   expect(client.getConnectionState()).toEqual({ status: "connected" });
 });
 
+test("foreground replaces a connect attempt left pending while the app was hidden", async () => {
+  useHeartbeatClock();
+  try {
+    const stuck = createMockTransport();
+    const fresh = createMockTransport();
+    const transports = [stuck, fresh];
+    let transportIndex = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "foreground-stale-connect",
+      logger: noopLogger,
+      transportFactory: () => {
+        const next = transports[transportIndex];
+        if (!next) throw new Error("unexpected extra connect");
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    void client.connect().catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.getConnectionState().status).toBe("connecting");
+    expect(transportIndex).toBe(1);
+
+    client.ensureConnected({ verify: true });
+    expect(transportIndex).toBe(2);
+
+    fresh.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("foreground keeps a connect attempt that has only just started", async () => {
+  useHeartbeatClock();
+  try {
+    const pending = createMockTransport();
+    let transportIndex = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "foreground-fresh-connect",
+      logger: noopLogger,
+      transportFactory: () => {
+        transportIndex += 1;
+        return pending.transport;
+      },
+    });
+    clients.push(client);
+
+    void client.connect().catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(500);
+    client.ensureConnected({ verify: true });
+    expect(transportIndex).toBe(1);
+
+    pending.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("foreground forgets the retry backoff built up while the app was hidden", async () => {
+  useHeartbeatClock();
+  try {
+    const transports = Array.from({ length: 8 }, () => createMockTransport());
+    let transportIndex = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "foreground-backoff-reset",
+      logger: noopLogger,
+      reconnect: { enabled: true, baseDelayMs: 1_500, maxDelayMs: 30_000 },
+      transportFactory: () => {
+        const next = transports[transportIndex];
+        if (!next) throw new Error("unexpected extra connect");
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    const initial = client.connect();
+    transports[0].triggerOpen();
+    await initial;
+
+    // Hidden: the OS blocks the network, so each retry fails and the delay doubles.
+    transports[0].triggerClose({ code: 1006, reason: "network suspended" });
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(1_500 * 2 ** (attempt - 1));
+      expect(transportIndex).toBe(attempt + 1);
+      transports[attempt].triggerClose({ code: 1006, reason: "network suspended" });
+    }
+
+    // Foreground: the immediate attempt fails once more, and the next one comes after the base delay.
+    client.ensureConnected({ verify: true });
+    expect(transportIndex).toBe(6);
+    transports[5].triggerClose({ code: 1006, reason: "network still waking" });
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(transportIndex).toBe(7);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("foreground verification preserves a healthy socket and deduplicates simultaneous checks", async () => {
   useHeartbeatClock();
   const daemon = new FakeDaemon();
