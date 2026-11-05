@@ -307,6 +307,14 @@ export function selectRecommendedProjectPaths(
     .filter((path) => path.length > 0);
 }
 
+export function selectProjectRootPaths(state: SessionsSnapshot, serverId: string | null): string[] {
+  const projects = serverId ? state.sessions[serverId]?.projects : undefined;
+  if (!projects || projects.size === 0) {
+    return EMPTY_WORKSPACE_KEYS;
+  }
+  return Array.from(projects.values(), (project) => project.projectRootPath);
+}
+
 export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | null): boolean {
   if (!serverId) {
     return false;

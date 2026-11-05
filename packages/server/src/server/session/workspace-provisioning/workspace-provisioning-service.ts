@@ -149,7 +149,8 @@ export function createWorkspaceProvisioningService(deps: {
 
     const [projectsBeforeImport, workspacesBeforeImport] = await Promise.all([
       projectRegistry.list(),
-      workspaceRegistry.list(),
+      // Import rollback must distinguish restored records from newly allocated workspaces.
+      workspaceRegistry.listAll(),
     ]);
     const workspace = await findOrCreateWorkspaceForDirectory(input.cwd);
     const createdWorkspace = workspacesBeforeImport.some(
@@ -179,7 +180,7 @@ export function createWorkspaceProvisioningService(deps: {
   ): Promise<void> {
     try {
       await workspaceRegistry.remove(workspace.workspaceId);
-      const projectHasActiveWorkspace = (await workspaceRegistry.list()).some(
+      const projectHasActiveWorkspace = (await workspaceRegistry.listActive()).some(
         (candidate) => candidate.projectId === workspace.projectId && !candidate.archivedAt,
       );
       if (projectHasActiveWorkspace) {
@@ -321,7 +322,7 @@ export function createWorkspaceProvisioningService(deps: {
       return refreshProjectKind(await requireActiveProject(input.projectId));
     }
 
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listActive();
     const sourceWorkspace =
       workspaces.find(
         (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, input.sourceCwd),
@@ -356,7 +357,8 @@ export function createWorkspaceProvisioningService(deps: {
   async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     // Path-based discovery selects public work; explicit-ID recovery bypasses this selector.
-    const workspaces = (await workspaceRegistry.list())
+    // Opening a directory explicitly recovers an archived workspace at that path.
+    const workspaces = (await workspaceRegistry.listAll())
       .filter(
         (workspace) => !workspace.background && areEquivalentPaths(workspace.cwd, normalizedCwd),
       )

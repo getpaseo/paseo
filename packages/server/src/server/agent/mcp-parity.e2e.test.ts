@@ -404,6 +404,7 @@ describe("Suite A: Core Fixes", () => {
           expect(parseAgentMessage(callerPrompts[0]).source).toEqual({
             kind: "agent-notification",
             agentId: childId,
+            serverId: daemon.daemon.getServerId(),
             title: "Notification child",
             event: "finished",
           });
@@ -517,6 +518,7 @@ describe("Suite A: Core Fixes", () => {
         expect(notification.source).toEqual({
           kind: "agent-notification",
           agentId: childId,
+          serverId: daemon.daemon.getServerId(),
           title: "Watched child",
           event: "errored",
         });
@@ -579,7 +581,11 @@ describe("Suite A: Core Fixes", () => {
             type: "tool_call",
             agentMessage: {
               event: outcome,
-              sender: { id: childId, title: "Follow-up child" },
+              sender: {
+                id: childId,
+                serverId: daemonHandle.daemon.getServerId(),
+                title: "Follow-up child",
+              },
               text: expect.stringContaining(`(Follow-up child) ${outcome}.`),
             },
           }),
@@ -1205,4 +1211,137 @@ describe("Suite E: Workspace Tools", () => {
           .catch(() => undefined);
     }
   });
+
+  test("a background agent's children and workspaces are background unless it overrides", async () => {
+    const visibleAgentId = await createTopLevelAgent();
+    const workspaceId = daemonHandle.daemon.agentManager.getAgent(visibleAgentId)?.workspaceId;
+    const caller = await callToolStructured(topLevelClient, "create_agent", {
+      workspaceId,
+      title: "Background caller",
+      provider: "claude/claude-test-model",
+      initialPrompt: "Say done.",
+      background: true,
+    });
+    const callerId = str(caller.agentId);
+    const background = (agentId: string) =>
+      daemonHandle.daemon.agentManager.getAgent(agentId)?.background;
+    expect(background(callerId)).toBe(true);
+    const scoped = await createMcpClient(
+      `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${callerId}`,
+    );
+    const ownedWorkspaces: string[] = [];
+    try {
+      const inheritedChild = await callToolStructured(scoped, "create_agent", {
+        relationship: { kind: "subagent" },
+        workspace: { kind: "current" },
+        title: "Inherited child",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
+        notifyOnFinish: false,
+      });
+      expect(background(str(inheritedChild.agentId))).toBe(true);
+      const visibleChild = await callToolStructured(scoped, "create_agent", {
+        relationship: { kind: "subagent" },
+        workspace: { kind: "current" },
+        title: "Visible child",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
+        notifyOnFinish: false,
+        background: false,
+      });
+      expect(background(str(visibleChild.agentId))).toBe(false);
+      const inheritedWorkspace = await callToolStructured(scoped, "create_workspace", {
+        isolation: "local",
+      });
+      ownedWorkspaces.push(str(inheritedWorkspace.workspaceId));
+      expect(inheritedWorkspace.background).toBe(true);
+    } finally {
+      await scoped.close();
+      await archiveAgentIfPresent(callerId);
+      await archiveAgentIfPresent(visibleAgentId);
+      for (const id of ownedWorkspaces)
+        await topLevelClient
+          .callTool({ name: "archive_workspace", args: { workspaceId: id } })
+          .catch(() => undefined);
+    }
+  });
+
+  test("a background subagent stays out of default lists, notifies its parent and archives with it", async () => {
+    const callerPrompts: string[] = [];
+    const daemon = await createTestPaseoDaemon({
+      agentClients: createTestAgentClients({
+        onStartTurn(prompt, config) {
+          if (config.title === "Background parent" && typeof prompt === "string")
+            callerPrompts.push(prompt);
+        },
+      }),
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    let mcp: McpClient | undefined;
+    try {
+      await client.connect();
+      const caller = await client.createAgent({
+        provider: "claude",
+        cwd: daemon.paseoHome,
+        title: "Background parent",
+        modeId: "bypassPermissions",
+      });
+      mcp = await createMcpClient(
+        buildExpectedAgentMcpUrl({ host: "127.0.0.1", port: daemon.port, agentId: caller.id }),
+      );
+      const created = await callToolStructured(mcp, "create_agent", {
+        relationship: { kind: "subagent" },
+        workspace: { kind: "current" },
+        provider: "codex/gpt-5.4",
+        title: "Background child",
+        initialPrompt: "say done and stop",
+        notifyOnFinish: true,
+        background: true,
+        settings: { modeId: "full-access" },
+      });
+      const childId = str(created.agentId);
+      expect((await client.fetchAgent(childId))?.agent).toMatchObject({
+        background: true,
+        workspaceId: caller.workspaceId,
+        labels: { [PARENT_AGENT_ID_LABEL]: caller.id },
+      });
+      expect((await client.fetchAgents()).entries.map((entry) => entry.agent.id)).not.toContain(
+        childId,
+      );
+      expect(
+        (await client.fetchAgents({ filter: { includeBackground: true } })).entries.map(
+          (entry) => entry.agent.id,
+        ),
+      ).toContain(childId);
+
+      await waitFor({
+        timeoutMs: 10000,
+        label: "parent finish notification",
+        check: () => (callerPrompts.length > 0 ? true : null),
+      });
+      expect(parseAgentMessage(callerPrompts[0]).source).toMatchObject({
+        kind: "agent-notification",
+        agentId: childId,
+        event: "finished",
+      });
+      expect((await client.fetchAgent(childId))?.agent.requiresAttention).toBe(false);
+
+      await waitFor({
+        timeoutMs: 10000,
+        label: "parent idle",
+        check: () =>
+          daemon.daemon.agentManager.getAgent(caller.id)?.lifecycle === "idle" ? true : null,
+      });
+      await client.archiveAgent(caller.id);
+      await waitFor({
+        timeoutMs: 10000,
+        label: "child archived with parent",
+        check: async () => ((await client.fetchAgent(childId))?.agent.archivedAt ? true : null),
+      });
+    } finally {
+      await mcp?.close();
+      await client.close();
+      await daemon.close();
+    }
+  }, 30_000);
 });

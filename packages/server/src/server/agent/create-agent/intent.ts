@@ -6,6 +6,30 @@ export interface CreateAgentCaller {
   workspaceId?: string;
 }
 
+/** The agent on whose behalf something is created, as far as background inheritance goes. */
+export interface BackgroundCaller {
+  background?: boolean;
+}
+
+/** Omitted, an agent inherits its caller agent's own background; without a caller it is visible. */
+export function inheritAgentBackground(
+  requested: boolean | undefined,
+  caller: BackgroundCaller | null | undefined,
+): boolean {
+  return requested ?? caller?.background === true;
+}
+
+/**
+ * Omitted, a new workspace inherits its caller's effective background. A background caller
+ * agent decides it here; otherwise `undefined` lets provisioning apply the caller workspace's value.
+ */
+export function inheritWorkspaceBackground(
+  requested: boolean | undefined,
+  caller: BackgroundCaller | null | undefined,
+): boolean | undefined {
+  return requested ?? (caller?.background === true ? true : undefined);
+}
+
 export interface CreateAgentPlacement {
   workspaceId: string;
   cwd: string;

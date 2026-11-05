@@ -10,26 +10,6 @@ export function reserveKeyboardLayoutShift(input: {
   return input.phase === "start" ? Math.max(input.current, input.target) : input.target;
 }
 
-export function resolveStreamKeyboardInset(input: {
-  platform: "android" | "ios";
-  settledShift: number;
-}): {
-  contentContainerPaddingBottom: number;
-  contentInset: { bottom: number } | undefined;
-} {
-  const settledShift = Math.max(0, input.settledShift);
-  if (input.platform === "ios") {
-    return {
-      contentContainerPaddingBottom: 0,
-      contentInset: { bottom: settledShift },
-    };
-  }
-  return {
-    contentContainerPaddingBottom: settledShift,
-    contentInset: undefined,
-  };
-}
-
 export function resolveKeyboardShift(input: {
   rawKeyboardHeight: number;
   keyboardProgress: number;

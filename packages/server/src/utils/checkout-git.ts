@@ -636,6 +636,11 @@ function normalizeNumstatPath(pathField: string): string {
   const braceRenameMatch = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (braceRenameMatch) {
     const [, prefix, , renamed, suffix] = braceRenameMatch;
+    // Moving out of a directory prints `src/{nested => }/a.ts`, so an empty
+    // destination leaves a separator from each side behind.
+    if (!renamed) {
+      return unquoteGitPath(`${prefix}${suffix.slice(1)}`);
+    }
     return unquoteGitPath(`${prefix}${renamed}${suffix}`);
   }
 
@@ -4218,6 +4223,7 @@ export interface PullRequestStatus {
   state: string;
   baseRefName: string;
   headRefName: string;
+  headSha?: string;
   isMerged: boolean;
   isDraft?: boolean;
   mergeable?: PullRequestMergeable;
