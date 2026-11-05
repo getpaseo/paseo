@@ -2801,6 +2801,53 @@ test("closing during reload leaves the replacement closed", async () => {
   }
 });
 
+test("every failed reload raises error attention, replacing unread finished attention", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-error-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+    onAgentAttention: ({ reason }) => attentionReasons.push(reason),
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.markAgentUnread(created.id);
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      attentionReason: "finished",
+    });
+
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("error");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error"]);
+
+    await manager.clearAgentAttention(created.id);
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error", "error"]);
+
+    client.finishClosing();
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retrying a timed-out reload waits for the original close to finish", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -5805,6 +5852,52 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   const last = events[events.length - 1];
   expect(last.id).toBe(created.id);
   expect(last.lifecycle).toBe("closed");
+});
+
+test("markAgentUnread restores error attention on a read errored agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ErrorClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new ErrorClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Selected model is at capacity.",
+  });
+  await failed;
+  await manager.clearAgentAttention(agent.id);
+
+  await manager.markAgentUnread(agent.id);
+
+  expect(manager.getAgent(agent.id)?.attention).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+  expect(await storage.get(agent.id)).toMatchObject({
+    lastStatus: "error",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
 });
 
 test("markAgentUnread dispatches stored attention to every subscriber", async () => {

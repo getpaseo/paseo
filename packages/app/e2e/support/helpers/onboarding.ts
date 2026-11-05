@@ -34,6 +34,54 @@ export async function openAppAsNewUser(
   await page.goto("/");
 }
 
+interface FirstLaunchRecord {
+  appBeforeSetup: boolean;
+  setupOpacityOnArrival: number | null;
+}
+
+/**
+ * Watches the page from its first paint: whether the app's sidebar or home showed before setup,
+ * and how opaque setup was when it arrived. Call before `openAppAsNewUser`.
+ */
+export async function recordFirstLaunch(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const record: FirstLaunchRecord = { appBeforeSetup: false, setupOpacityOnArrival: null };
+    Object.assign(window, { __firstLaunch: record });
+    const observer = new MutationObserver(() => {
+      const setup = document.querySelector('[data-testid="onboarding-modal"] [role="dialog"]');
+      if (setup) {
+        record.setupOpacityOnArrival = Number(getComputedStyle(setup).opacity);
+        observer.disconnect();
+        return;
+      }
+      if (
+        document.querySelector(
+          '[data-testid="open-project-submit"], [data-testid="sidebar-settings"]',
+        )
+      ) {
+        record.appBeforeSetup = true;
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  });
+}
+
+export async function readFirstLaunch(page: Page): Promise<FirstLaunchRecord> {
+  return page.evaluate(
+    () => (window as unknown as { __firstLaunch: FirstLaunchRecord }).__firstLaunch,
+  );
+}
+
+/** The loading screen the app shows while it starts. */
+export function loadingScreen(page: Page): Locator {
+  return page.getByTestId("startup-splash");
+}
+
+/** The empty home a host with no projects lands on. */
+export function emptyHome(page: Page): Locator {
+  return page.getByTestId("open-project-submit");
+}
+
 export function setupModal(page: Page): Locator {
   return page.getByTestId("onboarding-modal").getByRole("dialog");
 }
