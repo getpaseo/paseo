@@ -165,7 +165,7 @@ function ButtonMenuItem({
   );
   if (behavior.kind !== "action") {
     return (
-      <MenuSubTrigger id={pageId} leading={leading} disabled={disabled}>
+      <MenuSubTrigger id={pageId} leading={leading} disabled={disabled} selected={selected}>
         {title}
       </MenuSubTrigger>
     );
