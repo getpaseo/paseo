@@ -2431,7 +2431,7 @@ export const it: TranslationResources = {
       installing: "Installazione…",
       logs: {
         action: "Log",
-        title: "Log: {{id}}",
+        title: "Log: {{name}}",
         loading: "Caricamento dei log…",
         refresh: "Aggiorna",
         refreshing: "Aggiornamento…",
@@ -2440,7 +2440,8 @@ export const it: TranslationResources = {
       },
       status: { running: "in esecuzione", disabled: "disattivato", failed: "non riuscito" },
       actions: {
-        menu: "Azioni per {{id}}",
+        menu: "Azioni per {{name}}",
+        settings: "Impostazioni",
         reload: "Ricarica",
         reloading: "Ricaricamento…",
         enable: "Attiva",
@@ -2451,16 +2452,16 @@ export const it: TranslationResources = {
         removing: "Rimozione…",
       },
       feedback: {
-        installed: "Installato {{id}}",
-        reload: "Ricaricato {{id}}",
-        enable: "Attivato {{id}}",
-        disable: "Disattivato {{id}}",
-        remove: "Rimosso {{id}}",
-        kept: "Mantenuto {{id}}",
+        installed: "Installato {{name}}",
+        reload: "Ricaricato {{name}}",
+        enable: "Attivato {{name}}",
+        disable: "Disattivato {{name}}",
+        remove: "Rimosso {{name}}",
+        kept: "Mantenuto {{name}}",
         globalEnabled: "Plugin attivati",
         globalDisabled: "Plugin disattivati",
       },
-      removeConfirmTitle: "Rimuovere {{id}}?",
+      removeConfirmTitle: "Rimuovere {{name}}?",
       removeConfirmMessage:
         "La configurazione verrà rimossa. La cartella di origine non verrà eliminata.",
       states: {
