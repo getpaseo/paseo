@@ -84,6 +84,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: HEADER_INNER_HEIGHT + 24,
   },
   form: { flexShrink: 1, width: "100%", maxWidth: theme.contentMaxWidth },
-  centeredComposer: { flexShrink: 0, paddingBottom: theme.spacing[4] },
+  centeredComposer: { flexShrink: 0 },
   setup: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
 }));

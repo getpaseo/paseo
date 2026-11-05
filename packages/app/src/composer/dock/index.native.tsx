@@ -247,7 +247,7 @@ const dockStyles = StyleSheet.create({
   centered: { flexShrink: 1, width: "100%" },
   // Reserve the composer's own capped height before the setup scroll view shrinks.
   centeredComposer: { width: "100%", flexShrink: 0 },
-  centeredComposerSurface: { width: "100%", flexShrink: 1, paddingBottom: SPACING[4] },
+  centeredComposerSurface: { width: "100%", flexShrink: 1 },
   setup: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   hiddenSetup: { display: "none" },
 });
