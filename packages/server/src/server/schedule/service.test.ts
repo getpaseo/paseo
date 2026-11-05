@@ -257,9 +257,9 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
               agentManager,
               agentStorage,
               findWorkspaceIdForCwd: async (cwd) =>
-                resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list()),
+                resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listAll()),
               listActiveWorkspaces: async () =>
-                (await workspaceRegistry.list())
+                (await workspaceRegistry.listAll())
                   .filter((workspace) => !workspace.archivedAt)
                   .map((workspace) => ({
                     workspaceId: workspace.workspaceId,
@@ -828,7 +828,7 @@ describe("ScheduleService", () => {
       model: "test-model",
       cwd: tempDir,
     });
-    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(await workspaceRegistry.listAll()).toEqual([]);
   });
 
   test("archiveOnFinish=false local runs create one active workspace per run", async () => {
@@ -885,7 +885,7 @@ describe("ScheduleService", () => {
     expect(firstAgent?.workspaceId).not.toBe(secondAgent?.workspaceId);
     expect(firstAgent?.archivedAt ?? null).toBeNull();
     expect(secondAgent?.archivedAt ?? null).toBeNull();
-    expect(await workspaceRegistry.list()).toEqual([
+    expect(await workspaceRegistry.listAll()).toEqual([
       expect.objectContaining({
         workspaceId: firstAgent?.workspaceId,
         cwd: tempDir,
@@ -1012,7 +1012,7 @@ describe("ScheduleService", () => {
       (service as unknown as ScheduleServiceInternals).executeSchedule(created, "run-create-fails"),
     ).rejects.toThrow("provider misconfigured");
 
-    expect(await workspaceRegistry.list()).toEqual([
+    expect(await workspaceRegistry.listAll()).toEqual([
       expect.objectContaining({
         cwd: tempDir,
         archivedAt: expect.any(String),
@@ -1883,7 +1883,7 @@ describe("ScheduleService", () => {
       agentId: expect.any(String),
       error: expect.stringContaining("start turn exploded"),
     });
-    const storedAgents = await agentStorage.list();
+    const storedAgents = await agentStorage.listAll();
     expect(storedAgents).toHaveLength(1);
     expect(inspected.runs[0]?.agentId).toBe(storedAgents[0]?.id);
     expect(storedAgents[0]).toMatchObject({

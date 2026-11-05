@@ -41,6 +41,7 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
     isLatestTurnOpen: false,
     expandedHostIds: new Set(),
     getGroupedCalls: () => undefined,
+    previousTurnsByHostId: new Map(),
     ...options,
   });
 }
@@ -48,6 +49,37 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  // A history row renders again only when its item changes, so a prompt that is already retained
+  // when its turn closes needs its row revised to show the summary line.
+  it("reports the hosts whose summary line appeared, changed or went away", () => {
+    const open = collapse([user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2")], {
+      isLatestTurnOpen: true,
+    });
+    expect([...open.updatedHostIds]).toEqual(["u1"]);
+    const closed = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), reply("r2")],
+      {
+        previousTurnsByHostId: open.turnsByHostId,
+      },
+    );
+    expect([...closed.updatedHostIds]).toEqual(["u2"]);
+    const unchanged = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), reply("r2")],
+      {
+        previousTurnsByHostId: closed.turnsByHostId,
+      },
+    );
+    expect(unchanged.updatedHostIds.size).toBe(0);
+    const moreWork = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), shell("c3"), reply("r2")],
+      { previousTurnsByHostId: unchanged.turnsByHostId },
+    );
+    expect([...moreWork.updatedHostIds]).toEqual(["u2"]);
+    const rewound = collapse([user("u1"), shell("c1"), reply("r1")], {
+      previousTurnsByHostId: moreWork.turnsByHostId,
+    });
+    expect([...rewound.updatedHostIds]).toEqual(["u2"]);
+  });
   it("maps hidden rows only while their turn is closed", () => {
     const result = collapse([user("u1"), shell("c1"), reply("final")]);
     expect(result.hostIdByHiddenRowId.get("c1")).toBe("u1");
