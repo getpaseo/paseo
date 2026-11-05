@@ -152,6 +152,48 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("reports the Auto Accept that legacy full-access turned on, when it opens or resumes", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "full-access",
+    });
+    expect(created.openOptionsPatch).toEqual({ auto_accept: true });
+    await created.close();
+
+    const resumed = await client.resumeSession(
+      { provider: "opencode", sessionId: "session-1" },
+      { cwd: "/tmp/project", modeId: "full-access" },
+    );
+    expect(resumed.openOptionsPatch).toEqual({ auto_accept: true });
+    await resumed.close();
+  });
+
+  test("reports nothing when Auto Accept was already on", async () => {
+    const { runtime } = mockOpenCodeClient();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      modeId: "full-access",
+      providerOptions: { auto_accept: true },
+    });
+
+    expect(session.openOptionsPatch).toEqual({});
+    await session.close();
+  });
+
   test("resolves legacy full-access for provider-driven child creation", () => {
     const client = new OpenCodeAgentClient(createTestLogger());
 

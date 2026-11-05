@@ -237,6 +237,16 @@ function isOpenCodeAutoAcceptEnabled(config: AgentSessionConfig): boolean {
   return config.providerOptions?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true;
 }
 
+/** What opening changed in the options the caller gave: legacy `full-access` turns Auto Accept on. */
+function openCodeOpenOptionsPatch(
+  given: AgentSessionConfig,
+  opened: OpenCodeAgentConfig,
+): Record<string, unknown> {
+  return isOpenCodeAutoAcceptEnabled(opened) && !isOpenCodeAutoAcceptEnabled(given)
+    ? { [OPENCODE_AUTO_ACCEPT_FEATURE_ID]: true }
+    : {};
+}
+
 function withOpenCodeAutoAccept(
   providerOptions: ProviderOptions | undefined,
   enabled: boolean,
@@ -1494,6 +1504,7 @@ export class OpenCodeAgentClient implements AgentClient {
         false,
         unbindBridge,
         connectServer,
+        openCodeOpenOptionsPatch(config, openCodeConfig),
       );
     } catch (error) {
       await connection.release();
@@ -1549,6 +1560,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
         unbindBridge,
         connectServer,
+        openCodeOpenOptionsPatch(config, openCodeConfig),
       );
     } catch (error) {
       await connection.release();
@@ -3363,6 +3375,7 @@ interface OpenCodeServerConnection {
 class OpenCodeAgentSession implements AgentSession {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
+  readonly openOptionsPatch: Record<string, unknown>;
 
   private readonly config: OpenCodeAgentConfig;
   private server: OpenCodeServerConnection;
@@ -3450,8 +3463,10 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
     connectServer?: () => Promise<OpenCodeServerConnection>,
+    openOptionsPatch: Record<string, unknown> = {},
   ) {
     this.config = config;
+    this.openOptionsPatch = openOptionsPatch;
     this.server = {
       client,
       events,

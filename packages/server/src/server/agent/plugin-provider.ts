@@ -1209,6 +1209,8 @@ class PluginAgentSession implements AgentSession {
   private knownSettings: Record<string, JsonValue> = {};
   /** While `applyOptions` waits on the plugin, its `session.config` answers that call. */
   private applyingOptions = false;
+  /** One apply at a time: each reconciles against the settings the one before it left. */
+  private applying: Promise<unknown> = Promise.resolve();
   private currentTurnId: string | null = null;
   private closed = false;
   private replay: {
@@ -1435,7 +1437,13 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.configure({ thinkingOption: thinkingOptionId });
   }
 
-  async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
+  applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
+    const run = this.applying.then(() => this.applyOptionsNow(options));
+    this.applying = run.catch(() => undefined);
+    return run;
+  }
+
+  private async applyOptionsNow(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentSettings();
     // A key the plugin does not report as a setting is one it only reads when the session opens;
