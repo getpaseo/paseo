@@ -9,12 +9,15 @@ export interface RuntimeCleanupCandidate {
   readonly provider: string;
   readonly sessionId: string | null;
   readonly lastActivityAt: number;
+  /** Time of the latest read while the runtime has served only reads since it was loaded. */
+  readonly readOnlySince?: number;
   isEligible(): boolean;
   canStopRuntime?(): Promise<boolean>;
   closeIfEligible(revalidate: () => boolean): Promise<boolean>;
 }
 interface Options {
   enabled: boolean;
+  idlePeriodMs?: number;
   runtimes(): readonly RuntimeCleanupCandidate[];
   isProtected?(agentId: string): boolean;
   logger: Pick<Logger, "debug" | "info" | "warn">;
@@ -30,7 +33,10 @@ interface CollectionResult {
   collected: CollectionEntry[];
   failures: Array<{ agentId: string; error: unknown }>;
 }
-const IDLE_PERIOD_MS = 60 * 60_000;
+export const DEFAULT_IDLE_PERIOD_MS = 60 * 60_000;
+// A runtime started only to serve a read releases soon after the latest read. Reads
+// arriving faster than this keep it resident instead of respawning it each time.
+const READ_ONLY_GRACE_MS = 2 * 60_000;
 
 /** Owns idle clocks, baseline eligibility, optional provider vetoes and the sweep lifetime. */
 export function createIdleRuntimeCleanup(options: Options) {
@@ -38,6 +44,7 @@ export function createIdleRuntimeCleanup(options: Options) {
   let collection: Promise<CollectionResult> | null = null;
   let stopped = false;
   let enabled = options.enabled;
+  let idlePeriodMs = options.idlePeriodMs ?? DEFAULT_IDLE_PERIOD_MS;
   let generation = 0;
   const isProtected = options.isProtected ?? (() => false);
   const now = options.now ?? Date.now;
@@ -97,9 +104,11 @@ export function createIdleRuntimeCleanup(options: Options) {
           protectedAt.set(runtime.identity, { at: timestamp, protected: false });
         const idleSince = Math.max(
           runtime.lastActivityAt,
+          runtime.readOnlySince ?? 0,
           protectedAt.get(runtime.identity)?.at ?? 0,
         );
-        if (timestamp - idleSince < IDLE_PERIOD_MS) continue;
+        const period = runtime.readOnlySince === undefined ? idlePeriodMs : READ_ONLY_GRACE_MS;
+        if (timestamp - idleSince < period) continue;
         const revalidate = () => {
           const currentFamily = familyOf(runtime, options.runtimes());
           return (
@@ -157,6 +166,9 @@ export function createIdleRuntimeCleanup(options: Options) {
       if (enabled === value) return;
       enabled = value;
       generation++;
+    },
+    setIdlePeriodMs(value: number) {
+      idlePeriodMs = value;
     },
     async close() {
       stopped = true;

@@ -13317,3 +13317,71 @@ test("stops only a currently owned public background item with its current token
   expect(stopped).toEqual(["one"]);
   await manager.closeAgent(agent.id);
 });
+
+async function collectedAgentForReads(h: ReturnType<typeof idleCleanupHarness>) {
+  const agent = await h.create();
+  h.probes[0] = async () => true;
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  expect(h.manager.getAgent(agent.id)).toBeNull();
+  const read = () =>
+    ensureAgentLoaded(agent.id, {
+      agentManager: h.manager,
+      agentStorage: h.storage,
+      logger,
+      purpose: "history",
+    });
+  return { agent, read };
+}
+
+test("a timeline read of a collected agent releases its runtime two minutes after the read", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  expect(h.manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  expect((await h.sweep({ now: h.later(1) })).collected).toEqual([]);
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
+  expect(h.manager.getAgent(agent.id)).toBeNull();
+});
+
+test("another read of a read-only runtime restarts its two-minute grace", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  const firstReadAt = h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince;
+  expect(typeof firstReadAt).toBe("number");
+  while (Date.now() <= firstReadAt!) await new Promise((resolve) => setTimeout(resolve, 1));
+  await read();
+  const sinceFirstRead = new Date(firstReadAt! + 2 * 60_000);
+  expect((await h.sweep({ now: sinceFirstRead })).collected).toEqual([]);
+  expect(h.manager.getAgent(agent.id)?.id).toBe(agent.id);
+});
+
+test.each(["prompt", "mode change"])(
+  "a %s after a timeline read restores the configured idle period",
+  async (use) => {
+    const h = idleCleanupHarness();
+    const { agent, read } = await collectedAgentForReads(h);
+    await read();
+    if (use === "prompt") await h.manager.runAgent(agent.id, "continue");
+    else await h.manager.setAgentMode(agent.id, "plan");
+    expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeUndefined();
+    expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+    expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  },
+);
+
+test("a timeline read of a resident agent keeps its configured idle period", async () => {
+  const h = idleCleanupHarness();
+  const agent = await h.create();
+  h.probes[0] = async () => true;
+  await ensureAgentLoaded(agent.id, {
+    agentManager: h.manager,
+    agentStorage: h.storage,
+    logger,
+    purpose: "history",
+  });
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+});
