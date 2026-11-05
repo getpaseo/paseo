@@ -92,6 +92,15 @@ const CursorUsageResponseSchema = z.object({
       apiPercentUsed: ApiNullableNumberSchema,
     })
     .nullish(),
+  // Enterprise only, and only with includePooledUsage. Cents; int64 limits arrive as strings.
+  spendLimitUsage: z
+    .object({
+      overallUsed: ApiNullableNumberSchema,
+      overallLimit: ApiNullableNumberSchema,
+      pooledUsed: ApiNullableNumberSchema,
+      pooledLimit: ApiNullableNumberSchema,
+    })
+    .nullish(),
   billingCycleStart: CursorBillingCycleTimestampSchema,
   billingCycleEnd: CursorBillingCycleTimestampSchema,
 });
@@ -104,7 +113,10 @@ const CursorPlanInfoSchema = z.object({
   planInfo: z.object({ planName: z.string().trim().min(1) }).nullish(),
 });
 
+const CursorMeResponseSchema = z.object({ isEnterpriseUser: z.boolean().optional() });
+
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
+type AvailableUsageReport = Extract<UsageReport, { status: "available" }>;
 
 function parseCursorBillingCycleTimestamp(
   value: CursorUsageResponse["billingCycleStart"],
@@ -193,41 +205,75 @@ export async function fetchUsage(
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const planLabel = fetchPlanLabel(token, fetchApi);
-  const res = await fetchDashboard({
-    method: "GetCurrentPeriodUsage",
-    token,
-    fetchApi,
-    timeoutMs: 15_000,
-  });
+  const usage = await readUsage(
+    await fetchDashboard({ method: "GetCurrentPeriodUsage", token, fetchApi, timeoutMs: 15_000 }),
+  );
+  if ("status" in usage) return usage;
+  // Enterprise logins report no plan usage unless asked for pooled usage. cursor-agent makes
+  // the same GetMe check; personal and Teams logins keep the plain request.
+  if (usage.planUsage || !(await isEnterpriseLogin(token, fetchApi)))
+    return { ...standardReport(usage), planLabel: await planLabel };
+  const pooled = await readUsage(
+    await fetchDashboard({
+      method: "GetCurrentPeriodUsage",
+      token,
+      fetchApi,
+      timeoutMs: 15_000,
+      body: { includePooledUsage: true },
+    }),
+  );
+  if ("status" in pooled) return pooled;
+  return { ...enterpriseReport(pooled), planLabel: (await planLabel) ?? "Enterprise" };
+}
 
+async function readUsage(res: Response): Promise<CursorUsageResponse | UsageReport> {
   if (res.status === 401 || res.status === 403)
     return unavailable({ kind: "rejected", status: res.status });
   if (!res.ok) throw new Error(`Cursor usage API returned ${res.status}`);
+  return CursorUsageResponseSchema.parse(await res.json());
+}
 
-  const resp = CursorUsageResponseSchema.parse(await res.json());
-  const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
-  const windows: UsageWindow[] = [];
-  const balances: UsageBalance[] = [];
-  if (resp.planUsage) {
-    // Total spend includes bonus credits; returned percentages measure quota usage.
-    for (const [id, label, usedPct] of [
-      ["plan_usage", "Total", resp.planUsage.totalPercentUsed],
-      ["cursor_usage", "Cursor", resp.planUsage.autoPercentUsed],
-      ["third_party_usage", "Third Party", resp.planUsage.apiPercentUsed],
-    ] as const) {
-      if (usedPct === null) continue;
-      windows.push(
-        windowFromUsedPct({
-          id,
-          label,
-          utilizationPct: usedPct,
-          resetsAt: billingCycleEnd,
-          summary: id === "plan_usage",
-          tone: toneFromUsedPct(usedPct),
-        }),
-      );
-    }
+async function isEnterpriseLogin(token: string, fetchApi: typeof fetch): Promise<boolean> {
+  const res = await fetchDashboard({ method: "GetMe", token, fetchApi, timeoutMs: 15_000 });
+  if (!res.ok) {
+    await res.body?.cancel();
+    return false;
   }
+  const me = CursorMeResponseSchema.safeParse(await res.json());
+  return me.success && me.data.isEnterpriseUser === true;
+}
+
+// Returned percentages measure quota usage; total spend includes bonus credits.
+function planUsageWindows(
+  planUsage: NonNullable<CursorUsageResponse["planUsage"]>,
+  resetsAt: string | null,
+  summary: boolean,
+): UsageWindow[] {
+  const windows: UsageWindow[] = [];
+  for (const [id, label, usedPct] of [
+    ["plan_usage", "Total", planUsage.totalPercentUsed],
+    ["cursor_usage", "Cursor", planUsage.autoPercentUsed],
+    ["third_party_usage", "Third Party", planUsage.apiPercentUsed],
+  ] as const) {
+    if (usedPct === null) continue;
+    windows.push(
+      windowFromUsedPct({
+        id,
+        label,
+        utilizationPct: usedPct,
+        resetsAt,
+        summary: summary && id === "plan_usage",
+        tone: toneFromUsedPct(usedPct),
+      }),
+    );
+  }
+  return windows;
+}
+
+function standardReport(resp: CursorUsageResponse): AvailableUsageReport {
+  const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const windows = resp.planUsage ? planUsageWindows(resp.planUsage, billingCycleEnd, true) : [];
+  const balances: UsageBalance[] = [];
   if (resp.planUsage && windows.length === 0) {
     const totalSpend = centsToDollars(resp.planUsage.totalSpend);
     const remaining = centsToDollars(resp.planUsage.remaining);
@@ -243,21 +289,50 @@ export async function fetchUsage(
       tone: toneFromUsedPct(usedPctOf(totalSpend, limit)),
     });
   }
+  return { status: "available", windows, balances, details: [] };
+}
 
+// The user's own cap binds first, so it leads and is the summary; the team pool follows.
+// Included-usage pools that all read 0% beside a spend limit say nothing and are dropped.
+function enterpriseReport(resp: CursorUsageResponse): AvailableUsageReport {
+  const resetsAt = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const limits = resp.spendLimitUsage;
+  const spendWindows = (
+    [
+      ["personal_spend", "Personal spend", usedPctOf(limits?.overallUsed, limits?.overallLimit)],
+      ["team_pool", "Team pool", usedPctOf(limits?.pooledUsed, limits?.pooledLimit)],
+    ] as const
+  ).flatMap(([id, label, usedPct]) =>
+    usedPct === null
+      ? []
+      : [
+          windowFromUsedPct({
+            id,
+            label,
+            utilizationPct: usedPct,
+            resetsAt,
+            tone: toneFromUsedPct(usedPct),
+          }),
+        ],
+  );
+  if (spendWindows.length === 0) return standardReport(resp);
+  spendWindows[0]!.summary = true;
+  const planWindows = resp.planUsage ? planUsageWindows(resp.planUsage, resetsAt, false) : [];
+  const planIsIdle = planWindows.every((window) => window.usedPct === 0);
   return {
     status: "available",
-    planLabel: await planLabel,
-    windows,
-    balances,
+    windows: planIsIdle ? spendWindows : [...spendWindows, ...planWindows],
+    balances: [],
     details: [],
   };
 }
 
 interface CursorDashboardRequest {
-  method: "GetCurrentPeriodUsage" | "GetPlanInfo";
+  method: "GetCurrentPeriodUsage" | "GetPlanInfo" | "GetMe";
   token: string;
   fetchApi: typeof fetch;
   timeoutMs: number;
+  body?: Record<string, unknown>;
 }
 
 function fetchDashboard({
@@ -265,6 +340,7 @@ function fetchDashboard({
   token,
   fetchApi,
   timeoutMs,
+  body = {},
 }: CursorDashboardRequest): Promise<Response> {
   return fetchApi(`https://api2.cursor.sh/aiserver.v1.DashboardService/${method}`, {
     signal: AbortSignal.timeout(timeoutMs),
@@ -274,7 +350,7 @@ function fetchDashboard({
       "Content-Type": "application/json",
       "Connect-Protocol-Version": "1",
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify(body),
   });
 }
 
