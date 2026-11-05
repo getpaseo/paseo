@@ -1269,8 +1269,17 @@ export async function startWorkerTerminalManager(
     try {
       current = await startCurrent();
     } catch (error) {
-      if (!(error instanceof NoTerminalWorkerAvailableError)) throw error;
-      logger.warn(error.message);
+      if (error instanceof NoTerminalWorkerAvailableError) {
+        logger.warn(error.message);
+      } else {
+        // The daemon starts without terminals rather than not at all. A worker that cannot start
+        // here (its process identity query failed, say) is launched again by the first terminal
+        // creation, which reports the same error if it still cannot.
+        logger.error(
+          { err: error },
+          "Terminal worker did not start; terminals are unavailable until one starts",
+        );
+      }
     }
   }
 

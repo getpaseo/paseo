@@ -891,6 +891,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
   internal: z.boolean().optional(),
+  // Background agent: hidden from default discovery, tabs, tracks and notifications.
+  // Fixed at creation. Effective background also includes the workspace's flag.
+  background: z.boolean().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -1802,7 +1805,8 @@ export const CreateAgentRequestMessageSchema = z.object({
   // in the config schema, which is reused for updates. Retained for wire parsing;
   // public internal creation is no longer supported.
   internal: z.boolean().optional(),
-  // Workspace creation intent, rejected when selecting an existing workspace.
+  // The created agent is a background agent. A workspace this request creates inherits it.
+  // Omitted on agent-scoped creation, the caller agent's own value applies.
   background: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
@@ -3694,6 +3698,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(internalWorkspaces): added in v0.9.0; remove gate after 2027-03-17.
         internalWorkspaces: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
+        // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
+        backgroundAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
@@ -7802,6 +7808,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
+      [CLIENT_CAPS.backgroundAgents]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

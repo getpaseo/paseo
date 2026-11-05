@@ -4,7 +4,7 @@ import { StyleSheet, View } from "react-native";
 export function ComposerToolbarGlyph({ children, size }: { children: ReactNode; size: number }) {
   return (
     <View
-      style={size >= 20 ? styles.native : styles.web}
+      style={size >= 20 ? styles.touch : styles.pointer}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       pointerEvents="none"
@@ -15,14 +15,14 @@ export function ComposerToolbarGlyph({ children, size }: { children: ReactNode; 
 }
 
 const styles = StyleSheet.create({
-  web: {
+  pointer: {
     width: 16,
     height: 16,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
-  native: {
+  touch: {
     width: 20,
     height: 20,
     flexShrink: 0,

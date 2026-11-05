@@ -2194,6 +2194,33 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test.each([false, true])(
+    "rejects new turns with Reload guidance after the Pi process exits (active: %s)",
+    async (active) => {
+      const { pi, session, events } = await createSession();
+      try {
+        if (active) {
+          await session.startTurn("before crash");
+        }
+        const runtime = pi.latestSession();
+        runtime.emit({ type: "process_exit", error: "Pi exited" });
+        if (active) {
+          await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+        }
+        const promptCount = runtime.prompts.length;
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await expect(session.startTurn("after crash")).rejects.toThrow(
+            "Pi process exited. Reload agent before sending another message.",
+          );
+        }
+        expect(runtime.prompts).toHaveLength(promptCount);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("fails an autonomous turn when the Pi process exits before settlement", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
