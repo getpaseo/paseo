@@ -652,6 +652,9 @@ test.describe("Half-screen desktop layout", () => {
           .locator('[data-testid^="workspace-pane-"]')
           .getByTestId("workspace-tabs-row")
           .filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true }),
       ).toHaveCount(1);
 
       await explorerToggle.click();

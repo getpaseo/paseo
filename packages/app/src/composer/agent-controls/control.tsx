@@ -2,6 +2,7 @@ import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
+import { TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import type { AgentControlIcon } from "@/agent-controls/icons";
@@ -96,7 +97,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
 
 const styles = StyleSheet.create((theme) => ({
   toolbarControl: {
-    height: 28,
+    height: TOOLBAR_CONTROL_HEIGHT,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
@@ -107,7 +108,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "transparent",
   },
   toolbarIconOnly: {
-    width: 28,
+    width: TOOLBAR_CONTROL_HEIGHT,
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",

@@ -56,7 +56,7 @@ export async function createOrderingRuntime(
       if (!project || project.archivedAt) throw new Error("Project is not active");
     }
     const workspaces = new Map(
-      (await input.workspaces.list()).map((workspace) => [workspace.workspaceId, workspace]),
+      (await input.workspaces.listAll()).map((workspace) => [workspace.workspaceId, workspace]),
     );
     for (const id of order) {
       const workspace = workspaces.get(id);
@@ -75,7 +75,7 @@ export async function createOrderingRuntime(
       load: async () => {
         const [projects, workspaces] = await Promise.all([
           input.projects.list(),
-          input.workspaces.list(),
+          input.workspaces.listAll(),
         ]);
         return {
           pinnedWorkspaceIds: new Set(

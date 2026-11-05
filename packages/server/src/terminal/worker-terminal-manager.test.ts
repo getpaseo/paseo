@@ -70,7 +70,7 @@ import {
   TerminalWorkerIncompatibleError,
 } from "./terminal-worker-pool.js";
 import { connectTerminalWorker } from "./terminal-worker-client.js";
-import { launchTerminalWorker } from "./terminal-worker-launch.js";
+import { launchTerminalWorker, TerminalWorkerLaunchError } from "./terminal-worker-launch.js";
 
 type TerminalRow = TerminalState["grid"][number];
 
@@ -2670,4 +2670,35 @@ it.each([false, true])(
     }
   },
   45000,
+);
+
+// Both Windows reports in #8766: the worker's process identity query (PowerShell there, `ps` here)
+// fails, the worker exits before writing its record, and the daemon used to exit with it.
+it.skipIf(isPlatform("win32"))(
+  "starts without a worker when the worker cannot read its own identity, and launches one once it can",
+  async () => {
+    const paseoHome = createTemporaryHome();
+    const binDir = mkdtempSync(join(tmpdir(), "worker-terminal-manager-no-ps-"));
+    temporaryDirs.push(binDir);
+    writeFileSync(join(binDir, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+    try {
+      manager = await startRealWorkerManager({ paseoHome });
+      expect(await workerRecords(paseoHome)).toEqual([]);
+      await expect(
+        manager.createTerminal({ workspaceId: "ws-no-identity", cwd: paseoHome }),
+      ).rejects.toThrow(TerminalWorkerLaunchError);
+      expect(await workerRecords(paseoHome)).toEqual([]);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    const terminal = trackTerminal(
+      await manager.createTerminal({ workspaceId: "ws-no-identity", cwd: paseoHome }),
+    );
+    expect(terminal.id).toBeTruthy();
+    expect((await workerRecords(paseoHome)).map((record) => record.pid)).toHaveLength(1);
+  },
+  30000,
 );
