@@ -22,7 +22,12 @@ export function buildWorkspaceAgentActivityIndex(
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
-    if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
+    if (
+      agent.archivedAt ||
+      agent.background ||
+      !agent.workspaceId ||
+      !isWorkspaceRootAgent(agent, parentAgent)
+    ) {
       continue;
     }
 

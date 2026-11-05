@@ -61,8 +61,9 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `parent` accepts a host-local agent ID, an `AgentAddress` (`{ serverId, agentId }`), or an agent handle. A handle’s `address` keeps its host identity after disconnect. When creating through `hosts.client(serverId)`, pass the parent handle or complete address; the SDK carries parent metadata to the destination.
 
-`background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
-See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
+`background` creates a [background agent](./agents.md#run-a-helper-as-a-background-agent). A
+workspace the call creates is background too. With a `parent` and no value, the parent's own
+`background` applies. See [background workspaces](./workspaces.md) for inclusive discovery.
 
 `config` accepts:
 

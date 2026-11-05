@@ -358,7 +358,8 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
   return {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => [],
+    listAll: async () => [],
+    listActive: async () => [],
     get: async () => null,
     update: async () => null,
     upsert: async () => {},
@@ -2013,6 +2014,8 @@ export class VoiceAssistantWebSocketServer {
         creationLifecycle: true,
         hubAgentRpc: true,
         backgroundWorkspaces: true,
+        // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
+        backgroundAgents: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -2098,6 +2101,8 @@ export class VoiceAssistantWebSocketServer {
         projectAdd: true,
         // COMPAT(projectList): added in v0.2.4, drop the gate when floor >= v0.2.4.
         projectList: true,
+        // COMPAT(projectSuggestions): added in v0.14.1, remove gate after 2027-05-01.
+        projectSuggestions: true,
         // COMPAT(worktreeRestore): keep through 2027-01-11 for clients older than v0.1.105.
         worktreeRestore: true,
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.

@@ -73,10 +73,10 @@ my-plugin/
 | 字段           | 是否必填 | 行为                                                                                                       |
 | -------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `id`           | 是       | 默认的安装 ID。                                                                                            |
-| `name`         | 否       | 注册表和网站使用的非空显示名称；与安装 ID 无关。                                                           |
+| `name`         | 否       | 注册表、网站、**设置 → 插件** 中的插件行以及插件设置页标题使用的非空显示名称。没有 `name` 时显示插件 ID。  |
 | `icon`         | 否       | 插件包内 PNG 文件的相对路径。                                                                              |
 | `media`        | 否       | 包内图片或视频路径的数组，或 HTTPS URL。空数组是有效的。                                                   |
-| `description`  | 否       | 在 **设置 → 插件** 中显示在插件 ID 下方的非空摘要。                                                        |
+| `description`  | 否       | 在 **设置 → 插件** 中显示在插件名称下方的非空摘要。                                                        |
 | `translations` | 否       | 其他语言的展示文本，由注册表读取，Paseo 会忽略它。见[其他语言](/docs/plugins/publishing#other-languages)。 |
 | `requirements` | 否       | 支持的 Paseo 版本，见下文。                                                                                |
 | `build`        | 否       | 准备命令，见 CLI 参考。                                                                                    |
@@ -1087,7 +1087,7 @@ export default function contribute(client: PluginClientContext) {
 
 ## 设置界面 {#settings-screens}
 
-在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。它会出现在该主机的 **设置 → 插件 → 你的插件** 下。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
+在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。之后，该主机 **设置 → 插件** 中你的插件行会显示一个设置按钮（齿轮），点击后打开你的第一个界面。注册多个界面时，设置页面会按注册顺序为每个界面显示一个标签页，使用其 `title` 和 `icon`；只有一个界面时不显示标签页。页面标题显示 manifest 中的 `name`；没有 `name` 时显示插件 ID，且从不包含界面标题。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
 
 调用 `client.openSettings(id)` 或 Command Center 回调中的 `openSettings(id)` 可以打开你自己的某个界面。即使多台主机安装了同一个插件，每次安装也有各自的值和路由。
 
@@ -1778,6 +1778,8 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 ```
 
 返回的 API 涵盖项目、工作区、Agent、终端、Provider 和 daemon 配置。其方法请参阅 [SDK API 参考](/docs/sdk/reference)。这里刻意没有连接生命周期方法，因为连接由 Paseo 负责。
+
+如果要运行用户不需要看到的辅助任务，例如分类或摘要，请在已有工作区中把它创建为[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent)。
 
 ### 发现主机并指定另一台主机 {#discover-hosts-and-target-another-host}
 

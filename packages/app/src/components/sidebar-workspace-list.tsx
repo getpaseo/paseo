@@ -154,6 +154,7 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import { bySizing } from "@/components/ui/control-geometry";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -2737,12 +2738,12 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -6,
   },
   projectKebabButton: {
-    // Larger on compact so the kebab is an easy tap target. The negative margins keep its
-    // dots on the same rail as the 24px desktop box and the row at its 44px height.
-    width: { xs: 32, md: 24 },
-    height: { xs: 32, md: 24 },
-    marginRight: { xs: -4, md: 0 },
-    marginVertical: { xs: -4, md: 0 },
+    // Larger on touch so the kebab is an easy tap target. The negative margins keep its
+    // dots on the same rail as the 24px pointer box and the row at its 44px height.
+    width: bySizing({ touch: 32, pointer: 24 }),
+    height: bySizing({ touch: 32, pointer: 24 }),
+    marginRight: bySizing({ touch: -4, pointer: 0 }),
+    marginVertical: bySizing({ touch: -4, pointer: 0 }),
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",

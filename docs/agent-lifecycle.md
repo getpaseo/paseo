@@ -14,9 +14,10 @@ Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idl
 
 ## Daemon restart recovery
 
-Hosts resume interrupted agents by default after graceful shutdown or a crash. The daemon
-reopens the saved provider conversation and settings, then sends `Resume working.`. Change
-`agents.resumePrompt` or disable `agents.resumeOnStartup` in host config or Host settings → Agents.
+Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
+Host settings → Agents to resume interrupted agents after graceful shutdown or a crash. The daemon
+reopens the saved provider conversation and settings, then sends `Resume working.`. Customize
+the prompt with `agents.resumePrompt` or the same settings page.
 Disabling recovery consumes pending intent; enabling it later does not revive old work.
 
 Only agents recorded as running qualify. Idle and initializing agents stay inactive. Archived
@@ -182,23 +183,42 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
-## Background workspaces
+## Background visibility
 
-`workspace.background` controls discovery only. Background workspaces contain ordinary durable
-agents and terminals: provider history, plugin hooks, parentage, archive, and restart recovery
-keep their normal behavior. Visibility is creation-only; selecting an existing workspace cannot
-change it. New workspaces default to false, inherit the caller workspace's value when an agent
-creates one without an override, and accept explicit true or false.
+An agent is effectively background when it or its workspace is background:
+`agent.background || workspace.background`. Background controls discovery only. Background agents
+and the agents in background workspaces are ordinary durable agents: provider history, plugin
+hooks, parentage, finish notifications to a caller, archive, and restart recovery keep their
+normal behavior. Both flags are fixed at creation.
 
-The daemon derives agent discovery from workspace ownership. Default workspace and agent lists,
-including History requests, exclude background work; `filter.includeBackground` includes it.
-Exact-ID operations bypass discovery filtering. The app replicates both kinds and filters only
-its sidebar with **Show background**, so direct navigation and restored tabs remain available.
+- **Agent.** `create_agent_request.background` marks the agent. Use it for helpers the user does
+  not watch, such as a plugin's classifier in the user's open workspace. A background agent never
+  raises attention, adds nothing to its workspace's status bucket or Last prompt time, and stays
+  out of tabs, the parent's subagent track and agent lists in the app. A tab opened by id still
+  works.
+- **Workspace.** `workspace.background` hides the workspace from the sidebar unless **Show
+  background** is on.
+- **Inheritance.** When `background` is omitted, an agent created by a caller agent takes the
+  caller's own `background`. A new workspace takes the caller's effective background. A request
+  that creates its workspace applies `background` to both the agent and the workspace. Explicit
+  true or false always wins.
+
+`AgentDirectory` (`packages/server/src/server/agent/directory.ts`) owns visibility for lists.
+Default workspace and agent lists, including History requests, exclude background work;
+`includeBackground` includes it. Exact-ID operations bypass discovery filtering. The app
+replicates inclusively and filters at each surface.
+
+Sources without the `background_agents` hello capability get workspace-only visibility on
+inclusive reads and subscriptions: agents in background workspaces, but no agent-level background
+agents. Older apps replicate inclusively and auto-open a tab for every root agent, so a classifier
+run would otherwise open a tab each turn. That visibility has its own directory sync generation.
 
 Sequenced directories keep complete canonical collections. A filtered read must never replace
 those collections with its subset. Inclusive and default observations have distinct cursor
 scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
-Clients gate creation and inclusive discovery on `features.backgroundWorkspaces`.
+Clients gate background workspaces and inclusive discovery on `features.backgroundWorkspaces`.
+They gate a background agent placed in an existing workspace or under a caller on
+`features.backgroundAgents`.
 
 ### Private daemon helpers
 
@@ -285,9 +305,9 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
-A finished workspace can be marked unread after it has been reviewed. The daemon restores
-`finished` attention on its newest eligible workspace-root agent without sending a new completion
-notification. Opening the workspace clears that attention through the normal focus flow.
+A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
+attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
+`error` and `finished` otherwise, without sending a new notification. Opening the workspace clears that attention through the normal focus flow.
 
 Attention is set by the agent finishing or failing and cleared by the client's
 `workspace.clear_attention`, which fires when the user reads the chat. Loading an agent's runtime is
@@ -295,6 +315,13 @@ neither, so resuming carries the stored attention and the stored last-activity t
 untouched. Forging either makes a background resume look like the user read a workspace and like the
 agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted
 `updatedAt` is what workspace `statusEnteredAt` is re-derived from on the next daemon start.
+
+The `failed` bucket follows unread `error` attention, not lifecycle status. An agent stays `error`
+until its next turn starts, so reading the chat dismisses the red dot the same way it dismisses the
+green one. For the same reason every new failure raises `error` attention, including a failed reload
+that leaves the lifecycle at `error`, and replaces unread `finished` attention; otherwise the failed
+agent would show the green dot or none. Subagents track marks are the exception: they follow the
+child's lifecycle, because the track is where a failed child stays visible.
 
 ## The subagents track
 

@@ -1,8 +1,31 @@
 # Changelog
 
-## 0.15.0-beta.1 - 2026-11-01
+## 0.15.2 - 2026-11-05
 
-Daemon restarts now keep terminal programs running and automatically resume interrupted agents in their existing conversations.
+### Added
+
+- Added a first-run setup on Paseo Desktop and web that walks new users through theme, providers, projects, agent orchestration and the mobile app, with Settings → General → Show setup again to reopen it ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Added project suggestions from the folders where you ran Claude Code, Codex, OpenCode or Pi, shown in the setup Projects step ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+### Improved
+
+- Changed the theme picker to a grid of tiles with a preview of each theme ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Replaced the "Loading…" text in Providers settings with skeleton rows ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed controls to two sizes: default controls are 32px tall on desktop and 44px on phones, and compact controls are 28px ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed first launch to go from the loading screen straight into setup instead of showing the empty home first ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- Changed dialogs on desktop and web to fade in over about 160ms ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- Changed modal and sheet backgrounds to match the screen background ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed documentation links in Settings sections to a `Label ↗` link beside the section title ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+## 0.15.1 - 2026-11-05
+
+### Fixed
+
+- Fixed the daemon failing to start when the terminal worker cannot read its own process identity, which left Paseo Desktop without a daemon on Windows machines where Windows PowerShell 5.1 cannot run `Get-CimInstance` ([#8810](https://github.com/getpaseo/paseo/pull/8810))
+
+## 0.15.0 - 2026-11-03
+
+Daemon restarts now keep terminal programs running. Interrupted agents can resume in their existing conversations when you turn on agent recovery.
 
 Mobile terminals have native rendering and draggable text-selection handles. Reconnecting restores up to 10,000 lines of terminal history.
 
@@ -13,7 +36,7 @@ Worktree setup can copy ignored files and use plugin-defined locations before ag
 - Insert known agent commands from replies into the Composer draft ([#8371](https://github.com/getpaseo/paseo/pull/8371))
 - Reuse running OpenCode v2 services ([#7435](https://github.com/getpaseo/paseo/pull/7435) by [@mcowger](https://github.com/mcowger))
 - Kept terminal programs running across daemon restarts, crashes and supported updates ([#7644](https://github.com/getpaseo/paseo/pull/7644), [#8155](https://github.com/getpaseo/paseo/pull/8155) by [@sebastianarena](https://github.com/sebastianarena))
-- Automatically resume interrupted agents in their existing conversations after a host restart ([#8127](https://github.com/getpaseo/paseo/pull/8127) by [@coolwindX](https://github.com/coolwindX), [@suntianc](https://github.com/suntianc))
+- Added an opt-in setting to resume interrupted agents in their existing conversations after a host restart ([#8127](https://github.com/getpaseo/paseo/pull/8127), [#8619](https://github.com/getpaseo/paseo/pull/8619) by [@coolwindX](https://github.com/coolwindX), [@suntianc](https://github.com/suntianc))
 - Added draggable terminal text-selection handles on iOS and Android ([#8348](https://github.com/getpaseo/paseo/pull/8348))
 - Let phones and tablets rotate with the system orientation setting ([#8256](https://github.com/getpaseo/paseo/pull/8256) by [@magiclaw](https://github.com/magiclaw), [@yzim](https://github.com/yzim))
 - Copy ignored files selected by `.worktreeinclude` into new worktrees before setup and agents start ([#8100](https://github.com/getpaseo/paseo/pull/8100) by [@cprecioso](https://github.com/cprecioso))
@@ -64,6 +87,7 @@ Worktree setup can copy ignored files and use plugin-defined locations before ag
 - Fixed the MiniMax Code catalog command failing to select an executable ([#8201](https://github.com/getpaseo/paseo/pull/8201) by [@Peanut-HZM](https://github.com/Peanut-HZM))
 - Fixed Android keeping the wrong layout after folding or unfolding while backgrounded ([#8285](https://github.com/getpaseo/paseo/pull/8285))
 - Fixed Android workspace layouts and header fades retaining their old size after rotation ([#8349](https://github.com/getpaseo/paseo/pull/8349), [#8377](https://github.com/getpaseo/paseo/pull/8377))
+- Fixed chat reconnecting and updating status being hidden behind the header on iOS and Android phones ([#8568](https://github.com/getpaseo/paseo/pull/8568))
 - Fixed deleted agents leaving unclosable tabs in another window ([#8248](https://github.com/getpaseo/paseo/pull/8248) by [@loganmeyer](https://github.com/loganmeyer))
 - Fixed transcript text retaining old theme colors after the theme changes while the window is hidden ([#8199](https://github.com/getpaseo/paseo/pull/8199) by [@Nurshot](https://github.com/Nurshot), [@dansabin](https://github.com/dansabin))
 - Fixed web menus snapping back to their loading size after content arrives ([#8180](https://github.com/getpaseo/paseo/pull/8180) by [@babo-jeonguk](https://github.com/babo-jeonguk))
@@ -74,7 +98,7 @@ Worktree setup can copy ignored files and use plugin-defined locations before ag
 ### Notes
 
 - The first upgrade from 0.14.0 still closes terminals; terminal preservation starts once the new daemon is installed, and Windows desktop app upgrades still close them
-- Automatic agent recovery is on by default and sends `Resume working.`; change the prompt or disable it in Host settings → Agents
+- Agent recovery is off by default; turn on **Resume agents after restart** in Host settings → Agents to send `Resume working.` or your own prompt
 - Before downgrading to 0.14.0, restore a backed-up `config.json` or remove the saved agent-resume and usage-check settings
 
 ## 0.14.0 - 2026-10-29

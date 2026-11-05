@@ -6,7 +6,7 @@ import type { WorkspaceCommandCenterShortcuts } from "./workspace-contributions"
 
 interface ResolveWorkspaceCommandCenterShortcutsInput {
   overrides: ShortcutOverrides;
-  platform: { isMac: boolean; isDesktop: boolean };
+  platform: { isMac: boolean; usesDesktopBindings: boolean };
 }
 
 export function resolveWorkspaceCommandCenterShortcuts({

@@ -1,8 +1,8 @@
+import { usesDesktopBindings } from "@/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { getIsElectronRuntime } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -24,14 +24,13 @@ export function KeyboardShortcutsDialog() {
 
   const shortcutOs = getShortcutOs();
   const isMac = shortcutOs === "mac";
-  const isDesktopApp = getIsElectronRuntime();
   const { overrides } = useKeyboardShortcutOverrides();
   // Effective bindings, so a shortcut the user unassigned lists no keys here
   // instead of advertising a default that no longer fires.
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const sections = useMemo(
-    () => buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp }, bindings),
-    [bindings, isDesktopApp, isMac],
+    () => buildKeyboardShortcutHelpSections({ isMac, usesDesktopBindings }, bindings),
+    [bindings, isMac],
   );
   const visibleSections = useMemo(
     () => filterShortcutHelpSections({ sections, query, translate: t, shortcutOs }),

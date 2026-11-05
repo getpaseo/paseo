@@ -928,11 +928,11 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
     throw new Error("Compact Changes toolbar geometry could not be measured");
   }
   expect(actionsBox.width).toBe(48);
-  expect(actionsBox.height).toBe(28);
-  expect(optionsBox.width).toBe(32);
-  expect(optionsBox.height).toBe(32);
-  expect(glyphBox.width).toBe(18);
-  expect(glyphBox.height).toBe(18);
+  expect(actionsBox.height).toBe(32);
+  expect(optionsBox.width).toBe(44);
+  expect(optionsBox.height).toBe(44);
+  expect(glyphBox.width).toBe(20);
+  expect(glyphBox.height).toBe(20);
 
   await expect(actions).not.toContainText("Commit");
   await expect(actions.locator("svg")).toHaveCount(2);

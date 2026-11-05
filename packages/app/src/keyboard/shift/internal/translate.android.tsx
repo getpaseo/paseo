@@ -10,18 +10,27 @@ interface KeyboardTranslateViewProps extends ViewProps {
   enabled?: boolean;
   /** Space below the view's resting position that the keyboard may fill before the view moves. */
   bottomClearance?: number;
+  /**
+   * Distance the view rises beyond the keyboard's overlap of the safe area, so content
+   * resting on the safe-area boundary keeps this gap above the open keyboard.
+   */
+  keyboardGap?: number;
 }
 
 export function KeyboardTranslateView({
   children,
   enabled = true,
   bottomClearance = 0,
+  keyboardGap = 0,
   style,
   ...props
 }: KeyboardTranslateViewProps) {
   const { shift } = useKeyboardShift();
   const frameRef = useRef<View>(null);
-  const translation = useMemo(() => ({ enabled, bottomClearance }), [bottomClearance, enabled]);
+  const translation = useMemo(
+    () => ({ enabled, bottomClearance, keyboardGap }),
+    [bottomClearance, enabled, keyboardGap],
+  );
   const scope = useKeyboardTranslationScope(frameRef, translation);
   const keyboardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -resolveKeyboardLift({ shift: shift.value, ...translation }) }],

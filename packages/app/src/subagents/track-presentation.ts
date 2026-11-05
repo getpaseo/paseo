@@ -1,7 +1,8 @@
 import type { TFunction } from "i18next";
 import type { ComposerTrackPillSegment } from "@/composer/tracks";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { deriveSidebarStateBucket, STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
+import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
@@ -12,6 +13,16 @@ function presentationStatus(row: SubagentRow) {
     return row.status === "running" ? "idle" : row.status;
   }
   return providerSubagentLifecycleStatus(row.status);
+}
+
+/**
+ * A child's mark reports what it is doing, not whether anyone read it: the track is where a
+ * failed child stays visible after the parent's own attention is cleared.
+ */
+export function deriveSubagentStatusBucket(status: AgentLifecycleStatus): SidebarStateBucket {
+  if (status === "error") return "failed";
+  if (status === "running") return "running";
+  return "done";
 }
 
 export interface SubagentRowPresentationData {
@@ -38,10 +49,7 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSidebarStateBucket({
-      status,
-      requiresAttention: false,
-    }),
+    statusBucket: deriveSubagentStatusBucket(status),
   };
 }
 
