@@ -383,7 +383,7 @@ describe("Claude rewind against the Claude SDK", () => {
       if (!(message.worker instanceof Worker)) return;
       const fork = ++started;
       events.push(`start ${fork}`);
-      message.worker.once("message", () => events.push(`reply ${fork}`));
+      message.worker.once("exit", () => events.push(`exit ${fork}`));
     }
 
     subscribe("worker_threads", recordWorker);
@@ -397,7 +397,7 @@ describe("Claude rewind against the Claude SDK", () => {
       unsubscribe("worker_threads", recordWorker);
     }
 
-    expect(events).toEqual(["start 1", "reply 1", "start 2", "reply 2"]);
+    expect(events).toEqual(["start 1", "exit 1", "start 2", "exit 2"]);
   });
 
   test("forks a long transcript without blocking the daemon's event loop", async () => {

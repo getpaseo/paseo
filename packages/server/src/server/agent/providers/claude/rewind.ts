@@ -29,26 +29,30 @@ export const realClaudeRewindSdk: ClaudeRewindSdk = {
     ),
 };
 
-function forkInWorker(request: ClaudeForkRequest): Promise<{ sessionId: string }> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(rewindWorker.entrypoint, {
-      eval: rewindWorker.eval,
-      execArgv: [],
-      workerData: request,
-    });
-    worker.once("message", (reply: ClaudeForkReply) => {
-      void worker.terminate();
-      if (reply.kind === "forked") {
-        resolve({ sessionId: reply.sessionId });
-        return;
-      }
-      const error = new Error(reply.message);
-      error.stack = reply.stack;
-      reject(Object.assign(error, reply.properties));
-    });
-    worker.once("error", reject);
-    worker.once("exit", (code) => reject(new Error(`Claude rewind worker exited (code ${code})`)));
+async function forkInWorker(request: ClaudeForkRequest): Promise<{ sessionId: string }> {
+  const worker = new Worker(rewindWorker.entrypoint, {
+    eval: rewindWorker.eval,
+    execArgv: [],
+    workerData: request,
   });
+  let reply: ClaudeForkReply;
+  try {
+    reply = await new Promise<ClaudeForkReply>((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", (code) =>
+        reject(new Error(`Claude rewind worker exited (code ${code})`)),
+      );
+    });
+  } finally {
+    await worker.terminate();
+  }
+  if (reply.kind === "forked") {
+    return { sessionId: reply.sessionId };
+  }
+  const error = new Error(reply.message);
+  error.stack = reply.stack;
+  throw Object.assign(error, reply.properties);
 }
 
 /**
