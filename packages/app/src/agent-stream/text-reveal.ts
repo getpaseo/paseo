@@ -164,7 +164,7 @@ export function advanceTextReveal(
   return { target: state.target, revealed: Math.min(state.target.length, state.revealed + step) };
 }
 
-/** Release everything, for when the turn ends and nothing may be held back. */
+/** Release everything when paced rendering is unavailable. */
 export function completeTextReveal(state: TextRevealState): TextRevealState {
   if (state.revealed >= state.target.length) {
     return state;
