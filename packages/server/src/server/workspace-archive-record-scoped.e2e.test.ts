@@ -368,25 +368,25 @@ test("a managed workspace restores its changed base after archival removes the c
   );
 });
 
-test("an archived sibling restores the base changed after it was archived", async () => {
+test("an archived workspace keeps its base when a later workspace reuses its path", async () => {
   const repo = createGitRepo();
   execFileSync("git", ["branch", "release"], { cwd: repo });
-  const created = await ctx.client.createWorkspace({
-    source: { kind: "worktree", cwd: repo, worktreeSlug: "archived-sibling", baseBranch: "main" },
-  });
-  const workspace = created.workspace;
-  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
-  const siblingId = await createLocalWorkspace(workspace.workspaceDirectory, "Sibling");
-  expect((await ctx.client.archiveWorkspace(workspace.id)).error).toBe(null);
+  const source = { kind: "worktree", cwd: repo, worktreeSlug: "reused-path", baseBranch: "main" };
+  const first = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!first) throw new Error("Failed to create first workspace");
+  expect((await ctx.client.archiveWorkspace(first.id)).error).toBe(null);
+  expect(existsSync(first.workspaceDirectory)).toBe(false);
+  const second = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!second) throw new Error("Failed to create second workspace");
+  expect(second.workspaceDirectory).toBe(first.workspaceDirectory);
   await ctx.client.setWorkspaceBaseBranch({
-    workspaceId: siblingId,
+    workspaceId: second.id,
     baseRef: "refs/heads/release",
   });
-  expect((await ctx.client.archiveWorkspace(siblingId)).error).toBe(null);
-  expect(existsSync(workspace.workspaceDirectory)).toBe(false);
-  await ctx.client.restoreWorkspace(workspace.id);
-  expect((await readPaseoWorktreeMetadata(workspace.workspaceDirectory))?.baseRef).toBe(
-    "refs/heads/release",
+  expect((await ctx.client.archiveWorkspace(second.id)).error).toBe(null);
+  await ctx.client.restoreWorkspace(first.id);
+  expect((await readPaseoWorktreeMetadata(first.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/main",
   );
 });
 
