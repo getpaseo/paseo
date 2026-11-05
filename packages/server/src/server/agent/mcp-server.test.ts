@@ -271,6 +271,7 @@ function buildAgentManagerSpies() {
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     getPluginTools: () => [],
+    effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
     reloadStalePluginSession: async () => {},
     hasInFlightRun: vi.fn().mockReturnValue(false),
     steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
