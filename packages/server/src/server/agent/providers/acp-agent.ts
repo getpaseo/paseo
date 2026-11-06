@@ -1867,10 +1867,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
-      await this.applyConfiguredOverrides();
-
       if (this.resumePurpose === "history") {
+        // History replay never runs a turn, so stored mode/model choices are not
+        // applied: a model that is no longer offered must not block opening it.
         await this.releaseHistoryRuntime();
+      } else {
+        await this.applyConfiguredOverrides();
       }
     } catch (error) {
       await this.closeAfterInitializationFailure(error);

@@ -92,6 +92,27 @@ describe("GenericACPAgentClient archived history", () => {
     });
   });
 
+  test("replays an archived session whose stored model is no longer offered", async () => {
+    await withFakeACPAgent(async ({ command, removedCwd }) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+
+      const session = await client.resumeSession(
+        { provider: "acp", sessionId: "archived-session", metadata: { cwd: removedCwd } },
+        { model: "stale/removed-model" },
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        expect(await collectTimelineText(session.streamHistory())).toEqual([
+          "user_message:What is in the README?",
+          "assistant_message:It describes the project.",
+        ]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
   test("keeps the provider process for an interactive resume", async () => {
     await withFakeACPAgent(async ({ command, removedCwd, pidPath }) => {
       await mkdir(removedCwd, { recursive: true });
