@@ -1786,6 +1786,16 @@ async function resolveBestComparisonBaseRef(
   return resolveCommitComparisonRef(cwd, baseRef, context);
 }
 
+async function resolveQualifiedComparisonBaseRef(
+  cwd: string,
+  baseRef: string,
+  context: CheckoutContext,
+): Promise<string> {
+  const comparison = context.facts?.isGit ? context.facts.comparisonBaseRef : null;
+  const ref = comparison ?? (await resolveBestComparisonBaseRef(cwd, baseRef, context));
+  return resolveCommitComparisonRef(cwd, ref, context);
+}
+
 async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<string> {
   if (isQualifiedBranchRef(baseRef)) {
     if (await doesGitRefExist(cwd, baseRef)) {
@@ -2404,6 +2414,10 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
+  // Ref-derived counts skip the current base branch; the diff consumer still needs its ref.
+  const comparisonBaseRef = baseRef
+    ? await resolveQualifiedComparisonBaseRef(cwd, baseRef, factsContext).catch(() => null)
+    : null;
   const aheadBehind =
     baseRef && currentBranch
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
@@ -2426,7 +2440,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
-      comparisonBaseRef: facts.comparisonBaseRef,
+      comparisonBaseRef,
       aheadBehind,
       upstreamRef,
       aheadOfOrigin,
@@ -2446,7 +2460,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,
-    comparisonBaseRef: facts.comparisonBaseRef,
+    comparisonBaseRef,
     aheadBehind,
     upstreamRef,
     aheadOfOrigin,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
-import { deriveCheckoutDiffResult } from "./use-diff-query";
+import { deriveCheckoutDiffResult } from "./diff-snapshot";
 
 function createParsedDiffFile(path: string): ParsedDiffFile {
   return {
@@ -59,6 +59,7 @@ describe("deriveCheckoutDiffResult", () => {
 
     expect(result).toEqual({
       files: [],
+      entries: null,
       payloadError: error,
       diffTooLarge: true,
       isLoading: false,
@@ -67,4 +68,21 @@ describe("deriveCheckoutDiffResult", () => {
       error: null,
     });
   });
+});
+
+it("shows the announced tree while file bodies are still loading", () => {
+  const entries = [
+    {
+      path: "src/app.ts",
+      oldPath: null,
+      change: "modified",
+      content: "text",
+      additions: 3,
+      deletions: 1,
+    },
+  ] as const;
+  const result = deriveCheckoutDiffResult({ ...createPayload([]), entries: [...entries] });
+  expect(result.isLoading).toBe(true);
+  expect(result.entries).toEqual(entries);
+  expect(result.files).toEqual([]);
 });

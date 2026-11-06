@@ -424,3 +424,17 @@ it("compares tag-based worktrees in status, history and legacy diff modes", asyn
   const all = await getCheckoutDiff(repoDir, { mode: "all", baseRef: "refs/tags/v1" });
   expect(all.diff).toContain("+edited");
 });
+
+it("announces a usable comparison base while checked out on the base branch", async () => {
+  const cwd = makeTempDir();
+  git(["init", "-b", "main"], cwd);
+  writeFileSync(join(cwd, "a.txt"), "before\n");
+  git(["add", "."], cwd);
+  commit(cwd, "base");
+  writeFileSync(join(cwd, "a.txt"), "after\n");
+  const status = await getCheckoutStatus(cwd);
+  expect(status).toMatchObject({ isGit: true, comparisonBaseRef: "refs/heads/main" });
+  if (!status.isGit || !status.comparisonBaseRef) throw new Error("Missing comparison base");
+  const all = await getCheckoutDiff(cwd, { mode: "all", baseRef: status.comparisonBaseRef });
+  expect(all.diff).toContain("+after");
+});
