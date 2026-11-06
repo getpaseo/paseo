@@ -27,6 +27,7 @@ import type {
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
   ProviderDiagnosticResponseMessage,
+  ProviderSubagentDescriptorPayload,
   ProviderUsageListResponseMessage,
   ProjectPlacementPayload,
   WorkspaceProjectDescriptorPayload,
@@ -111,6 +112,7 @@ export interface PaseoClientConfig {
 
 export type PaseoWorkspace = WorkspaceDescriptorPayload;
 export type PaseoAgent = AgentSnapshotPayload;
+export type PaseoProviderSubagent = ProviderSubagentDescriptorPayload;
 export type PaseoAgentListOptions = FetchAgentsOptions;
 export type PaseoProject = WorkspaceProjectDescriptorPayload;
 export type PaseoProjectListOptions = Omit<ProjectListRequestMessage, "type" | "requestId"> & {
@@ -334,6 +336,12 @@ export type PaseoAgentTimelineEvent =
 
 export type PaseoAgentTimelineSubscription = ReturnType<DaemonClient["subscribeAgentTimeline"]>;
 
+/** Child executions the provider runs inside this agent, such as Claude Code Task subagents. */
+export interface PaseoAgentProviderSubagentsHandle {
+  /** Rejects when the daemon reports an error for the parent agent. */
+  list(): Promise<PaseoProviderSubagent[]>;
+}
+
 export interface PaseoAgentTimelineHandle {
   append(item: Omit<PluginTimelineItem, "pluginId">): Promise<{ seq: number; epoch: string }>;
   /**
@@ -376,6 +384,7 @@ export interface PaseoAgentHandle {
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
+  readonly providerSubagents: PaseoAgentProviderSubagentsHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   /**
@@ -938,6 +947,9 @@ function createAgentHandleFactory(
                 });
             }
           }),
+      },
+      providerSubagents: {
+        list: async () => (await daemonClient.listProviderSubagents(id)).subagents,
       },
       get workspaceId() {
         return current?.workspaceId ?? null;
