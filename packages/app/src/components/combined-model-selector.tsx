@@ -334,9 +334,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
+  // A custom trigger, such as a form field, owns its own box: none of the toolbar slot applies.
   customTriggerWrapper: {
     paddingHorizontal: 0,
     paddingVertical: 0,
+    marginHorizontal: 0,
     height: "auto",
   },
   triggerFill: {

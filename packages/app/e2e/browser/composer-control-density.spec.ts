@@ -232,3 +232,26 @@ test.describe("Composer toolbar rails on touch", () => {
     });
   }
 });
+
+test.describe("Composer trailing disc on a new chat", () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 1024, height: 1366 } });
+
+  test("an empty draft holds a disabled send disc until there is something to send", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "composer-placeholder-send-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await clickNewChat(page);
+      const send = page
+        .getByTestId("message-input-root")
+        .filter({ visible: true })
+        .getByRole("button", { name: "Send message", exact: true });
+      await expect(send).toBeDisabled({ timeout: 30_000 });
+      await fillComposerDraft(page, "Refactor the composer toolbar");
+      await expect(send).toBeEnabled();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});

@@ -1251,8 +1251,12 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+/**
+ * Send that stands in for the trailing disc, in fullscreen or while there is nothing to send, is
+ * disabled until there is content.
+ */
 function resolvePresentationSendDisabled(input: {
-  fullscreen: boolean;
+  standsIn: boolean;
   disabled: boolean;
   hasText: boolean;
   attachments: ComposerAttachment[];
@@ -1260,7 +1264,7 @@ function resolvePresentationSendDisabled(input: {
   allowEmpty: boolean;
 }): boolean {
   return (
-    input.disabled || (input.fullscreen && !input.allowEmpty && !hasSendableComposerContent(input))
+    input.disabled || (input.standsIn && !input.allowEmpty && !hasSendableComposerContent(input))
   );
 }
 
@@ -2011,12 +2015,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // Fullscreen always shows Send; without content it is disabled, and looks it.
     // With nothing to send and no voice mode, a disabled Send holds the trailing disc so the row
     // does not shift when typing starts.
-    const presentedActionKind: PrimaryActionKind =
-      isFullscreen || (primaryActionKind === "none" && voiceModeContent == null)
-        ? "send"
-        : primaryActionKind;
+    const sendStandsIn = isFullscreen || (primaryActionKind === "none" && voiceModeContent == null);
+    const presentedActionKind: PrimaryActionKind = sendStandsIn ? "send" : primaryActionKind;
     const isPresentedSendDisabled = resolvePresentationSendDisabled({
-      fullscreen: isFullscreen,
+      standsIn: sendStandsIn,
       disabled: isSendButtonDisabled,
       hasText: hasLiveText,
       attachments,
