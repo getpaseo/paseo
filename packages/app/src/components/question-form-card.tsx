@@ -585,7 +585,9 @@ export function QuestionFormCard({
             <View style={styles.optionsWrap} {...optionsGroupAccessibility}>
               {activeQuestion.options.map((opt, optIndex) => (
                 <QuestionOptionRow
-                  key={opt.label}
+                  // Folding can make two different options read the same, so
+                  // the key uses the text the agent sent.
+                  key={opt.rawLabel ?? opt.label}
                   qIndex={resolvedActiveQuestionIndex}
                   optIndex={optIndex}
                   option={opt}
