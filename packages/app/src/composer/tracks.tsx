@@ -45,6 +45,7 @@ export function ComposerTrackBar({ children }: { children: ReactNode }): ReactEl
           <ScrollView
             testID="composer-track-scroll"
             horizontal
+            keyboardShouldPersistTaps="handled"
             showsHorizontalScrollIndicator={false}
             pointerEvents="box-none"
           >
