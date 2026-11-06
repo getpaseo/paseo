@@ -1,9 +1,14 @@
 import { useCallback } from "react";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
-import { useSidebarWorkspacePinController } from "@/hooks/use-sidebar-workspace-pin";
+import {
+  useSidebarWorkspacePinController,
+  type PinnableWorkspace,
+} from "@/hooks/use-sidebar-workspace-pin";
+import { useSidebarBatchWorkspaceActions } from "@/hooks/use-sidebar-batch-actions";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useHostFeature } from "@/runtime/host-features";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useSidebarSelectionStore } from "@/stores/sidebar-selection-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
@@ -33,6 +38,7 @@ export function useGlobalWorkspacePinAction() {
   }));
   const canPin = useHostFeature(serverId, "workspacePinning");
   const togglePin = useSidebarWorkspacePinController();
+  const { pin: batchPin, unpin: batchUnpin } = useSidebarBatchWorkspaceActions();
 
   const handle = useCallback(() => {
     if (!serverId || !fields || !canPin) {
@@ -45,6 +51,23 @@ export function useGlobalWorkspacePinAction() {
     if (!workspaceKey) {
       return false;
     }
+    // When the active workspace sits inside a multi-selection, the shortcut propagates its own
+    // toggle direction to the whole selection: whatever it would do to this row, it does to all.
+    const selectionState = useSidebarSelectionStore.getState();
+    if (selectionState.selected.length > 1 && selectionState.selectedKeys.has(workspaceKey)) {
+      const targets: PinnableWorkspace[] = selectionState.selected.map((target) => ({
+        serverId: target.serverId,
+        workspaceId: target.workspaceId,
+        workspaceKey: target.workspaceKey,
+        pinnedAt: null,
+      }));
+      if (fields.pinnedAt == null) {
+        batchPin(targets);
+      } else {
+        batchUnpin(targets);
+      }
+      return true;
+    }
     togglePin({
       serverId,
       workspaceId: fields.id,
@@ -52,7 +75,7 @@ export function useGlobalWorkspacePinAction() {
       pinnedAt: fields.pinnedAt,
     });
     return true;
-  }, [canPin, fields, serverId, togglePin]);
+  }, [batchPin, batchUnpin, canPin, fields, serverId, togglePin]);
 
   useKeyboardActionHandler({
     handlerId: "workspace-pin-global",
