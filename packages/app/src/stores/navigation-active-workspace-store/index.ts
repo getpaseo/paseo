@@ -37,12 +37,11 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
     revealTab: revealWorkspaceTab,
-    revealWorkspace: () => {
+    revealWorkspace: (workspaceKey) => {
+      useWorkspaceLayoutStore.getState().focusWorkspace(workspaceKey);
       usePanelStore.getState().showMobileAgent();
     },
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
-    getSessionAgents: (serverId) =>
-      useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     deferOpenTab: (input) => useWorkspaceLayoutStore.getState().deferOpenTab(input),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),

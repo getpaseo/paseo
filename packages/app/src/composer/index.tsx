@@ -1058,10 +1058,7 @@ function ComposerAutocompleteBinding({
       options={autocomplete.options}
       selectedIndex={autocomplete.selectedIndex}
       onSelect={onSelect}
-      isLoading={autocomplete.isLoading}
-      errorMessage={autocomplete.errorMessage}
-      loadingText={autocomplete.loadingText}
-      emptyText={autocomplete.emptyText}
+      status={autocomplete.status}
     >
       {children}
     </ComposerAutocomplete>

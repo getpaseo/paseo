@@ -820,7 +820,7 @@ describe("translation resources", () => {
     expect(en.branchSwitcher.stashRestored).toBe("Stashed changes restored");
     expect(en.agentAutocomplete.searchingWorkspace).toBe("Searching workspace...");
     expect(en.agentAutocomplete.noCommands).toBe("No commands found");
-    expect(en.agentAutocomplete.failedToLoad).toBe("Failed to load");
+    expect(en.agentAutocomplete.commandsFailed).toBe("Couldn't load commands");
     expect(en.loadOlderHistory.failed).toBe("Couldn't load older history");
     expect(en.agentControls.thinking.extraHigh).toBe("Extra high");
     expect(en.agentControls.model.unknown).toBe("Unknown model");

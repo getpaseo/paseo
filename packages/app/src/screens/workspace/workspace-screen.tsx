@@ -380,9 +380,9 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
   const handleTouch = useCallback(() => {
-    if (!isPaneFocused && paneId) onFocusPane(paneId);
+    if (paneId) onFocusPane(paneId);
     return false;
-  }, [isPaneFocused, onFocusPane, paneId]);
+  }, [onFocusPane, paneId]);
 
   return (
     <RenderProfile id={`MobileMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
