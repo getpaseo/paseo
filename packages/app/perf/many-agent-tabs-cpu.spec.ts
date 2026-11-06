@@ -4,6 +4,12 @@ import { loadavg } from "node:os";
 import type { CDPSession, Page, WebSocket } from "@playwright/test";
 import { expect, test } from "../e2e/support/fixtures";
 import { openAgentRoute } from "../e2e/support/helpers/mock-agent";
+import {
+  readReactCommits,
+  readReactRenders,
+  recordReactRenders,
+  resetReactRenders,
+} from "../e2e/support/helpers/react-renders";
 import { seedWorkspace, type SeededWorkspace } from "../e2e/support/helpers/seed-client";
 
 /*
@@ -60,11 +66,6 @@ interface WindowSample {
   loadavg: string;
 }
 
-declare global {
-  var __PASEO_MANY_TABS_COMMITS__: number | undefined;
-  var __PASEO_MANY_TABS_RENDERS__: Record<string, number> | undefined;
-}
-
 test.describe.configure({ mode: "serial" });
 
 test.describe("many agent tabs CPU", () => {
@@ -104,7 +105,7 @@ test.describe("many agent tabs CPU", () => {
         test.setTimeout(SETTLE_MS + WINDOW_MS * 2 + 240_000);
         const tabs = tabWorkspaces.get(count);
         if (!tabs) throw new Error(`No seeded workspace for N=${count}`);
-        if (COUNT_RENDERS) await installCommitCounter(page);
+        if (COUNT_RENDERS) await recordReactRenders(page);
         const traffic = recordTraffic(page);
 
         await openAgentRoute(page, {
@@ -236,60 +237,6 @@ function recordTraffic(page: Page): { take(): TrafficCounters } {
   };
 }
 
-async function installCommitCounter(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const PERFORMED_WORK = 1;
-    interface Fiber {
-      type: unknown;
-      flags: number;
-      child: Fiber | null;
-      sibling: Fiber | null;
-      alternate: Fiber | null;
-    }
-    const nameOf = (type: unknown): string | null => {
-      if (typeof type === "function") {
-        return (type as { displayName?: string }).displayName || type.name || null;
-      }
-      if (!type || typeof type !== "object") return null;
-      const component = type as { displayName?: string; render?: unknown; type?: unknown };
-      return component.displayName || nameOf(component.render) || nameOf(component.type);
-    };
-    let rendererCount = 0;
-    Object.defineProperty(globalThis, "__REACT_DEVTOOLS_GLOBAL_HOOK__", {
-      configurable: true,
-      value: {
-        supportsFiber: true,
-        isDisabled: false,
-        renderers: new Map(),
-        inject(renderer: unknown) {
-          rendererCount += 1;
-          this.renderers.set(rendererCount, renderer);
-          return rendererCount;
-        },
-        checkDCE() {},
-        onScheduleFiberRoot() {},
-        onCommitFiberRoot(_id: number, root: { current: Fiber }) {
-          globalThis.__PASEO_MANY_TABS_COMMITS__ =
-            (globalThis.__PASEO_MANY_TABS_COMMITS__ ?? 0) + 1;
-          const renders = (globalThis.__PASEO_MANY_TABS_RENDERS__ ??= {});
-          const pending: Fiber[] = [root.current];
-          while (pending.length > 0) {
-            const fiber = pending.pop()!;
-            const name = typeof fiber.type === "string" ? null : nameOf(fiber.type);
-            if (name && (fiber.flags & PERFORMED_WORK) !== 0) {
-              renders[name] = (renders[name] ?? 0) + 1;
-            }
-            if (fiber.alternate && fiber.child === fiber.alternate.child) continue;
-            for (let child = fiber.child; child; child = child.sibling) pending.push(child);
-          }
-        },
-        onPostCommitFiberRoot() {},
-        onCommitFiberUnmount() {},
-      },
-    });
-  });
-}
-
 // macOS and other hosts without /proc: the daemon is the process listening on the e2e port.
 function daemonCpuSecondsFromPs(): number {
   const port = process.env.E2E_DAEMON_PORT;
@@ -385,10 +332,7 @@ async function measureWindow(input: {
     await pageSession.send("Profiler.start");
   }
   if (COUNT_RENDERS) {
-    await page.evaluate(() => {
-      globalThis.__PASEO_MANY_TABS_COMMITS__ = 0;
-      globalThis.__PASEO_MANY_TABS_RENDERS__ = {};
-    });
+    await resetReactRenders(page);
   }
   input.traffic.take();
   const startedAt = Date.now();
@@ -429,12 +373,9 @@ async function measureWindow(input: {
     loadavg: `${loadBefore} -> ${loadAfter}`,
   };
   if (COUNT_RENDERS) {
-    const renders = await page.evaluate(() => ({
-      commits: globalThis.__PASEO_MANY_TABS_COMMITS__ ?? 0,
-      renders: globalThis.__PASEO_MANY_TABS_RENDERS__ ?? {},
-    }));
-    sample.reactCommits = renders.commits;
-    sample.reactRendersTop = Object.entries(renders.renders)
+    const renders = await readReactRenders(page);
+    sample.reactCommits = await readReactCommits(page);
+    sample.reactRendersTop = Object.entries(renders)
       .sort((left, right) => right[1] - left[1])
       .slice(0, 25);
   }

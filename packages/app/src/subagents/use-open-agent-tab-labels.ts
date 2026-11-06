@@ -1,12 +1,14 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { selectAgentTabsNeedingOpenLabelKey } from "./open-tab-labels";
+import { createAgentTabsNeedingOpenLabelKeySelector } from "./open-tab-labels";
 
-const NO_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
+function selectNoAgentTabs(): string {
+  return "";
+}
 
 function increment(value: number): number {
   return value + 1;
@@ -21,16 +23,18 @@ export function useOpenAgentTabLabels(input: {
   const [label, setLabel] = useState<string | null>(null);
   // The workspace screen calls this hook, so it subscribes to the open tabs that still need a
   // label rather than to the agent maps, which change on every agent update on the host.
-  const neededKey = useSessionStore((state) =>
-    label
-      ? selectAgentTabsNeedingOpenLabelKey({
-          session: state.sessions[input.serverId],
-          tabs: input.tabs,
-          label,
-          pendingAgentIds: NO_PENDING_AGENT_IDS,
-        })
-      : "",
+  const selectNeededKey = useMemo(
+    () =>
+      label
+        ? createAgentTabsNeedingOpenLabelKeySelector({
+            serverId: input.serverId,
+            tabs: input.tabs,
+            label,
+          })
+        : selectNoAgentTabs,
+    [input.serverId, input.tabs, label],
   );
+  const neededKey = useSessionStore(selectNeededKey);
   const pendingAgentIdsRef = useRef(new Set<string>());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -45,20 +49,35 @@ export function useOpenAgentTabLabels(input: {
   );
 
   useEffect(() => {
+    if (label) {
+      return;
+    }
     let cancelled = false;
+    let resolving = false;
     const resolveLabel = async () => {
+      if (resolving) return;
+      resolving = true;
       try {
         const clientId = await getOrCreateClientId();
         if (!cancelled) setLabel(getOpenAgentTabLabel(clientId));
       } catch (error) {
         console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
+      } finally {
+        resolving = false;
       }
     };
     void resolveLabel();
+    // A failed lookup is retried on the next agent map change. This listener doesn't render, so
+    // the screen still doesn't subscribe to the maps.
+    const unsubscribe = useSessionStore.subscribe(
+      (state) => state.sessions[input.serverId]?.agents,
+      () => void resolveLabel(),
+    );
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, []);
+  }, [input.serverId, label]);
 
   useEffect(() => {
     const client = input.client;

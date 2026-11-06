@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import {
   getAgentTabsNeedingOpenLabel,
-  selectAgentTabsNeedingOpenLabelKey,
+  createAgentTabsNeedingOpenLabelKeySelector,
 } from "./open-tab-labels";
 
 const label = "paseo.open-agent-tab.client-1";
@@ -55,19 +55,21 @@ describe("getAgentTabsNeedingOpenLabel", () => {
   });
 });
 
-describe("selectAgentTabsNeedingOpenLabelKey", () => {
+describe("createAgentTabsNeedingOpenLabelKeySelector", () => {
   const tabs = [tab("child", 1), tab("root", 2)];
 
-  function select(agents: Map<string, Agent>): string {
-    return selectAgentTabsNeedingOpenLabelKey({
-      session: { agents, agentDetails: new Map() },
-      tabs,
-      label,
-      pendingAgentIds: new Set(),
-    });
+  type Snapshot = Parameters<ReturnType<typeof createAgentTabsNeedingOpenLabelKeySelector>>[0];
+
+  function snapshot(agents: Map<string, Agent>): Snapshot {
+    return { sessions: { s: { agents, agentDetails: new Map() } } } as unknown as Snapshot;
+  }
+
+  function create() {
+    return createAgentTabsNeedingOpenLabelKeySelector({ serverId: "s", tabs, label });
   }
 
   it("keeps the same value when an agent outside the open tabs updates", () => {
+    const select = create();
     const before = new Map([
       ["child", agent({ id: "child", parentAgentId: "parent" })],
       ["root", agent({ id: "root" })],
@@ -76,16 +78,29 @@ describe("selectAgentTabsNeedingOpenLabelKey", () => {
     const after = new Map(before);
     after.set("elsewhere", agent({ id: "elsewhere", parentAgentId: "root" }));
 
-    expect(select(before)).toBe("child");
-    expect(select(after)).toBe(select(before));
+    expect(select(snapshot(before))).toBe("child");
+    expect(select(snapshot(after))).toBe("child");
   });
 
   it("changes once the open child carries the label", () => {
+    const select = create();
     const agents = new Map([
       ["child", agent({ id: "child", parentAgentId: "parent", open: true })],
       ["root", agent({ id: "root" })],
     ]);
 
-    expect(select(agents)).toBe("");
+    expect(select(snapshot(agents))).toBe("");
+  });
+
+  it("does no work on store updates that leave the agent maps unchanged", () => {
+    const select = create();
+    const agents = new Map([["child", agent({ id: "child", parentAgentId: "parent" })]]);
+    const state = snapshot(agents);
+    const get = vi.spyOn(agents, "get");
+
+    expect(select(state)).toBe("child");
+    const lookups = get.mock.calls.length;
+    expect(select({ ...state } as Snapshot)).toBe("child");
+    expect(get.mock.calls.length).toBe(lookups);
   });
 });
