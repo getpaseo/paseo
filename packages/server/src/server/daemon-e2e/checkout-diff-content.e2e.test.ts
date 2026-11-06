@@ -461,6 +461,7 @@ test("SDK diff journey publishes a tag tree, commits a one-file refresh and shar
     });
     const initial = states.at(-1);
     if (initial?.phase !== "ready") throw new Error("Expected ready");
+    const initialStateCount = states.length;
     await second.connect();
     startGitCommandMetrics();
     const duplicateStates: import("@getpaseo/client").DiffState[] = [];
@@ -487,7 +488,8 @@ test("SDK diff journey publishes a tag tree, commits a one-file refresh and shar
     if (refreshed?.phase !== "ready") throw new Error("Expected ready");
     expect(refreshed.files[0]).not.toBe(initial.files[0]);
     expect(refreshed.files[1]).toBe(initial.files[1]);
-    expect(states.filter((state) => state.phase === "loading")).toHaveLength(1);
+    expect(states.slice(initialStateCount).map((state) => state.phase)).not.toContain("loading");
+    expect(states.map((state) => state.phase)).not.toContain("error");
     await duplicate.release();
     await observation.release();
   } finally {
@@ -515,6 +517,36 @@ test("commit-file RPC keeps the existing read ceiling for patches larger than on
     const expected = await getCommitFileDiff({ cwd, sha, path: "large.txt" });
     const actual = await ctx.client.getCommitFileDiff(cwd, sha, "large.txt");
     expect(expected?.hunks.length).toBeGreaterThan(0);
+    expect(actual.file?.hunks).toEqual(expected?.hunks);
+  } finally {
+    await ctx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("commit-file RPC selects renamed content when the source path becomes a directory", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "commit-rename-directory-"));
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "a.txt"), "original line\n".repeat(16));
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    git(cwd, "mv", "a.txt", "z.txt");
+    writeFileSync(join(cwd, "z.txt"), "original line\n".repeat(16) + "renamed line\n");
+    mkdirSync(join(cwd, "a.txt"));
+    writeFileSync(join(cwd, "a.txt", "child.txt"), "replacement line\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "rename");
+    const sha = git(cwd, "rev-parse", "HEAD").trim();
+    const { getCommitFileDiff } = await import("../../utils/checkout-git.js");
+    const expected = await getCommitFileDiff({ cwd, sha, path: "z.txt" });
+    const actual = await ctx.client.getCommitFileDiff(cwd, sha, "z.txt");
+    expect(expected?.hunks.flatMap((hunk) => hunk.lines.map((line) => line.content))).toContain(
+      "renamed line",
+    );
     expect(actual.file?.hunks).toEqual(expected?.hunks);
   } finally {
     await ctx.cleanup();

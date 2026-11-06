@@ -291,3 +291,86 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test.each(["worktree", "index", "rev"] as const)(
+  "%s rename reads select the destination when the old path becomes a directory",
+  async (headKind) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-rename-directory-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const { mkdir } = await import("node:fs/promises");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, "a.txt"), "original line\n".repeat(16));
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      git("mv", "a.txt", "z.txt");
+      await writeFile(join(cwd, "z.txt"), "original line\n".repeat(16) + "renamed line\n");
+      await mkdir(join(cwd, "a.txt"));
+      await writeFile(join(cwd, "a.txt", "child.txt"), "replacement line\n");
+      git("add", ".");
+      if (headKind === "rev") git("-c", "commit.gpgsign=false", "commit", "-m", "rename");
+      const head = headKind === "rev" ? { kind: "rev" as const, rev: "HEAD" } : { kind: headKind };
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: base },
+        head,
+        highlight: false,
+      });
+      try {
+        const file = comparison.files.find((candidate) => candidate.entry.path === "z.txt");
+        if (!file) throw new Error("Missing rename");
+        expect(file.entry.oldPath).toBe("a.txt");
+        const record = await comparison.read(file);
+        if (record.kind !== "ready") throw new Error("Expected readable rename");
+        const lines = record.body.hunks.flatMap((hunk) => hunk.lines.map((line) => line.content));
+        expect(lines).toContain("renamed line");
+        expect(lines).not.toContain("replacement line");
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a dangling untracked symlink exposes its target text alongside tracked changes",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-dangling-link-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    const { symlink } = await import("node:fs/promises");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, "a.txt"), "before\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await writeFile(join(cwd, "a.txt"), "after\n");
+      await symlink("not-created-yet", join(cwd, "link"));
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: "HEAD" },
+        head: { kind: "worktree" },
+        highlight: false,
+      });
+      try {
+        expect(comparison.files.map((file) => file.entry.path)).toEqual(["a.txt", "link"]);
+        const record = await comparison.read(comparison.files[1]);
+        if (record.kind !== "ready") throw new Error("Expected link body");
+        expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual({
+          type: "add",
+          content: "not-created-yet",
+        });
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

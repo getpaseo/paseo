@@ -253,7 +253,13 @@ async function readComparisonList(
       const command =
         file.source.kind === "untracked"
           ? ["diff", "--no-index", ...GIT_PATCH_FORMAT_ARGS, "--", "/dev/null", file.entry.path]
-          : [...args, "--patch", "--", ...paths.map((path) => `:(literal)${path}`)];
+          : [
+              ...args,
+              ...(file.entry.oldPath !== null ? ["--diff-filter=RC"] : []),
+              "--patch",
+              "--",
+              ...paths.map((path) => `:(literal)${path}`),
+            ];
       const result = await runGitCommand(command, {
         ...options,
         acceptExitCodes: [0, 1],
@@ -262,7 +268,9 @@ async function readComparisonList(
       const bytes = Buffer.byteLength(result.stdout);
       if (result.truncated || bytes > remainingBytes || bytes > maxPatchBytes)
         return { kind: "too_large" };
-      const parsed = parseDiff(result.stdout)[0];
+      const parsed = parseDiff(result.stdout).find(
+        (candidate) => candidate.path === file.entry.path,
+      );
       if (!parsed) return { kind: "ready", body: { path: file.entry.path, hunks: [] }, bytes };
       let highlighted = parsed;
       if (compare.highlight !== false) {
@@ -320,13 +328,15 @@ async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFil
   );
   for (const path of untracked.stdout.split("\0").filter(Boolean)) {
     const value = await lstat(resolve(cwd, path), { bigint: true });
-    const inspected = await inspectUntrackedFile(cwd, path);
-    const binary = inspected.stat?.isBinary === true;
-    const content = await readUntrackedText(
-      resolve(cwd, path),
-      value.isSymbolicLink(),
-      binary || inspected.truncated,
-    );
+    const symlink = value.isSymbolicLink();
+    let binary = false;
+    let omitted = false;
+    if (!symlink) {
+      const inspected = await inspectUntrackedFile(cwd, path);
+      binary = inspected.stat?.isBinary === true;
+      omitted = inspected.truncated;
+    }
+    const content = await readUntrackedText(resolve(cwd, path), symlink, binary || omitted);
     const additions =
       binary || content.length === 0
         ? 0
