@@ -10,6 +10,7 @@ export interface WorkspaceTabMenuLabels {
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  download: string;
   rename: string;
   closeAbove: string;
   closeBelow: string;
@@ -26,6 +27,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
+  download: i18n.t("workspace.fileActions.download"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
@@ -44,6 +46,7 @@ export type WorkspaceTabMenuEntry =
       label: string;
       icon?:
         | "copy"
+        | "download"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -77,6 +80,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  onDownloadFile?: (input: { fileName: string; path: string }) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -94,6 +98,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  onDownloadFile: (input: { fileName: string; path: string }) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -168,6 +173,10 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
+function getFileNameFromPath(path: string): string {
+  return path.split("/").pop() || path;
+}
+
 export function buildWorkspaceTabMenuEntries(
   input: BuildWorkspaceTabMenuEntriesInput,
 ): WorkspaceTabMenuEntry[] {
@@ -181,6 +190,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyAgentId,
     onCopyTerminalId,
     onCopyFilePath,
+    onDownloadFile,
     onReloadAgent,
     onRenameTab,
     onCloseTab,
@@ -246,6 +256,18 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyFilePath(filePath);
       },
     });
+    if (surface === "desktop" && onDownloadFile) {
+      entries.push({
+        kind: "item",
+        key: "download-file",
+        label: labels.download,
+        icon: "download",
+        testID: `${menuTestIDBase}-download-file`,
+        onSelect: () => {
+          void onDownloadFile({ fileName: getFileNameFromPath(filePath), path: filePath });
+        },
+      });
+    }
     entries.push({ kind: "file-panel-open-with", key: "file-panel-open-with" });
   }
 
@@ -343,6 +365,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyAgentId: input.onCopyAgentId,
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
+      onDownloadFile: input.onDownloadFile,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,

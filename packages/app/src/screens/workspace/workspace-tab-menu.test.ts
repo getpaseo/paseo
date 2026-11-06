@@ -233,6 +233,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
   it("includes copy file path for file tabs", () => {
     const onCopyFilePath = vi.fn();
+    const onDownloadFile = vi.fn();
     const fileTab: WorkspaceTabDescriptor = {
       key: "file_abc",
       tabId: "file_abc",
@@ -249,6 +250,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
+      onDownloadFile,
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
@@ -259,6 +261,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
     expect(labels[0]).toBe("Copy file path");
+    expect(labels[1]).toBe("Download");
     expect(labels).not.toContain("Copy resume command");
     expect(labels).not.toContain("Copy agent id");
     expect(labels).not.toContain("Rename");
@@ -272,7 +275,49 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
     copyFilePathEntry.onSelect();
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
-    expect(entries[1]).toEqual({ kind: "file-panel-open-with", key: "file-panel-open-with" });
+    const downloadEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "download-file",
+    );
+    if (!downloadEntry || downloadEntry.kind !== "item") {
+      throw new Error("Download entry missing");
+    }
+    downloadEntry.onSelect();
+    expect(onDownloadFile).toHaveBeenCalledWith({
+      fileName: "path.ts",
+      path: "/some/path.ts",
+    });
+    expect(entries[2]).toEqual({ kind: "file-panel-open-with", key: "file-panel-open-with" });
+  });
+
+  it("does not add the desktop download action to mobile file menus", () => {
+    const onDownloadFile = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: {
+        key: "file_abc",
+        tabId: "file_abc",
+        kind: "file",
+        target: { kind: "file", path: "/some/path.ts" },
+      },
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-menu-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onDownloadFile,
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.key === "download-file")).toBe(
+      false,
+    );
   });
 
   it("uses a Changes close id for the working diff tab", () => {
@@ -293,6 +338,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
+      onDownloadFile: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
