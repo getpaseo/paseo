@@ -1649,7 +1649,7 @@ export const en = {
     placeholder: "Switch branch...",
     searchPlaceholder: "Filter branches...",
     empty: "No branches found.",
-    failedToLoad: "Could not load branches. Try again.",
+    failedToLoad: "Could not load branches. Reopen the picker to try again.",
     title: "Switch branch",
     uncommittedTitle: "Uncommitted changes",
     uncommittedMessage: "You have uncommitted changes. Stash them before switching branches?",

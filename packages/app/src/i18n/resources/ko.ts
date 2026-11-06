@@ -1629,7 +1629,7 @@ export const ko: TranslationResources = {
     openPath: "경로 열기",
   },
   branchSwitcher: {
-    failedToLoad: "브랜치를 불러오지 못했습니다. 다시 시도하세요.",
+    failedToLoad: "브랜치를 불러오지 못했습니다. 선택기를 다시 열어 재시도하세요.",
     triggerTooltip: "워크스페이스 브랜치 전환",
     currentBranch: "현재 브랜치: {{branchName}}. 브랜치를 전환하려면 누르세요.",
     placeholder: "브랜치 전환...",

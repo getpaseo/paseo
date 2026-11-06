@@ -1636,7 +1636,7 @@ export const ja: TranslationResources = {
     openPath: "パスを開く",
   },
   branchSwitcher: {
-    failedToLoad: "ブランチを読み込めませんでした。もう一度お試しください。",
+    failedToLoad: "ブランチを読み込めませんでした。選択画面を開き直してお試しください。",
     triggerTooltip: "ワークスペースのブランチを切り替え",
     currentBranch: "現在のブランチ: {{branchName}}。押してブランチを切り替えてください。",
     placeholder: "ブランチを切り替え...",

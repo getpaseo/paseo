@@ -77,19 +77,18 @@ async function expectFailedRefreshRecovery(
     await page
       .getByRole("button", { name: "Current branch: dev. Press to switch branch." })
       .click();
-    await expect(picker.getByRole("alert")).toHaveText("Could not load branches. Try again.");
+    await expect(picker.getByRole("alert")).toHaveText(
+      "Could not load branches. Reopen the picker to try again.",
+    );
   } finally {
     await unlink(packedRefs);
   }
   await expect(picker.getByText("No branches found.", { exact: true })).toHaveCount(0);
   responses.holdNextResponse();
   const beforeRetry = responses.requestCount();
-  // Enter on Retry must run the focused button, not select a cached branch.
-  await page.getByRole("button", { name: "Retry", exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("button", { name: "Loading...", exact: true })).toBeDisabled();
-  await expect(picker).toBeVisible();
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Current branch: dev. Press to switch branch." }).click();
+  await expect(picker.getByRole("alert")).toHaveText("Loading...");
   await expect.poll(responses.requestCount).toBe(beforeRetry + 1);
   await expect(picker).toBeVisible();
   responses.release();

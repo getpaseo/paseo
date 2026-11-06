@@ -10,8 +10,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
-import { isWeb } from "@/constants/platform";
-import { Button } from "@/components/ui/button";
 import { ToolbarLabelSelectTrigger } from "@/components/ui/toolbar-label-trigger";
 
 interface BranchSwitcherProps {
@@ -38,7 +36,6 @@ export function BranchSwitcher({
 }: BranchSwitcherProps) {
   const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
-  const retryFocusRef = useRef<View>(null);
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
@@ -49,7 +46,6 @@ export function BranchSwitcher({
     isLoadingBranches,
     isFetchingBranches,
     branchError,
-    retryBranches,
     isOpen,
     setIsOpen,
     handleBranchSelect,
@@ -89,26 +85,16 @@ export function BranchSwitcher({
   if (isLoadingBranches) emptyText = t("common.states.loading");
   else if (branchError) emptyText = "";
 
-  const handleRetry = useCallback(() => {
-    // Disabling the focused button otherwise moves focus back to the search
-    // input, where another Enter would select a cached branch.
-    if (isWeb) (retryFocusRef.current as unknown as HTMLElement | null)?.focus();
-    retryBranches();
-  }, [retryBranches]);
-
   const errorFooter = useMemo(
     () =>
       branchError ? (
-        <View ref={retryFocusRef} tabIndex={-1} style={styles.footer}>
+        <View style={styles.footer}>
           <Text accessibilityRole="alert" style={styles.error}>
-            {t("branchSwitcher.failedToLoad")}
+            {isFetchingBranches ? t("common.states.loading") : t("branchSwitcher.failedToLoad")}
           </Text>
-          <Button variant="outline" onPress={handleRetry} disabled={isFetchingBranches}>
-            {isFetchingBranches ? t("common.states.loading") : t("common.actions.retry")}
-          </Button>
         </View>
       ) : undefined,
-    [branchError, isFetchingBranches, handleRetry, t],
+    [branchError, isFetchingBranches, t],
   );
 
   if (!currentBranchName) {

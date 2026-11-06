@@ -25,7 +25,6 @@ interface UseBranchSwitcherResult {
   isLoadingBranches: boolean;
   isFetchingBranches: boolean;
   branchError: Error | null;
-  retryBranches: () => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   handleBranchSelect: (branchId: string) => void;
@@ -72,11 +71,6 @@ export function useBranchSwitcher({
     retry: false,
     staleTime: 15_000,
   });
-
-  const { refetch } = branchSuggestionsQuery;
-  const retryBranches = useCallback(() => {
-    void refetch({ cancelRefetch: false });
-  }, [refetch]);
 
   const branchOptions = useMemo<ComboboxOption[]>(() => {
     const branches = branchSuggestionsQuery.data ?? [];
@@ -199,7 +193,6 @@ export function useBranchSwitcher({
     isLoadingBranches: branchSuggestionsQuery.isPending,
     isFetchingBranches: branchSuggestionsQuery.isFetching,
     branchError: branchSuggestionsQuery.error,
-    retryBranches,
     isOpen,
     setIsOpen,
     handleBranchSelect,

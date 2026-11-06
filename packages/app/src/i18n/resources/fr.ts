@@ -1661,7 +1661,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
-    failedToLoad: "Impossible de charger les branches. Réessayez.",
+    failedToLoad: "Impossible de charger les branches. Rouvrez le sélecteur pour réessayer.",
     triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",

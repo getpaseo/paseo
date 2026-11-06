@@ -1650,7 +1650,7 @@ export const ptBR: TranslationResources = {
     openPath: "Abrir caminho",
   },
   branchSwitcher: {
-    failedToLoad: "Não foi possível carregar as branches. Tente novamente.",
+    failedToLoad: "Não foi possível carregar as branches. Reabra o seletor para tentar novamente.",
     triggerTooltip: "Trocar branch do workspace",
     currentBranch: "Branch atual: {{branchName}}. Pressione para trocar de branch.",
     placeholder: "Trocar branch...",
