@@ -468,13 +468,33 @@ function applyTokensToHunks(
         newLineNum++;
       }
 
-      return tokens ? { ...line, tokens } : line;
+      const matchingTokens = tokensForPatchLine(tokens, line.content);
+      return matchingTokens ? { ...line, tokens: matchingTokens } : line;
     });
 
     return { ...hunk, lines: highlightedLines };
   });
 
   return { ...file, hunks: highlightedHunks };
+}
+
+function tokensForPatchLine(
+  tokens: HighlightToken[] | undefined,
+  content: string,
+): HighlightToken[] | undefined {
+  if (!tokens) return undefined;
+  const source = tokens.map((token) => token.text).join("");
+  if (source === content) return tokens;
+  // Git can normalize a CRLF worktree while source highlighting retains its CR.
+  if (source !== `${content}\r`) return undefined;
+  const aligned: HighlightToken[] = [];
+  let remaining = content.length;
+  for (const token of tokens) {
+    const text = token.text.slice(0, remaining);
+    if (text) aligned.push({ text, style: token.style });
+    remaining -= text.length;
+  }
+  return aligned;
 }
 
 /**

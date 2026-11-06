@@ -485,3 +485,52 @@ test.each([true, false])(
     }
   },
 );
+
+test.each([true, false])(
+  "autocrlf=%s highlighted CRLF worktrees keep the revision readable",
+  async (autocrlf) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-crlf-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root) {
+        return { repoRoot: root, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      git("config", "core.autocrlf", String(autocrlf));
+      await writeFile(join(cwd, "a.ts"), "export const value = 1;\r\n");
+      await writeFile(join(cwd, "b.txt"), "before\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await writeFile(join(cwd, "a.ts"), "export const value = 2;\r\n");
+      await writeFile(join(cwd, "b.txt"), "after\n");
+      const subscription = await streams.subscribe(
+        { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await subscription.start();
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      const files = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(files.map((file) => file.path)).toEqual(["a.ts", "b.txt"]);
+      const line = files[0].hunks
+        .flatMap((hunk) => hunk.lines)
+        .find((candidate) => candidate.type === "add");
+      expect(line?.content).toBe(`export const value = 2;${autocrlf ? "" : "\r"}`);
+      expect(line?.runs?.reduce((length, run) => length + run.length, 0)).toBe(
+        line?.content.length,
+      );
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
