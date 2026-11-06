@@ -27,9 +27,11 @@ function toIsoStringOrNull(timestampMs: number): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
-// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
-// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
+// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). The modern
+// `cursorAuth/accessToken` value is a plain JWT or encrypted at rest. Any
+// `cursor-safe-storage:` value (any version) is Electron safeStorage ciphertext
+// and is skipped. Older builds kept a JSON blob under `cursorAuthStatus`.
+// Read it with node:sqlite so we don't
 // depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
 // Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
 // Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
@@ -106,15 +108,21 @@ function readItemTableValue(db: CursorStateDatabase, key: string): string | null
   return null;
 }
 
+function usableCursorToken(value: string | null | undefined): string | null {
+  const token = value?.trim();
+  // Electron safeStorage ciphertext cannot authenticate an API request.
+  return token && !token.startsWith("cursor-safe-storage:") ? token : null;
+}
+
 function cursorTokenFromDb(db: CursorStateDatabase): string | null {
-  const modern = readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY)?.trim();
+  const modern = usableCursorToken(readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY));
   if (modern) return modern;
 
   const legacy = readItemTableValue(db, CURSOR_LEGACY_AUTH_KEY);
   if (legacy) {
     try {
       const parsed = CursorAuthStatusSchema.parse(JSON.parse(legacy));
-      if (parsed.accessToken) return parsed.accessToken;
+      return usableCursorToken(parsed.accessToken);
     } catch {
       // ignore a malformed legacy blob
     }
@@ -149,7 +157,7 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
   if (!existsSync(path)) return null;
   try {
     const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    return parsed.accessToken?.trim() || null;
+    return usableCursorToken(parsed.accessToken);
   } catch {
     return null;
   }
@@ -230,7 +238,7 @@ export async function fetchUsage(
 }
 
 async function readToken(input: UsageInput): Promise<string | undefined> {
-  if (input.store === "env") return process.env[input.locator];
+  if (input.store === "env") return usableCursorToken(process.env[input.locator]) ?? undefined;
   const token =
     input.store === "sqlite"
       ? await readCursorTokenFromSqlite(input.locator)
