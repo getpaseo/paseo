@@ -86,7 +86,8 @@ Reaching the history-start threshold loads one older page and preserves the visi
 Cursor progress does not trigger another page. The user must leave and return to the threshold unless
 the anchored page still leaves the viewport at history start, as with short or compacted content; in
 that case pagination continues as one loading operation until the page fills the viewport or history
-is exhausted.
+is exhausted. On native, a measured list that cannot scroll starts that loading operation without a
+gesture, since Android may not deliver a scroll gesture until there is enough content to scroll.
 
 ## Durable item anchors
 

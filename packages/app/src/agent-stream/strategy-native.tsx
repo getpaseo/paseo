@@ -42,6 +42,7 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  isHistoryViewportUnscrollable,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -197,6 +198,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       isLoadingOlderHistory,
       isReady: historyStartReadyRef.current && hasMeasuredViewport,
       progressKey: olderHistoryProgressKey,
+      // Android may not deliver scroll gestures when the entire chat fits in the viewport.
+      autoFillUnscrollable: isHistoryViewportUnscrollable(metrics),
     };
   });
   const applyHistoryStartPaginationTransition = useStableEvent(
@@ -629,6 +632,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentMeasuredForKey: "native-virtualized",
     };
     bottomAnchorController.handleContentSizeChange();
+    evaluateHistoryStart();
   });
 
   useEffect(() => {
