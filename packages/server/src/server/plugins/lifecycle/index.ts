@@ -44,6 +44,7 @@ const worktreeRequestFields = {
   branch: z.string().min(1),
   slug: z.string().refine((value) => validateBranchSlug(value).valid, "Invalid worktree slug"),
   path: z.string().min(1),
+  checkout: z.enum(["paseo", "plugin"]).optional(),
 };
 const changeRequestFields = {
   headRef: z.string().min(1),

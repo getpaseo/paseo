@@ -146,6 +146,7 @@ async function createWorktreeCoreWithPriority(
       worktreeSlug: normalizedSlug,
       worktreePath: transformed.path,
       source: intent,
+      checkout: transformed.checkout ?? "paseo",
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
     }),
@@ -195,6 +196,7 @@ function creationIntentFromRequest(
     sourceCheckout: _checkout,
     slug: _slug,
     path: _path,
+    checkout: _checkoutOwner,
     branch,
     baseRef,
     ...facts
