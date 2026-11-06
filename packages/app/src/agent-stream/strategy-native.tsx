@@ -42,12 +42,15 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
-  isHistoryViewportUnscrollable,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import {
+  createNativeHistoryMeasurementEvents,
+  getNativeHistoryStartPaginationInput,
+} from "./native-history-measurements";
 import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
@@ -188,19 +191,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   }, [newRowEstimates, historyRows, liveRows]);
   const getEstimatedItemSize = useStableEvent((item: StreamItem) => newRowEstimates.estimate(item));
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
-    const metrics = streamViewportMetricsRef.current;
-    const hasMeasuredViewport =
-      metrics.viewportMeasuredForKey === metrics.containerKey &&
-      metrics.contentMeasuredForKey === metrics.containerKey;
-    return {
-      distanceFromHistoryStart: metrics.offsetY,
+    return getNativeHistoryStartPaginationInput({
+      metrics: streamViewportMetricsRef.current,
+      isReady: historyStartReadyRef.current,
       hasOlderHistory,
       isLoadingOlderHistory,
-      isReady: historyStartReadyRef.current && hasMeasuredViewport,
       progressKey: olderHistoryProgressKey,
-      // Android may not deliver scroll gestures when the entire chat fits in the viewport.
-      autoFillUnscrollable: isHistoryViewportUnscrollable(metrics),
-    };
+    });
   });
   const applyHistoryStartPaginationTransition = useStableEvent(
     (transition: HistoryStartPaginationTransition) => {
@@ -581,59 +578,42 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
   );
 
+  const measurementEvents = createNativeHistoryMeasurementEvents({
+    readMetrics: () => streamViewportMetricsRef.current,
+    writeMetrics: (metrics) => {
+      streamViewportMetricsRef.current = metrics;
+    },
+    isListPlaced: () => isListPlacedRef.current,
+    markListPlaced: () => {
+      isListPlacedRef.current = true;
+      setPlacedAgentId(agentId);
+    },
+    onViewportChange: bottomAnchorController.handleViewportMetricsChange,
+    onContentSizeChange: bottomAnchorController.handleContentSizeChange,
+    onContentResize: () => {
+      // Content growing below a detached viewport moves the end away without a scroll event.
+      if (
+        bottomAnchorController.mode === "detached" &&
+        streamViewportMetricsRef.current.viewportHeight > 0
+      ) {
+        publishNearBottom();
+      }
+    },
+    evaluateHistoryStart,
+    settleAfterContentResize: () => {
+      if (historyStartPaginationStateRef.current.status === "settling") {
+        scheduleHistoryStartSettle();
+      }
+    },
+  });
   const handleListLayout = useStableEvent((event: LayoutChangeEvent) => {
-    const previousViewportWidth = streamViewportMetricsRef.current.viewportWidth;
-    const previousViewportHeight = streamViewportMetricsRef.current.viewportHeight;
-    const viewportWidth = Math.max(0, event.nativeEvent.layout.width);
-    const viewportHeight = Math.max(0, event.nativeEvent.layout.height);
-    streamViewportMetricsRef.current = {
-      ...streamViewportMetricsRef.current,
-      containerKey: "native-virtualized",
-      viewportWidth,
-      viewportHeight,
-      viewportMeasuredForKey: "native-virtualized",
-    };
-    bottomAnchorController.handleViewportMetricsChange({
-      previousViewportWidth,
-      viewportWidth,
-      previousViewportHeight,
-      viewportHeight,
-    });
-    evaluateHistoryStart();
+    const { width, height } = event.nativeEvent.layout;
+    measurementEvents.onLayout(width, height);
   });
-
   const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
-    const nextContentHeight = Math.max(0, height);
-    streamViewportMetricsRef.current = {
-      ...streamViewportMetricsRef.current,
-      containerKey: "native-virtualized",
-      contentHeight: nextContentHeight,
-      contentMeasuredForKey: isListPlacedRef.current ? "native-virtualized" : null,
-    };
-    bottomAnchorController.handleContentSizeChange();
-    // Content growing below a detached viewport moves the end away without a scroll event.
-    if (
-      bottomAnchorController.mode === "detached" &&
-      streamViewportMetricsRef.current.viewportHeight > 0
-    ) {
-      publishNearBottom();
-    }
-    evaluateHistoryStart();
-    if (historyStartPaginationStateRef.current.status === "settling") {
-      scheduleHistoryStartSettle();
-    }
+    measurementEvents.onContentSizeChange(height);
   });
-
-  const handleListPlaced = useStableEvent(() => {
-    isListPlacedRef.current = true;
-    setPlacedAgentId(agentId);
-    streamViewportMetricsRef.current = {
-      ...streamViewportMetricsRef.current,
-      contentMeasuredForKey: "native-virtualized",
-    };
-    bottomAnchorController.handleContentSizeChange();
-    evaluateHistoryStart();
-  });
+  const handleListPlaced = useStableEvent(() => measurementEvents.onListPlaced());
 
   useEffect(() => {
     evaluateHistoryStart();
