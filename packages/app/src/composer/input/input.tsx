@@ -88,6 +88,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { readLinkedClipboardText } from "@/composer/pasted-text";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
   EditingTextInput,
@@ -513,16 +514,17 @@ function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTM
   return native instanceof HTMLElement ? native : null;
 }
 
-interface PasteImagesEffectArgs {
+interface PasteEffectArgs {
   textarea: HTMLElement | null;
   isConnected: boolean;
   disabled: boolean;
   isDictating: boolean;
   isRealtimeVoiceForCurrentAgent: boolean;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteText: (text: string) => void;
 }
 
-function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
+function usePasteEffect(args: PasteEffectArgs): void {
   const {
     textarea,
     isConnected,
@@ -530,10 +532,11 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onPasteText,
   } = args;
 
   useEffect(() => {
-    if (!isWeb || !onAddImages) return;
+    if (!isWeb) return;
 
     if (!textarea) return;
 
@@ -542,7 +545,14 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       if (!isConnected || disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
-      if (imageFiles.length === 0) return;
+      if (imageFiles.length === 0) {
+        const text = readLinkedClipboardText(event.clipboardData);
+        if (text === null) return;
+        event.preventDefault();
+        onPasteText(text);
+        return;
+      }
+      if (!onAddImages) return;
 
       event.preventDefault();
 
@@ -562,7 +572,15 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       disposed = true;
       textarea.removeEventListener?.("paste", handlePaste);
     };
-  }, [disabled, textarea, isConnected, isDictating, isRealtimeVoiceForCurrentAgent, onAddImages]);
+  }, [
+    disabled,
+    textarea,
+    isConnected,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+    onAddImages,
+    onPasteText,
+  ]);
 }
 
 function useAutoFocusOnWebEffect(
@@ -1811,13 +1829,31 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       handleAlternateSendAction();
     }, [alternateSendAction, handleAlternateSendAction]);
 
-    usePasteImagesEffect({
+    const handlePasteText = useCallback(
+      (text: string) => {
+        const snapshot = getComposerInputSnapshot(
+          textInputRef.current,
+          valueRef.current,
+          selectionRef.current,
+        );
+        const nextText =
+          snapshot.text.slice(0, snapshot.selection.start) +
+          text +
+          snapshot.text.slice(snapshot.selection.end);
+        const cursor = snapshot.selection.start + text.length;
+        replaceText(nextText, { start: cursor, end: cursor });
+      },
+      [replaceText],
+    );
+
+    usePasteEffect({
       textarea: webTextArea,
       isConnected,
       disabled,
       isDictating,
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
+      onPasteText: handlePasteText,
     });
 
     const handleSelectionChange = useCallback(

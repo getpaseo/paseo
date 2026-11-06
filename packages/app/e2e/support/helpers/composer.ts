@@ -566,3 +566,24 @@ export async function roundTripComposerTabBeforePaint(
   ).toBe(true);
   expect(result.focused, "returning on touch must leave the composer unfocused").toBe(false);
 }
+
+/** Paste both clipboard representations through the browser's normal paste command. */
+export async function pasteRichTextIntoComposer(
+  page: Page,
+  html: string,
+  text: string,
+): Promise<void> {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(
+    async ({ html: richHtml, text: plainText }) => {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([richHtml], { type: "text/html" }),
+          "text/plain": new Blob([plainText], { type: "text/plain" }),
+        }),
+      ]);
+    },
+    { html, text },
+  );
+  await composerInput(page).press("ControlOrMeta+v");
+}

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  pasteRichTextIntoComposer,
+  selectComposerDraftRange,
   blurComposerInput,
   roundTripComposerTabBeforePaint,
   composerLocator,
@@ -136,8 +138,23 @@ test("submitting a message leaves the composer ready for the next message", asyn
     await submitMessage(page, "First message");
     await expectComposerFocused(page);
 
-    await typeIntoFocusedComposer(page, "Second message");
-    await expectComposerDraft(page, "Second message");
+    await typeIntoFocusedComposer(page, "Investigate: replace this. Thanks");
+    await selectComposerDraftRange(page, 13, 25);
+    await pasteRichTextIntoComposer(
+      page,
+      '<a href="https://example.com/issues/39150">this FR</a>',
+      "this FR",
+    );
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150). Thanks",
+    );
+    await typeIntoFocusedComposer(page, " next");
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150) next. Thanks",
+    );
+    await expectComposerFocused(page);
   } finally {
     await agent.cleanup();
   }
