@@ -1,9 +1,7 @@
+import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import {
-  acceptAgentDirectoryUpdate,
-  keepUnchangedAgentFields,
-} from "@/utils/agent-directory-update-policy";
+import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
 import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
@@ -21,6 +19,26 @@ function withoutAgent(agentId: string) {
     next.delete(agentId);
     return next;
   };
+}
+
+/**
+ * Every update arrives as a whole new agent, so each nested value (capabilities, modes, labels) is
+ * a new object even when it did not change. Keep the stored value for every field that is equal,
+ * and the stored agent when nothing changed, so a reader of one field sees a new value only when
+ * that field changes.
+ */
+function keepUnchangedFields(stored: Agent, incoming: Agent): Agent {
+  const next = { ...incoming };
+  let changed = Object.keys(stored).length !== Object.keys(next).length;
+  for (const key of Object.keys(next) as (keyof Agent)[]) {
+    if (next[key] === stored[key]) continue;
+    if (key in stored && equal(next[key], stored[key])) {
+      Object.assign(next, { [key]: stored[key] });
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : stored;
 }
 
 function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent {
@@ -61,7 +79,8 @@ export class AgentStoreProjection {
     let accepted = agent;
     useSessionStore.getState().setAgents(this.serverId, (current) => {
       const previous = current.get(agent.id);
-      accepted = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
+      const winner = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
+      accepted = previous ? keepUnchangedFields(previous, winner) : winner;
       if (accepted === previous) return current;
       const next = new Map(current);
       next.set(agent.id, accepted);
@@ -119,7 +138,7 @@ export class AgentStoreProjection {
     for (const [agentId, fetchedAgent] of fetched) {
       const existing = current.get(agentId);
       const merged = mergeSnapshotTurn(existing, fetchedAgent);
-      agents.set(agentId, existing ? keepUnchangedAgentFields(existing, merged) : merged);
+      agents.set(agentId, existing ? keepUnchangedFields(existing, merged) : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
       }
