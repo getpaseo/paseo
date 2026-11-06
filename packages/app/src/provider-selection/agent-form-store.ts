@@ -4,7 +4,6 @@ import type { FormPreferences } from "@/hooks/use-form-preferences";
 import {
   INITIAL_AGENT_FORM_RESOLUTION,
   INITIAL_USER_MODIFIED,
-  isUnlistedModel,
   resolveAgentForm,
   type AgentFormAction,
   type AgentFormReducerState,
@@ -32,11 +31,8 @@ export interface AgentFormStore {
   subscribe: (listener: () => void) => () => void;
   /** `false` when the provider is unknown or not ready; the form is left as it was. */
   setProviderAndModel: (provider: AgentProvider, modelId: string) => boolean;
-  /**
-   * `false` when the provider's catalog is loaded and does not list the model. A catalog that has
-   * not arrived keeps the id as given.
-   */
-  setModel: (modelId: string) => boolean;
+  /** The id is kept as given; a catalog that does not list it is the provider's to refuse. */
+  setModel: (modelId: string) => void;
 }
 
 export function openAgentForm(catalog: () => AgentFormCatalog): AgentFormStore {
@@ -74,14 +70,12 @@ export function openAgentForm(catalog: () => AgentFormCatalog): AgentFormStore {
       const host = catalog();
       const listed = provider ? host.models.get(provider) : undefined;
       const models = listed?.length ? listed : null;
-      if (isUnlistedModel(models, modelId)) return false;
       dispatch({
         type: "SET_MODEL_FROM_USER",
         modelId,
         availableModels: models,
         providerPrefs: provider ? host.providerPreferences(provider) : undefined,
       });
-      return true;
     },
     subscribe: (listener) => {
       listeners.add(listener);

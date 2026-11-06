@@ -56,8 +56,7 @@ export interface UseAgentFormStateResult {
   selectedMode: string;
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
-  /** `false` when the provider's loaded catalog does not list the model. */
-  setModelFromUser: (modelId: string) => boolean;
+  setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
   workingDir: string;
@@ -397,8 +396,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   );
 
   const setModelFromUser = useCallback(
-    (modelId: string): boolean => {
-      if (!formStore.setModel(modelId)) return false;
+    (modelId: string) => {
+      formStore.setModel(modelId);
       const { provider } = formStore.getState().form;
       if (provider) {
         const listed = allProviderModels.get(provider);
@@ -415,7 +414,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
           }),
         );
       }
-      return true;
     },
     [allProviderModels, formStore, updateCurrentPreferences],
   );

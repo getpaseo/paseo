@@ -43,6 +43,7 @@ export interface PluginComposer {
   removeAttachment(input: { sourceId: string; itemId: string }): void;
   /** Resets the model like the built-in control. Rejects on a running agent, which keeps its provider. */
   setProvider(provider: string): Promise<void>;
+  /** On a running agent, rejects with the provider's message when it refuses the model. */
   setModel(modelId: string): Promise<void>;
   setMode(modeId: string): Promise<void>;
   setThinking(thinkingOptionId: string): Promise<void>;

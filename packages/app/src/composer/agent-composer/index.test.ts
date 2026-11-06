@@ -88,7 +88,7 @@ function fakeClient() {
     },
     async setAgentModel(id: string, model: string | null) {
       calls.push(`model:${id}:${model}`);
-      if (model === "nope") throw new Error("Model 'nope' is not available for provider 'claude'");
+      if (model === "nope") throw new Error("The provider refused model 'nope'");
     },
     async setAgentMetadata(id: string, patch: unknown) {
       calls.push(`metadata:${id}:${JSON.stringify(patch)}`);
@@ -294,11 +294,9 @@ describe("agent composer", () => {
     );
   });
 
-  it("rejects an unlisted model with the daemon's message", async () => {
+  it("rejects a model the provider refuses with the provider's message", async () => {
     openSession(agent());
-    await expect(composer().setModel("nope")).rejects.toThrow(
-      "Model 'nope' is not available for provider 'claude'",
-    );
+    await expect(composer().setModel("nope")).rejects.toThrow("The provider refused model 'nope'");
   });
 
   it("takes the catalog the host changed while the picker was not open, once the host reconnects", async () => {

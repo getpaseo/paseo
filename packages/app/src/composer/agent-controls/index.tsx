@@ -133,8 +133,7 @@ export interface DraftAgentControlsProps {
   onSelectMode: (modeId: string) => void;
   models: AgentModelDefinition[];
   selectedModel: string;
-  /** `false` when the provider's loaded catalog does not list the model. */
-  onSelectModel: (modelId: string) => boolean;
+  onSelectModel: (modelId: string) => void;
   isModelLoading: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;

@@ -39,9 +39,7 @@ export function draftComposerAgent(
         throw new Error(`Unknown or unavailable provider: ${provider}`);
       }
     },
-    setModel: async (modelId) => {
-      if (!props.onSelectModel(modelId)) throw new Error(`Unknown model: ${modelId}`);
-    },
+    setModel: async (modelId) => props.onSelectModel(modelId),
     setMode: async (modeId) => props.onSelectMode(modeId),
     setThinking: async (thinkingOptionId) => props.onSelectThinkingOption(thinkingOptionId),
     setOptions: async (patch) => {

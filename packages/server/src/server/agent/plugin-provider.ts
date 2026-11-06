@@ -64,7 +64,6 @@ import {
   createProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
-import { assertChangesAreLive } from "./provider-options.js";
 import { readPluginOptionState } from "./plugin-provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
@@ -1235,7 +1234,7 @@ class PluginAgentSession implements AgentSession {
       options: Readonly<Record<string, JsonValue>>,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
-    private readonly givenOptions: Readonly<Record<string, JsonValue>>,
+    givenOptions: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1432,34 +1431,27 @@ class PluginAgentSession implements AgentSession {
     this.assertReplayComplete();
     const before = this.currentOptions();
     const { controls, legacySettings } = readPluginOptionState(this.bridge.config);
+    // The plugin applies every key it is given or rejects the whole request.
     const settings: Record<string, JsonValue> = {};
-    // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01. A plugin
-    // reporting `settings` cannot refuse a key, so only its settings are sent and any other
-    // changed key is rejected here; a value equal to the one it opened with is not a change.
-    if (legacySettings) {
-      const live = controls.map((control) => control.key);
-      assertChangesAreLive({
-        provider: this.provider,
-        patch: options,
-        current: this.givenOptions,
-        live,
-      });
-      for (const [id, value] of Object.entries(options)) {
-        if (live.includes(id)) settings[id] = toJsonValue(value, `option '${id}'`);
-      }
-    } else {
-      // The plugin applies every key it is given or rejects the whole request.
-      for (const [id, value] of Object.entries(options)) {
-        settings[id] = toJsonValue(value, `option '${id}'`);
-      }
+    for (const [id, value] of Object.entries(options)) {
+      settings[id] = toJsonValue(value, `option '${id}'`);
     }
     if (Object.keys(settings).length === 0) return {};
     this.applyingOptions = true;
     try {
-      // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01.
+      // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01. A plugin
+      // reporting `settings` reads only its own settings, so it is sent those.
       await this.bridge.configure({
         providerOptions: settings,
-        ...(legacySettings ? { settings } : {}),
+        ...(legacySettings
+          ? {
+              settings: Object.fromEntries(
+                Object.entries(settings).filter(([id]) =>
+                  controls.some((control) => control.key === id),
+                ),
+              ),
+            }
+          : {}),
       });
     } catch (error) {
       // Nothing is stored for a refused patch, so what the plugin moved is reported once the

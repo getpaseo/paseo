@@ -544,7 +544,7 @@ The provider draws some of those keys in the composer by reporting `controls` an
 built-in providers ([options flow](providers.md#options-flow)). `PluginAgentSession` in
 `packages/server/src/server/agent/plugin-provider.ts` is that adapter. A provider still reporting
 `settings` is read through `plugin-provider-options.ts`, which turns each setting into a control and
-its value into an option and is sent both shapes in `session.configure`; delete it with
+its value into an option and is sent both shapes in `session.configure` (`settings` holds only the keys it reports); delete it with
 `COMPAT(plugin-provider-settings)`. The ACP shim still reports `settings`.
 
 Providers add an optional veto to daemon baseline cleanup through the per-session
@@ -698,9 +698,8 @@ implementations provide it:
   `ComposerInput.isLive()` is how the model tells: it needs the ref and a retained panel that is
   showing (`useRetainedPanelActive`). Closing a root agent's tab archives
   it, so a running agent with no mounted composer at all only exists as a subagent whose tab was
-  closed. The daemon is the authority for `setModel` and `setThinking`. It validates against the
-  catalog of the agent's directory, the one the picker reads, and checks a thinking option against
-  the model the agent runs: the runtime model when the catalog lists it, else the configured one.
+  closed. The daemon does not check `setModel` and `setThinking` against a catalog; the provider
+  decides and its refusal rejects the call.
 - A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
@@ -728,8 +727,8 @@ item that renders nothing still counts for density; there is no registration for
 
 A command runs against the owner's current state, not the render that built the callback. The
 draft's form (`openAgentForm`) and options (`openDraftOptions`) are plain stores for that reason,
-and `draftComposerAgent` rejects a provider the host does not offer or a model its loaded catalog
-does not list; for a running agent the daemon rejects it. `ComposerControl` owns the pending state and the error toast for callbacks that
+and `draftComposerAgent` rejects a provider the host does not offer. It passes a model id to the form
+as the picker does, with no catalog check; for a running agent the provider decides. `ComposerControl` owns the pending state and the error toast for callbacks that
 return a promise.
 
 The overflow sheet's content portals to the app root, away from the composer. Pass

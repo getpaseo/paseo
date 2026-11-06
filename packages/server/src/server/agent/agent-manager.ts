@@ -3,8 +3,6 @@ import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
-import type { AgentConfigurationValidationInput } from "./agent-configuration-validator.js";
-import type { HubExecutionAgentValidationIssue } from "@getpaseo/protocol/messages";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -360,13 +358,6 @@ export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
-  /**
-   * Asks whether the provider lists a model or thinking option. A running agent rejects a
-   * selection it does not; omitted, any value is accepted.
-   */
-  validateAgentSelection?: (
-    input: AgentConfigurationValidationInput,
-  ) => Promise<HubExecutionAgentValidationIssue[]>;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
   registry?: AgentStorage;
@@ -839,7 +830,6 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
-  private readonly validateAgentSelection?: AgentManagerOptions["validateAgentSelection"];
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -864,7 +854,6 @@ export class AgentManager {
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
-    this.validateAgentSelection = options.validateAgentSelection;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -2297,56 +2286,10 @@ export class AgentManager {
     return notice;
   }
 
-  private async assertSelectionListed(input: AgentConfigurationValidationInput): Promise<void> {
-    const issues = (await this.validateAgentSelection?.(input)) ?? [];
-    if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join("; "));
-  }
-
-  /**
-   * Checks the option against the model the agent runs, chosen as the model picker chooses it: the
-   * model the session reports when the provider lists it, otherwise the configured model, otherwise
-   * the provider's default.
-   */
-  private async assertThinkingOptionListed(
-    agent: ActiveManagedAgent,
-    thinkingOptionId: string,
-  ): Promise<void> {
-    const reported = agent.runtimeInfo?.model;
-    const candidates = [reported, agent.config.model].filter(
-      (model): model is string => typeof model === "string" && model.length > 0,
-    );
-    for (const model of candidates) {
-      const issues =
-        (await this.validateAgentSelection?.({
-          provider: agent.provider,
-          cwd: agent.cwd,
-          model,
-          thinkingOptionId,
-        })) ?? [];
-      const modelListed = !issues.some((issue) => issue.path[0] === "model");
-      if (modelListed) {
-        if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join("; "));
-        return;
-      }
-    }
-    await this.assertSelectionListed({
-      provider: agent.provider,
-      cwd: agent.cwd,
-      thinkingOptionId,
-    });
-  }
-
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
     const agent = await this.ensureInteractiveSession(agentId);
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-    if (normalizedModelId) {
-      await this.assertSelectionListed({
-        provider: agent.provider,
-        cwd: agent.cwd,
-        model: normalizedModelId,
-      });
-    }
 
     if (agent.session.setModel) {
       await agent.session.setModel(normalizedModelId);
@@ -2371,9 +2314,6 @@ export class AgentManager {
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
         ? thinkingOptionId
         : null;
-    if (normalizedThinkingOptionId) {
-      await this.assertThinkingOptionListed(agent, normalizedThinkingOptionId);
-    }
 
     let notice: AgentProviderNotice | null = null;
     if (agent.session.setThinkingOption) {

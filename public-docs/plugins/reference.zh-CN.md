@@ -1642,16 +1642,16 @@ export default function contribute(client: PluginClientContext) {
 
 `useComposer()` 返回该项所在的 composer：
 
-| 字段或命令                                          | 含义                                                                                                                                                                                                                           |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                         |
-| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                              |
-| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                         |
-| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                   |
-| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                  |
-| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                                                                                                                        |
-| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型。在 `context: "agent"` 下（运行中的 Agent 保持其 Provider）以及主机不提供该 Provider 时会被拒绝。Provider 的模型目录已加载但未列出该模型时，`setModel` 会被拒绝。 |
-| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                                                                                                                         |
+| 字段或命令                                          | 含义                                                                                                                                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
+| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
+| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
+| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
+| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                                                                                                                                                      |
+| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型。在 `context: "agent"` 下（运行中的 Agent 保持其 Provider）以及主机不提供该 Provider 时会被拒绝。`setModel` 和 `setThinking` 原样传递该值；对运行中的 Agent，Provider 拒绝时 Promise 会被拒绝。 |
+| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                                                                                                                                                       |
 
 同一个调用在每个 composer 中行为一致，插件不需要选择 composer 的实现。在运行中的 Agent 上调用 `setMetadata` 需要支持元数据的主机；主机过旧时，Promise 会以 “Update the host to use metadata.” 拒绝。
 
@@ -1716,7 +1716,7 @@ export default function contribute(client: PluginClientContext) {
 - Agent 的 composer 在屏幕上时，`insertText` 在光标处插入。不在屏幕上时（例如用户在另一个工作区），它会追加到该 Agent 已保存的提示词，用户回来时文本就在输入框里。`setPrompt` 以同样的方式替换已保存的提示词。
 - 运行中 Agent 的 composer 从不锁定。
 - `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
-- 对于 Provider 未列出的值，`setModel` 和 `setThinking` 会以 daemon 的消息拒绝。请传入 Provider 目录中列出的 id。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
 - 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
 
 ## 新建工作区项 {#new-workspace-items}

@@ -1472,27 +1472,19 @@ describe("PluginAgentClientRegistry", () => {
       },
     );
 
-    test.runIf(shape === "settings")(
-      "rejects a key the plugin does not report as a setting, and configures none of a mixed patch",
-      async () => {
-        const { harness, session } = await openStubbornVoiceSession({ launch_key: "original" });
-        const configureBefore = lastConfigure(harness.inputs);
+    test("sends a key the plugin does not report, for the plugin to accept or refuse", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
 
-        await expect(session.applyOptions?.({ loud: true, launch_key: "changed" })).rejects.toThrow(
-          /launch_key.*cannot change on a running session/,
-        );
+      await session.applyOptions?.({ loud: true, launch_key: "changed" });
 
-        expect(lastConfigure(harness.inputs)).toBe(configureBefore);
-
-        // The value it opened with is not a change, so a whole profile can be applied.
-        await session.applyOptions?.({ loud: true, launch_key: "original" });
-        const configure = lastConfigure(harness.inputs) as {
-          changes: { providerOptions: object };
-        };
-        expect(Object.keys(configure.changes.providerOptions)).toEqual(["loud"]);
-        await session.close();
-      },
-    );
+      const configure = lastConfigure(harness.inputs) as {
+        changes: { providerOptions: object; settings?: object };
+      };
+      expect(configure.changes.providerOptions).toEqual({ loud: true, launch_key: "changed" });
+      // A plugin reporting `settings` reads only the ones it reports.
+      expect(configure.changes.settings).toEqual(shape === "settings" ? { loud: true } : undefined);
+      await session.close();
+    });
 
     test("applying options returns the settings that ended up different, and emits nothing", async () => {
       const { session, events } = await openStubbornVoiceSession({});

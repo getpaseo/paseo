@@ -156,7 +156,7 @@ describe.each(["draft", "new-workspace"] as const)("the %s composer's agent", (c
     expect(draft.request()?.providerOptions).toBeUndefined();
   });
 
-  it("rejects a provider the host cannot run and a model the catalog does not list", async () => {
+  it("rejects a provider the host cannot run", async () => {
     const draft = openDraft(context);
     const retained = draft.agent();
 
@@ -164,9 +164,16 @@ describe.each(["draft", "new-workspace"] as const)("the %s composer's agent", (c
       "Unknown or unavailable provider: nope",
     );
     expect(draft.agent().provider).toBe("claude");
+  });
+
+  it("accepts a model id the catalog does not list; the form resolves it as the model picker does", async () => {
+    const draft = openDraft(context);
+    const retained = draft.agent();
 
     await retained.setProvider("codex");
-    await expect(retained.setModel("missing")).rejects.toThrow("Unknown model: missing");
+    await expect(retained.setModel("missing")).resolves.toBeUndefined();
+
+    // The form keeps a listed model when the one asked for is not in the catalog.
     expect(draft.agent()).toMatchObject({ provider: "codex", model: "gpt-5.4" });
   });
 
