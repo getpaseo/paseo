@@ -667,15 +667,14 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
-        {model.baseRef ? (
+        {model.baseRef && model.isWorktree ? (
           <>
-            <ThemedArrowRight size={14} uniProps={foregroundMutedIconColorMapping} />
+            <ThemedArrowRight size={14} uniProps={extraMutedIconColorMapping} />
             <WorkspaceBaseBranchPicker
               serverId={model.serverId}
               workspaceId={model.workspaceId}
               cwd={model.cwd}
               baseRef={model.baseRef}
-              isWorktree={model.isWorktree}
             />
           </>
         ) : null}
