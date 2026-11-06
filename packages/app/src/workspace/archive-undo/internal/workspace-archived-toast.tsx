@@ -15,7 +15,6 @@ export function WorkspaceArchivedToast({ onUndo }: { onUndo: () => void }) {
     <View style={styles.row}>
       <Text style={styles.message}>{t("sidebar.workspace.toasts.archived")}</Text>
       <Button
-        variant="ghost"
         size="sm"
         onPress={onUndo}
         testID="workspace-archived-toast-undo"
