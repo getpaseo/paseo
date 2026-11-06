@@ -1,3 +1,5 @@
+import { lstat, readlink } from "node:fs/promises";
+import { resolve } from "node:path";
 import { readGitFileContents, readGitFileContentAtRef } from "../../utils/git-file-contents.js";
 import type { ListedFile } from "./git.js";
 
@@ -34,8 +36,12 @@ export class HighlightSources {
         ? null
         : await this.content(contents, this.options.baseSha, file.entry.oldPath ?? file.entry.path);
     let newFileContent: string | null | undefined;
-    if (this.options.headSha !== null)
+    if (this.options.headSha !== null) {
       newFileContent = await this.content(contents, this.options.headSha, file.entry.path);
+    } else if (file.entry.change !== "deleted") {
+      const path = resolve(this.options.cwd, file.entry.path);
+      if ((await lstat(path)).isSymbolicLink()) newFileContent = await readlink(path);
+    }
     return { oldFileContent, newFileContent };
   }
   private async load(start: number): Promise<Map<string, string | null> | null> {

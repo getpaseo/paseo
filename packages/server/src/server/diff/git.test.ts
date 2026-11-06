@@ -519,3 +519,42 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test.skipIf(process.platform === "win32")(
+  "highlighted symlink replacements use stored link text instead of target contents",
+  async () => {
+    const { encodeDiffFrame, decodeDiffFrame } =
+      await import("@getpaseo/protocol/binary-frames/index");
+    const cwd = await mkdtemp(join(tmpdir(), "diff-highlighted-link-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    const { symlink, unlink } = await import("node:fs/promises");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, "file.ts"), "export const old = 1;\n");
+      await writeFile(join(cwd, "target.ts"), "export const entirelyDifferentLength = 2;\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await unlink(join(cwd, "file.ts"));
+      await symlink("target.ts", join(cwd, "file.ts"));
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: "HEAD" },
+        head: { kind: "worktree" },
+      });
+      try {
+        const record = await readBody(comparison);
+        expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual(
+          expect.objectContaining({ type: "add", content: "target.ts" }),
+        );
+        const frame = { opcode: 0x41 as const, slot: 0, revision: 1, files: [record.body] };
+        expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
