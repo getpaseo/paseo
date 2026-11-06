@@ -1,10 +1,16 @@
-import { useMemo } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatAmount, formatProviderUsageLabel, formatResetLabel } from "./format";
-import type { UsageBalance, UsageTone } from "./types";
+import {
+  formatAmount,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatResetTime,
+} from "./format";
+import { UsageMeter } from "./meter";
+import { UsageResetLine } from "./reset-line";
+import type { UsageBalance } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 interface ResolvedBalance {
@@ -41,19 +47,6 @@ function resolveBalance({
   return { amountText: "—", usedPct: null };
 }
 
-function fillToneStyle(tone: UsageTone) {
-  switch (tone) {
-    case "ok":
-      return styles.fillOk;
-    case "warning":
-      return styles.fillWarning;
-    case "danger":
-      return styles.fillDanger;
-    default:
-      return styles.fillDefault;
-  }
-}
-
 export function UsageBalanceBar({
   balance,
   retained = false,
@@ -66,11 +59,7 @@ export function UsageBalanceBar({
   const { amountText, usedPct } = resolveBalance({ balance, t, locale: i18n.resolvedLanguage });
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt, retained, now, t);
-
-  const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
-    [usedPct, tone],
-  );
+  const resetTime = formatResetTime(balance.resetsAt, now, t);
 
   return (
     <View style={styles.container}>
@@ -78,22 +67,21 @@ export function UsageBalanceBar({
         <Text style={styles.label} numberOfLines={1}>
           {formatProviderUsageLabel(balance.id, balance.label, t)}
         </Text>
-        <View style={styles.value} testID={`provider-usage-balance-${balance.id}-value`}>
-          <Text style={styles.amount} numberOfLines={1} ellipsizeMode="tail">
-            {amountText}
-          </Text>
-          {resetLabel ? (
-            <Text style={styles.reset} testID={`provider-usage-balance-${balance.id}-reset`}>
-              {resetLabel}
-            </Text>
-          ) : null}
-        </View>
+        <Text
+          style={styles.amount}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID={`provider-usage-balance-${balance.id}-value`}
+        >
+          {amountText}
+        </Text>
       </View>
-      {usedPct != null ? (
-        <View style={styles.track}>
-          <View style={fillStyle} />
-        </View>
-      ) : null}
+      {usedPct != null ? <UsageMeter percent={usedPct} tone={tone} /> : null}
+      <UsageResetLine
+        countdown={resetLabel}
+        exactTime={resetTime}
+        testID={`provider-usage-balance-${balance.id}-reset`}
+      />
     </View>
   );
 }
@@ -110,44 +98,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  value: {
-    flexShrink: 1,
-    alignItems: "flex-end",
-  },
-  amount: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
-  reset: {
-    color: theme.colors.foregroundMuted,
+  amount: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-    textAlign: "right",
-  },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface3,
-    overflow: "hidden",
-  },
-  fill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
-  },
-  fillOk: {
-    backgroundColor: theme.colors.statusSuccess,
-  },
-  fillWarning: {
-    backgroundColor: theme.colors.statusWarning,
-  },
-  fillDanger: {
-    backgroundColor: theme.colors.statusDanger,
   },
 }));

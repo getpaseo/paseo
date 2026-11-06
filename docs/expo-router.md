@@ -58,6 +58,12 @@ restore the same workspace and could repeat the crash.
 
 ## App-Wide Route Hops
 
+Keep Add host in `hosts/add-host`, opened through `useAddHost()`. It is an in-place
+flow; callers choose what happens after success. Settings opts into the new host’s
+Overview. Do not send callers to Settings with an `addHost` query parameter: a
+retained route replays that request when appearance changes remount its content.
+The flow provider and sheet host stay outside appearance keys so open drafts survive.
+
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
 into a host workspace, use `navigateToWorkspace()`. Do not make the caller
 branch on its current route.
@@ -90,7 +96,8 @@ hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
 Plugin settings use the distinct `settings/hosts/[serverId]/plugins/[pluginId]/[screenId]` leaf;
-Back returns to that host's Plugins page.
+Back returns to that host's Plugins page. Its screen tabs change `screenId` with `router.setParams`,
+so switching tabs adds no stack entries.
 
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as

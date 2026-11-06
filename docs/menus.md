@@ -200,13 +200,15 @@ its own.
 
 ## Gotchas
 
-- **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
-  the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
-  identity changes — a pushed page taller than the one it replaced is clipped without that.
-- **Animate only once placed.** The same snapshot carries top/left, and Reanimated writes it back
-  750ms after mount. `AnchoredSurface` remounts the surface when its position resolves so the
-  entering animation never ends at the off-screen measuring position; on a slow machine that
-  write moved the open menu back off-screen.
+- **Web enters without Reanimated.** For a custom keyframe, Reanimated's web path snapshots the
+  surface's rect when the animation ends and writes it back as inline top/left/width/height 750ms
+  after the start. Whatever moved or resized the surface in between was undone: content that
+  grew once its data arrived left the menu clipped, or hanging over its anchor, until it moved
+  again. `AnchoredSurface` plays the same keyframes through the Web Animations API on web, which
+  leaves no inline style; native keeps the Reanimated `Keyframe`.
+- **Animate only once placed.** `AnchoredSurface` remounts the surface when its position resolves,
+  so the entering animation runs at the final position rather than ending unseen at the
+  off-screen measuring position.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
   rarely the height of the page before it. A fill page is the one exception.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
@@ -224,7 +226,8 @@ its own.
   inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
   portal backdrop blocking the destination. On web the chat suspends one commit after it goes
   inactive, and that inactive commit is where the surface unmounts.
-- Anchoring, flipping, and edge clamping live in `components/ui/anchor.ts`, shared with the hover
-  card, and are unit-tested. Fix positioning bugs there, not at a call site.
+- Anchoring, flipping, edge clamping, and capping a surface's width to the display live in
+  `components/ui/anchor.ts`, shared with the hover card, and are unit-tested. Clamping moves a
+  surface but cannot shrink it, so the width cap is what keeps a wide menu on a narrow screen. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

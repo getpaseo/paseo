@@ -2,6 +2,7 @@ import React, { memo, useCallback, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { IndentRail } from "@/components/indent-rail";
 import { ExpandableBadge } from "@/components/message";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -32,9 +33,13 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
+  const hold = useDisclosureHold();
   const toggle = useCallback(() => {
-    onExpandedChange(group.run.id, !expanded);
-  }, [expanded, group.run.id, onExpandedChange]);
+    const apply = () => onExpandedChange(group.run.id, !expanded);
+    // Compact opens a sheet; nothing in the timeline moves.
+    if (isCompact) apply();
+    else hold(apply);
+  }, [expanded, group.run.id, hold, isCompact, onExpandedChange]);
   const close = useCallback(() => {
     onExpandedChange(group.run.id, false);
   }, [group.run.id, onExpandedChange]);
