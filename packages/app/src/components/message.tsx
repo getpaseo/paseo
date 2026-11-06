@@ -1,3 +1,4 @@
+import { ChatHistoryAttachment } from "@/attachments/chat-history";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -496,11 +497,19 @@ export const UserMessage = memo(function UserMessage({
             {hasAttachments ? (
               <View style={attachmentPreviewContainerStyle}>
                 {attachments.map((attachment, index) => {
+                  const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
+                  if (attachment.type === "text" && attachment.contextKind === "chat_history") {
+                    return (
+                      <ChatHistoryAttachment
+                        key={key}
+                        attachment={attachment}
+                        testID="message-chat-history-attachment"
+                      />
+                    );
+                  }
                   const content = getAgentAttachmentPillContent(attachment, t);
                   return (
-                    <AttachmentFrame
-                      key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                    >
+                    <AttachmentFrame key={key}>
                       <AttachmentLabel
                         icon={content.icon}
                         title={content.title}

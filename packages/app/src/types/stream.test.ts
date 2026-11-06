@@ -158,6 +158,30 @@ describe("plugin timeline rows", () => {
 });
 
 describe("user message identity", () => {
+  it.each(["", "Continue from here"])(
+    "hydrates fork history without optimistic state: %s",
+    (text) => {
+      const chatHistory = {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        text: "[User] Earlier question\n[Assistant] Earlier answer",
+        chatHistorySource: { serverId: "source-host", agentId: "source-agent", title: "Original" },
+      } as const;
+      const result = reduceStreamUpdate(
+        [],
+        {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text, messageId: "fork-prompt", chatHistory },
+        },
+        new Date(0),
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ kind: "user_message", text, attachments: [chatHistory] });
+    },
+  );
+
   it("replaces provisional optimistic turn membership with canonical membership", () => {
     const optimistic = createUserMessage({
       clientMessageId: "hello-client",

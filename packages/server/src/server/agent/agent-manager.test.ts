@@ -729,6 +729,97 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test.each([true, false])(
+  "fork history survives storage-backed replay (provider echo: %s)",
+  async (echo) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-history-"));
+    const storagePath = join(workdir, "agents");
+    const attachment = {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      text: "<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[User] Original question\n[Assistant] Original answer\n</chat-history-summary>",
+      chatHistorySource: { serverId: "source-host", agentId: "source-agent", title: "Original" },
+    } as const;
+    const clientMessageId = "fork-prompt";
+    let hasHistory = false;
+    let includeFork = true;
+    class HistorySession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        hasHistory = true;
+        if (echo)
+          this.pushEvent({
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "user_message",
+              text: attachment.text,
+              messageId: "native-fork",
+              clientMessageId,
+            },
+          });
+        return super.startTurn();
+      }
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        if (!hasHistory) return;
+        if (includeFork)
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text: attachment.text, messageId: "native-fork" },
+          };
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: attachment.text, messageId: "native-later" },
+        };
+      }
+    }
+    class HistoryClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new HistorySession(config);
+      }
+      override async resumeSession(): Promise<AgentSession> {
+        return new HistorySession({ provider: "codex", cwd: workdir });
+      }
+    }
+    const client = new HistoryClient();
+    let storage = new AgentStorage(storagePath, logger);
+    let manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    onTestFinished(async () => {
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    });
+    await drainAsyncGenerator(manager.streamAgent(agent.id, [attachment], { clientMessageId }));
+    expect((await manager.getTimelineRows(agent.id))[0]?.item).toMatchObject({
+      type: "user_message",
+      text: "",
+      chatHistory: attachment,
+    });
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+
+    storage = new AgentStorage(storagePath, logger);
+    manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    await manager.hydrateTimelineFromProvider(agent.id);
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: "", messageId: "native-fork", chatHistory: attachment },
+      { type: "user_message", text: attachment.text, messageId: "native-later" },
+    ]);
+    // A provider rewind must not recreate a removed fork prompt.
+    includeFork = false;
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: attachment.text, messageId: "native-later" },
+    ]);
+  },
+);
+
 test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
   const store = new RecordingTimelineStore();

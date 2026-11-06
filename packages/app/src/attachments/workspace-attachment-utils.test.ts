@@ -21,6 +21,29 @@ function contextAttachment(
 }
 
 describe("workspace attachment utilities", () => {
+  it("submits chat history with its source host and agent", () => {
+    const source = { serverId: "original-host", agentId: "original-agent", title: "Original" };
+    expect(
+      workspaceAttachmentToSubmitAttachment({
+        kind: "chat_history",
+        id: "history-draft",
+        attachment: {
+          type: "text",
+          mimeType: "text/plain",
+          contextKind: "chat_history",
+          text: "Earlier context",
+        },
+        source,
+      }),
+    ).toEqual({
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      text: "Earlier context",
+      chatHistorySource: source,
+    });
+  });
+
   it("treats pull request context as a workspace attachment", () => {
     expect(isWorkspaceAttachment(contextAttachment())).toBe(true);
   });

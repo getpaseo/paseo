@@ -1,5 +1,6 @@
 import type {
   AgentAttachment,
+  ChatHistorySource,
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
@@ -82,9 +83,7 @@ export interface ChatHistoryContextAttachment {
   kind: "chat_history";
   id: string;
   attachment: Extract<AgentAttachment, { type: "text" }>;
-  source: {
-    serverId: string;
-    agentId: string;
+  source: ChatHistorySource & {
     boundaryMessageId?: string | null;
     boundaryCursor?: { epoch: string; seq: number } | null;
     itemCount?: number;

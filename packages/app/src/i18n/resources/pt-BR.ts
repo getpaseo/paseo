@@ -346,6 +346,14 @@ export const ptBR: TranslationResources = {
       openFile: "Abrir arquivo",
       copied: "Copiado",
     },
+    chatHistory: {
+      title: "Histórico do chat",
+      previousConversation: "Conversa anterior",
+      open: "Abrir histórico anexado",
+      remove: "Remover histórico anexado",
+      openSource: "Abrir chat de origem",
+      description: "Contexto copiado ao ramificar este chat.",
+    },
     attachments: {
       dismissImage: "Dispensar imagem",
       closeImage: "Fechar imagem",

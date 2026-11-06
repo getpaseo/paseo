@@ -343,6 +343,14 @@ export const ko: TranslationResources = {
       openFile: "파일 열기",
       copied: "복사됨",
     },
+    chatHistory: {
+      title: "채팅 기록",
+      previousConversation: "이전 대화",
+      open: "채팅 기록 첨부 열기",
+      remove: "채팅 기록 첨부 제거",
+      openSource: "원본 채팅 열기",
+      description: "이 채팅을 분기할 때 복사된 컨텍스트입니다.",
+    },
     attachments: {
       dismissImage: "이미지 닫기",
       closeImage: "이미지 닫기",

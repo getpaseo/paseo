@@ -900,9 +900,10 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  chatHistory?: Extract<AgentTimelineItem, { type: "user_message" }>["chatHistory"],
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent) {
+  if (!hasContent && !chatHistory) {
     return state;
   }
 
@@ -914,6 +915,7 @@ function appendUserMessage(
     timelineCursor,
     turnId,
     text: chunk,
+    ...(chatHistory ? { attachments: [chatHistory] } : {}),
     timestamp,
   });
   return upsertUserMessage(state, nextItem);
@@ -1523,6 +1525,7 @@ function reduceTimelineEvent(
         item.clientMessageId,
         timelineCursor,
         event.turnId,
+        item.chatHistory,
       );
     case "assistant_message":
       return appendAssistantMessage(

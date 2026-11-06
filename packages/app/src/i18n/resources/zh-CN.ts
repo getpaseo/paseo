@@ -342,6 +342,14 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       copied: "已复制",
     },
+    chatHistory: {
+      title: "聊天历史",
+      previousConversation: "之前的对话",
+      open: "打开聊天历史附件",
+      remove: "移除聊天历史附件",
+      openSource: "打开来源对话",
+      description: "创建此分叉时复制的上下文。",
+    },
     attachments: {
       dismissImage: "关闭图片",
       closeImage: "关闭图片",

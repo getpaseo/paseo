@@ -68,6 +68,7 @@ export interface UseForkAgentInput {
 
 function buildChatHistoryAttachment(input: {
   draftId: string;
+  title: string | null;
   serverId: string;
   agentId: string;
   payload: Awaited<ReturnType<DaemonClient["buildAgentForkContext"]>>;
@@ -83,6 +84,7 @@ function buildChatHistoryAttachment(input: {
     source: {
       serverId: input.serverId,
       agentId: input.agentId,
+      ...(input.title ? { title: input.title } : {}),
       boundaryMessageId: input.payload.boundaryMessageId,
       boundaryCursor: input.payload.boundaryCursor,
       itemCount: input.payload.itemCount,
@@ -147,6 +149,7 @@ export function useForkAgent(
         const payload = await client.buildAgentForkContext(agentId, boundary);
         const attachment = buildChatHistoryAttachment({
           draftId,
+          title: useSessionStore.getState().sessions[serverId]?.agents.get(agentId)?.title ?? null,
           serverId,
           agentId,
           payload,

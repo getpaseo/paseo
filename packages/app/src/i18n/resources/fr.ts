@@ -347,6 +347,14 @@ export const fr: TranslationResources = {
       openFile: "Ouvrir le fichier",
       copied: "Copié",
     },
+    chatHistory: {
+      title: "Historique du chat",
+      previousConversation: "Conversation précédente",
+      open: "Ouvrir l’historique joint",
+      remove: "Retirer l’historique joint",
+      openSource: "Ouvrir le chat d’origine",
+      description: "Contexte copié lors de la bifurcation de ce chat.",
+    },
     attachments: {
       dismissImage: "Ignorer l’image",
       closeImage: "Fermer l’image",
