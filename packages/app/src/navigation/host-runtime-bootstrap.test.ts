@@ -7,6 +7,7 @@ import {
   shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
   bindHostRuntimeAppState,
+  bindBackgroundConnectionKeeper,
 } from "./host-runtime-bootstrap";
 import type { DaemonStartResult, StartDaemonIfEnabledInput } from "@/runtime/daemon-start-service";
 
@@ -420,6 +421,139 @@ describe("resolveHostIndexRoute", () => {
 });
 
 describe("host runtime app lifecycle", () => {
+  it("keeps online hosts alive in the background and stops the service when no host is online", () => {
+    let online = false;
+    let state: "active" | "background" = "active";
+    let onStoreChange = () => {};
+    let onAppState = (_state: "active" | "background") => {};
+    let onHeartbeat = () => {};
+    let heartbeatCount = 0;
+    const serviceChanges: boolean[] = [];
+    const subscriptions = new Set<string>();
+    const unbind = bindBackgroundConnectionKeeper(
+      {
+        getEarliestOnlineHostServerId: () => (online ? "host-a" : null),
+        subscribeAll: (listener) => {
+          onStoreChange = listener;
+          subscriptions.add("hosts");
+          return () => void subscriptions.delete("hosts");
+        },
+        sendBackgroundHeartbeats: () => {
+          heartbeatCount += 1;
+        },
+      },
+      {
+        currentState: state,
+        addEventListener: (_event, listener) => {
+          onAppState = listener;
+          subscriptions.add("app-state");
+          return { remove: () => void subscriptions.delete("app-state") };
+        },
+      },
+      {
+        setEnabled: (enabled) => {
+          serviceChanges.push(enabled);
+          return enabled;
+        },
+        subscribeHeartbeat: (listener) => {
+          onHeartbeat = listener;
+          subscriptions.add("heartbeat");
+          return () => void subscriptions.delete("heartbeat");
+        },
+      },
+    );
+
+    expect(serviceChanges).toEqual([]);
+    online = true;
+    onStoreChange();
+    expect(serviceChanges).toEqual([true]);
+    state = "background";
+    onAppState(state);
+    onHeartbeat();
+    onHeartbeat();
+    expect(heartbeatCount).toBe(2);
+    online = false;
+    onStoreChange();
+    expect(serviceChanges).toEqual([true]);
+    state = "active";
+    onAppState(state);
+    expect(serviceChanges).toEqual([true, false]);
+    unbind();
+    expect([...subscriptions]).toEqual([]);
+  });
+
+  it("stops an enabled keeper and removes its subscriptions when the binding is disposed", () => {
+    const serviceChanges: boolean[] = [];
+    const subscriptions = new Set<string>();
+    const unbind = bindBackgroundConnectionKeeper(
+      {
+        getEarliestOnlineHostServerId: () => "host-a",
+        subscribeAll: () => {
+          subscriptions.add("hosts");
+          return () => void subscriptions.delete("hosts");
+        },
+        sendBackgroundHeartbeats: () => {},
+      },
+      {
+        currentState: "active",
+        addEventListener: () => {
+          subscriptions.add("app-state");
+          return { remove: () => void subscriptions.delete("app-state") };
+        },
+      },
+      {
+        setEnabled: (enabled) => {
+          serviceChanges.push(enabled);
+          return enabled;
+        },
+        subscribeHeartbeat: () => {
+          subscriptions.add("heartbeat");
+          return () => void subscriptions.delete("heartbeat");
+        },
+      },
+    );
+
+    expect(serviceChanges).toEqual([true]);
+    expect(subscriptions.size).toBe(3);
+    unbind();
+    expect(serviceChanges).toEqual([true, false]);
+    expect(subscriptions.size).toBe(0);
+  });
+
+  it("waits until the app is active to start a service for a connected host", () => {
+    let onAppState = (_state: "active" | "background") => {};
+    const serviceChanges: boolean[] = [];
+    const unbind = bindBackgroundConnectionKeeper(
+      {
+        getEarliestOnlineHostServerId: () => "host-a",
+        subscribeAll: () => () => {},
+        sendBackgroundHeartbeats: () => {},
+      },
+      {
+        currentState: "background",
+        addEventListener: (_event, listener) => {
+          onAppState = listener;
+          return { remove: () => {} };
+        },
+      },
+      {
+        setEnabled: (enabled) => {
+          serviceChanges.push(enabled);
+          return enabled;
+        },
+        subscribeHeartbeat: () => () => {},
+      },
+    );
+
+    expect(serviceChanges).toEqual([]);
+    onAppState("active");
+    onAppState("background");
+    onAppState("active");
+    expect(serviceChanges).toEqual([true, true]);
+    unbind();
+    expect(serviceChanges).toEqual([true, true, false]);
+  });
+
   it.each(["inactive", "background"] as const)(
     "applies initial visibility and forwards lifecycle changes when mounted %s",
     (currentState) => {

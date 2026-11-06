@@ -2444,6 +2444,12 @@ export const ar: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "الاتصال في الخلفية",
+        label: "إبقاء الاتصال في الخلفية",
+        description:
+          "يظهر إشعار دائم وقد يزيد استهلاك البطارية. تتطلب بعض الهواتف أيضًا السماح بالنشاط في الخلفية من إعدادات النظام.",
+      },
       title: "عام",
       sending: "الإرسال",
       setup: {

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -58,6 +59,7 @@ import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
 import { ChatSection } from "@/screens/settings/chat/chat-section";
 import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
 import { SendingSection } from "@/screens/settings/general/sending-section";
+import { BackgroundConnectionSection } from "@/screens/settings/general/background-connection-section";
 import {
   useAppSettings,
   useSettings,
@@ -1317,6 +1319,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           return (
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
+              {Platform.OS === "android" ? <BackgroundConnectionSection /> : null}
               <SendingSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>

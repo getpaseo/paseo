@@ -1,0 +1,5 @@
+<resources>
+  <string name="paseo_connection_channel">服务器连接</string>
+  <string name="paseo_connection_notification">正在保持服务器连接</string>
+  <string name="paseo_connection_description">切换应用时保持服务器连接。</string>
+</resources>

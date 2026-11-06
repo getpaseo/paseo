@@ -13,6 +13,18 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+## Background connections
+
+React Native pauses JavaScript timers when the Android activity enters the background. Paseo's
+foreground service and native heartbeat scheduler keep an existing host connection active while
+the process and network remain available. They do not hold a wake lock; Android Doze, network
+changes, or stopping the app can still end the connection.
+
+The service uses the `specialUse` foreground-service type for its real-time host connections.
+For Google Play apps targeting Android 14+, declare the type in the Play Console; its use case is
+reviewed on submission. Changes to the native module require an Android rebuild; a Metro reload is
+not enough.
+
 ## Version codes
 
 `packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.

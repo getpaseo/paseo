@@ -2442,6 +2442,12 @@ export const ptBR: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "Conexão em segundo plano",
+        label: "Manter conexão em segundo plano",
+        description:
+          "Exibe uma notificação permanente e pode aumentar o consumo de bateria. Alguns celulares também exigem permitir a atividade em segundo plano nas configurações do sistema.",
+      },
       title: "Geral",
       sending: "Envio",
       setup: {

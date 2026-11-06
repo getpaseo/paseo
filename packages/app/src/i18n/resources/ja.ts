@@ -2431,6 +2431,12 @@ export const ja: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "バックグラウンド接続",
+        label: "バックグラウンドで接続を維持",
+        description:
+          "常時通知が表示され、電池の消費が増える場合があります。機種によっては、システム設定でバックグラウンド動作を許可する必要があります。",
+      },
       title: "一般",
       sending: "送信",
       setup: {

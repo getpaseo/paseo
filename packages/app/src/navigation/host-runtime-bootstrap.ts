@@ -270,3 +270,42 @@ export function bindHostRuntimeAppState(
   store.setAppVisible(appState.currentState === "active");
   return () => subscription.remove();
 }
+
+export function bindBackgroundConnectionKeeper(
+  store: {
+    getEarliestOnlineHostServerId: () => string | null;
+    subscribeAll: (listener: () => void) => () => void;
+    sendBackgroundHeartbeats: () => void;
+  },
+  appState: Pick<typeof AppState, "currentState" | "addEventListener">,
+  keeper: {
+    setEnabled: (enabled: boolean) => boolean;
+    subscribeHeartbeat: (listener: () => void) => () => void;
+  },
+): () => void {
+  let active = appState.currentState === "active";
+  let enabled = false;
+  const sync = (resume = false) => {
+    // Android requires foreground services to be started while the app is visible.
+    if (!active) return;
+    const shouldEnable = store.getEarliestOnlineHostServerId() !== null;
+    if (shouldEnable !== enabled || (shouldEnable && resume)) {
+      enabled = keeper.setEnabled(shouldEnable);
+    }
+  };
+  const unsubscribeStore = store.subscribeAll(() => sync());
+  const unsubscribeHeartbeat = keeper.subscribeHeartbeat(() => {
+    if (enabled && !active) store.sendBackgroundHeartbeats();
+  });
+  const subscription = appState.addEventListener("change", (state) => {
+    active = state === "active";
+    sync(active);
+  });
+  sync();
+  return () => {
+    subscription.remove();
+    unsubscribeHeartbeat();
+    unsubscribeStore();
+    if (enabled) keeper.setEnabled(false);
+  };
+}

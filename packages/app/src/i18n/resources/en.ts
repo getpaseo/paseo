@@ -2535,6 +2535,12 @@ export const en = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "Background connection",
+        label: "Keep connection in background",
+        description:
+          "Shows an ongoing notification and may use more battery. Some phones also require background activity to be allowed in system settings.",
+      },
       title: "General",
       sending: "Sending",
       setup: {

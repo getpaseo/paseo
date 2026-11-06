@@ -33,7 +33,7 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 - **Message identity survives completion.** Assistant row ids are source message ids. Plugin rows can replace a source, so find, scroll-to-message and history reveal still use `getStreamItemMessageId`. Width-specific measurements describe whole rendered messages.
 - **First sight of a text is revealed whole.** Only growth is paced. This is what makes history hydration, timeline replay, a virtualized row remounting on scroll, and an already-finished message all render complete on first paint without a special case for each.
 - **Leaving `phase: "streaming"` snaps the reveal.** A completed turn must never be left holding characters. `layoutStream` sets the phase, so anything outside the live head with an active turn is already complete.
-- **The reducer queue commits on a frame, with a timer as the ceiling.** A frame callback never fires in a hidden tab, so a timer races it and wins when nothing is painting — the store has to keep advancing either way.
+- **The reducer queue commits on a frame, with a timer as the ceiling.** A frame callback never fires in a hidden tab, so a timer races it and wins when nothing is painting. Android pauses both callbacks in the background, so pending events flush when backgrounding and new events commit on arrival while the app can run.
 - **A history row re-renders only when its item or layout item identity changes.** Every
   coalesced tick hands the list a new layout. Without a memo boundary each tick re-rendered every
   mounted row (measured on the inverted FlatList native used before LegendList: about 50 rows on a

@@ -1,0 +1,13 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'sh.paseo.connection'
+version = '0.1.0'
+
+android {
+  namespace 'sh.paseo.connection'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}

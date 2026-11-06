@@ -2384,6 +2384,11 @@ export const zhCN: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "后台连接",
+        label: "后台保持连接",
+        description: "开启后显示常驻通知，可能增加耗电；部分手机还需在系统设置中允许完全后台行为。",
+      },
       title: "通用",
       sending: "发送",
       setup: {

@@ -2457,6 +2457,12 @@ export const es: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "Conexión en segundo plano",
+        label: "Mantener la conexión en segundo plano",
+        description:
+          "Muestra una notificación permanente y puede consumir más batería. Algunos teléfonos también requieren permitir la actividad en segundo plano en los ajustes del sistema.",
+      },
       title: "General",
       sending: "Envío",
       setup: {
