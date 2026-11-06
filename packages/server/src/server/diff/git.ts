@@ -328,6 +328,7 @@ async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFil
   );
   for (const path of untracked.stdout.split("\0").filter(Boolean)) {
     const value = await lstat(resolve(cwd, path), { bigint: true });
+    if (!value.isFile() && !value.isSymbolicLink()) continue;
     const symlink = value.isSymbolicLink();
     let binary = false;
     let omitted = false;

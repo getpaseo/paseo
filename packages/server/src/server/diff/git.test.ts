@@ -374,3 +374,79 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("untracked nested repositories do not hide tracked edits", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-nested-repository-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  const { mkdir } = await import("node:fs/promises");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "a.txt"), "before\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "a.txt"), "after\n");
+    await mkdir(join(cwd, "nested"));
+    git("-C", "nested", "init");
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    try {
+      expect(comparison.files.map((file) => file.entry.path)).toEqual(["a.txt"]);
+      const record = await readBody(comparison);
+      expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual({
+        type: "add",
+        content: "after",
+      });
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test.each(["worktree", "index", "rev"] as const)(
+  "%s preserves hunks for paths containing a patch prefix delimiter",
+  async (headKind) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-path-delimiter-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const { mkdir } = await import("node:fs/promises");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await mkdir(join(cwd, "dir b"));
+      await writeFile(join(cwd, "dir b", "file.txt"), "before\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      await writeFile(join(cwd, "dir b", "file.txt"), "after\n");
+      if (headKind !== "worktree") git("add", ".");
+      if (headKind === "rev") git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+      const head = headKind === "rev" ? { kind: "rev" as const, rev: "HEAD" } : { kind: headKind };
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: base },
+        head,
+        highlight: false,
+      });
+      try {
+        expect(comparison.files[0].entry.path).toBe("dir b/file.txt");
+        const record = await readBody(comparison);
+        expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual({
+          type: "add",
+          content: "after",
+        });
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

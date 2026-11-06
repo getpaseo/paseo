@@ -70,11 +70,6 @@ function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): stri
 
 function extractPathFromDiffHeader(lines: string[]): string {
   const firstLine = lines[0] ?? "";
-  const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
-  if (prefixedPathMatch) {
-    return prefixedPathMatch[2];
-  }
-
   const quotedPathMatch =
     firstLine.match(/^("(?:\\.|[^"\\])*") (.+)$/) ?? firstLine.match(/^(.+) ("(?:\\.|[^"\\])*")$/);
   if (quotedPathMatch) {
@@ -86,10 +81,21 @@ function extractPathFromDiffHeader(lines: string[]): string {
     return newPath;
   }
 
-  const metadataPath =
-    extractPathFromMetadata(lines, "+++ ") ?? extractPathFromMetadata(lines, "--- ");
-  if (metadataPath) {
-    return metadataPath;
+  // The ---/+++ records are unambiguous even when a path contains " b/".
+  const oldMetadata = extractPathFromMetadata(lines, "--- ");
+  const newMetadata = extractPathFromMetadata(lines, "+++ ");
+  const metadata = newMetadata ?? oldMetadata;
+  if (metadata) {
+    const prefixed =
+      (oldMetadata !== null &&
+        newMetadata !== null &&
+        usesDiffPathPrefixes(oldMetadata, newMetadata)) ||
+      firstLine === `a/${metadata.slice(2)} b/${metadata.slice(2)}`;
+    return prefixed ? metadata.slice(2) : metadata;
+  }
+  const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
+  if (prefixedPathMatch) {
+    return prefixedPathMatch[2];
   }
 
   const pathMatch = firstLine.match(/^(\S+)\s+(\S+)$/);
