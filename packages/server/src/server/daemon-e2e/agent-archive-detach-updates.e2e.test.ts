@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "vitest";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
@@ -9,52 +9,76 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo
 
 const CREATED_AT = "2026-11-04T08:00:00.000Z";
 const UPDATED_AT = "2026-11-04T09:00:00.000Z";
+const RUNTIME_INFO = {
+  provider: "codex",
+  sessionId: null,
+  model: "provider-default",
+  thinkingOptionId: "medium",
+};
 
-test("parent archive publishes the detached stored survivor to subscribed clients", async () => {
-  const fixture = seedFixture();
-  let daemon: TestPaseoDaemon | null = null;
-  let observer: DaemonClient | null = null;
-  let actor: DaemonClient | null = null;
-  try {
-    daemon = await createTestPaseoDaemon({
-      paseoHomeRoot: fixture.paseoHomeRoot,
-      staticDir: fixture.staticDir,
-      cleanup: false,
-    });
-    const url = `ws://127.0.0.1:${daemon.port}/ws`;
-    observer = new DaemonClient({ url });
-    actor = new DaemonClient({ url });
-    await observer.connect();
-    await actor.connect();
+test.each([false, true])(
+  "parent archive preserves a stored survivor for subscribers (filtered=%s)",
+  async (filtered) => {
+    const fixture = seedFixture();
+    let daemon: TestPaseoDaemon | null = null;
+    let observer: DaemonClient | null = null;
+    let actor: DaemonClient | null = null;
+    try {
+      daemon = await createTestPaseoDaemon({
+        paseoHomeRoot: fixture.paseoHomeRoot,
+        staticDir: fixture.staticDir,
+        cleanup: false,
+      });
+      const url = `ws://127.0.0.1:${daemon.port}/ws`;
+      observer = new DaemonClient({ url });
+      actor = new DaemonClient({ url });
+      await observer.connect();
+      await actor.connect();
 
-    const updates: Array<{ id: string; labels: Record<string, string> }> = [];
-    observer.subscribeRawMessages((message: SessionOutboundMessage) => {
-      if (message.type === "agent_update" && message.payload.kind === "upsert") {
-        updates.push({ id: message.payload.agent.id, labels: message.payload.agent.labels });
-      }
-    });
-    await observer.fetchAgents({ filter: { includeBackground: true }, subscribe: {} });
+      const updates: AgentSnapshotPayload[] = [];
+      const removed: string[] = [];
+      observer.subscribeRawMessages((message: SessionOutboundMessage) => {
+        if (message.type === "agent_update" && message.payload.kind === "upsert") {
+          updates.push(message.payload.agent);
+        } else if (message.type === "agent_update" && message.payload.kind === "remove") {
+          removed.push(message.payload.agentId);
+        }
+      });
+      const initial = await observer.fetchAgents({
+        filter: { includeBackground: true, ...(filtered ? { thinkingOptionId: "medium" } : {}) },
+        subscribe: {},
+      });
+      const initialSurvivor = initial.entries.find(
+        (entry) => entry.agent.id === "child-survivor",
+      )?.agent;
+      expect(initialSurvivor?.runtimeInfo).toEqual(RUNTIME_INFO);
+      expect(initialSurvivor?.effectiveThinkingOptionId).toBe("medium");
 
-    // A child already detached by hand remains independent of the parent archive.
-    await actor.detachAgent("child-manual");
-    await actor.archiveAgent("parent");
+      // A child already detached by hand remains independent of the parent archive.
+      await actor.detachAgent("child-manual");
+      await actor.archiveAgent("parent");
 
-    const survivor = await actor.fetchAgent({ agentId: "child-survivor" });
-    expect(survivor?.agent.archivedAt).toBeNull();
-    expect(survivor?.agent.labels).toEqual({});
-    await expect
-      .poll(() => updates.findLast((update) => update.id === "child-survivor")?.labels)
-      .toEqual({});
-    const manual = await actor.fetchAgent({ agentId: "child-manual" });
-    expect(manual?.agent.archivedAt).toBeNull();
-    expect(manual?.agent.labels).toEqual({});
-  } finally {
-    await observer?.close().catch(() => undefined);
-    await actor?.close().catch(() => undefined);
-    await daemon?.close().catch(() => undefined);
-    for (const target of fixture.cleanupPaths) rmSync(target, { recursive: true, force: true });
-  }
-});
+      const survivor = await actor.fetchAgent({ agentId: "child-survivor" });
+      expect(survivor?.agent.archivedAt).toBeNull();
+      expect(survivor?.agent.labels).toEqual({});
+      await expect
+        .poll(() => updates.findLast((update) => update.id === "child-survivor")?.labels)
+        .toEqual({});
+      const update = updates.findLast((item) => item.id === "child-survivor");
+      expect(update?.runtimeInfo).toEqual(RUNTIME_INFO);
+      expect(update?.effectiveThinkingOptionId).toBe("medium");
+      expect(removed).not.toContain("child-survivor");
+      const manual = await actor.fetchAgent({ agentId: "child-manual" });
+      expect(manual?.agent.archivedAt).toBeNull();
+      expect(manual?.agent.labels).toEqual({});
+    } finally {
+      await observer?.close().catch(() => undefined);
+      await actor?.close().catch(() => undefined);
+      await daemon?.close().catch(() => undefined);
+      for (const target of fixture.cleanupPaths) rmSync(target, { recursive: true, force: true });
+    }
+  },
+);
 
 function seedFixture() {
   const artifacts = path.join(process.cwd(), ".artifacts");
@@ -117,6 +141,7 @@ function seedFixture() {
     lastStatus: "closed",
     lastModeId: "full-access",
     config: null,
+    ...(id === "child-survivor" ? { runtimeInfo: RUNTIME_INFO } : {}),
     persistence: null,
   });
   // Both children live in another workspace, so the parent's archive detaches rather than archives them.
