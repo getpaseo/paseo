@@ -2,7 +2,6 @@ import { resampleToPcm16 } from "@/audio/pcm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePcm16Wav } from "@/utils/pcm16-wav";
 import { isElectronRuntime } from "@/desktop/host";
-import { AttemptCancelledError } from "@/utils/attempt-guard";
 
 import type {
   DictationAudioSource,
@@ -155,9 +154,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     started: boolean;
     mode: "pcm" | "recorder";
     recorder: RecorderRefs;
-    // Advanced by every stop(), so a start still waiting on getUserMedia can tell it
-    // was stopped and must not install its stream.
-    startGeneration: number;
   }>({
     stream: null,
     context: null,
@@ -174,7 +170,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       stoppedResolve: null,
       stoppedReject: null,
     },
-    startGeneration: 0,
   });
 
   const decodeAudioData = useCallback(
@@ -238,8 +233,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       throw new Error("AudioContext unavailable");
     }
 
-    const startGeneration = refs.current.startGeneration;
-    const stream = await navigator.mediaDevices.getUserMedia({
+    const rawStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         noiseSuppression: true,
@@ -247,11 +241,8 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         autoGainControl: true,
       },
     });
-    if (refs.current.startGeneration !== startGeneration) {
-      // Stopped while the permission prompt or device acquisition was pending.
-      disconnectDictationAudioGraph({ processor: null, source: null, gain: null, stream });
-      throw new AttemptCancelledError("Dictation start was cancelled");
-    }
+
+    const stream = rawStream;
 
     const context = new AudioContextCtor();
 
@@ -380,7 +371,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
 
   const stop = useCallback(async () => {
     refs.current.started = false;
-    refs.current.startGeneration += 1;
     setVolume(0);
 
     const { processor, source, gain, context, stream, pending, mode, recorder } = refs.current;
@@ -428,7 +418,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         stoppedResolve: null,
         stoppedReject: null,
       },
-      startGeneration: refs.current.startGeneration,
     };
   }, [decodeAudioData, emitPcmSegments]);
 
@@ -447,9 +436,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
           await start();
         } catch (err) {
           const normalized = err instanceof Error ? err : new Error(String(err));
-          if (!(normalized instanceof AttemptCancelledError)) {
-            onErrorRef.current?.(normalized);
-          }
+          onErrorRef.current?.(normalized);
           throw normalized;
         }
       },

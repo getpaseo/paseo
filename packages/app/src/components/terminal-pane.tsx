@@ -2,7 +2,7 @@ import { TerminalFind, type TerminalPaneFindHandle } from "@/terminal/find";
 import type { TerminalFindResult } from "@/terminal/runtime/terminal-emulator-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import {
   Pressable,
@@ -57,28 +57,8 @@ import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { getDesktopHost } from "@/desktop/host";
-import {
-  routeTerminalDrop,
-  routeTerminalPickedFile,
-  type TerminalDropDelivery,
-} from "@/terminal/drop/terminal-file-drop";
-import { preparePathsForTerminalInput } from "@/terminal/drop/terminal-path";
-import {
-  useRegisterTerminalInputSink,
-  type TerminalDictationActions,
-  type TerminalInputSink,
-} from "@/terminal/input-sink";
-import {
-  TerminalDictationOwner,
-  type TerminalDictationOwnerActions,
-} from "@/terminal/dictation/terminal-dictation-owner";
-import { isTerminalKeyboardOwner } from "@/terminal/dictation/terminal-dictation-lifecycle";
-import {
-  TerminalKeyBarDictationButton,
-  TerminalKeyBarDictationGate,
-} from "@/terminal/toolbar/terminal-key-bar-dictation";
-import type { SelectedFile } from "@/attachments/selected-file";
-import { TerminalUploadButton } from "@/terminal/toolbar/terminal-upload-button";
+import { routeTerminalDrop } from "@/terminal/drop/terminal-file-drop";
+import { prepareDroppedPathsForTerminal } from "@/terminal/drop/terminal-path";
 import { toErrorMessage } from "@/utils/error-messages";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
 import {
@@ -104,7 +84,7 @@ import {
   type TerminalResizeRequest,
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -933,11 +913,11 @@ export function TerminalPane({
     });
   });
 
-  // Shared by drops and picks: own paths are pasted together at once, uploads go
-  // through the paste queue in gesture order.
-  const deliverToTerminal = useStableEvent((deliveries: TerminalDropDelivery[]) => {
+  const handleDroppedFiles = useStableEvent((items: DroppedItem[]) => {
+    const bridge = getDesktopHost();
     const paths: string[] = [];
-    for (const delivery of deliveries) {
+    for (const item of items) {
+      const delivery = routeTerminalDrop(item, { hostIsLocal: isLocalHost, bridge });
       if (delivery.kind === "path") {
         paths.push(delivery.path);
       } else {
@@ -945,54 +925,10 @@ export function TerminalPane({
       }
     }
     if (paths.length > 0) {
-      pasteTerminalText(preparePathsForTerminalInput(paths));
+      pasteTerminalText(prepareDroppedPathsForTerminal(paths));
     }
     requestTerminalFocus();
   });
-
-  const handleDroppedFiles = useStableEvent((items: DroppedItem[]) => {
-    const bridge = getDesktopHost();
-    deliverToTerminal(
-      items.map((item) => routeTerminalDrop(item, { hostIsLocal: isLocalHost, bridge })),
-    );
-  });
-
-  const deliverPickedFiles = useStableEvent((files: SelectedFile[]) => {
-    deliverToTerminal(
-      files.map((file) => routeTerminalPickedFile(file, { hostIsLocal: isLocalHost })),
-    );
-  });
-
-  // The owner mounts only while connected and remounts per terminal; the sink keeps
-  // one stable forwarding object and reaches whichever owner is mounted now.
-  const dictationOwnerId = useId();
-  const dictationActionsRef = useRef<TerminalDictationOwnerActions | null>(null);
-  const dictationActions = useMemo<TerminalDictationActions>(
-    () => ({
-      ownerId: dictationOwnerId,
-      toggle: () => dictationActionsRef.current?.toggle(),
-      cancel: () => dictationActionsRef.current?.cancel(),
-      confirm: () => dictationActionsRef.current?.confirm(),
-      retry: () => dictationActionsRef.current?.retry(),
-      discard: () => dictationActionsRef.current?.discard(),
-    }),
-    [dictationOwnerId],
-  );
-  const terminalSurfaceRef = useRef<View>(null);
-  const isDictationKeyboardOwner = useStableEvent(
-    () => isWeb && isTerminalKeyboardOwner(terminalSurfaceRef.current, document.activeElement),
-  );
-
-  const inputSink = useMemo<TerminalInputSink>(
-    () => ({
-      pasteText: pasteTerminalText,
-      deliverFiles: deliverPickedFiles,
-      focus: requestTerminalFocus,
-      dictation: dictationActions,
-    }),
-    [pasteTerminalText, deliverPickedFiles, requestTerminalFocus, dictationActions],
-  );
-  useRegisterTerminalInputSink(serverId, terminalId, inputSink);
 
   const sendTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
     const nextSize = { rows: input.rows, cols: input.cols };
@@ -1235,10 +1171,6 @@ export function TerminalPane({
             onPaste={handleTerminalPaste}
           />
         ) : null;
-      case "upload":
-        return <TerminalUploadButton key={controlId} sink={inputSink} placement="keybar" />;
-      case "dictation":
-        return <TerminalKeyBarDictationButton key={controlId} sink={inputSink} />;
       case "keyboardToggle":
         return (
           <KeyboardToggleButton
@@ -1268,20 +1200,9 @@ export function TerminalPane({
 
   return (
     <Animated.View style={containerStyle}>
-      <TerminalDictationOwner
-        key={`${serverId}:${terminalId}`}
-        ownerId={dictationOwnerId}
-        serverId={serverId}
-        terminalId={terminalId}
-        isPresented={isTerminalPresented}
-        pasteText={pasteTerminalText}
-        focus={requestTerminalFocus}
-        isKeyboardOwner={isDictationKeyboardOwner}
-        actionsRef={dictationActionsRef}
-      />
       <FileDropZone style={styles.outputContainer}>
         <TerminalFileDropSink onFiles={handleDroppedFiles} />
-        <View ref={terminalSurfaceRef} style={styles.terminalGestureContainer}>
+        <View style={styles.terminalGestureContainer}>
           <TerminalEmulator
             ref={emulatorRef}
             dom={TERMINAL_EMULATOR_DOM_PROPS}
@@ -1355,16 +1276,14 @@ export function TerminalPane({
             onLayout={handleKeyBarLayout}
             testID={isNative && !isMobile ? "terminal-virtual-keyboard-native-wide" : undefined}
           >
-            <TerminalKeyBarDictationGate sink={inputSink}>
-              {virtualKeyboardRows.map((row) => (
-                <View
-                  key={row.map(getTerminalVirtualKeyboardControlId).join(":")}
-                  style={styles.keyboardRow}
-                >
-                  {row.map(renderVirtualKeyboardControl)}
-                </View>
-              ))}
-            </TerminalKeyBarDictationGate>
+            {virtualKeyboardRows.map((row) => (
+              <View
+                key={row.map(getTerminalVirtualKeyboardControlId).join(":")}
+                style={styles.keyboardRow}
+              >
+                {row.map(renderVirtualKeyboardControl)}
+              </View>
+            ))}
           </View>
         </View>
       ) : null}

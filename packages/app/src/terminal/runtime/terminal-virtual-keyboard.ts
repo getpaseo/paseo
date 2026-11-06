@@ -19,30 +19,21 @@ export type TerminalVirtualKeyboardControl =
       type: "paste";
     }
   | {
-      type: "upload";
-    }
-  | {
-      type: "dictation";
-    }
-  | {
       type: "keyboardToggle";
     };
 
-// Paste, upload and dictation stay next to each other in every arrangement.
 export const TERMINAL_VIRTUAL_KEYBOARD_ROWS = [
   [
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.esc },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.tab },
     { type: "modifier", modifier: "ctrl" },
-    { type: "modifier", modifier: "shift" },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.up },
-    { type: "modifier", modifier: "alt" },
+    { type: "modifier", modifier: "shift" },
     { type: "keyboardToggle" },
   ],
   [
+    { type: "modifier", modifier: "alt" },
     { type: "paste" },
-    { type: "upload" },
-    { type: "dictation" },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.left },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.down },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.right },
@@ -62,8 +53,6 @@ export const TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS = [
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.up },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.right },
     { type: "paste" },
-    { type: "upload" },
-    { type: "dictation" },
     { type: "keyboardToggle" },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.enter },
   ],
@@ -80,8 +69,8 @@ export const TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS = [
     { type: "modifier", modifier: "shift" },
     { type: "keyboardToggle" },
   ],
-  [{ type: "paste" }, { type: "upload" }, { type: "dictation" }],
   [
+    { type: "paste" },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.up },
     { type: "key", button: TERMINAL_VIRTUAL_KEY_BUTTONS.enter },
   ],
@@ -124,10 +113,6 @@ export function getTerminalVirtualKeyboardControlId(
       return `terminal-key-${control.modifier}`;
     case "paste":
       return "terminal-paste";
-    case "upload":
-      return "terminal-upload";
-    case "dictation":
-      return "terminal-dictation";
     case "keyboardToggle":
       return "terminal-keyboard-toggle";
   }

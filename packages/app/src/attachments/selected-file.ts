@@ -5,8 +5,6 @@ import { readDesktopFileBase64 } from "@/desktop/attachments/desktop-preview-url
 export interface SelectedFile {
   fileName: string;
   mimeType: string;
-  /** Where the file sits on this machine's disk; set only by the desktop app's file dialog. */
-  desktopPath?: string;
   readBytes(): Promise<Uint8Array>;
 }
 

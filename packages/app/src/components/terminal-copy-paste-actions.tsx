@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, Text, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -45,23 +45,8 @@ export function TerminalFloatingCopyAction({
   );
 }
 
-export interface TerminalKeyBarIconActionProps {
-  accessibilityLabel: string;
-  testID: string;
-  icon: ReactNode;
-  disabled?: boolean;
-  onPress: () => void;
-}
-
-/** A key-bar action shown as an icon, styled like the bar's other keys. */
-export function TerminalKeyBarIconAction(props: TerminalKeyBarIconActionProps) {
-  return <TerminalActionButton {...props} variant="key" />;
-}
-
 interface TerminalActionButtonProps {
-  /** Text shown when no icon is given. */
-  label?: string;
-  icon?: ReactNode;
+  label: string;
   accessibilityLabel: string;
   testID: string;
   disabled?: boolean;
@@ -71,7 +56,6 @@ interface TerminalActionButtonProps {
 
 function TerminalActionButton({
   label,
-  icon,
   accessibilityLabel,
   testID,
   disabled = false,
@@ -110,7 +94,7 @@ function TerminalActionButton({
       onPress={handlePress}
       style={pressableStyle}
     >
-      {icon ?? <Text style={textStyle}>{label}</Text>}
+      <Text style={textStyle}>{label}</Text>
     </Pressable>
   );
 }

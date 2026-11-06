@@ -35,10 +35,6 @@ export function prepareTerminalPath(path: string): string {
   return escapeNonWindowsPath(path);
 }
 
-/**
- * Paths as terminal input: each quoted and followed by one space, so paths pasted
- * together or by consecutive gestures stay separate shell words. Never Enter.
- */
-export function preparePathsForTerminalInput(paths: readonly string[]): string {
-  return paths.map((path) => `${prepareTerminalPath(path)} `).join("");
+export function prepareDroppedPathsForTerminal(paths: readonly string[]): string {
+  return paths.map(prepareTerminalPath).join(" ");
 }

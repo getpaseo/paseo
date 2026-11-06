@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { holdFileUploadResponse } from "../support/helpers/file-upload-gate";
 import { installLocalDesktopHost } from "../support/helpers/local-desktop-host";
@@ -32,8 +32,7 @@ setTimeout(finish, 700);
 
 // A TUI stand-in: turns on bracketed paste, reads every quoted path in each
 // bracketed paste, and echoes typed lines, so the PTY output proves what reached
-// the terminal and where the file was read from. Each paste body is also echoed
-// as PASTED:<json>, whitespace escaped so it survives the capture's line joins.
+// the terminal and where the file was read from.
 const FILE_RECEIVER_SCRIPT = String.raw`
 const fs = require("node:fs");
 const crypto = require("node:crypto");
@@ -83,22 +82,6 @@ function fileRead(bytes: Buffer, location: "upload" | "local"): string {
 // the same workspace adds a tab here too. Only the selected tab's surface is visible.
 function terminalSurface(page: Page) {
   return page.getByTestId("terminal-surface").filter({ visible: true });
-}
-
-function visibleTestId(page: Page, testId: string) {
-  return page.getByTestId(testId).filter({ visible: true }).first();
-}
-
-/** The test ID of the toolbar control rendered immediately before `control`. */
-async function controlBefore(control: Locator): Promise<string | null> {
-  return await control.evaluate((element) => {
-    let group = element.parentElement;
-    while (group && group.querySelectorAll('[role="button"]').length < 2) {
-      group = group.parentElement;
-    }
-    const buttons = Array.from(group?.querySelectorAll('[role="button"]') ?? []);
-    return buttons[buttons.indexOf(element) - 1]?.getAttribute("data-testid") ?? null;
-  });
 }
 
 function terminalInput(page: Page) {
@@ -297,54 +280,6 @@ test.describe("Terminal protocol queries", () => {
     }
   });
 
-  test("upload button uploads picked files when the host is another machine", async ({ page }) => {
-    const terminal = await openFileReceiver(page, "file-pick-remote");
-    const files = [
-      { name: "picked.png", mimeType: "image/png", buffer: pngBytes(11) },
-      { name: "picked.txt", mimeType: "text/plain", buffer: Buffer.from("picked notes") },
-    ];
-    try {
-      const upload = visibleTestId(page, "terminal-toolbar-upload");
-      await expect(upload).toHaveCount(1);
-      // The terminal slot sits right before "...": upload, then the mic.
-      expect(await controlBefore(visibleTestId(page, "workspace-split-pane-menu"))).toBe(
-        "terminal-toolbar-dictation",
-      );
-      expect(await controlBefore(visibleTestId(page, "terminal-toolbar-dictation"))).toBe(
-        "terminal-toolbar-upload",
-      );
-
-      const chooser = page.waitForEvent("filechooser");
-      await upload.click();
-      await (await chooser).setFiles(files);
-
-      await expectTerminalOutput(terminal.id, fileRead(files[0].buffer, "upload"));
-      await expectTerminalOutput(terminal.id, fileRead(files[1].buffer, "upload"));
-      await expectSeparatePastedPaths(terminal.id);
-    } finally {
-      await harness.killTerminal(terminal.id);
-    }
-  });
-
-  test("shows the upload button only while the pane's active tab is a terminal", async ({
-    page,
-  }) => {
-    const terminal = await openFileReceiver(page, "file-pick-slot");
-    try {
-      await expect(visibleTestId(page, "terminal-toolbar-upload")).toHaveCount(1);
-
-      await visibleTestId(page, "workspace-new-tab-button").click();
-      await visibleTestId(page, "workspace-new-tab-menu-diff").click();
-      await expect(visibleTestId(page, "working-diff-panel")).toBeVisible();
-      await expect(visibleTestId(page, "terminal-toolbar-upload")).toHaveCount(0);
-
-      await visibleTestId(page, `workspace-tab-terminal_${terminal.id}`).click();
-      await expect(visibleTestId(page, "terminal-toolbar-upload")).toHaveCount(1);
-    } finally {
-      await harness.killTerminal(terminal.id);
-    }
-  });
-
   test("pastes dropped files' own paths when the host is this machine", async ({ page }) => {
     const files = [
       { name: "local-shot.png", type: "image/png", bytes: pngBytes(9) },
@@ -360,7 +295,6 @@ test.describe("Terminal protocol queries", () => {
 
       await expectTerminalOutput(terminal.id, fileRead(pngBytes(9), "local"));
       await expectTerminalOutput(terminal.id, fileRead(Buffer.from("local notes"), "local"));
-      await expectSeparatePastedPaths(terminal.id);
       expect(await terminalOutput(terminal.id)).not.toContain(":upload");
       await expect(page.getByTestId("terminal-file-uploading")).toHaveCount(0);
     } finally {

@@ -1,5 +1,5 @@
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
-import { preparePathsForTerminalInput } from "../drop/terminal-path";
+import { prepareTerminalPath } from "../drop/terminal-path";
 
 /** File bytes from a paste or drop gesture, before they become a file on the host. */
 export interface TerminalFile {
@@ -75,7 +75,7 @@ export class TerminalFilePasteQueue {
       this.setUploading(true);
       const path = await target.upload({ ...file, fileName: toShellSafeFileName(file.fileName) });
       if (isCurrent()) {
-        target.paste(preparePathsForTerminalInput([path]));
+        target.paste(`${prepareTerminalPath(path)} `);
         this.events.onUploaded();
       }
     } catch (error) {
