@@ -1,5 +1,5 @@
 import { ComposerDockBackground } from "@/composer/dock";
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,6 +12,11 @@ import {
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { TOUCH_TARGET } from "@/components/ui/control-sizing";
+import { useTopBandRow } from "@/window-layout";
+
+// Leading content that must stay readable in the top band: a navigation button and a title.
+const MIN_LEADING_WIDTH = TOUCH_TARGET + 8 + 96;
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -41,17 +46,37 @@ export function ScreenHeader({
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
+  const [rightWidth, setRightWidth] = useState(0);
+  const measureRight = useCallback(
+    (event: LayoutChangeEvent) => setRightWidth(event.nativeEvent.layout.width),
+    [],
+  );
+  const topBand = useTopBandRow({
+    offset: insets.top + topPadding,
+    height: isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT,
+    minimumWidth: baseHorizontalPadding + MIN_LEADING_WIDTH + rightWidth,
+  });
   const innerStyle = useMemo(
-    () => [styles.inner, { paddingTop: insets.top + topPadding }],
-    [insets.top, topPadding],
+    () => [styles.inner, { paddingTop: insets.top + topPadding + topBand.top }],
+    [insets.top, topPadding, topBand.top],
   );
   const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
-  const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
+  // The occlusion replaces the row's trailing padding rather than adding to it.
+  const rightCombinedStyle = useMemo(
+    () => [
+      styles.right,
+      rightStyle,
+      topBand.trailing > baseHorizontalPadding && {
+        marginRight: topBand.trailing - baseHorizontalPadding,
+      },
+    ],
+    [rightStyle, topBand.trailing, baseHorizontalPadding],
+  );
 
   return (
     <ComposerDockBackground style={styles.header} testID="composer-dock-header">
-      <View style={innerStyle}>
+      <View ref={topBand.ref} onLayout={topBand.onLayout} style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
           horizontalPadding={baseHorizontalPadding}
@@ -60,7 +85,9 @@ export function ScreenHeader({
         >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>
-          <View style={rightCombinedStyle}>{right}</View>
+          <View style={rightCombinedStyle} onLayout={measureRight}>
+            {right}
+          </View>
         </WindowChromeSafeArea>
       </View>
     </ComposerDockBackground>

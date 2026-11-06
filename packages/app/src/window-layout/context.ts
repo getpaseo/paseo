@@ -1,8 +1,11 @@
 import { createContext, useContext } from "react";
 import { useWindowDimensions } from "react-native";
-import type { WindowLayout } from "./model";
+import type { TopBand, WindowLayout } from "./model";
 
 export const WindowLayoutContext = createContext<WindowLayout | null>(null);
+
+/** Published by `WindowLayoutProvider` beside the safe-area insets it derives from it. */
+export const TopBandContext = createContext<TopBand | null>(null);
 
 export function useWindowLayout(): WindowLayout | null {
   const layout = useContext(WindowLayoutContext);

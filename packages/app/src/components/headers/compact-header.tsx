@@ -1,6 +1,6 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { Text, View, type LayoutChangeEvent } from "react-native";
 import { router } from "expo-router";
 import { ArrowLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,12 +12,19 @@ import {
   iconButtonChromeGlyphSize,
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
+import { TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import { SPACING } from "@/styles/theme";
+import { useTopBandRow } from "@/window-layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
 const NO_SHORTCUT: ShortcutKey[] = [];
+const ROW_PADDING = SPACING[3];
+const ROW_GAP = SPACING[2];
+// Below this the title is unreadable; the row starts below the system's occlusions instead.
+const MIN_TITLE_WIDTH = 96;
 
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
@@ -51,21 +58,38 @@ export function CompactHeader({
   actions,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
+  const [actionsWidth, setActionsWidth] = useState(0);
+  const measureActions = useCallback(
+    (event: LayoutChangeEvent) => setActionsWidth(event.nativeEvent.layout.width),
+    [],
+  );
+  // The trailing side gives way to the occlusion, so it needs no padding of its own.
+  const topBand = useTopBandRow({
+    offset: insets.top + HEADER_TOP_PADDING_MOBILE,
+    height: HEADER_INNER_HEIGHT_MOBILE,
+    minimumWidth:
+      ROW_PADDING +
+      TOUCH_TARGET +
+      ROW_GAP +
+      MIN_TITLE_WIDTH +
+      (actions ? ROW_GAP + actionsWidth : 0),
+  });
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE + topBand.top,
+        paddingRight: Math.max(ROW_PADDING, topBand.trailing),
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [insets.top, insets.left, insets.right],
+    [insets.top, insets.left, insets.right, topBand.top, topBand.trailing],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
-      <View style={rootStyle}>
+      <View ref={topBand.ref} onLayout={topBand.onLayout} style={rootStyle}>
         <View style={styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
@@ -78,7 +102,11 @@ export function CompactHeader({
               subtitle={subtitle}
             />
           </View>
-          {actions ? <View style={styles.island}>{actions}</View> : null}
+          {actions ? (
+            <View style={styles.island} onLayout={measureActions}>
+              {actions}
+            </View>
+          ) : null}
         </View>
       </View>
     </IconButtonChromeProvider>
@@ -140,13 +168,13 @@ function BackButton({ onBack }: { onBack?: () => void }) {
 
 const styles = StyleSheet.create((theme) => ({
   root: {
-    paddingHorizontal: theme.spacing[3],
+    paddingLeft: ROW_PADDING,
   },
   row: {
     height: HEADER_INNER_HEIGHT_MOBILE,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: ROW_GAP,
   },
   titleGroup: {
     flex: 1,
