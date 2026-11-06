@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppState } from "react-native";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { DaemonConnectionError, type DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createAgentAttentionController } from "@/utils/agent-attention";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { isWeb } from "@/constants/platform";
@@ -40,7 +40,11 @@ export function useAgentAttentionClear({
   const clearAttention = useStableEvent(async (id: string) => {
     if (client) await client.clearAgentAttention(id);
   });
-  const reportError = useStableEvent(onError);
+  const reportError = useStableEvent((error: unknown) => {
+    // The timeline's reconnect status already explains a lost connection.
+    if (error instanceof DaemonConnectionError && error.code === "DAEMON_CONNECTION_LOST") return;
+    onError(error);
+  });
   const controller = useMemo(
     () =>
       createAgentAttentionController({
