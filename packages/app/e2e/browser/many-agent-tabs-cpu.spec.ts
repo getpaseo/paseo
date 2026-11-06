@@ -1,22 +1,24 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { loadavg } from "node:os";
 import type { CDPSession, Page, WebSocket } from "@playwright/test";
-import { expect, test } from "../e2e/support/fixtures";
-import { openAgentRoute } from "../e2e/support/helpers/mock-agent";
+import { expect, test } from "../support/fixtures";
+import { openAgentRoute } from "../support/helpers/mock-agent";
 import {
   readReactCommits,
   readReactRenders,
   recordReactRenders,
   resetReactRenders,
-} from "../e2e/support/helpers/react-renders";
-import { seedWorkspace, type SeededWorkspace } from "../e2e/support/helpers/seed-client";
+} from "../support/helpers/react-renders";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 /*
  * Measures what an idle app costs while many agent tabs are open, and while one agent that
  * is not on screen streams. Each test opens N agent tabs in one workspace, visits every tab
  * once, returns to the first and then samples renderer CPU, daemon CPU and WebSocket traffic
  * over a fixed idle window and a fixed streaming window.
+ *
+ *   PASEO_MANY_TABS_PERF_E2E=1 npm run test:e2e -- many-agent-tabs-cpu.spec.ts
  *
  *   PASEO_MANY_TABS_COUNTS=1,5,10,20  tab counts to measure
  *   PASEO_MANY_TABS_RUNS=3            repetitions per tab count
@@ -30,8 +32,8 @@ import { seedWorkspace, type SeededWorkspace } from "../e2e/support/helpers/seed
 
 const TAB_COUNTS = (process.env.PASEO_MANY_TABS_COUNTS ?? "1,5,10,20")
   .split(",")
-  .map((value) => Number(value.trim()))
-  .filter((value) => Number.isInteger(value) && value > 0);
+  .map((value: string) => Number(value.trim()))
+  .filter((value: number) => Number.isInteger(value) && value > 0);
 const RUNS = Number(process.env.PASEO_MANY_TABS_RUNS ?? 3);
 const WINDOW_MS = Number(process.env.PASEO_MANY_TABS_WINDOW_MS ?? 60_000);
 const SETTLE_MS = 10_000;
@@ -69,6 +71,7 @@ interface WindowSample {
 test.describe.configure({ mode: "serial" });
 
 test.describe("many agent tabs CPU", () => {
+  test.skip(process.env.PASEO_MANY_TABS_PERF_E2E !== "1", "Opt-in CPU measurement");
   const tabWorkspaces = new Map<number, TabWorkspace>();
   let background: SeededWorkspace;
   let streamerId: string;
@@ -237,64 +240,44 @@ function recordTraffic(page: Page): { take(): TrafficCounters } {
   };
 }
 
-// macOS and other hosts without /proc: the daemon is the process listening on the e2e port.
-function daemonCpuSecondsFromPs(): number {
-  const port = process.env.E2E_DAEMON_PORT;
-  if (!port) throw new Error("E2E_DAEMON_PORT is not set");
+// Only inspect the daemon started by this worker and its descendants.
+function daemonCpuSeconds(): number {
+  const pid = process.env.E2E_DAEMON_PID;
+  if (!pid || !/^\d+$/.test(pid)) throw new Error("E2E_DAEMON_PID is not set");
   const run = (cmd: string, args: string[]) =>
-    execFileSync(cmd, args, { encoding: "utf8" })
-      .split("\n")
-      .map((v) => v.trim())
-      .filter(Boolean);
-  const roots = run("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"]);
+    execFileSync(cmd, args, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
   const pids = new Set<string>();
-  const visit = (pid: string) => {
-    if (pids.has(pid)) return;
-    pids.add(pid);
+  const visit = (current: string) => {
+    if (pids.has(current)) return;
+    pids.add(current);
     let children: string[] = [];
     try {
-      children = run("pgrep", ["-P", pid]);
+      children = run("pgrep", ["-P", current]);
     } catch {
       // pgrep exits 1 when a process has no children.
     }
     for (const child of children) visit(child);
   };
-  for (const root of roots) visit(root);
+  visit(pid);
   let seconds = 0;
-  for (const pid of pids) {
+  for (const current of pids) {
     try {
-      const [time] = run("ps", ["-o", "cputime=", "-p", pid]);
-      // [[dd-]hh:]mm:ss[.cc]
-      const [days, rest] = time.includes("-") ? time.split("-") : ["0", time];
-      const parts = rest.split(":").map(Number);
-      while (parts.length < 3) parts.unshift(0);
-      seconds += Number(days) * 86_400 + parts[0] * 3_600 + parts[1] * 60 + parts[2];
+      if (existsSync("/proc/self/stat")) {
+        const stat = readFileSync(`/proc/${current}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        seconds += (Number(fields[11]) + Number(fields[12])) / CLOCK_TICKS_PER_SECOND;
+      } else {
+        const [time] = run("ps", ["-o", "cputime=", "-p", current]);
+        const [days, rest] = time.includes("-") ? time.split("-") : ["0", time];
+        const parts = rest.split(":").map(Number);
+        while (parts.length < 3) parts.unshift(0);
+        seconds += Number(days) * 86_400 + parts[0] * 3_600 + parts[1] * 60 + parts[2];
+      }
     } catch {
       // The process exited between listing and reading.
     }
   }
   return seconds;
-}
-
-function daemonCpuSeconds(): number {
-  if (!existsSync("/proc/self/stat")) return daemonCpuSecondsFromPs();
-  const home = process.env.E2E_PASEO_HOME;
-  if (!home) throw new Error("E2E_PASEO_HOME is not set");
-  const marker = `PASEO_HOME=${home}\0`;
-  let ticks = 0;
-  for (const entry of readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry)) continue;
-    try {
-      const environ = readFileSync(`/proc/${entry}/environ`, "utf8");
-      if (!environ.includes(marker)) continue;
-      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      ticks += Number(fields[11]) + Number(fields[12]);
-    } catch {
-      // The process exited or belongs to another user.
-    }
-  }
-  return ticks / CLOCK_TICKS_PER_SECOND;
 }
 
 async function processCpu(

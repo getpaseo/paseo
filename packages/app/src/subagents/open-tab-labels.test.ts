@@ -1,3 +1,4 @@
+import { createClientIdLookup } from "./client-id-lookup";
 import { describe, expect, it, vi } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
@@ -101,5 +102,56 @@ describe("createAgentTabsNeedingOpenLabelKeySelector", () => {
     const lookups = get.mock.calls.length;
     expect(select({ ...state })).toBe("child");
     expect(get.mock.calls.length).toBe(lookups);
+  });
+});
+
+describe("client id lookup", () => {
+  it("retries a rejected lookup on the next signal", async () => {
+    let attempts = 0;
+    const resolved: string[] = [];
+    const errors: unknown[] = [];
+    const failure = new Error("storage unavailable");
+    const lookup = createClientIdLookup({
+      getClientId: async () => {
+        if (++attempts === 1) throw failure;
+        return "client-1";
+      },
+      onResolved: (id) => resolved.push(id),
+      onError: (error) => errors.push(error),
+    });
+    await lookup.resolve();
+    expect(errors).toEqual([failure]);
+    expect(resolved).toEqual([]);
+    await lookup.resolve();
+    expect(attempts).toBe(2);
+    expect(resolved).toEqual(["client-1"]);
+  });
+
+  it("coalesces concurrent signals and ignores a result after disposal", async () => {
+    let finish!: (id: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    let attempts = 0;
+    const resolved: string[] = [];
+    const errors: unknown[] = [];
+    const lookup = createClientIdLookup({
+      getClientId: () => {
+        attempts++;
+        return pending;
+      },
+      onResolved: (id) => resolved.push(id),
+      onError: (error) => errors.push(error),
+    });
+    const first = lookup.resolve();
+    await lookup.resolve();
+    expect(attempts).toBe(1);
+    lookup.dispose();
+    finish("client-1");
+    await first;
+    await lookup.resolve();
+    expect(attempts).toBe(1);
+    expect(resolved).toEqual([]);
+    expect(errors).toEqual([]);
   });
 });

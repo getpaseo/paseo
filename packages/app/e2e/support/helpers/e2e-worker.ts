@@ -201,6 +201,7 @@ export async function startE2EWorker(
     });
 
     process.env.E2E_DAEMON_PORT = String(daemon.port);
+    process.env.E2E_DAEMON_PID = String(daemon.getPid());
     process.env.E2E_SERVER_ID = daemon.serverId;
     process.env.E2E_PASEO_HOME = daemon.paseoHome;
     process.env.E2E_EDITOR_RECORD_PATH = editorRecordPath;

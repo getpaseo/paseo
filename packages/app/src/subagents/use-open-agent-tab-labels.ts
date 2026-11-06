@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
+import { createClientIdLookup } from "./client-id-lookup";
 import { createAgentTabsNeedingOpenLabelKeySelector } from "./open-tab-labels";
 
 function selectNoAgentTabs(): string {
@@ -54,31 +55,23 @@ export function useOpenAgentTabLabels(input: {
     if (label || !input.client || !input.enabled) {
       return;
     }
-    let cancelled = false;
-    let resolving = false;
-    const resolveLabel = async () => {
-      if (resolving) return;
-      resolving = true;
-      try {
-        const clientId = await getOrCreateClientId();
-        if (!cancelled) setLabel(getOpenAgentTabLabel(clientId));
-      } catch (error) {
-        console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
-      } finally {
-        resolving = false;
-      }
-    };
-    void resolveLabel();
+    const lookup = createClientIdLookup({
+      getClientId: getOrCreateClientId,
+      onResolved: (clientId) => setLabel(getOpenAgentTabLabel(clientId)),
+      onError: (error) =>
+        console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error }),
+    });
+    void lookup.resolve();
     const unsubscribeAgents = useSessionStore.subscribe(
       (state) => state.sessions[input.serverId]?.agents,
-      () => void resolveLabel(),
+      () => void lookup.resolve(),
     );
     const unsubscribeAgentDetails = useSessionStore.subscribe(
       (state) => state.sessions[input.serverId]?.agentDetails,
-      () => void resolveLabel(),
+      () => void lookup.resolve(),
     );
     return () => {
-      cancelled = true;
+      lookup.dispose();
       unsubscribeAgents();
       unsubscribeAgentDetails();
     };
