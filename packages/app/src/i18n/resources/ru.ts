@@ -346,6 +346,14 @@ export const ru: TranslationResources = {
       openFile: "Открыть файл",
       copied: "Скопировано",
     },
+    chatHistory: {
+      title: "История чата",
+      previousConversation: "Предыдущий разговор",
+      open: "Открыть вложенную историю чата",
+      remove: "Удалить вложенную историю чата",
+      openSource: "Открыть исходный чат",
+      description: "Контекст, скопированный при создании этой ветки чата.",
+    },
     attachments: {
       dismissImage: "Закрыть изображение",
       closeImage: "Закрыть изображение",

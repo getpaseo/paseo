@@ -1,3 +1,4 @@
+import { extractChatHistoryBody } from "@getpaseo/protocol/chat-history";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
@@ -21,6 +22,7 @@ const FORK_CONTEXT_KINDS: readonly AgentTimelineItem["type"][] = [
 ];
 
 interface ActivityCuratorOptions {
+  includeChatHistory?: boolean;
   maxItems?: number;
   labelAssistantMessages?: boolean;
   includeKinds?: readonly AgentTimelineItem["type"][];
@@ -35,6 +37,17 @@ type TextAgentAttachment = Extract<AgentAttachment, { type: "text" }>;
 
 function activityEntry(text: string): ActivityEntry {
   return { text };
+}
+
+function appendUserEntry(
+  entries: ActivityEntry[],
+  item: Extract<AgentTimelineItem, { type: "user_message" }>,
+  options?: ActivityCuratorOptions,
+) {
+  if (options?.includeChatHistory && item.chatHistory) {
+    entries.push(activityEntry(extractChatHistoryBody(item.chatHistory.text)));
+  }
+  entries.push(activityEntry(`[User] ${item.text.trim()}`));
 }
 
 function appendTextEntry(
@@ -158,7 +171,7 @@ function curateProjectedActivityEntries(
 
     switch (item.type) {
       case "user_message":
-        entries.push(activityEntry(`[User] ${item.text.trim()}`));
+        appendUserEntry(entries, item, options);
         break;
       case "assistant_message":
       case "reasoning":
@@ -361,6 +374,7 @@ export function buildAgentForkContextAttachment(input: {
   });
   const entries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
+    includeChatHistory: true,
     labelAssistantMessages: true,
     includeKinds: FORK_CONTEXT_KINDS,
     includeExternalToolInput: false,

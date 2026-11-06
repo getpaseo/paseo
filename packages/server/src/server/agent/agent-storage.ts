@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import { AgentFeatureSchema, AgentStatusSchema, ChatHistoryAttachmentSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -53,6 +53,15 @@ const STORED_AGENT_SCHEMA = z.object({
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
+  // Provider transcripts retain the rendered prompt, not attachment metadata.
+  forkContext: z
+    .object({
+      clientMessageId: z.string(),
+      providerMessageId: z.string().optional(),
+      text: z.string(),
+      attachment: ChatHistoryAttachmentSchema,
+    })
+    .optional(),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),

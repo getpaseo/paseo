@@ -712,6 +712,25 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
+export const ChatHistorySourceSchema = z.object({
+  serverId: z.string(),
+  agentId: z.string(),
+  title: z.string().optional(),
+});
+
+export type ChatHistorySource = z.infer<typeof ChatHistorySourceSchema>;
+
+export const ChatHistoryAttachmentSchema = z.object({
+  type: z.literal("text"),
+  mimeType: z.literal("text/plain"),
+  contextKind: z.literal("chat_history"),
+  title: z.string().nullable().optional(),
+  text: z.string(),
+  chatHistorySource: ChatHistorySourceSchema.optional(),
+});
+
+export type ChatHistoryAttachment = z.infer<typeof ChatHistoryAttachmentSchema>;
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
@@ -720,6 +739,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    chatHistory: ChatHistoryAttachmentSchema.optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),
@@ -1180,6 +1200,7 @@ export const TextAttachmentSchema = z
     title: z.string().nullable().optional(),
     text: z.string(),
     externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
+    chatHistorySource: ChatHistorySourceSchema.optional(),
   })
   .transform(({ contextKind, ...attachment }) => ({
     ...attachment,

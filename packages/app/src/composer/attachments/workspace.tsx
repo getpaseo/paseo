@@ -1,3 +1,4 @@
+import { ChatHistoryAttachment } from "@/attachments/chat-history";
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -255,12 +256,28 @@ function WorkspaceAttachmentPill({
 }: WorkspaceAttachmentPillProps) {
   const { t } = useTranslation();
   const content = getWorkspaceAttachmentPillContent(attachment, t);
+  const chatHistory = useMemo(() => {
+    if (attachment.kind !== "chat_history") return null;
+    if (!attachment.source) return attachment.attachment;
+    const { serverId, agentId, title } = attachment.source;
+    return { ...attachment.attachment, chatHistorySource: { serverId, agentId, title } };
+  }, [attachment]);
   const handleOpen = useCallback(() => {
     onOpen(attachment);
   }, [onOpen, attachment]);
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
+  if (chatHistory) {
+    return (
+      <ChatHistoryAttachment
+        attachment={chatHistory}
+        onRemove={handleRemove}
+        disabled={disabled}
+        testID={getPillTestID(attachment)}
+      />
+    );
+  }
   return (
     <AttachmentPill
       testID={getPillTestID(attachment)}

@@ -157,7 +157,10 @@ export interface SeedDaemonClient {
   sendAgentMessage(
     agentId: string,
     text: string,
-    options?: { sourceAgentId?: string },
+    options?: {
+      sourceAgentId?: string;
+      attachments?: import("@getpaseo/protocol/messages").AgentAttachment[];
+    },
   ): Promise<void>;
   waitForFinish(
     agentId: string,

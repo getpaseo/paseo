@@ -1,3 +1,4 @@
+import { ChatHistoryAttachment } from "@/attachments/chat-history";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -33,7 +34,10 @@ import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  ChatHistoryAttachment as ChatHistorySnapshot,
+} from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Check,
@@ -419,7 +423,12 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
+  const chatHistory = attachments.find(
+    (attachment): attachment is ChatHistorySnapshot =>
+      attachment.type === "text" && attachment.contextKind === "chat_history",
+  );
+  const showTrailingRow =
+    !isPending && (hasText || Boolean(chatHistory)) && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -428,9 +437,12 @@ export const UserMessage = memo(function UserMessage({
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const getMessageContent = useCallback(() => message, [message]);
+  const getMessageContent = useCallback(
+    () => message || chatHistory?.text || "",
+    [message, chatHistory],
+  );
   const handleRewind = useCallback(
-    (input: { mode: RewindMode; rewoundText: string }) => {
+    (input: { mode: RewindMode; rewoundText: string; chatHistory?: ChatHistorySnapshot }) => {
       return rewindMutation.rewindAgent(input);
     },
     [rewindMutation],
@@ -496,11 +508,19 @@ export const UserMessage = memo(function UserMessage({
             {hasAttachments ? (
               <View style={attachmentPreviewContainerStyle}>
                 {attachments.map((attachment, index) => {
+                  const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
+                  if (attachment.type === "text" && attachment.contextKind === "chat_history") {
+                    return (
+                      <ChatHistoryAttachment
+                        key={key}
+                        attachment={attachment}
+                        testID="message-chat-history-attachment"
+                      />
+                    );
+                  }
                   const content = getAgentAttachmentPillContent(attachment, t);
                   return (
-                    <AttachmentFrame
-                      key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                    >
+                    <AttachmentFrame key={key}>
                       <AttachmentLabel
                         icon={content.icon}
                         title={content.title}
@@ -518,7 +538,7 @@ export const UserMessage = memo(function UserMessage({
             ) : null}
           </MessagePreview>
         </View>
-        {hasText ? (
+        {hasText || chatHistory ? (
           <View
             style={trailingRowStyle}
             pointerEvents={showTrailingRow ? "auto" : "none"}
@@ -532,6 +552,7 @@ export const UserMessage = memo(function UserMessage({
                 capabilities={capabilities}
                 isPending={rewindMutation.isPending}
                 rewoundText={message}
+                chatHistory={chatHistory}
                 onRewind={handleRewind}
               />
             ) : null}

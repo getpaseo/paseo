@@ -242,10 +242,10 @@ describe("useDraftAgentCreateFlow", () => {
     expect(createRequest).toHaveBeenCalledWith({
       attempt: expect.objectContaining({
         text: "",
-        attachments: [attachment.attachment],
+        attachments: [{ ...attachment.attachment, chatHistorySource: attachment.source }],
       }),
       text: "",
-      attachments: [attachment.attachment],
+      attachments: [{ ...attachment.attachment, chatHistorySource: attachment.source }],
       cwd: "/repo",
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);

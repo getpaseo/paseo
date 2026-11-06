@@ -441,6 +441,7 @@ interface HandleStreamEventOptions {
 }
 
 interface ManagedAgentBase {
+  forkContext?: StoredAgentRecord["forkContext"];
   id: string;
   provider: AgentProvider;
   cwd: string;
@@ -2701,11 +2702,15 @@ export class AgentManager {
       if (event.type === "timeline") {
         this.touchUpdatedAt(agent);
         const row = this.recordTimeline(agent.id, event.item);
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
         return;
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
@@ -3919,6 +3924,8 @@ export class AgentManager {
         options,
       });
 
+      await this.restoreForkContext(managed);
+
       // Read history before publishing the agent: a provider failure must leave the
       // session unregistered so the registration catch closes it.
       const startupHistory: AgentStreamEvent[] = [];
@@ -4491,11 +4498,15 @@ export class AgentManager {
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
       if (broadcastTimeline) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
       }
     }
     this.touchUpdatedAt(agent);
@@ -4560,13 +4571,17 @@ export class AgentManager {
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
       if (deferredBroadcast) {
-        timelineEvents.push({ event, row });
+        timelineEvents.push({ event: { ...event, item: row.item }, row });
       } else if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
       }
     }
     agent.historyPrimed = true;
@@ -5101,7 +5116,7 @@ export class AgentManager {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
       type: "timeline",
-      item,
+      item: row.item,
       provider,
       ...(turnId !== undefined ? { turnId } : {}),
     };
@@ -5133,9 +5148,25 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
+    const text = submittedPromptText(prompt);
+    if (typeof prompt !== "string") {
+      const attachment = prompt.find(
+        (block) =>
+          block.type === "text" && "contextKind" in block && block.contextKind === "chat_history",
+      );
+      if (attachment?.type === "text" && "mimeType" in attachment) {
+        agent.forkContext = {
+          clientMessageId,
+          providerMessageId:
+            options?.providerMessageId !== clientMessageId ? options?.providerMessageId : undefined,
+          text,
+          attachment: { ...attachment, contextKind: "chat_history" },
+        };
+      }
+    }
     const items = projectAgentMessages({
       type: "user_message",
-      text: submittedPromptText(prompt),
+      text,
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
@@ -5183,6 +5214,10 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
+      if (agent.forkContext?.clientMessageId === clientMessageId && messageId !== clientMessageId) {
+        agent.forkContext.providerMessageId = messageId;
+        this.enqueueBackgroundPersist(agent);
+      }
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,
@@ -5247,6 +5282,10 @@ export class AgentManager {
     return parts.join("\n\n");
   }
 
+  private async restoreForkContext(agent: ManagedAgent): Promise<void> {
+    agent.forkContext = (await this.registry?.get(agent.id))?.forkContext;
+  }
+
   private recordTimeline(
     agentId: string,
     item: AgentTimelineItem,
@@ -5256,6 +5295,29 @@ export class AgentManager {
       turnId?: string;
     },
   ): AgentTimelineRow {
+    const agent = this.agents.get(agentId);
+    const context = agent?.forkContext;
+    if (
+      context &&
+      item.type === "user_message" &&
+      (item.clientMessageId === context.clientMessageId ||
+        (context.providerMessageId
+          ? item.messageId === context.providerMessageId
+          : context.attachment.text.length > 0 && item.text.includes(context.attachment.text)))
+    ) {
+      // Providers without client IDs can be matched once by the exact snapshot.
+      // Remember their native ID so a later quotation is not mistaken for the fork.
+      if (
+        agent &&
+        !context.providerMessageId &&
+        item.messageId &&
+        item.messageId !== context.clientMessageId
+      ) {
+        context.providerMessageId = item.messageId;
+        this.enqueueBackgroundPersist(agent);
+      }
+      item = { ...item, text: context.text, chatHistory: context.attachment };
+    }
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
