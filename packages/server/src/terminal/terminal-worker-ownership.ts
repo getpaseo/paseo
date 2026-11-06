@@ -1,5 +1,5 @@
 import type { ManagedProcessInspection } from "../server/managed-processes/managed-processes.js";
-import { probeTerminalWorkerSocket } from "./terminal-worker-client.js";
+import { connectTerminalWorker, probeTerminalWorkerSocket } from "./terminal-worker-client.js";
 import { type TerminalWorkerRecord } from "./terminal-worker-record.js";
 
 // Who a pid named in a terminal worker record belongs to, before anything signals it.
@@ -29,6 +29,36 @@ export async function identifyTerminalWorker(
   if (socket === "refused") return { status: "gone" };
   if (socket === "accepting") return { status: "owned" };
   return { status: "unknown", reason: "worker socket probe inconclusive" };
+}
+
+/** Rechecks the live worker immediately before a forced termination. */
+export async function authorizeTerminalWorkerTermination(
+  record: TerminalWorkerRecord,
+): Promise<ProcessOwnership> {
+  const ownership = await identifyTerminalWorker(record);
+  if (ownership.status !== "owned") return ownership;
+  // COMPAT(terminal-worker-legacy-socket): added after v0.15.1, remove after 2027-02-06.
+  // Legacy names contain only home + pid. A stale record can reach a newer worker, so an
+  // accepting legacy socket requires proof of its secret before cleanup may signal it.
+  if (
+    record.socketPath.endsWith(`-${record.recordId}.sock`) ||
+    record.socketPath.endsWith(`-${record.recordId}`)
+  )
+    return ownership;
+  try {
+    const connection = await connectTerminalWorker({
+      socketPath: record.socketPath,
+      secret: record.secret,
+      timeoutMs: 1000,
+    });
+    const matches = connection.workerPid === record.pid;
+    connection.disconnect();
+    return matches
+      ? ownership
+      : { status: "unknown", reason: "legacy socket authenticated another pid" };
+  } catch {
+    return { status: "unknown", reason: "legacy socket ownership could not be authenticated" };
+  }
 }
 
 export function classifyTerminalProgramProcess(

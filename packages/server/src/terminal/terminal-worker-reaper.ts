@@ -7,6 +7,7 @@ import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import {
   classifyTerminalProgramProcess,
   identifyTerminalWorker,
+  authorizeTerminalWorkerTermination,
   type ProcessOwnership,
 } from "./terminal-worker-ownership.js";
 import {
@@ -373,7 +374,7 @@ async function forceKillOwned(
   const { record, inspector } = tracked;
   const signaled: number[] = [];
   if (tracked.worker.status === "owned") {
-    tracked.worker = await identifyTerminalWorker(record);
+    tracked.worker = await authorizeTerminalWorkerTermination(record);
     if (tracked.worker.status === "owned") {
       await forceKillWorker(record.pid);
       signaled.push(record.pid);

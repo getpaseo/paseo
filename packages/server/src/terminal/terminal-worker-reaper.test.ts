@@ -22,6 +22,7 @@ import {
   terminalCleanupRecordPath,
   terminalWorkerDirectory,
   writeTerminalWorkerRecord,
+  writeTerminalCleanupRecord,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 
@@ -582,7 +583,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
         process.execPath,
         [
           "-e",
-          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live.sock"))});setInterval(() => {}, 1e9)`,
+          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live-record-under-test.sock"))});setInterval(() => {}, 1e9)`,
           "--",
           "--paseo-terminal-worker",
           "record-under-test",
@@ -592,7 +593,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       children.push(worker);
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
-        socketPath: path.join(home, "live.sock"),
+        socketPath: path.join(home, "live-record-under-test.sock"),
         identity: {
           startedAt: await birthOf(worker.pid!),
           commandLine: "node -e --paseo-terminal-worker record-under-test",
@@ -635,7 +636,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
         process.execPath,
         [
           "-e",
-          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live.sock"))});setInterval(() => {}, 1e9)`,
+          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live-record-under-test.sock"))});setInterval(() => {}, 1e9)`,
           "--",
           "--paseo-terminal-worker",
           "record-under-test",
@@ -645,7 +646,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       children.push(worker);
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
-        socketPath: path.join(home, "live.sock"),
+        socketPath: path.join(home, "live-record-under-test.sock"),
         identity: {
           startedAt: await birthOf(worker.pid!),
           commandLine: "node -e --paseo-terminal-worker record-under-test",
@@ -701,12 +702,49 @@ describe("terminal worker reaper without process identity", () => {
     expect(existsSync(recordPath)).toBe(false);
   });
 
+  it("does not kill a newer legacy worker when a stale cleanup secret is rejected", async () => {
+    const home = makeHome();
+    const socketPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\paseo-legacy-${Date.now()}`
+        : path.join(home, "legacy.sock");
+    const listener = spawnIdle(`
+      require("node:net").createServer(socket => socket.on("data", () => socket.destroy())).listen(${JSON.stringify(socketPath)}, () => process.stdout.write("ready"));
+    `);
+    await new Promise((resolve) => listener.stdout!.once("data", resolve));
+    const stalePath = writeRecord(home, { pid: listener.pid!, socketPath, secret: "stale-secret" });
+    const stale = await readTerminalWorkerRecord(stalePath);
+    const cleanupPath = await writeTerminalCleanupRecord(home, {
+      ...stale,
+      closing: {
+        unresolved: [
+          { pid: listener.pid!, role: "worker", reason: "still alive", detail: "old cleanup" },
+        ],
+      },
+    });
+    writeRecord(home, {
+      pid: listener.pid!,
+      recordId: "newer-worker",
+      socketPath,
+      secret: "new-secret",
+    });
+    await expect(
+      reapTerminalWorkers({
+        paseoHome: home,
+        gracefulMs: 0,
+        confirmMs: 50,
+        recordPaths: [cleanupPath],
+      }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+    expect(isAlive(listener.pid!)).toBe(true);
+  });
+
   it("force kills a worker whose socket accepts but never answers", async () => {
     const home = makeHome();
     const socketPath =
       process.platform === "win32"
-        ? `\\\\.\\pipe\\paseo-test-${Date.now()}`
-        : path.join(home, "w.sock");
+        ? `\\\\.\\pipe\\paseo-test-${Date.now()}-record-under-test`
+        : path.join(home, "w-record-under-test.sock");
     const listener = await spawnSilentListener(socketPath);
     writeRecord(home, {
       pid: listener.pid!,
@@ -720,6 +758,7 @@ describe("terminal worker reaper without process identity", () => {
       gracefulMs: 300,
     });
     expect(result.signaled).toContain(listener.pid);
+    await waitUntilGone(listener.pid!);
     expect(isAlive(listener.pid!)).toBe(false);
     expect(await readUnconfirmedTerminalCleanup(home)).toEqual([]);
   });
