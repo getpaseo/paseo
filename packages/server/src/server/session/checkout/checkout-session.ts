@@ -51,7 +51,6 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   listCheckoutCommits,
-  getCommitFileDiff,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
@@ -109,6 +108,7 @@ function toLegacyGithubSearchItems(items: ForgeSearchResultItem[]): LegacyGithub
  * real CheckoutDiffManager satisfies this structurally; tests supply a fake.
  */
 export interface CheckoutDiffSubscriber {
+  readCommitFile: import("../../diff/index.js").DiffSubscriptions["readCommitFile"];
   read(
     params: Omit<CheckoutDiffSubscriptionRequest, "signal">,
   ): Promise<CheckoutDiffSnapshotPayload>;
@@ -301,7 +301,12 @@ export class CheckoutSession {
       if (path.length === 0 || isAbsolute(path) || path.split(/[\\/]/).includes("..")) {
         throw new Error(`Invalid path: ${path}`);
       }
-      const file = await getCommitFileDiff({ cwd: expandTilde(cwd), sha, path, signal });
+      const file = await this.checkoutDiffManager.readCommitFile({
+        cwd: expandTilde(cwd),
+        sha,
+        path,
+        signal,
+      });
       this.host.emit({
         type: "checkout.commits.file_diff.response",
         payload: { cwd, sha, path, file, error: null, requestId },

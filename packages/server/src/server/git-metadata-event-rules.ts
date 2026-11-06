@@ -74,6 +74,14 @@ export const GIT_METADATA_EVENT_RULES = [
     route: "local-ref",
   },
   {
+    id: "tag",
+    scope: "common",
+    match: "prefix",
+    path: "refs/tags/",
+    route: "all",
+    refreshBase: true,
+  },
+  {
     id: "remote-branch",
     scope: "common",
     match: "prefix",

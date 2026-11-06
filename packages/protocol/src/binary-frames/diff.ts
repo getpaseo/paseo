@@ -92,6 +92,9 @@ export interface DiffEnd {
 export type DiffFrame = DiffBegin | DiffBodies | DiffEnd;
 export class InvalidDiffFrameError extends Error {}
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true });
+
 class Writer {
   private bytes: number[] = [];
   byte(value: number): void {
@@ -109,7 +112,7 @@ class Writer {
     } while (value);
   }
   str(value: string): void {
-    const bytes = new TextEncoder().encode(value);
+    const bytes = textEncoder.encode(value);
     this.uint(bytes.length);
     for (const byte of bytes) this.byte(byte);
   }
@@ -147,9 +150,7 @@ class Reader {
     const start = this.offset;
     this.offset += size;
     try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(
-        this.bytes.subarray(start, this.offset),
-      );
+      return textDecoder.decode(this.bytes.subarray(start, this.offset));
     } catch {
       throw new InvalidDiffFrameError("Invalid UTF-8");
     }

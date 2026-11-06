@@ -39,7 +39,7 @@ describe("Git metadata event rules", () => {
     ["common", "hooks/pre-commit", { kind: "ignore" }],
     ["common", "logs/refs/heads/main", { kind: "ignore" }],
     ["common", "objects/ab/cdef", { kind: "ignore" }],
-    ["common", "refs/tags/v1", { kind: "ignore" }],
+    ["common", "refs/tags/v1", { kind: "all", refreshBase: true }],
     ["common", "FETCH_HEAD", { kind: "ignore" }],
     ["common", "packed-refs.lock", { kind: "ignore" }],
   ] as const)("classifies %s metadata path %s", (scope, path, expected) => {

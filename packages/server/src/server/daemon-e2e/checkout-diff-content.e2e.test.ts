@@ -293,3 +293,126 @@ test("large source diffs stay renderable for reads, subscriptions, and commit fi
     await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test("streams whole-file batches and answers a same-socket ping before the revision ends", async () => {
+  const { WebSocket } = await import("ws");
+  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "diff-stream-wire-"));
+  let socket: InstanceType<typeof WebSocket> | null = null;
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "README"), "base\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    for (let file = 0; file < 252; file++) {
+      const content =
+        Array.from(
+          { length: 90 },
+          (_, line) =>
+            `export const fn${line} = (param: string) => ({ key: param, value: ${file} });`,
+        ).join("\n") + "\n";
+      writeFileSync(join(cwd, `${file}.ts`), content);
+    }
+    expect(ctx.client.getLastServerInfoMessage()).toMatchObject({
+      features: { diffSubscription: true },
+    });
+    const legacy = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
+    const legacyJsonBytes = Buffer.byteLength(JSON.stringify(legacy.files));
+    expect(legacyJsonBytes).toBeGreaterThanOrEqual(10 * 1024 * 1024);
+    const activeSocket = new WebSocket(`ws://127.0.0.1:${ctx.daemon.port}/ws`);
+    socket = activeSocket;
+    await new Promise<void>((resolve, reject) => {
+      activeSocket.once("open", resolve);
+      activeSocket.once("error", reject);
+    });
+    let encodedBytes = 0;
+    let endReceived = false;
+    let pingSent = false;
+    let pongDuringRevision = false;
+    let bodyFrames = 0;
+    let entryCount = 0;
+    const done = new Promise<void>((resolve, reject) => {
+      activeSocket.on("message", (data, binary) => {
+        try {
+          if (binary) {
+            if (!Buffer.isBuffer(data)) throw new Error("Expected buffer");
+            encodedBytes += data.byteLength;
+            const frame = decodeDiffFrame(new Uint8Array(data));
+            if (frame.opcode === DiffOpcode.Begin) entryCount = frame.entries.length;
+            if (frame.opcode === DiffOpcode.Bodies) {
+              bodyFrames++;
+              if (!pingSent) {
+                pingSent = true;
+                activeSocket.send(
+                  JSON.stringify({
+                    type: "session",
+                    message: { type: "ping", requestId: "mid-revision", clientSentAt: 1 },
+                  }),
+                );
+              }
+            }
+            if (frame.opcode === DiffOpcode.End) {
+              expect(frame.error).toBeNull();
+              endReceived = true;
+              resolve();
+            }
+          } else {
+            const envelope = JSON.parse(data.toString());
+            if (
+              envelope.message?.type === "pong" &&
+              envelope.message.payload.requestId === "mid-revision"
+            )
+              pongDuringRevision = !endReceived;
+            if (envelope.message?.payload?.status === "server_info")
+              activeSocket.send(
+                JSON.stringify({
+                  type: "session",
+                  message: {
+                    type: "diff.subscribe.request",
+                    requestId: "stream-diff",
+                    cwd,
+                    base: { kind: "rev", rev: "HEAD" },
+                    head: { kind: "worktree" },
+                  },
+                }),
+              );
+            if (envelope.message?.type === "diff.subscribe.response")
+              expect(envelope.message.payload.error).toBeNull();
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+      activeSocket.once("error", reject);
+    });
+    activeSocket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "diff-wire-test",
+        clientType: "browser",
+        protocolVersion: 1,
+        capabilities: { owned_subscriptions: true },
+      }),
+    );
+    await done;
+    expect(entryCount).toBe(252);
+    expect(bodyFrames).toBeGreaterThan(1);
+    expect(pongDuringRevision).toBe(true);
+    const artifactDirectory = join(
+      import.meta.dirname,
+      "../../../../../.artifacts/diff-subscription",
+    );
+    mkdirSync(artifactDirectory, { recursive: true });
+    writeFileSync(
+      join(artifactDirectory, "wire-metrics.json"),
+      JSON.stringify({ legacyJsonBytes, encodedBytes, bodyFrames, pongDuringRevision }, null, 2),
+    );
+  } finally {
+    socket?.terminate();
+    await ctx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 60_000);
