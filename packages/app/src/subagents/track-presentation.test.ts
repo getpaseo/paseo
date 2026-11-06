@@ -26,6 +26,7 @@ function row(
         ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
         : { phase: "idle", cancellationRequestId: null }),
     requiresAttention: overrides.requiresAttention ?? false,
+    backgroundWork: overrides.backgroundWork,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
 }
@@ -191,6 +192,22 @@ describe("buildSubagentRowPresentationData", () => {
     expect(buildSubagentRowPresentationData(row({ id: "a", status: "running" })).statusBucket).toBe(
       "running",
     );
+  });
+
+  it("shows a child with background work as running after its foreground turn ends", () => {
+    expect(
+      buildSubagentRowPresentationData(
+        row({ id: "a", status: "idle", backgroundWork: { count: 1 } }),
+      ).statusBucket,
+    ).toBe("running");
+  });
+
+  it("keeps a failed child marked failed while it has background work", () => {
+    expect(
+      buildSubagentRowPresentationData(
+        row({ id: "a", status: "error", backgroundWork: { count: 1 } }),
+      ).statusBucket,
+    ).toBe("failed");
   });
 
   it("maps an idle row to the done status bucket so callers render the static provider icon", () => {

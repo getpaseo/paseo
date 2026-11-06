@@ -44,7 +44,7 @@ export const GIT_METADATA_EVENT_RULES = [
   },
   {
     id: "paseo-worktree-metadata",
-    scope: "worktree",
+    scope: "both",
     match: "exact",
     path: "paseo/worktree.json",
     route: "owner",

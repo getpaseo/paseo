@@ -1021,6 +1021,9 @@ export class HostRuntimeController {
       }
 
       const currentActiveConnectionId = this.snapshot.activeConnectionId;
+      if (currentActiveConnectionId) {
+        this.reconcileActiveProbeWithClient(currentActiveConnectionId, probeByConnectionId);
+      }
       const activeProbe = currentActiveConnectionId
         ? probeByConnectionId.get(currentActiveConnectionId)
         : null;
@@ -1209,6 +1212,27 @@ export class HostRuntimeController {
         })();
       }
     });
+  }
+
+  // The active connection is probed through its own client, which may still be
+  // reconnecting when the probe starts. A verdict taken then is stale if the client
+  // has since connected, so the decision uses the client's current state.
+  private reconcileActiveProbeWithClient(
+    connectionId: string,
+    probeByConnectionId: Map<string, ConnectionProbeState>,
+  ): void {
+    if (probeByConnectionId.get(connectionId)?.status !== "unavailable") return;
+    if (this.authRejectedConnectionIds.has(connectionId)) return;
+    const client = this.snapshot.client;
+    if (!client || client.getConnectionState().status !== "connected") return;
+    const rttMs = client.getLastLivenessRttMs();
+    probeByConnectionId.set(
+      connectionId,
+      rttMs === null
+        ? { status: "pending", latencyMs: null }
+        : { status: "available", latencyMs: rttMs },
+    );
+    this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
   }
 
   private isConnectionUnavailable(

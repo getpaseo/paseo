@@ -1,3 +1,4 @@
+import { resolveWorkspaceRootAgent } from "../workspace-directory.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,7 +51,6 @@ beforeEach(async () => {
     manager: { listAgents: () => [] },
     workspaces: {
       get: async (id) => workspaces.find((entry) => entry.workspaceId === id) ?? null,
-      list: async () => workspaces,
     },
     projectLive: () => {
       throw new Error("No live agents in this suite");
@@ -111,4 +111,29 @@ test("prompt recency ignores background agents", async () => {
   expect(await directory.workspaceLastUserMessageTimes()).toEqual(
     new Map([["open", "2026-03-02T00:00:00.000Z"]]),
   );
+});
+
+test("scoped status queries retain cross-workspace parent context", async () => {
+  const base = { provider: "codex", cwd: home, createdAt: NOW, updatedAt: NOW };
+  await storage.upsert({ ...base, id: "parent", workspaceId: "open" });
+  await storage.upsert({
+    ...base,
+    id: "child",
+    workspaceId: "hidden",
+    labels: { "paseo.parent-agent-id": "parent" },
+    lastStatus: "running",
+  });
+  const agents = await directory.list({
+    workspaceIds: ["hidden"],
+    includeBackground: true,
+    includeAncestors: true,
+  });
+  const child = agents.find((agent) => agent.id === "child")!;
+  expect(
+    resolveWorkspaceRootAgent(child, new Map(agents.map((agent) => [agent.id, agent])))?.id,
+  ).toBe("child");
+  expect(child.status).toBe("running");
+  expect(
+    (await directory.list({ workspaceIds: ["hidden"], includeBackground: true })).map((a) => a.id),
+  ).not.toContain("parent");
 });

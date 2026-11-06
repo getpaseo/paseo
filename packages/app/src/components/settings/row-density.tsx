@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { CONTROL_HEIGHTS, type ControlSize } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, mapLayout, type ControlSize } from "@/components/ui/control-geometry";
 
 import { settingsStyles } from "@/styles/settings";
 
@@ -49,7 +49,7 @@ const styles = StyleSheet.create((theme) => ({
   // trailing button line up.
   nestedRow: {
     paddingVertical: theme.spacing[2],
-    minHeight: CONTROL_HEIGHTS.sm + theme.spacing[2] * 2,
+    minHeight: mapLayout(CONTROL_HEIGHTS.sm, (height) => height + theme.spacing[2] * 2),
   },
   nestedText: {
     fontSize: theme.fontSize.sm,
