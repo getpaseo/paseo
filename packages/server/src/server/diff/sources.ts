@@ -40,7 +40,7 @@ export class HighlightSources {
       newFileContent = await this.content(contents, this.options.headSha, file.entry.path);
     } else if (file.entry.change !== "deleted") {
       const path = resolve(this.options.cwd, file.entry.path);
-      if ((await lstat(path)).isSymbolicLink()) newFileContent = await readlink(path);
+      newFileContent = await readWorktreeLink(path);
     }
     return { oldFileContent, newFileContent };
   }
@@ -64,4 +64,13 @@ export class HighlightSources {
     if (content === undefined) throw new Error("Missing comparison source");
     return content;
   }
+}
+
+async function readWorktreeLink(path: string): Promise<string | undefined> {
+  try {
+    if ((await lstat(path)).isSymbolicLink()) return await readlink(path);
+  } catch {
+    // Source context is optional; files can disappear after Git reads the patch.
+  }
+  return undefined;
 }

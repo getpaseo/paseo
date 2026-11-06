@@ -558,3 +558,38 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("files removed between listing and highlighting retain their deletion patch", async () => {
+  const { encodeDiffFrame, decodeDiffFrame } =
+    await import("@getpaseo/protocol/binary-frames/index");
+  const cwd = await mkdtemp(join(tmpdir(), "diff-source-disappeared-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "a.ts"), "export const old = 1;\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "a.ts"), "export const old = 2;\n");
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+    });
+    try {
+      expect(comparison.files[0].entry.change).toBe("modified");
+      await rm(join(cwd, "a.ts"));
+      const record = await readBody(comparison);
+      expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual(
+        expect.objectContaining({ type: "remove", content: "export const old = 1;" }),
+      );
+      const frame = { opcode: 0x41 as const, slot: 0, revision: 1, files: [record.body] };
+      expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
