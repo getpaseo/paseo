@@ -165,8 +165,9 @@ export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef 
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The base is short and identifies the comparison, so the branch name truncates first.
-  anchor: { flexShrink: 0 },
+  // The branch name truncates first so a short base like "main" stays readable; the cap lets
+  // a long base still truncate instead of overflowing the header.
+  anchor: { flexShrink: 0, minWidth: 0, maxWidth: "40%" },
   footer: { padding: theme.spacing[3], gap: theme.spacing[2] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },
