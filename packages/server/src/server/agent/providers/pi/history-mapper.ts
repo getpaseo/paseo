@@ -330,7 +330,7 @@ export async function* streamPiHistory(
     if (signal?.aborted) return;
     yield event;
   }
-  // Live background entries can arrive during getMessages or child hydration.
+  // Live background entries can arrive during getHistory or child hydration.
   // Drain the growing replay buffer last so an old snapshot cannot win the replay.
   yield* streamCustomEntryHistory({ mapper, customEntries, signal });
 }

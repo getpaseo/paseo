@@ -78,7 +78,9 @@ export function transitionMobilePanel(
     if (event.selection.revision <= state.revision) {
       return { state };
     }
-    const continuesCurrentMotion = state.motionTarget === event.selection.target;
+    // An interrupted drag left the position between anchors, so it moves back even when the
+    // target is unchanged. Without a drag, the command adopts motion already heading there.
+    const continuesCurrentMotion = !state.gesture && state.motionTarget === event.selection.target;
     return {
       animationTarget: continuesCurrentMotion ? undefined : event.selection.target,
       state: {

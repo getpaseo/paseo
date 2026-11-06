@@ -36,11 +36,15 @@ export default defineConfig({
       },
     },
     {
-      name: "compile-usage-components",
+      name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
-        // These labels must react to time and language in the compiled app too.
-        if (!id.includes("/src/usage/") || !id.endsWith(".tsx") || id.includes(".test.")) return;
+        // Exercise compiler-sensitive labels, overlay lifetime and timeline row revisions in the same
+        // form as Expo.
+        const usageComponent = id.includes("/src/usage/") && id.endsWith(".tsx");
+        const overlayLayer = id.endsWith("/src/lib/overlay-root.ts");
+        const streamRow = id.endsWith("/src/agent-stream/stream-row.tsx");
+        if ((!usageComponent && !overlayLayer && !streamRow) || id.includes(".test.")) return;
         const result = transformSync(source, {
           filename: id,
           babelrc: false,
@@ -93,6 +97,17 @@ export default defineConfig({
       },
       {
         extends: true,
+        resolve: {
+          alias: [
+            // The app renders LegendList on native only, from the patched native build. Browser
+            // tests render that build too, instead of the package's separate web build. Unit tests
+            // load it outside Vite, where its react-native import would miss the web alias.
+            {
+              find: /^@legendapp\/list\/react-native$/,
+              replacement: path.resolve(rootNodeModules, "@legendapp/list/react-native.mjs"),
+            },
+          ],
+        },
         test: {
           name: "browser",
           fileParallelism: false,
@@ -163,6 +178,8 @@ export default defineConfig({
       "expo-router/react-navigation",
       "@testing-library/react",
       "@tanstack/react-query",
+      "@tanstack/react-virtual",
+      "@legendapp/list/react-native",
       "react-i18next",
       "i18next",
       "@marijn/find-cluster-break",

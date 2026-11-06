@@ -442,6 +442,12 @@ interface SlashCommandInvocation {
   rawInput: string;
 }
 
+// Claude Code reserves `__`-prefixed commands for its own server-launched sessions
+// (for example `/__remote-workflow`); a user cannot run them from a Paseo agent.
+function isClaudeInternalSlashCommand(commandName: string): boolean {
+  return commandName.startsWith("__");
+}
+
 function classifyClaudeSlashCommand(commandName: string): AgentSlashCommand["kind"] {
   // Claude exposes commands and skills as one flat SDK list, without structured source
   // metadata. Keep obvious root-only/session controls out of inline autocomplete and
@@ -2294,6 +2300,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
+  private readonly backgroundStops = new Map<string, (outcome: string) => void>();
   private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
@@ -2669,6 +2676,33 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  async stopBackgroundWork(id: string): Promise<void> {
+    const query = this.query;
+    if (!query || !this.runtimeSafety.canStop(id))
+      throw new Error("Background work is no longer available");
+    if (this.backgroundStops.has(id)) throw new Error("Stop is already pending");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finish!: (outcome: string) => void;
+    const outcome = new Promise<string>((resolve) => {
+      finish = resolve;
+      this.backgroundStops.set(id, resolve);
+    });
+    try {
+      const result = await Promise.race([
+        Promise.all([query.stopTask(id), outcome]).then(([, value]) => value),
+        outcome.then((value) => (value === "stopped" ? new Promise<string>(() => {}) : value)),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 15000);
+        }),
+      ]);
+      if (result !== "stopped") throw new Error(`Background work stop: ${result}`);
+      if (this.query !== query) throw new Error("Background work connection changed");
+    } finally {
+      clearTimeout(timer);
+      if (this.backgroundStops.get(id) === finish) this.backgroundStops.delete(id);
+    }
+  }
+
   async interrupt(): Promise<void> {
     if (this.cancelCurrentTurn) {
       this.cancelCurrentTurn();
@@ -3018,7 +3052,9 @@ class ClaudeAgentSession implements AgentSession {
     this.closed = true;
     await this.ensureHistoryReady();
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
-    this.cancelCurrentTurn?.();
+    // AgentManager settles the run after runtime release. Preserve cleanup records
+    // without reporting this closure as an explicit turn cancellation.
+    this.flushPendingToolCalls();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
@@ -3085,6 +3121,7 @@ class ClaudeAgentSession implements AgentSession {
     const commands = await q.supportedCommands();
     const commandMap = new Map<string, AgentSlashCommand>();
     for (const cmd of commands) {
+      if (isClaudeInternalSlashCommand(cmd.name)) continue;
       if (!commandMap.has(cmd.name)) {
         commandMap.set(cmd.name, {
           name: cmd.name,
@@ -3476,6 +3513,7 @@ class ClaudeAgentSession implements AgentSession {
     const oldQuery = this.query;
     if (!oldQuery) return;
     const oldInput = this.input;
+    for (const finish of this.backgroundStops.values()) finish("connection lost");
     // Null out query/input BEFORE awaiting the old iterator's return so the
     // old pump sees this.query !== activeQuery and skips failActiveTurns.
     this.query = null;
@@ -3525,9 +3563,12 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
+    // Closure can finish while launch options are being prepared.
+    if (this.closed) throw new Error("Claude session is closed");
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
+    this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
     this.query = claudeQuery(
@@ -4123,11 +4164,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRunningRuntimeTasks(): void {
-    this.dispatchEvents(
-      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
+    for (const finish of this.backgroundStops.values()) finish("connection lost");
+    this.runtimeSafety.retire();
+    this.dispatchEvents([
+      ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
       ),
-    );
+      // The SDK resets its background task set when the CLI process (re)starts.
+      { type: "background_work", provider: "claude", items: null },
+    ]);
   }
 
   private startQueryPump(): void {
@@ -4195,12 +4240,19 @@ class ClaudeAgentSession implements AgentSession {
       if (!this.ownsQuery(activeQuery)) return true;
       this.processingSdkMessages++;
       try {
-        this.runtimeSafety.observe(message);
+        const backgroundWork = this.runtimeSafety.observe(message);
+        if (message.type === "system" && message.subtype === "task_notification")
+          this.backgroundStops.get(message.task_id)?.(message.status);
         logRawMessage(message);
         consecutiveInterruptAbortRecoveries = 0;
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
         if (!this.ownsQuery(activeQuery)) return true;
         await this.routeSdkMessageFromPump(message);
+        if (!this.ownsQuery(activeQuery)) return true;
+        if (backgroundWork && this.runtimeSafety.isCurrentInventory(backgroundWork))
+          this.dispatchEvents([
+            { type: "background_work", provider: "claude", items: backgroundWork },
+          ]);
         return false;
       } finally {
         this.processingSdkMessages--;
@@ -4837,6 +4889,13 @@ class ClaudeAgentSession implements AgentSession {
       this.appendTaskNotificationEvents(message, events);
       return;
     }
+    if (message.subtype === "background_tasks_changed") {
+      this.logger.debug(
+        { tasks: message.tasks.map(({ task_id, task_type }) => ({ task_id, task_type })) },
+        "claude.background_tasks_changed",
+      );
+      return;
+    }
     if (message.subtype === "task_progress") {
       return;
     }
@@ -5037,6 +5096,7 @@ class ClaudeAgentSession implements AgentSession {
       "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
         ? message.errors.join("\n")
         : "Claude run failed";
+    if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
     events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
   }

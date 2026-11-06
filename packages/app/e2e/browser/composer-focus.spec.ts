@@ -25,7 +25,7 @@ import {
   expectMobileAgentSidebarVisible,
   expectMobileExplorerHidden,
   expectMobileExplorerVisible,
-  swipeOpenMobileAgentSidebar,
+  openMobileAgentSidebarWithKeyboard,
   swipeOpenMobileExplorer,
 } from "../support/helpers/sidebar";
 import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
@@ -249,7 +249,7 @@ test.describe("touch screen wide enough for the desktop layout", () => {
 const COMPACT_PANELS = [
   {
     name: "agent list",
-    open: swipeOpenMobileAgentSidebar,
+    open: openMobileAgentSidebarWithKeyboard,
     expectOpen: expectMobileAgentSidebarVisible,
     close: closeMobileAgentSidebar,
     expectClosed: expectMobileAgentSidebarHidden,

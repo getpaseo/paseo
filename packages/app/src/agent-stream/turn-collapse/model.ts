@@ -27,6 +27,11 @@ export interface TurnCollapse {
   hostIdByFoldedMessageId: ReadonlyMap<string, string>;
   /** Mounted rows replaced by a closed turn's host, for preserving the reading position. */
   hostIdByHiddenRowId: ReadonlyMap<string, string>;
+  /**
+   * Hosts whose summary line appeared, changed or went away since `previousTurnsByHostId`. A
+   * history row renders again only when its item changes, so these rows are revised.
+   */
+  updatedHostIds: ReadonlySet<string>;
 }
 
 export interface CollapseTurnsInput {
@@ -36,6 +41,8 @@ export interface CollapseTurnsInput {
   expandedHostIds: ReadonlySet<string>;
   /** The calls a tool-call group row stands for; undefined for a single call. */
   getGroupedCalls: (itemId: string) => readonly (ToolCallItem | ThoughtItem)[] | undefined;
+  /** The previous fold of the same history, the baseline for `updatedHostIds`. */
+  previousTurnsByHostId: ReadonlyMap<string, CollapsedTurn>;
 }
 
 const EMPTY_TURNS: ReadonlyMap<string, CollapsedTurn> = new Map();
@@ -59,13 +66,59 @@ function hasWork(summary: TurnSummary): boolean {
   return Object.keys(paseoActions).length > 0 || Object.values(counts).some((count) => count > 0);
 }
 
+function isSameTurn(a: CollapsedTurn, b: CollapsedTurn): boolean {
+  const { paseoActions: actionsA, ...countsA } = a.summary.tools;
+  const { paseoActions: actionsB, ...countsB } = b.summary.tools;
+  return (
+    a.expanded === b.expanded &&
+    hasSameCounts(countsA, countsB) &&
+    hasSameCounts(actionsA, actionsB)
+  );
+}
+
+function hasSameCounts(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+function findUpdatedHosts(
+  previous: ReadonlyMap<string, CollapsedTurn>,
+  next: ReadonlyMap<string, CollapsedTurn>,
+): ReadonlySet<string> {
+  const updated = new Set<string>();
+  for (const [hostId, turn] of next) {
+    const before = previous.get(hostId);
+    if (!before || !isSameTurn(before, turn)) updated.add(hostId);
+  }
+  for (const hostId of previous.keys()) {
+    if (!next.has(hostId)) updated.add(hostId);
+  }
+  return updated.size === 0 ? EMPTY_IDS : updated;
+}
+
 function staysVisibleWhenCollapsed(item: StreamItem): boolean {
   return isTurnTrigger(item) || item.kind === "compaction";
 }
 
-function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
+function isAssistantReply(item: StreamItem): boolean {
+  return (
+    item.kind === "assistant_message" ||
+    (item.kind === "plugin" && item.sourceKind === "assistant_message")
+  );
+}
+
+function findLastReplyIndex(tail: StreamItem[], start: number, end: number): number {
   for (let index = end - 1; index >= start; index -= 1) {
-    if (tail[index]?.kind === "assistant_message") return index;
+    const item = tail[index]!;
+    if (!isAssistantReply(item)) continue;
+    const messageId = getStreamItemMessageId(item);
+    // A transformer can split one reply into several cards; keep the whole reply visible.
+    while (index > start) {
+      const previous = tail[index - 1]!;
+      if (!isAssistantReply(previous) || getStreamItemMessageId(previous) !== messageId) break;
+      index -= 1;
+    }
+    return index;
   }
   return -1;
 }
@@ -88,7 +141,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const flushRun = (runEnd: number) => {
     const host = tail[runStart - 1];
     const isClosed = runEnd < tail.length || !input.isLatestTurnOpen;
-    const replyIndex = findLastAssistantIndex(tail, runStart, runEnd);
+    const replyIndex = findLastReplyIndex(tail, runStart, runEnd);
     if (
       !host ||
       (host.kind !== "user_message" && host.kind !== "tool_call") ||
@@ -100,7 +153,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     }
     const folded = tail.slice(runStart, replyIndex);
     const summary = summarizeTurn(folded, input.getGroupedCalls);
-    if (!hasWork(summary) && !folded.some((item) => item.kind === "assistant_message")) {
+    if (!hasWork(summary) && !folded.some(isAssistantReply)) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
@@ -137,6 +190,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   }
   flushRun(tail.length);
 
+  const updatedHostIds = findUpdatedHosts(input.previousTurnsByHostId, turnsByHostId);
   if (turnsByHostId.size === 0) {
     return {
       tail,
@@ -144,6 +198,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       nestedItemIds: EMPTY_IDS,
       hostIdByFoldedMessageId: EMPTY_HOSTS,
       hostIdByHiddenRowId: EMPTY_HOSTS,
+      updatedHostIds,
     };
   }
   return {
@@ -155,5 +210,6 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     nestedItemIds,
     hostIdByFoldedMessageId,
     hostIdByHiddenRowId,
+    updatedHostIds,
   };
 }

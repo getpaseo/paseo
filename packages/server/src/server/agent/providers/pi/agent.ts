@@ -255,6 +255,7 @@ interface PiRpcAgentSessionOptions {
   currentModeId?: string | null;
   persistedSessionFile?: string;
   cleanup?: () => void;
+  closeAfterHistory?: boolean;
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
@@ -689,8 +690,6 @@ function createPiPaseoExtensionFile({
 	        requestId,
 	        // Rewind targets: rows can still show entries that a rewind or compaction left off the branch.
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
-	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
-	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
 	        // Extension state belongs to the active branch, including entries before compaction.
 	        customEntries: ctx.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
 	      }),
@@ -1216,7 +1215,6 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
-  private readonly contextUserEntries: PiCapturedEntry[] = [];
   private customEntries: PiCustomEntry[] = [];
   private readonly customEntryStreams = new Set<PiCustomEntry[]>();
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
@@ -1231,6 +1229,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
   private closed = false;
+  private runtimeDead = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
   private pendingOutput: Promise<void> | null = null;
@@ -1261,6 +1260,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.persistedSessionFile = options.persistedSessionFile;
     this.cleanup = options.cleanup;
+    this.closeAfterHistory = options.closeAfterHistory ?? false;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
     this.extensionHost = createPiExtensionHost(this.logger);
@@ -1292,6 +1292,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly config: AgentSessionConfig;
   private readonly persistedSessionFile?: string;
   private readonly cleanup?: () => void;
+  private readonly closeAfterHistory: boolean;
   private readonly extensionTimeoutMs: number;
 
   get id(): string | null {
@@ -1311,6 +1312,9 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
+    if (this.runtimeDead) {
+      throw new Error("Pi process exited. Reload agent before sending another message.");
+    }
     if (this.activeTurnId) {
       throw new Error("A Pi turn is already active");
     }
@@ -1460,14 +1464,16 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    await this.requestEntryCapture("history");
-    const customEntries = [...this.customEntries];
-    this.customEntryStreams.add(customEntries);
+    let customEntries: PiCustomEntry[] = [];
     try {
+      await this.requestEntryCapture("history");
+      customEntries = [...this.customEntries];
+      this.customEntryStreams.add(customEntries);
+      const history = await this.runtimeSession.getHistory();
       yield* streamPiHistory(
         this.provider,
-        await this.runtimeSession.getMessages(),
-        this.contextUserEntries,
+        history.messages,
+        history.userEntries,
         {},
         // At most eight 2 MiB child files per replay; later cards retain their summaries.
         createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
@@ -1476,6 +1482,7 @@ export class PiRpcAgentSession implements AgentSession {
       );
     } finally {
       this.customEntryStreams.delete(customEntries);
+      if (this.closeAfterHistory) await this.close();
     }
   }
 
@@ -2023,13 +2030,9 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private recordCapturedUserEntries(input: {
-    treeEntries: PiCapturedEntry[];
-    contextEntries: PiCapturedEntry[];
-  }): void {
-    this.contextUserEntries.splice(0, this.contextUserEntries.length, ...input.contextEntries);
+  private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
     this.treeUserEntriesById.clear();
-    for (const entry of input.treeEntries) {
+    for (const entry of entries) {
       this.treeUserEntriesById.set(entry.id, entry);
     }
   }
@@ -2066,10 +2069,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
-    this.recordCapturedUserEntries({
-      treeEntries: parseCapturedEntries(payload.treeEntries),
-      contextEntries: parseCapturedEntries(payload.contextEntries),
-    });
+    this.recordCapturedUserEntries(parseCapturedEntries(payload.treeEntries));
     this.customEntries = [];
     this.extensionHost.resetCustomEntries();
     if (Array.isArray(payload.customEntries)) {
@@ -2226,6 +2226,7 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
+    this.runtimeDead = true;
     this.rejectAllExtensionResults(new Error(error));
     this.interruptingTurn = null;
     if (!this.activeTurnId && !this.activeTurnStarted) {
@@ -2772,6 +2773,7 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: capabilitiesForSession(mcp !== null),
         persistedSessionFile: sessionCopy ? sessionFile : undefined,
         cleanup: cleanupTempFiles,
+        closeAfterHistory: options?.purpose === "history",
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
