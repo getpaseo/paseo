@@ -774,6 +774,52 @@ describe("image prompts", () => {
   });
 });
 
+describe("uploaded file prompts", () => {
+  it("inlines readable text files and references uploaded images and large files", async () => {
+    const h = await harness();
+    await h.open();
+    const txtFile = path.join(h.cwd, "notes.txt");
+    await writeFile(txtFile, "export const meaning = 42;");
+    const imgFile = path.join(h.cwd, "photo.png");
+    await writeFile(imgFile, "png bytes");
+
+    await h.completed(
+      await h.message([
+        { type: "text", text: "Please review these attachments:" },
+        {
+          type: "uploaded_file",
+          id: "upload-txt-1",
+          fileName: "notes.txt",
+          mimeType: "text/plain",
+          size: 26,
+          path: txtFile,
+        },
+        {
+          type: "uploaded_file",
+          id: "upload-img-1",
+          fileName: "photo.png",
+          mimeType: "image/png",
+          size: 9,
+          path: imgFile,
+        },
+        {
+          type: "uploaded_file",
+          id: "upload-big-1",
+          fileName: "dataset.bin",
+          mimeType: "application/octet-stream",
+          size: 3 * 1024 * 1024,
+          path: "/tmp/dataset.bin",
+        },
+      ]),
+    );
+
+    const sent = (await h.records()).find((entry) => entry.input).input.message.content;
+    expect(sent).toBe(
+      `SYSTEM PREFIX\n\nPlease review these attachments:\n[File: notes.txt]\nexport const meaning = 42;\nAttached image: ${imgFile}\n[Attached large file: dataset.bin at /tmp/dataset.bin (3145728 bytes)]`,
+    );
+  });
+});
+
 it.runIf(process.platform === "win32")(
   "launches an Antigravity command shim for probes and conversation startup",
   async () => {
