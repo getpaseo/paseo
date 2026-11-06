@@ -13350,6 +13350,7 @@ function runtimeCleanup(manager: AgentManager) {
 }
 
 function idleCleanupHarness() {
+  let now = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-protection-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const commands: AgentPromptInput[] = [];
@@ -13397,7 +13398,12 @@ function idleCleanupHarness() {
       return recordPrompts(session);
     }
   })();
-  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    now: () => now,
+  });
   onTestFinished(async () => {
     closeGate = undefined;
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
@@ -13424,7 +13430,10 @@ function idleCleanupHarness() {
         workspaceId: undefined,
         labels,
       }),
-    later: (minutes: number) => new Date(Date.now() + minutes * 60_000),
+    advance: (minutes: number) => {
+      now += minutes * 60_000;
+    },
+    later: (minutes: number) => new Date(now + minutes * 60_000),
   };
 }
 
@@ -14350,11 +14359,14 @@ test("another read of a read-only runtime restarts its two-minute grace", async 
   await read();
   const firstReadAt = h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince;
   expect(typeof firstReadAt).toBe("number");
-  while (Date.now() <= firstReadAt!) await new Promise((resolve) => setTimeout(resolve, 1));
+  h.advance(1);
   await read();
   const sinceFirstRead = new Date(firstReadAt! + 2 * 60_000);
   expect((await h.sweep({ now: sinceFirstRead })).collected).toEqual([]);
   expect(h.manager.getAgent(agent.id)?.id).toBe(agent.id);
+  expect((await h.sweep({ now: h.later(2) })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
 });
 
 test.each(["prompt", "mode change"])(
