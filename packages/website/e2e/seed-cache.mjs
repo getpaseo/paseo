@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 const state = process.env.WEBSITE_E2E_PERSIST_PATH;
 if (!state) throw new Error("WEBSITE_E2E_PERSIST_PATH is required");
@@ -33,9 +34,12 @@ writeFileSync(
   ),
 );
 execFileSync(
-  "npx",
+  process.execPath,
   [
-    "wrangler",
+    path.join(
+      path.dirname(createRequire(import.meta.url).resolve("wrangler/package.json")),
+      "bin/wrangler.js",
+    ),
     "kv",
     "bulk",
     "put",
