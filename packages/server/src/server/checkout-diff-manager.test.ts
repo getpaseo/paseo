@@ -180,7 +180,7 @@ test("legacy diffs retain successful bodies when an oversized sibling is removed
       { path: "b.txt", status: "too_large" },
     ]);
     await rm(join(cwd, "b.txt"));
-    manager.scheduleRefreshForCwd(cwd);
+    await manager.scheduleRefreshForCwd(cwd);
     await expect.poll(() => updates.at(-1)?.error).toBeNull();
     expect(updates.at(-1)?.files[0]).toMatchObject({
       path: "a.ts",
@@ -206,7 +206,7 @@ test("legacy subscriptions reselect the preferred base when a remote ref appears
     try {
       expect(subscription.initial.files.map((file) => file.path)).toEqual(["b.ts"]);
       git("update-ref", "refs/remotes/origin/main", "HEAD");
-      manager.scheduleRefreshForCwd(cwd);
+      await manager.scheduleRefreshForCwd(cwd);
       await expect.poll(() => updates.at(-1)?.files.length, { timeout: 5000 }).toBe(0);
       expect(updates.at(-1)).toEqual(await manager.read(params));
     } finally {

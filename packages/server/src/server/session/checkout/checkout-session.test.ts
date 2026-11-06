@@ -78,7 +78,7 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
         unsubscribe,
       };
     },
-    scheduleRefreshForCwd: (cwd) => {
+    scheduleRefreshForCwd: async (cwd) => {
       refreshedCwds.push(cwd);
     },
   };

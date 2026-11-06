@@ -215,8 +215,8 @@ export class DiffSubscriptions {
       },
     };
   }
-  invalidateForCwd(cwd: string): void {
-    const matches = createRealpathAwarePathMatcher(cwd);
+  async invalidateForCwd(cwd: string): Promise<void> {
+    const matches = createRealpathAwarePathMatcher(await worktreeRoot(expandTilde(cwd)));
     for (const target of this.targets.values())
       if (matches(target.compare.cwd)) this.invalidate(target);
   }

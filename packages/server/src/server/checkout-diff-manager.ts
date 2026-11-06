@@ -163,8 +163,8 @@ export class CheckoutDiffManager {
       return { initial: { cwd, files: [], error: toCheckoutError(error) }, unsubscribe() {} };
     }
   }
-  scheduleRefreshForCwd(cwd: string): void {
-    this.streams.invalidateForCwd(expandTilde(cwd));
+  scheduleRefreshForCwd(cwd: string): Promise<void> {
+    return this.streams.invalidateForCwd(expandTilde(cwd));
   }
   getMetrics(): CheckoutDiffMetrics {
     const metrics = this.streams.getMetrics();

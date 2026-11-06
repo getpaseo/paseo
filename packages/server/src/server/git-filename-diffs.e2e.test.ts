@@ -142,3 +142,55 @@ test("streamed Changes preserves BOM-prefixed paths and highlighted content", as
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
+
+test("checkout refresh from a subdirectory updates a pinned streamed comparison", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "stream-subdirectory-refresh-"));
+  const { mkdirSync } = await import("node:fs");
+  const workspace = join(cwd, "workspace");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const daemon = await createTestPaseoDaemon({ agentClients: {} });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    mkdirSync(workspace);
+    writeFileSync(join(cwd, "file.txt"), "committed content\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    const head = git("rev-parse", "HEAD");
+    await client.connect();
+    const states: import("@getpaseo/client").DiffState[] = [];
+    const observation = client.observeDiff({
+      cwd: workspace,
+      base: { kind: "empty" },
+      head: { kind: "rev", rev: head },
+    });
+    const unsubscribe = observation.subscribe({
+      snapshot: (state) => states.push(state),
+      update: () => {},
+    });
+    try {
+      await expect.poll(() => states.at(-1)?.phase, { timeout: 15000 }).toBe("ready");
+      const initial = states.at(-1);
+      if (initial?.phase !== "ready") throw new Error("Expected initial diff");
+      expect(initial.files[0]).toMatchObject({ path: "file.txt", status: "ok" });
+      writeFileSync(join(cwd, ".git", "info", "attributes"), "file.txt -diff\n");
+      expect(await client.checkoutRefresh(workspace)).toMatchObject({ success: true, error: null });
+      await expect
+        .poll(() => states.at(-1)?.revision, { timeout: 15000 })
+        .toBeGreaterThan(initial.revision);
+      expect(states.at(-1)).toMatchObject({
+        phase: "ready",
+        files: [{ path: "file.txt", status: "binary", hunks: [] }],
+      });
+    } finally {
+      unsubscribe();
+      await observation.release();
+    }
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

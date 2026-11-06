@@ -1,4 +1,5 @@
 import { parseGitRevParsePath } from "../../utils/git-rev-parse-path.js";
+import { readGitInputIdentities } from "./inputs.js";
 import { Patches } from "./patches.js";
 import { HighlightSources } from "./sources.js";
 import {
@@ -193,53 +194,11 @@ async function readComparisonList(
       ...(privateIndex ? { GIT_INDEX_FILE: privateIndex.indexFile } : {}),
     },
   };
-  const [raw, stat] = await Promise.all([
-    runGitCommand([...args, "--raw", "--no-abbrev", "-z"], options),
-    runGitCommand([...args, "--numstat", "-z"], options),
-  ]);
-  if (raw.truncated || stat.truncated)
-    throw new Error("Diff entry list exceeded the git output budget");
-  const stats = parseStats(stat.stdout);
-  const fields = raw.stdout.split("\0");
-  const files: ListedFile[] = [];
-  for (let index = 0; index < fields.length - 1; index++) {
-    const header = fields[index].split(" ");
-    const code = header[4]?.[0];
-    let path = fields[++index];
-    let oldPath: string | null = null;
-    if (code === "R" || code === "C") {
-      oldPath = path;
-      path = fields[++index];
-    }
-    const counts = stats.get(path);
-    // With -w, a raw metadata entry need not have a numstat record.
-    if (!counts && compare.ignoreWhitespace) continue;
-    if (!counts) throw new Error(`Missing diff statistics for ${path}`);
-    let change: DiffEntry["change"] = "modified";
-    if (code === "A") change = "added";
-    else if (code === "D") change = "deleted";
-    else if (oldPath !== null) change = "renamed";
-    let identity = header.join(" ");
-    if (compare.head.kind === "worktree" && code !== "D") {
-      identity += `:${await readWorktreeIdentity(path, header, options)}`;
-    }
-
-    files.push({
-      entry: {
-        path,
-        oldPath,
-        change,
-        content: counts.binary ? "binary" : "text",
-        additions: counts.additions,
-        deletions: counts.deletions,
-        body: !counts.binary,
-      },
-      identity,
-      source: { kind: "tracked" },
-    });
-  }
+  const { files, worktreeFiles } = await readTrackedFiles(compare, args, options);
   if (compare.head.kind === "worktree") files.push(...(await listUntrackedFiles(options)));
   files.sort((a, b) => a.entry.path.localeCompare(b.entry.path));
+  const gitInputs = await readGitInputIdentities(files, worktreeFiles, options);
+  for (const file of files) file.identity += `:${gitInputs.get(file.entry.path) ?? ""}`;
   const metrics = { highlightCalls: 0 };
   const patches = new Patches(args, options, files);
   const sources = new HighlightSources({
@@ -319,11 +278,67 @@ async function readComparisonList(
   };
 }
 
+async function readTrackedFiles(
+  compare: Compare,
+  args: string[],
+  options: GitCommandOptions,
+): Promise<{ files: ListedFile[]; worktreeFiles: Set<string> }> {
+  const [raw, stat] = await Promise.all([
+    runGitCommand([...args, "--raw", "--no-abbrev", "-z"], options),
+    runGitCommand([...args, "--numstat", "-z"], options),
+  ]);
+  if (raw.truncated || stat.truncated)
+    throw new Error("Diff entry list exceeded the git output budget");
+  const stats = parseStats(stat.stdout);
+  const fields = raw.stdout.split("\0");
+  const files: ListedFile[] = [];
+  const worktreeFiles = new Set<string>();
+  for (let index = 0; index < fields.length - 1; index++) {
+    const header = fields[index].split(" ");
+    const code = header[4]?.[0];
+    let path = fields[++index];
+    let oldPath: string | null = null;
+    if (code === "R" || code === "C") {
+      oldPath = path;
+      path = fields[++index];
+    }
+    const counts = stats.get(path);
+    // With -w, a raw metadata entry need not have a numstat record.
+    if (!counts && compare.ignoreWhitespace) continue;
+    if (!counts) throw new Error(`Missing diff statistics for ${path}`);
+    let change: DiffEntry["change"] = "modified";
+    if (code === "A") change = "added";
+    else if (code === "D") change = "deleted";
+    else if (oldPath !== null) change = "renamed";
+    let identity = header.join(" ");
+    if (compare.head.kind === "worktree" && code !== "D") {
+      const worktree = await readWorktreeIdentity(path, header, options);
+      identity += `:${worktree.identity}`;
+      if (worktree.regular) worktreeFiles.add(path);
+    }
+
+    files.push({
+      entry: {
+        path,
+        oldPath,
+        change,
+        content: counts.binary ? "binary" : "text",
+        additions: counts.additions,
+        deletions: counts.deletions,
+        body: !counts.binary,
+      },
+      identity,
+      source: { kind: "tracked" },
+    });
+  }
+  return { files, worktreeFiles };
+}
+
 async function readWorktreeIdentity(
   path: string,
   header: string[],
   options: GitCommandOptions,
-): Promise<string> {
+): Promise<{ identity: string; regular: boolean }> {
   const value = await lstat(resolve(options.cwd, path), { bigint: true });
   let identity = fileStatIdentity(value);
   if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
@@ -333,7 +348,7 @@ async function readWorktreeIdentity(
     );
     identity += `:${submodule.stdout}`;
   }
-  return identity;
+  return { identity, regular: value.isFile() };
 }
 
 function diffArguments(compare: Compare, baseSha: string, headSha: string): string[] {
