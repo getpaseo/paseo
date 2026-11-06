@@ -6,7 +6,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -24,11 +24,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
-import {
-  ARCHIVED_PARENT_AGENT_ID_LABEL,
-  getOpenAgentTabLabel,
-  PARENT_AGENT_ID_LABEL,
-} from "@getpaseo/protocol/agent-labels";
+import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
@@ -9434,9 +9430,7 @@ test("archiveAgent detaches an open same-workspace child instead of cascading", 
   expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
   expect(storedChild?.labels[DESKTOP_OPEN_AGENT_TAB_LABEL]).toBeUndefined();
   expect(storedChild?.labels[MOBILE_OPEN_AGENT_TAB_LABEL]).toBeUndefined();
-  expect(storedChild?.labels[ARCHIVED_PARENT_AGENT_ID_LABEL]).toBe(parent.id);
   expect(manager.getAgent(child.id)?.id).toBe(child.id);
-  expect(manager.getAgent(child.id)?.labels[ARCHIVED_PARENT_AGENT_ID_LABEL]).toBe(parent.id);
 });
 
 test("archiveAgent detaches a cross-workspace child even when its tab is closed", async () => {
@@ -9470,61 +9464,69 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
   expect(storedChild?.archivedAt).toBeUndefined();
   expect(storedChild?.workspaceId).toBe("workspace-b");
   expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
-  expect(storedChild?.labels[ARCHIVED_PARENT_AGENT_ID_LABEL]).toBe(parent.id);
 });
 
-test("archiveAgent records the archived parent on a stored-only cross-workspace child", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-stored-cross-workspace-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const manager = new AgentManager({
-    clients: { codex: new TestAgentClient() },
-    registry: storage,
-    logger,
-  });
-  const parent = await manager.createAgent(
-    { provider: "codex", cwd: workdir, title: "Parent" },
-    undefined,
-    { workspaceId: "workspace-a" },
-  );
-  const child = await manager.createAgent(
-    { provider: "codex", cwd: workdir, title: "Closed cross-workspace child" },
-    undefined,
-    {
-      workspaceId: "workspace-b",
-      labels: {
-        [PARENT_AGENT_ID_LABEL]: parent.id,
-        [DESKTOP_OPEN_AGENT_TAB_LABEL]: "true",
-        team: "ios",
+test.each([
+  { workspaceId: "workspace-b", open: "false" },
+  { workspaceId: "workspace-a", open: "true" },
+])(
+  "archiveAgent publishes stored survivor detach updates ($workspaceId, open=$open)",
+  async ({ workspaceId, open }) => {
+    const artifacts = join(process.cwd(), ".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const workdir = mkdtempSync(join(artifacts, "stored-child-detach-"));
+    onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const parent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Parent" },
+      undefined,
+      { workspaceId: "workspace-a" },
+    );
+    const child = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Closed cross-workspace child" },
+      undefined,
+      {
+        workspaceId,
+        labels: {
+          [PARENT_AGENT_ID_LABEL]: parent.id,
+          [DESKTOP_OPEN_AGENT_TAB_LABEL]: open,
+          team: "ios",
+        },
       },
-    },
-  );
-  await manager.closeAgent(child.id);
-  // Unfiltered, as a session subscribes: a closed survivor's update must reach every client.
-  const emittedLabels: Array<Record<string, string>> = [];
-  const unsubscribe = manager.subscribe(
-    (event) => {
-      if (event.type === "agent_state" && event.agent.id === child.id) {
-        emittedLabels.push(event.agent.labels);
-      }
-    },
-    { replayState: false },
-  );
+    );
+    await manager.closeAgent(child.id);
+    // Unfiltered, as a session subscribes: a closed survivor's update must reach every client.
+    const emittedLabels: Array<Record<string, string>> = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === child.id) {
+          emittedLabels.push(event.agent.labels);
+        }
+      },
+      { replayState: false },
+    );
 
-  await manager.archiveAgent(parent.id);
-  await manager.flush();
-  unsubscribe();
+    await manager.archiveAgent(parent.id);
+    await manager.flush();
+    unsubscribe();
 
-  const expectedLabels = { team: "ios", [ARCHIVED_PARENT_AGENT_ID_LABEL]: parent.id };
-  const storedChild = await storage.get(child.id);
-  expect(storedChild?.archivedAt).toBeUndefined();
-  expect(storedChild?.labels).toEqual(expectedLabels);
-  expect(emittedLabels).toEqual([expectedLabels]);
+    const expectedLabels = { team: "ios" };
+    const storedChild = await storage.get(child.id);
+    expect(storedChild?.archivedAt).toBeUndefined();
+    expect(storedChild?.labels).toEqual(expectedLabels);
+    expect(emittedLabels).toEqual([expectedLabels]);
 
-  // The provenance label is not parentage: an explicit detach has nothing to sever.
-  const detached = await manager.detachAgent(child.id);
-  expect(detached.previousParentAgentId).toBeNull();
-  expect(detached.record.labels).toEqual(expectedLabels);
-});
+    // The child is already detached; repeating detach has nothing to sever.
+    const detached = await manager.detachAgent(child.id);
+    expect(detached.previousParentAgentId).toBeNull();
+    expect(detached.record.labels).toEqual(expectedLabels);
+  },
+);
 
 test("archiveAgent re-reads a child before deciding whether to cascade", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-fresh-child-"));

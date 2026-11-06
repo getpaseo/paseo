@@ -1,12 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import {
-  ARCHIVED_PARENT_AGENT_ID_LABEL,
-  PARENT_AGENT_ID_LABEL,
-} from "@getpaseo/protocol/agent-labels";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -14,7 +10,7 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo
 const CREATED_AT = "2026-11-04T08:00:00.000Z";
 const UPDATED_AT = "2026-11-04T09:00:00.000Z";
 
-test("parent archive records itself on a closed survivor and tells every client; an explicit detach records nothing", async () => {
+test("parent archive publishes the detached stored survivor to subscribed clients", async () => {
   const fixture = seedFixture();
   let daemon: TestPaseoDaemon | null = null;
   let observer: DaemonClient | null = null;
@@ -35,24 +31,19 @@ test("parent archive records itself on a closed survivor and tells every client;
     });
     await observer.fetchAgents({ filter: { includeBackground: true }, subscribe: {} });
 
-    // Detached by hand while the parent is live: no provenance, now or after the archive.
+    // A child already detached by hand remains independent of the parent archive.
     await actor.detachAgent("child-manual");
     await actor.archiveAgent("parent");
 
-    await expect
-      .poll(() => updates.findLast((update) => update.id === "child-survivor")?.labels)
-      .toEqual({ [ARCHIVED_PARENT_AGENT_ID_LABEL]: "parent" });
     const survivor = await actor.fetchAgent({ agentId: "child-survivor" });
     expect(survivor?.agent.archivedAt).toBeNull();
-    expect(survivor?.agent.labels).toEqual({ [ARCHIVED_PARENT_AGENT_ID_LABEL]: "parent" });
+    expect(survivor?.agent.labels).toEqual({});
+    await expect
+      .poll(() => updates.findLast((update) => update.id === "child-survivor")?.labels)
+      .toEqual({});
     const manual = await actor.fetchAgent({ agentId: "child-manual" });
     expect(manual?.agent.archivedAt).toBeNull();
     expect(manual?.agent.labels).toEqual({});
-    expect(
-      updates.filter(
-        (update) => update.id === "child-manual" && update.labels[ARCHIVED_PARENT_AGENT_ID_LABEL],
-      ),
-    ).toEqual([]);
   } finally {
     await observer?.close().catch(() => undefined);
     await actor?.close().catch(() => undefined);
@@ -62,9 +53,14 @@ test("parent archive records itself on a closed survivor and tells every client;
 });
 
 function seedFixture() {
-  const parentCwd = mkdtempSync(path.join(os.tmpdir(), "paseo-provenance-parent-"));
-  const childCwd = mkdtempSync(path.join(os.tmpdir(), "paseo-provenance-child-"));
-  const paseoHomeRoot = mkdtempSync(path.join(os.tmpdir(), "paseo-provenance-home-"));
+  const artifacts = path.join(process.cwd(), ".artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const root = mkdtempSync(path.join(artifacts, "archive-detach-"));
+  const parentCwd = path.join(root, "parent");
+  const childCwd = path.join(root, "child");
+  const paseoHomeRoot = path.join(root, "home");
+  mkdirSync(parentCwd);
+  mkdirSync(childCwd);
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   const projectsDir = path.join(paseoHome, "projects");
   const agentsDir = path.join(paseoHome, "agents");
@@ -127,7 +123,7 @@ function seedFixture() {
     path.join(agentsDir, "child-manual.json"),
     agent("child-manual", childCwd, "ws-child", { [PARENT_AGENT_ID_LABEL]: "parent" }),
   );
-  return { paseoHomeRoot, cleanupPaths: [paseoHomeRoot, parentCwd, childCwd] };
+  return { paseoHomeRoot, cleanupPaths: [root] };
 }
 
 function writeJson(filePath: string, value: unknown): void {

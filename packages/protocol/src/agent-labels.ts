@@ -1,10 +1,6 @@
 import type { AgentAddress } from "./addresses.js";
 export const PARENT_SERVER_ID_LABEL = "paseo.parent-server-id";
 export const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
-// Provenance only: the parent whose archive detached this agent. Unlike
-// PARENT_AGENT_ID_LABEL it carries no lifecycle meaning (no subagent track,
-// no archive cascade, no tab-close policy).
-export const ARCHIVED_PARENT_AGENT_ID_LABEL = "paseo.archived-parent-agent-id";
 const OPEN_AGENT_TAB_LABEL_PREFIX = "paseo.open-agent-tab.";
 
 export function getOpenAgentTabLabel(clientId: string): string {
