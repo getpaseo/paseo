@@ -33,6 +33,7 @@ function installation(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    workspaceRowAccessories: [],
   };
 }
 

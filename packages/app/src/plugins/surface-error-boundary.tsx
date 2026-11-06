@@ -8,6 +8,7 @@ interface SurfaceErrorBoundaryProps {
   resetKey?: unknown;
   Surface: unknown;
   renderError?(error: string): ReactNode;
+  onError?(error: Error): void;
 }
 
 interface SurfaceErrorBoundaryState {
@@ -26,6 +27,7 @@ export class SurfaceErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.warn("[Plugins] Surface render failed", error, info.componentStack);
+    this.props.onError?.(error);
   }
 
   componentDidUpdate(previous: SurfaceErrorBoundaryProps): void {

@@ -43,6 +43,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    workspaceRowAccessories: [],
   };
 }
 
