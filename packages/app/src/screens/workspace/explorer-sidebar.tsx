@@ -19,9 +19,6 @@ import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window
 import { TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { useTopBandRow } from "@/window-layout";
 
-// One tab, the new-tab button and the header action stay usable beside an occlusion.
-const TOP_BAND_MIN_RAIL_WIDTH = TOUCH_TARGET * 3;
-
 interface ExplorerSidebarDockProps extends Pick<
   WorkspaceDesktopTabsRowProps,
   | "setHoveredCloseTabKey"
@@ -125,7 +122,8 @@ export function ExplorerSidebarDock({
   const topBand = useTopBandRow({
     offset: 0,
     height: TOUCH_TARGET,
-    minimumWidth: TOP_BAND_MIN_RAIL_WIDTH,
+    // Trimming the rail beside the status region truncates its tab labels; start below instead.
+    minimumWidth: Number.POSITIVE_INFINITY,
   });
   const railBandStyle = useMemo(
     () => ({ paddingTop: topBand.top, paddingRight: topBand.trailing }),

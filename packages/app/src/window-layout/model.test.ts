@@ -58,15 +58,13 @@ describe("resolveSafeAreaInsets", () => {
   });
 });
 
-// Estimated, not measured: Duo inner portrait (669×951) with a ≈80pt rectangular top and a
-// top-right status region 144pt wide (202pt with a Live Activity, from #7924's ActivityKit QA).
-// The top bar's start (12pt) is a placeholder: the simulator boots folded and Xcode 27 ships
-// no control to unfold it, so the inner screen's guide frame has not been measured.
+// Measured: iPhone Duo inner screen, portrait (669×951), iOS 27.1 simulator unfolded in
+// DeviceHub. The Live Activity width (202pt) is still an estimate from #7924's ActivityKit QA.
 const duo = {
-  systemTop: 80,
-  topBar: { x: 0, y: 12, width: 669, height: 44 },
-  statusRegion: { x: 525, y: 0, width: 144, height: 80 },
-  liveActivityRegion: { x: 467, y: 0, width: 202, height: 80 },
+  systemTop: 82,
+  topBar: { x: 16, y: 26, width: 509, height: 44 },
+  statusRegion: { x: 525, y: 0, width: 144, height: 82 },
+  liveActivityRegion: { x: 467, y: 0, width: 202, height: 82 },
 };
 
 function duoLayout(occlusions: WindowLayoutRect[]): WindowLayout {
@@ -80,7 +78,7 @@ function duoLayout(occlusions: WindowLayoutRect[]): WindowLayout {
 describe("resolveTopBand", () => {
   it("publishes the top bar's start and the occlusions when the band is in use", () => {
     expect(resolveTopBand(duo.systemTop, duoLayout([duo.statusRegion]))).toEqual({
-      top: 12,
+      top: 26,
       occlusions: [duo.statusRegion],
     });
   });
@@ -93,7 +91,7 @@ describe("resolveTopBand", () => {
 
   it("ignores occlusions when the top bar guide sits below the status region", () => {
     const below = layout({
-      topBar: { x: 0, y: 80, width: 669, height: 44 },
+      topBar: { x: 16, y: 82, width: 637, height: 44 },
       occlusions: [duo.statusRegion],
     });
     expect(resolveTopBand(duo.systemTop, below)).toBeNull();
@@ -162,7 +160,7 @@ describe("resolveTopBandClearance", () => {
         occlusions: [duo.statusRegion],
         minimumWidth: compactMinimum,
       }),
-    ).toEqual({ trailing: 0, top: 60 });
+    ).toEqual({ trailing: 0, top: 48 });
   });
 
   it("starts below the lowest of several overlapping occlusions", () => {
@@ -172,12 +170,12 @@ describe("resolveTopBandClearance", () => {
         occlusions: [duo.statusRegion, { x: 600, y: 0, width: 69, height: 96 }],
         minimumWidth: compactMinimum,
       }),
-    ).toEqual({ trailing: 0, top: 76 });
+    ).toEqual({ trailing: 0, top: 62 });
   });
 
   it("leaves rows alone that do not overlap an occlusion", () => {
     const sidebarRow = { x: 0, y: duo.topBar.y + 8, width: 320, height: 44 };
-    const rowBelow = { x: 0, y: 80, width: 669, height: 44 };
+    const rowBelow = { x: 0, y: 82, width: 669, height: 44 };
     for (const row of [sidebarRow, rowBelow]) {
       expect(
         resolveTopBandClearance({ row, occlusions: [duo.statusRegion], minimumWidth: 0 }),
