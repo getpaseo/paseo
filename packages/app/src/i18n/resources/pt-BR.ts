@@ -1228,6 +1228,8 @@ export const ptBR: TranslationResources = {
         labels: "Etiquetas",
         diff: "Estatísticas de diff",
         timestamp: "Última atividade",
+        agentStatus: "Status do agente",
+        agentStatusCounts: "{{unread}} não lidos, {{running}} em execução, {{read}} lidos",
       },
       checks: {
         iconAndText: "Ícone e texto",
