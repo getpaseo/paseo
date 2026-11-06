@@ -176,6 +176,7 @@ export function SidebarFooterOverflowMenu({
         offset={8}
         width={240}
         pages={pages}
+        scrollable
         testID="sidebar-footer-overflow-menu"
       >
         {actions.map(renderAction)}

@@ -108,3 +108,20 @@ export async function expectFooterOverflowActions(page: Page, names: string[]): 
 export async function chooseFooterOverflowAction(page: Page, name: string): Promise<void> {
   await footerOverflowMenu(page).getByRole("menuitem", { name }).click();
 }
+
+/** Every row of the open overflow menu, and of the page it opened, is inside the viewport's width. */
+export async function expectFooterMenusInsideViewport(page: Page): Promise<void> {
+  const viewport = page.viewportSize()!;
+  const rows = page.getByRole("menuitem");
+  await expect(rows.first()).toBeVisible();
+  const boxes = await rows.evaluateAll((elements) =>
+    elements.map((element) => {
+      const { x, width } = element.getBoundingClientRect();
+      return { x, width };
+    }),
+  );
+  for (const box of boxes) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  }
+}

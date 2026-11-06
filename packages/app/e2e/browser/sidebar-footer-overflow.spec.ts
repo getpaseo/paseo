@@ -4,6 +4,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import {
   chooseFooterOverflowAction,
   expectFooterLine,
+  expectFooterMenusInsideViewport,
   expectFooterNeverClipped,
   expectFooterOverflowActions,
   footerOverflowMenu,
@@ -11,6 +12,7 @@ import {
   seedDockedSidebarWidth,
   watchFooterClipping,
 } from "../support/helpers/sidebar-footer-overflow";
+import { addOfflineHostsAndReload } from "../support/helpers/hosts";
 import { openCompactSidebar } from "../support/helpers/usage-sidebar-item";
 
 const TOUCH_CONTROL = 44;
@@ -88,5 +90,38 @@ test.describe("Sidebar footer in a compact overlay narrower than the footer", ()
     await expectFooterNeverClipped(page);
     await openFooterOverflow(page);
     await expectFooterOverflowActions(page, ["Usage", "Help and support"]);
+    await expectFooterMenusInsideViewport(page);
+  });
+});
+
+test.describe("Sidebar footer on a short, narrow phone", () => {
+  // 164pt for buttons holds Settings, Add project and the caret, so Hosts moves behind it.
+  test.use({ viewport: { width: 180, height: 360 }, hasTouch: true });
+
+  test("the overflow Hosts page scrolls to its last host and Add host", async ({ page }) => {
+    await gotoAppShell(page);
+    await addOfflineHostsAndReload(
+      page,
+      Array.from({ length: 10 }, (_, index) => ({
+        serverId: `overflow-host-${index}`,
+        label: `Overflow host ${index}`,
+      })),
+    );
+    await openCompactSidebar(page);
+    await expectFooterLine(page, {
+      testIDs: ["sidebar-add-project", "sidebar-footer-overflow", "sidebar-settings"],
+      controlSize: TOUCH_CONTROL,
+    });
+    await openFooterOverflow(page);
+    await expectFooterOverflowActions(page, ["Usage", "Hosts", "Help and support"]);
+    await expectFooterMenusInsideViewport(page);
+    await chooseFooterOverflowAction(page, "Hosts");
+    await expectFooterMenusInsideViewport(page);
+    const addHost = page.getByRole("menuitem", { name: "Add host" });
+    await addHost.scrollIntoViewIfNeeded();
+    await expect(page.getByRole("menuitem", { name: "Overflow host 9" })).toBeVisible();
+    await expect(addHost).toBeInViewport();
+    await addHost.click();
+    await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
   });
 });
