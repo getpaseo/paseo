@@ -64,6 +64,7 @@ Paseo MCP 工具和引导功能不可用。你自己为 `agy` 配置的 MCP 服�
 - [crow-cli](https://crow-ai.dev/)：极简的原生 ACP 编程 Agent。
 - [Cursor](https://cursor.com/docs/cli/overview)：Cursor 的编程 Agent。
 - [DeepAgents](https://docs.langchain.com/oss/javascript/deepagents/overview)：基于 LangChain 的编程 Agent。
+- [DeepSeek Harness](#deepseek-harness)：DeepSeek 开源的 Agent Harness。
 - [DimCode](https://dimcode.dev/docs/acp.html)：多模型编程 Agent。
 - [Dirac](https://dirac.run)：开源 Agent，支持基于哈希锚点的并行编辑。
 - [Factory Droid](https://factory.ai/product/cli)：Factory AI 的编程 Agent。
@@ -91,6 +92,14 @@ Paseo MCP 工具和引导功能不可用。你自己为 `agy` 配置的 MCP 服�
 - [VT Code](https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md)：开源的多 Provider 编程 Agent。
 
 应用内目录是权威的、固定版本的来源。这里未列出的 Agent 仍然可以手动添加，参见[自定义 Provider](/docs/custom-providers)。
+
+### DeepSeek Harness {#deepseek-harness}
+
+在 daemon 主机上安装 [DeepSeek Harness](https://www.deepseek.com/harness/) 的 `dsh` CLI。在 **设置 → Hosts → 你的主机 → Providers** 中，在目录里找到 **DeepSeek Harness** 并选择 **添加**。Paseo 会通过通用 ACP 适配器启动 `dsh --profile acp`，首次启动会在 `$DSH_HOME/profiles` 下创建 `acp` profile。
+
+该 profile 默认使用 `deepseek-official/deepseek-v4-flash`，需要 DeepSeek API Key。可以设置 `agents.providers.deepseek-harness.env.DEEPSEEK_API_KEY`，也可以在新会话中改用已有凭据的模型路由。
+
+如果 `dsh` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers)。
 
 ### Hoplite {#hoplite}
 

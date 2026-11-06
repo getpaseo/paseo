@@ -74,6 +74,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [crow-cli](https://crow-ai.dev/), minimal ACP-native coding agent.
 - [Cursor](https://cursor.com/docs/cli/overview), Cursor's coding agent.
 - [DeepAgents](https://docs.langchain.com/oss/javascript/deepagents/overview), LangChain-powered coding agent.
+- [DeepSeek Harness](#deepseek-harness), DeepSeek's open-source agent harness.
 - [DimCode](https://dimcode.dev/docs/acp.html), multi-model coding agent.
 - [Dirac](https://dirac.run), open-source agent with hash-anchored parallel edits.
 - [Factory Droid](https://factory.ai/product/cli), Factory AI's coding agent.
@@ -101,6 +102,19 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [VT Code](https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md), open-source multi-provider coding agent.
 
 The in-app catalog is the canonical, version-pinned source. Anything not listed here can still be added manually, see [Custom providers](/docs/custom-providers).
+
+### DeepSeek Harness
+
+Install the [DeepSeek Harness](https://www.deepseek.com/harness/) CLI (`dsh`) on your daemon host.
+In **Settings → Hosts → your host → Providers**, find **DeepSeek Harness** in the catalog and
+choose **Add**. Paseo launches `dsh --profile acp` through the generic ACP adapter, and the first
+launch creates the `acp` profile under `$DSH_HOME/profiles`.
+
+That profile starts on `deepseek-official/deepseek-v4-flash`, which needs a DeepSeek API key. Set
+`agents.providers.deepseek-harness.env.DEEPSEEK_API_KEY`, or start a session and select a model
+route that already has credentials.
+
+Use a [command override](/docs/custom-providers) if `dsh` is outside your daemon's PATH.
 
 ### Hoplite
 
