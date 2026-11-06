@@ -765,6 +765,40 @@ test.describe("Composer autocomplete", () => {
     }
   });
 
+  test("forgets an arrow-key choice once the search changes", async ({ page }) => {
+    await installListCommandsStub(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "autocomplete-stale-choice-",
+      title: "Autocomplete stale choice",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectWorkspaceTabVisible(page, session.agentId);
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/");
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      await expect(popover.getByText("/tdd", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      // Down wraps from the default bottom row to the top: /clear, then /exit.
+      await input.press("ArrowDown");
+      await input.press("ArrowDown");
+      await input.press("h");
+      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
+      await input.press("Backspace");
+      await expect(input).toHaveValue("/");
+      await input.press("Enter");
+
+      await expect(input).toHaveValue("/tdd ");
+      await expectWorkspaceTabVisible(page, session.agentId);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("shows loading inside the popover until a slow host answers", async ({ page }) => {
     const host = createHeldReply();
     await installListCommandsStub(page, host.reply);
