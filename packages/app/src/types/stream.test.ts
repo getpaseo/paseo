@@ -9,6 +9,7 @@ import {
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
+  replaceWithCanonicalStream,
   streamTimelineItemIdentity,
   type AgentToolCallItem,
   type StreamItem,
@@ -158,6 +159,39 @@ describe("plugin timeline rows", () => {
 });
 
 describe("user message identity", () => {
+  it.each(["", "Continue here"])(
+    "restores fork history onto a cached user message (%s)",
+    (text) => {
+      const cached = createUserMessage({
+        clientMessageId: "fork-client",
+        messageId: "fork-provider",
+        text,
+        timestamp: new Date(0),
+        timelineCursor: { epoch: "timeline", seq: 1 },
+      });
+      const history = {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        text: "[User] Earlier question\n[Assistant] Earlier answer",
+      } as const;
+      const canonical = createUserMessage({
+        ...cached,
+        attachments: [history],
+      });
+      const result = replaceWithCanonicalStream({
+        canonical: [canonical],
+        previousTail: [cached],
+        previousHead: [],
+        sendingClientMessageIds: [],
+        preserveContinuity: true,
+        canonicalCoverage: { epoch: "timeline", endSeq: 1 },
+      });
+      expect(result.tail).toHaveLength(1);
+      expect(result.tail[0]).toMatchObject({ text, attachments: [history] });
+    },
+  );
+
   it.each(["", "Continue from here"])(
     "hydrates fork history without optimistic state: %s",
     (text) => {
