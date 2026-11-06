@@ -384,6 +384,8 @@ export const ptBR: TranslationResources = {
       otherPlaceholder: "Outro...",
     },
     backgroundWork: {
+      pillOne: "1 tarefa em segundo plano",
+      pillMany: "{{count}} tarefas em segundo plano",
       notRunning: "Não está mais em execução",
       dismiss: "Dispensar",
       stop: "Parar",

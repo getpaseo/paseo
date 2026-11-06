@@ -139,7 +139,8 @@ export class CodexBackgroundInventory {
               id: row.processId,
               kind: "shell",
               canStop: true,
-              description: row.command || null,
+              description: null,
+              ...(row.command ? { command: row.command } : {}),
             })),
           );
           cursor = page.nextCursor;

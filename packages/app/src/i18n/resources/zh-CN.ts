@@ -380,6 +380,8 @@ export const zhCN: TranslationResources = {
       otherPlaceholder: "其他...",
     },
     backgroundWork: {
+      pillOne: "1 个后台任务",
+      pillMany: "{{count}} 个后台任务",
       notRunning: "已不再运行",
       dismiss: "关闭",
       stop: "停止",

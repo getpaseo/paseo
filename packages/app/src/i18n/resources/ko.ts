@@ -381,6 +381,8 @@ export const ko: TranslationResources = {
       otherPlaceholder: "기타...",
     },
     backgroundWork: {
+      pillOne: "백그라운드 작업 1개",
+      pillMany: "백그라운드 작업 {{count}}개",
       notRunning: "더 이상 실행 중이 아님",
       dismiss: "닫기",
       stop: "중지",

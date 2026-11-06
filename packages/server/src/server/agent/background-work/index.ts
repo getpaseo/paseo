@@ -5,6 +5,7 @@ export interface AgentBackgroundWorkInput {
   /** Provider-neutral kind; consumers treat unknown kinds as other work. */
   kind: string;
   description: string | null;
+  command?: string;
   canStop?: boolean;
 }
 
@@ -38,6 +39,7 @@ export class AgentBackgroundWorkStore {
         id: input.id,
         kind: input.kind,
         description: input.description,
+        ...(input.command ? { command: input.command } : {}),
         ...(input.canStop
           ? { canStop: true, stopToken: previousById.get(input.id)?.stopToken ?? randomUUID() }
           : {}),
@@ -76,6 +78,7 @@ function sameItems(
         item.id === other.id &&
         item.kind === other.kind &&
         item.description === other.description &&
+        item.command === other.command &&
         item.canStop === other.canStop &&
         item.stopToken === other.stopToken &&
         item.startedAt === other.startedAt

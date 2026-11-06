@@ -112,3 +112,22 @@ test("revokes a stop token while inventory ownership is being re-established", (
   expect(stale.stopToken).toBeUndefined();
   expect(store.apply("agent", [item])![0].stopToken).not.toBe(first.stopToken);
 });
+
+test("publishes command changes without replacing a live item's identity", () => {
+  const store = new AgentBackgroundWorkStore();
+  const item = {
+    id: "1",
+    kind: "monitor",
+    description: "Watch build",
+    command: "tail -f build.log",
+    canStop: true,
+  };
+  const first = store.apply("agent", [item], T0)![0];
+  expect(first.command).toBe("tail -f build.log");
+  const changed = store.apply("agent", [{ ...item, command: "tail -f other.log" }], T1)![0];
+  expect(changed).toMatchObject({
+    command: "tail -f other.log",
+    startedAt: T0,
+    stopToken: first.stopToken,
+  });
+});

@@ -400,8 +400,8 @@ test("publishes every page of the current thread's live background terminals", a
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
       items: [
-        { id: "1", kind: "shell", description: "sleep 1" },
-        { id: "2", kind: "shell", description: "sleep 2" },
+        { id: "1", kind: "shell", description: null, command: "sleep 1" },
+        { id: "2", kind: "shell", description: null, command: "sleep 2" },
       ],
     }),
   );

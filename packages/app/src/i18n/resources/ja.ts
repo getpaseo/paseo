@@ -385,6 +385,8 @@ export const ja: TranslationResources = {
       otherPlaceholder: "その他...",
     },
     backgroundWork: {
+      pillOne: "バックグラウンドタスク1件",
+      pillMany: "バックグラウンドタスク{{count}}件",
       notRunning: "実行は終了しました",
       dismiss: "閉じる",
       stop: "停止",

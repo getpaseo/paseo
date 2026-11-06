@@ -380,6 +380,8 @@ export const ar: TranslationResources = {
       otherPlaceholder: "آخر...",
     },
     backgroundWork: {
+      pillOne: "مهمة واحدة في الخلفية",
+      pillMany: "{{count}} مهمة في الخلفية",
       notRunning: "لم يعد قيد التشغيل",
       dismiss: "إغلاق",
       stop: "إيقاف",

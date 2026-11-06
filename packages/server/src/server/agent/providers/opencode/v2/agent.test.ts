@@ -1218,7 +1218,7 @@ test("reconstructs only promoted session-owned running shells and reconciles exi
         time: { created: 1 },
         state: {
           status: "completed",
-          input: {},
+          input: { description: "Watch tests", command: "sleep ours" },
           content: [{ type: "text", text: "" }],
           metadata: { status: "running", shellID: "ours" },
         },
@@ -1253,7 +1253,9 @@ test("reconstructs only promoted session-owned running shells and reconciles exi
   try {
     await expect
       .poll(() => events.findLast((event) => event.type === "background_work"))
-      .toMatchObject({ items: [{ id: "ours", kind: "shell", description: "sleep ours" }] });
+      .toMatchObject({
+        items: [{ id: "ours", kind: "shell", description: "Watch tests", command: "sleep ours" }],
+      });
     live = [];
     harness.push({ id: "reconnect", created: 2, type: "server.connected", data: {} });
     await expect
@@ -1525,12 +1527,24 @@ test("buffers tool promotion and shell events during background history bootstra
       durable: { aggregateID: harness.info.id, seq: 1, version: 1 },
       data: { sessionID: harness.info.id, assistantMessageID: "msg", id: "tool", name: "shell" },
     });
+    harness.push({
+      id: "input-ended",
+      created: 3,
+      type: "session.tool.input.ended",
+      durable: { aggregateID: harness.info.id, seq: 2, version: 1 },
+      data: {
+        sessionID: harness.info.id,
+        assistantMessageID: "msg",
+        id: "tool",
+        text: JSON.stringify({ description: "Watch tests", command: "sleep 120" }),
+      },
+    });
     harness.push({ id: "created", created: 3, type: "shell.created", data: { info: shell } });
     harness.push({
       id: "success",
       created: 4,
       type: "session.tool.success",
-      durable: { aggregateID: harness.info.id, seq: 2, version: 2 },
+      durable: { aggregateID: harness.info.id, seq: 3, version: 2 },
       data: {
         sessionID: harness.info.id,
         assistantMessageID: "msg",
@@ -1545,19 +1559,21 @@ test("buffers tool promotion and shell events during background history bootstra
     release();
     await expect
       .poll(() => events.findLast((event) => event.type === "background_work"))
-      .toMatchObject({ items: [{ id: "promoted" }] });
+      .toMatchObject({
+        items: [{ id: "promoted", description: "Watch tests", command: "sleep 120" }],
+      });
     harness.push({
       id: "next-input",
       created: 5,
       type: "session.tool.input.started",
-      durable: { aggregateID: harness.info.id, seq: 3, version: 1 },
+      durable: { aggregateID: harness.info.id, seq: 4, version: 1 },
       data: { sessionID: harness.info.id, assistantMessageID: "next", id: "tool", name: "shell" },
     });
     harness.push({
       id: "next-success",
       created: 6,
       type: "session.tool.success",
-      durable: { aggregateID: harness.info.id, seq: 4, version: 2 },
+      durable: { aggregateID: harness.info.id, seq: 5, version: 2 },
       data: {
         sessionID: harness.info.id,
         assistantMessageID: "next",
@@ -1660,7 +1676,7 @@ test("retries failed background bootstrap and roster without losing stale work",
     inventory.start(harness.api);
     await vi.advanceTimersByTimeAsync(0);
     expect(inventory.snapshot()?.items).toEqual([
-      { id: "live", kind: "shell", description: "sleep 120" },
+      { id: "live", kind: "shell", description: null, command: "sleep 120" },
     ]);
     await expect(inventory.stopItem("live")).rejects.toThrow("no longer available");
     historyFails = false;

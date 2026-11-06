@@ -7,6 +7,7 @@ import { LiveElapsed } from "@/components/message";
 import { Button } from "@/components/ui/button";
 import type { PaseoAgentBackgroundWorkItem } from "@getpaseo/client";
 import { createHostBackgroundWorkModel } from "./host";
+import { backgroundWorkText } from "./presentation";
 export { createHostBackgroundWorkModel } from "./host";
 
 function kindKey(kind: string): "shell" | "monitor" | "other" {
@@ -38,7 +39,13 @@ export function BackgroundWorkTrack({
       testID="background-work"
       panelTitle={t("message.backgroundWork.title")}
       segments={[
-        { bucket: "running", text: `${t("message.backgroundWork.label")} · ${visibleCount}` },
+        {
+          bucket: "running",
+          text:
+            visibleCount === 1
+              ? t("message.backgroundWork.pillOne")
+              : t("message.backgroundWork.pillMany", { count: visibleCount }),
+        },
       ]}
     >
       {status === "loading" || status === "stale" ? (
@@ -98,6 +105,7 @@ function BackgroundWorkRow({
   );
   let detail = t("message.backgroundWork.notRunning");
   if (stopStatus === "pending") detail = t("message.backgroundWork.stopping");
+  const { title, command } = backgroundWorkText(item, kind);
   const action = item.canStop && ready && live;
   const label =
     stopStatus === "pending"
@@ -106,7 +114,8 @@ function BackgroundWorkRow({
   return (
     <ComposerTrackRow>
       <View style={styles.row}>
-        <Text style={styles.title}>{item.description ?? kind}</Text>
+        <Text style={styles.title}>{title}</Text>
+        {command ? <Text style={styles.facts}>{command}</Text> : null}
         <Text style={styles.facts}>
           {kind} ·{" "}
           {live ? (
@@ -123,7 +132,7 @@ function BackgroundWorkRow({
         <Button
           variant="ghost"
           size="sm"
-          accessibilityLabel={`${t("message.backgroundWork.stop")} ${item.description ?? kind}`}
+          accessibilityLabel={`${t("message.backgroundWork.stop")} ${title}`}
           disabled={stopStatus === "pending"}
           onPress={stop}
         >

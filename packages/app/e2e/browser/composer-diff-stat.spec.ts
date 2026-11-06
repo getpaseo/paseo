@@ -1,7 +1,9 @@
-import type { Locator } from "@playwright/test";
+import type { CDPSession, Locator } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
+import { seedSubagent } from "../support/helpers/subagents";
+import { submitMessage } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { gateNextAgentMessage } from "../support/helpers/agent-message-gate";
 import {
@@ -860,3 +862,96 @@ async function expectReviewEditorBody(page: Page, body: string) {
     body,
   );
 }
+
+async function swipeComposerTracks(page: Page, client: CDPSession, direction: "left" | "right") {
+  const track = page.getByTestId("composer-track-scroll");
+  const box = await track.boundingBox();
+  if (!box) throw new Error("Composer tracks are not visible");
+  const start = direction === "left" ? box.x + box.width - 5 : box.x + 5;
+  const end = direction === "left" ? box.x + 5 : box.x + box.width - 5;
+  await swipeTouch(client, start, end, box.y + box.height / 2);
+}
+
+async function swipeTouch(client: CDPSession, start: number, end: number, y: number) {
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: start, y }],
+  });
+  for (let step = 1; step <= 8; step++) {
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: start + ((end - start) * step) / 8, y }],
+    });
+  }
+  await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+}
+
+test("compact composer scrolls its task, subagent and changes tracks without squeezing them", async ({
+  page,
+}) => {
+  const workspace = await seedChangedAgent("composer-tracks-overflow-");
+  const touch = await page.context().newCDPSession(page);
+  await touch.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  await page.addInitScript(() => {
+    const matchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      const media = matchMedia(query);
+      if (query !== "(any-pointer: coarse)") return media;
+      return new Proxy(media, {
+        get(target, key) {
+          if (key === "matches") return true;
+          const value = Reflect.get(target, key, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+  });
+  try {
+    await seedSubagent(
+      { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
+      { parentId: workspace.agentId, title: "Track child" },
+    );
+    await page.setViewportSize({ width: 1000, height: 844 });
+    await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+    await submitMessage(page, "emit 1 agent stream updates");
+    const tasks = page.getByTestId("agent-task-list-header");
+    const subagents = page.getByTestId("subagents-track-header");
+    const changes = page.getByTestId("composer-diff-stat-pill");
+    await expect(tasks).toBeVisible();
+    await expect(subagents).toBeVisible();
+    await expect(changes).toBeVisible();
+    const wideWidths = await Promise.all(
+      [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
+    );
+    await page.setViewportSize({ width: 200, height: 844 });
+    const narrowWidths = await Promise.all(
+      [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
+    );
+    for (const [index, width] of wideWidths.entries())
+      expect(narrowWidths[index]).toBeGreaterThanOrEqual(width - 1);
+    const track = page.getByTestId("composer-track-scroll");
+    expect(await track.evaluate((node) => node.scrollWidth)).toBeGreaterThan(
+      await track.evaluate((node) => node.clientWidth),
+    );
+    await swipeComposerTracks(page, touch, "left");
+    await expect.poll(() => track.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    await swipeComposerTracks(page, touch, "right");
+    await expect.poll(() => track.evaluate((node) => node.scrollLeft)).toBeLessThanOrEqual(1);
+    await swipeComposerTracks(page, touch, "left");
+    await expect.poll(() => track.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport();
+    await expect(page.getByTestId("workspace-explorer-sidebar")).not.toBeInViewport();
+    await page.getByRole("button", { name: "Open menu" }).click();
+    await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ ratio: 1 });
+    await page.getByTestId("sidebar-close").click();
+    await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport();
+    await expect(changes).toBeInViewport();
+    await changes.click();
+    await expect(
+      page.getByTestId("changes-header").filter({ visible: true }).first(),
+    ).toBeVisible();
+  } finally {
+    await touch.detach();
+    await workspace.cleanup();
+  }
+});

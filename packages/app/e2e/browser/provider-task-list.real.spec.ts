@@ -124,7 +124,9 @@ async function openBackgroundInventory(
   page: Page,
   options: { compact: boolean; count: number; timeout: number },
 ): Promise<Locator> {
-  const pill = page.getByRole("button", { name: `Background · ${options.count}` });
+  const pill = page.getByRole("button", {
+    name: options.count === 1 ? "1 background task" : `${options.count} background tasks`,
+  });
   await expect(pill).toBeVisible({ timeout: options.timeout });
   await pill.click();
   const panel = page.getByTestId(
@@ -188,7 +190,7 @@ async function expectAssistantReply(page: Page, text: string): Promise<void> {
 }
 
 async function expectBackgroundPill(page: Page): Promise<void> {
-  await expect(page.getByRole("button", { name: /Background · 1/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "1 background task" })).toBeVisible();
 }
 
 async function expectBackgroundWorkOnAnotherClient(page: Page): Promise<void> {
@@ -455,6 +457,11 @@ test("Claude stops a selected monitor in the compact sheet", async ({ page }) =>
     await expectAssistantReply(page, "SPAWNED");
     const panel = await openBackgroundInventory(page, { compact: true, count: 2, timeout: 30_000 });
     await expectBackgroundItems(panel, "probe monitor one", "probe monitor two");
+    await expect(panel.getByText("sleep 150", { exact: true })).toHaveCount(2);
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/refinement-monitor-compact.png"),
+      animations: "disabled",
+    });
     await stopBackgroundItem(panel, "probe monitor one");
     await expectStoppedItemAndSibling(panel, "probe monitor one", "probe monitor two");
     await page.screenshot({
@@ -489,6 +496,47 @@ test("Claude stops a selected monitor in the compact sheet", async ({ page }) =>
           expect.objectContaining({ description: "probe monitor two", kind: "monitor" }),
         ]),
       );
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
+  }
+});
+
+test("Claude shows monitor description and command in the wide track", async ({ page }) => {
+  test.setTimeout(300_000);
+  const cwd = realpathSync(
+    mkdtempSync(path.resolve("../../.artifacts/refinement-wide-workspace-")),
+  );
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({
+      page,
+      provider: "claude",
+      cwd,
+      mode: "full-access",
+      providerConfig: { model: "opus" },
+    });
+    await sendMessage(
+      handle,
+      'Use Monitor with command `sleep 150`, timeout_ms 150000, persistent false, description "Watch the build". Do not wait; reply SPAWNED. Do not use other tools.',
+    );
+    await expectBackgroundAgentRunning(page);
+    const workspaceRow = page.getByTestId(
+      `sidebar-workspace-row-${getServerId()}:${handle.workspaceId}`,
+    );
+    await workspaceRow.scrollIntoViewIfNeeded();
+    await expect(workspaceRow.getByTestId("workspace-status-indicator-running")).toBeVisible();
+    const panel = await openBackgroundInventory(page, {
+      compact: false,
+      count: 1,
+      timeout: 30_000,
+    });
+    await expect(panel).toContainText("Watch the build");
+    await expect(panel).toContainText("sleep 150");
+    await expect(panel.getByRole("button", { name: "Stop Watch the build" })).toBeVisible();
+    await page.screenshot({
+      path: path.resolve("../../.artifacts/refinement-monitor-wide.png"),
+      animations: "disabled",
+    });
   } finally {
     await cleanupRewindFlow({ handle, cwd });
   }

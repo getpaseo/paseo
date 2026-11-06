@@ -385,6 +385,8 @@ export const fr: TranslationResources = {
       otherPlaceholder: "Autre…",
     },
     backgroundWork: {
+      pillOne: "1 tâche en arrière-plan",
+      pillMany: "{{count}} tâches en arrière-plan",
       notRunning: "N’est plus en cours",
       dismiss: "Fermer",
       stop: "Arrêter",

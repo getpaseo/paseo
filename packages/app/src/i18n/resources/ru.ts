@@ -384,6 +384,8 @@ export const ru: TranslationResources = {
       otherPlaceholder: "Другой ответ...",
     },
     backgroundWork: {
+      pillOne: "1 фоновая задача",
+      pillMany: "Фоновые задачи: {{count}}",
       notRunning: "Больше не выполняется",
       dismiss: "Закрыть",
       stop: "Остановить",

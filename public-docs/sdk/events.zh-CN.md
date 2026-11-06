@@ -53,7 +53,7 @@ const unsubscribe = agent.backgroundWork.subscribe((items) => render(items));
 unsubscribe();
 ```
 
-订阅建立后，`subscribe()` 会向监听器投递当前列表；每次重连后和每次变化时，也会投递完整列表。用 `list()` 执行单次读取。每项包含 `id`、`kind`（`"shell"`、`"monitor"` 或 `"other"`，未知值按 `"other"` 处理）、可为 `null` 的 `description`，以及 Paseo 首次观察到该项的时间 `startedAt`。列表属于当前 Provider 会话，不会持久化。运行时丢失后，旧项会被清除。列表不可用时会报告错误，而不是返回空列表。
+订阅建立后，`subscribe()` 会向监听器投递当前列表；每次重连后和每次变化时，也会投递完整列表。用 `list()` 执行单次读取。每项包含 `id`、`kind`（`"shell"`、`"monitor"` 或 `"other"`，未知值按 `"other"` 处理）、可为 `null` 的 `description`、可选的 `command`，以及 Paseo 首次观察到该项的时间 `startedAt`。列表属于当前 Provider 会话，不会持久化。运行时丢失后，旧项会被清除。列表不可用时会报告错误，而不是返回空列表。
 
 传入 `subscribe(listener, { onError })` 可接收读取当前列表失败的错误；此时不会调用监听器，下次重连时会重新读取。未提供 `onError` 时会记录错误。
 

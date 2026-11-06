@@ -9,6 +9,7 @@ type RelevantEvent = Extract<
   {
     type:
       | "session.tool.input.started"
+      | "session.tool.input.ended"
       | "session.tool.success"
       | "shell.created"
       | "shell.exited"
@@ -25,6 +26,8 @@ export class OpenCodeBackgroundInventory {
   private retrying = false;
   private events: RelevantEvent[] = [];
   private names = new Map<string, string>();
+  private inputs = new Map<string, unknown>();
+  private descriptions = new Map<string, string>();
   private promoted = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private current: InventoryEvent | null = null;
@@ -115,6 +118,7 @@ export class OpenCodeBackgroundInventory {
     this.timer = null;
     if (lost) {
       this.promoted.clear();
+      this.descriptions.clear();
       this.current = null;
       this.emit({ type: "background_work", provider: "opencode", items: null });
     } else if (this.current?.items?.some((item) => item.canStop)) {
@@ -124,6 +128,7 @@ export class OpenCodeBackgroundInventory {
         id: item.id,
         kind: item.kind,
         description: item.description,
+        ...(item.command ? { command: item.command } : {}),
       }));
       this.current = { type: "background_work", provider: "opencode", items };
       this.emit(this.current);
@@ -134,6 +139,7 @@ export class OpenCodeBackgroundInventory {
       const history = await messages(client, this.id);
       if (generation !== this.generation) return;
       this.names = new Map();
+      this.inputs = new Map();
       // Rewinds can remove launch messages without stopping the shell. Keep known
       // promotions until the current provider roster confirms they are gone.
       this.readHistory(history);
@@ -155,16 +161,27 @@ export class OpenCodeBackgroundInventory {
       for (const part of message.content) {
         if (part.type !== "tool") continue;
         if (part.state.status === "completed") {
-          if (part.name === "shell") this.promote(part.state.metadata);
+          if (part.name === "shell") this.promote(part.state.metadata, part.state.input);
         } else if (part.state.status !== "error") {
-          this.names.set(`${message.id}:${part.id}`, part.name);
+          const key = `${message.id}:${part.id}`;
+          this.names.set(key, part.name);
+          if (part.name === "shell") this.inputs.set(key, part.state.input);
         }
       }
     }
   }
-  private promote(metadata: { [key: string]: unknown } | undefined) {
-    if (metadata?.status === "running" && typeof metadata.shellID === "string")
+  private promote(metadata: { [key: string]: unknown } | undefined, input?: unknown) {
+    if (metadata?.status === "running" && typeof metadata.shellID === "string") {
       this.promoted.add(metadata.shellID);
+      if (
+        input &&
+        typeof input === "object" &&
+        "description" in input &&
+        typeof input.description === "string" &&
+        input.description.trim()
+      )
+        this.descriptions.set(metadata.shellID, input.description.trim());
+    }
   }
   observe(event: OpenCodeEvent) {
     if (event.type === "session.revert.committed" && event.data.sessionID === this.id) {
@@ -176,6 +193,7 @@ export class OpenCodeBackgroundInventory {
       event.type !== "shell.exited" &&
       event.type !== "shell.deleted" &&
       event.type !== "session.tool.input.started" &&
+      event.type !== "session.tool.input.ended" &&
       event.type !== "session.tool.success"
     )
       return;
@@ -186,7 +204,7 @@ export class OpenCodeBackgroundInventory {
       return;
     }
     this.apply(event);
-    if (event.type !== "session.tool.input.started") {
+    if (event.type !== "session.tool.input.started" && event.type !== "session.tool.input.ended") {
       this.dirty = true;
       if (!this.retrying) this.refresh();
     }
@@ -195,12 +213,30 @@ export class OpenCodeBackgroundInventory {
     if (event.type === "session.tool.input.started")
       this.names.set(`${event.data.assistantMessageID}:${event.data.id}`, event.data.name);
     if (
+      event.type === "session.tool.input.ended" &&
+      this.names.get(`${event.data.assistantMessageID}:${event.data.id}`) === "shell"
+    ) {
+      try {
+        this.inputs.set(
+          `${event.data.assistantMessageID}:${event.data.id}`,
+          JSON.parse(event.data.text),
+        );
+      } catch {
+        /* A malformed tool input supplies no presentation metadata. */
+      }
+    }
+    if (
       event.type === "session.tool.success" &&
       this.names.get(`${event.data.assistantMessageID}:${event.data.id}`) === "shell"
     )
-      this.promote(event.data.metadata);
-    if (event.type === "session.tool.success")
+      this.promote(
+        event.data.metadata,
+        this.inputs.get(`${event.data.assistantMessageID}:${event.data.id}`),
+      );
+    if (event.type === "session.tool.success") {
       this.names.delete(`${event.data.assistantMessageID}:${event.data.id}`);
+      this.inputs.delete(`${event.data.assistantMessageID}:${event.data.id}`);
+    }
   }
   private refresh() {
     if (!this.client || this.loading || this.pending) return;
@@ -247,6 +283,7 @@ export class OpenCodeBackgroundInventory {
         .map((shell) => shell.id),
     );
     this.promoted = new Set([...this.promoted].filter((id) => live.has(id)));
+    for (const id of this.descriptions.keys()) if (!live.has(id)) this.descriptions.delete(id);
     this.current = {
       type: "background_work",
       provider: "opencode",
@@ -260,7 +297,8 @@ export class OpenCodeBackgroundInventory {
         .map((shell) => ({
           id: shell.id,
           kind: "shell",
-          description: shell.command || null,
+          description: this.descriptions.get(shell.id) ?? null,
+          command: shell.command || undefined,
           canStop: true,
         })),
     };

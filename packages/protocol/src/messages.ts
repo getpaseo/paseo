@@ -4953,10 +4953,11 @@ export const ProviderSubagentListResponseMessageSchema = z.object({
 
 export const AgentBackgroundWorkItemSchema = z.object({
   id: z.string(),
-  // Open string: "shell" or "other" today (Claude Monitor watches report as "shell").
+  // Open string: known kinds include "shell" and "monitor".
   // Clients treat unknown values as "other".
   kind: z.string(),
   description: z.string().nullable(),
+  command: z.string().optional(),
   startedAt: z.string(),
   canStop: z.boolean().optional(),
   stopToken: z.string().optional(),

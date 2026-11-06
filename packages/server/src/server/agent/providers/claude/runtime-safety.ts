@@ -10,6 +10,7 @@ export class ClaudeRuntimeSafety {
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
   private readonly monitorTools = new Set<string>();
+  private readonly toolInputs = new Map<string, { description?: string; command?: string }>();
   private readonly taskTools = new Map<string, string>();
 
   reset(): void {
@@ -18,6 +19,7 @@ export class ClaudeRuntimeSafety {
     this.published = undefined;
     this.awaitingNotifications.clear();
     this.monitorTools.clear();
+    this.toolInputs.clear();
     this.taskTools.clear();
   }
 
@@ -42,8 +44,10 @@ export class ClaudeRuntimeSafety {
     if (message.type === "assistant") {
       let relevant = false;
       for (const block of message.message.content) {
-        if (block.type === "tool_use" && block.name === "Monitor")
-          relevant = this.observeMonitor(block.id) || relevant;
+        if (block.type === "tool_use" && (block.name === "Monitor" || block.name === "Bash")) {
+          if (block.name === "Monitor") relevant = this.observeMonitor(block.id) || relevant;
+          relevant = this.observeInput(block.id, block.input) || relevant;
+        }
       }
       return relevant;
     }
@@ -53,6 +57,20 @@ export class ClaudeRuntimeSafety {
         return this.observeMonitor(block.id);
     }
     return false;
+  }
+
+  private observeInput(id: string, value: unknown): boolean {
+    const input = value as Record<string, unknown> | null;
+    const description = typeof input?.description === "string" ? input.description.trim() : "";
+    const command = typeof input?.command === "string" ? input.command.trim() : "";
+    const previous = this.toolInputs.get(id);
+    if (description === (previous?.description ?? "") && command === (previous?.command ?? ""))
+      return false;
+    this.toolInputs.set(id, {
+      ...(description ? { description } : {}),
+      ...(command ? { command } : {}),
+    });
+    return this.liveTasks.some((task) => this.taskTools.get(task.task_id) === id);
   }
 
   private observeMonitor(id: string): boolean {
@@ -68,7 +86,9 @@ export class ClaudeRuntimeSafety {
       return (
         previous !== message.tool_use_id &&
         (this.monitorTools.has(message.tool_use_id) ||
-          (previous !== undefined && this.monitorTools.has(previous))) &&
+          this.toolInputs.has(message.tool_use_id) ||
+          (previous !== undefined &&
+            (this.monitorTools.has(previous) || this.toolInputs.has(previous)))) &&
         this.liveTasks.some((task) => task.task_id === message.task_id)
       );
     }
@@ -112,7 +132,11 @@ export class ClaudeRuntimeSafety {
 
   private buildInventory(): AgentBackgroundWorkInput[] {
     return toBackgroundWorkInputs(this.liveTasks).map((item) => {
-      if (this.monitorTools.has(this.taskTools.get(item.id) ?? "")) item.kind = "monitor";
+      const tool = this.taskTools.get(item.id) ?? "";
+      if (this.monitorTools.has(tool)) item.kind = "monitor";
+      const input = this.toolInputs.get(tool);
+      if (input?.description) item.description = input.description;
+      if (input?.command) item.command = input.command;
       return item;
     });
   }
@@ -129,6 +153,7 @@ function sameInventory(
         item.id === right[index].id &&
         item.kind === right[index].kind &&
         item.description === right[index].description &&
+        item.command === right[index].command &&
         item.canStop === right[index].canStop,
     )
   );

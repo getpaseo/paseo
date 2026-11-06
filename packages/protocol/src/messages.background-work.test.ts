@@ -52,6 +52,15 @@ describe("agent background work protocol", () => {
     ).toMatchObject({ payload: { items: [{ kind: "future-kind" }] } });
   });
 
+  test("preserves an optional command while accepting older items", () => {
+    const withCommand = { ...ITEM, description: "Watch build", command: "tail -f build.log" };
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "agent.background_work.update",
+      payload: { agentId: "agent-1", items: [ITEM, withCommand] },
+    });
+    expect(parsed).toMatchObject({ payload: { items: [ITEM, withCommand] } });
+  });
+
   test("is a subscribable event", () => {
     expect(SessionEventSubscriptionSchema.parse("agent.background_work.update")).toBe(
       "agent.background_work.update",
