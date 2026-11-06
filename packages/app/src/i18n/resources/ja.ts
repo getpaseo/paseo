@@ -376,6 +376,11 @@ export const ja: TranslationResources = {
       insertAndSend: "文字起こしを挿入して送信",
       failed: "音声入力に失敗しました: {{error}}",
       failedRetry: "音声入力に失敗しました。再試行をタップしてください。",
+      empty: {
+        noAudio: "音声が録音されませんでした。別のアプリがマイクを使用していませんか？",
+        silentAudio: "無音しか録音されませんでした。マイクを確認してください。",
+        noSpeech: "音声を認識できませんでした。再試行をタップしてください。",
+      },
     },
     question: {
       responseFailed: "回答を送信できませんでした。もう一度お試しください。",

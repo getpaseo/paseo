@@ -372,6 +372,11 @@ export const ko: TranslationResources = {
       insertAndSend: "전사 삽입 후 보내기",
       failed: "받아쓰기 실패: {{error}}",
       failedRetry: "받아쓰기에 실패했습니다. 다시 시도하려면 누르세요.",
+      empty: {
+        noAudio: "녹음된 오디오가 없습니다. 다른 앱이 마이크를 사용 중인가요?",
+        silentAudio: "무음만 녹음되었습니다. 마이크를 확인하세요.",
+        noSpeech: "음성이 인식되지 않았습니다. 다시 시도하려면 누르세요.",
+      },
     },
     question: {
       responseFailed: "응답을 보내지 못했습니다. 다시 시도해 주세요.",

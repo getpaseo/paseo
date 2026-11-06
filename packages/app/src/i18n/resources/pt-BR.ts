@@ -375,6 +375,11 @@ export const ptBR: TranslationResources = {
       insertAndSend: "Inserir transcrição e enviar",
       failed: "Falha no ditado: {{error}}",
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
+      empty: {
+        noAudio: "Nenhum áudio foi gravado. Outro app está usando o microfone?",
+        silentAudio: "Só foi gravado silêncio. Verifique seu microfone.",
+        noSpeech: "Nenhuma fala foi reconhecida. Toque para tentar novamente.",
+      },
     },
     question: {
       responseFailed: "Não foi possível enviar sua resposta. Tente novamente.",
