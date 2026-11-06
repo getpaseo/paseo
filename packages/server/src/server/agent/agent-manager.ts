@@ -1,3 +1,4 @@
+import { findForkContext } from "./fork-context.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
@@ -441,7 +442,7 @@ interface HandleStreamEventOptions {
 }
 
 interface ManagedAgentBase {
-  forkContext?: StoredAgentRecord["forkContext"];
+  forkContexts?: StoredAgentRecord["forkContexts"];
   id: string;
   provider: AgentProvider;
   cwd: string;
@@ -4491,12 +4492,12 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
+    const claimedForkContexts = new Set<string>();
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        claimedForkContexts,
+      });
       if (broadcastTimeline) {
         this.dispatchStream(
           agent.id,
@@ -4564,12 +4565,12 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
+    const claimedForkContexts = new Set<string>();
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        claimedForkContexts,
+      });
       if (deferredBroadcast) {
         timelineEvents.push({ event: { ...event, item: row.item }, row });
       } else if (broadcast) {
@@ -5155,12 +5156,17 @@ export class AgentManager {
           block.type === "text" && "contextKind" in block && block.contextKind === "chat_history",
       );
       if (attachment?.type === "text" && "mimeType" in attachment) {
-        agent.forkContext = {
-          clientMessageId,
-          providerMessageId:
-            options?.providerMessageId !== clientMessageId ? options?.providerMessageId : undefined,
-          text,
-          attachment: { ...attachment, contextKind: "chat_history" },
+        agent.forkContexts = {
+          ...agent.forkContexts,
+          [clientMessageId]: {
+            clientMessageId,
+            providerMessageId:
+              options?.providerMessageId !== clientMessageId
+                ? options?.providerMessageId
+                : undefined,
+            text,
+            attachment: { ...attachment, contextKind: "chat_history" },
+          },
         };
       }
     }
@@ -5214,8 +5220,12 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
-      if (agent.forkContext?.clientMessageId === clientMessageId && messageId !== clientMessageId) {
-        agent.forkContext.providerMessageId = messageId;
+      const context =
+        agent.forkContexts && Object.hasOwn(agent.forkContexts, clientMessageId)
+          ? agent.forkContexts[clientMessageId]
+          : undefined;
+      if (context && messageId !== clientMessageId) {
+        context.providerMessageId = messageId;
         this.enqueueBackgroundPersist(agent);
       }
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
@@ -5283,7 +5293,13 @@ export class AgentManager {
   }
 
   private async restoreForkContext(agent: ManagedAgent): Promise<void> {
-    agent.forkContext = (await this.registry?.get(agent.id))?.forkContext;
+    const stored = await this.registry?.get(agent.id);
+    // COMPAT(singleForkContext): added in v0.15.2, remove after 2027-02-06.
+    agent.forkContexts =
+      stored?.forkContexts ??
+      (stored?.forkContext
+        ? { [stored.forkContext.clientMessageId]: stored.forkContext }
+        : undefined);
   }
 
   private recordTimeline(
@@ -5293,18 +5309,13 @@ export class AgentManager {
       timestamp?: string;
       providerMessageId?: string;
       turnId?: string;
+      claimedForkContexts?: Set<string>;
     },
   ): AgentTimelineRow {
     const agent = this.agents.get(agentId);
-    const context = agent?.forkContext;
-    if (
-      context &&
-      item.type === "user_message" &&
-      (item.clientMessageId === context.clientMessageId ||
-        (context.providerMessageId
-          ? item.messageId === context.providerMessageId
-          : context.attachment.text.length > 0 && item.text.includes(context.attachment.text)))
-    ) {
+    const context = findForkContext(agent?.forkContexts, item, options?.claimedForkContexts);
+    if (context && item.type === "user_message") {
+      options?.claimedForkContexts?.add(context.clientMessageId);
       // Providers without client IDs can be matched once by the exact snapshot.
       // Remember their native ID so a later quotation is not mistaken for the fork.
       if (

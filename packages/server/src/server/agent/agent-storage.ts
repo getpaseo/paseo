@@ -42,6 +42,13 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const FORK_CONTEXT_SCHEMA = z.object({
+  clientMessageId: z.string(),
+  providerMessageId: z.string().optional(),
+  text: z.string(),
+  attachment: ChatHistoryAttachmentSchema,
+});
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -54,14 +61,9 @@ const STORED_AGENT_SCHEMA = z.object({
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   // Provider transcripts retain the rendered prompt, not attachment metadata.
-  forkContext: z
-    .object({
-      clientMessageId: z.string(),
-      providerMessageId: z.string().optional(),
-      text: z.string(),
-      attachment: ChatHistoryAttachmentSchema,
-    })
-    .optional(),
+  forkContexts: z.record(z.string(), FORK_CONTEXT_SCHEMA).optional(),
+  // COMPAT(singleForkContext): added in v0.15.2, remove after 2027-02-06.
+  forkContext: FORK_CONTEXT_SCHEMA.optional(),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),

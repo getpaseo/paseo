@@ -808,6 +808,13 @@ test.each([true, false])(
     });
     await manager.closeAgent(agent.id);
     await manager.flush();
+    // Existing installations may still have the single-snapshot record from the first fix.
+    const record = (await storage.get(agent.id))!;
+    await storage.upsert({
+      ...record,
+      forkContexts: undefined,
+      forkContext: record.forkContexts![clientMessageId],
+    });
 
     storage = new AgentStorage(storagePath, logger);
     manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
@@ -823,6 +830,107 @@ test.each([true, false])(
     expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
       { type: "user_message", text: attachment.text, messageId: "native-later" },
     ]);
+  },
+);
+
+test.each([
+  { identity: "native", sameText: false },
+  { identity: "local", sameText: false },
+  { identity: "missing", sameText: false },
+  { identity: "native", sameText: true },
+  { identity: "local", sameText: true },
+  { identity: "missing", sameText: true },
+])(
+  "preserves every fork snapshot across forced replay and restart ($identity IDs, same text: $sameText)",
+  async ({ identity, sameText }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "fork-multiple-history-"));
+    const storagePath = join(workdir, "agents");
+    const attachments = ["first", "second"].map((name) => ({
+      type: "text" as const,
+      mimeType: "text/plain" as const,
+      contextKind: "chat_history" as const,
+      text: `[User] ${sameText ? "same" : name} original question`,
+      chatHistoryEntries: [
+        {
+          id: `${name}-entry`,
+          role: "user" as const,
+          text: `${sameText ? "same" : name} original question`,
+        },
+      ],
+      chatHistorySource: { serverId: `${name}-host`, agentId: `${name}-source`, title: name },
+    }));
+    let submitted = 0;
+    let retained = 2;
+    class HistorySession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        const index = submitted++;
+        if (identity !== "missing")
+          this.pushEvent({
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "user_message",
+              text: attachments[index]!.text,
+              clientMessageId: `submission-${index}`,
+              messageId: identity === "native" ? `native-${index}` : `submission-${index}`,
+            },
+          });
+        return super.startTurn();
+      }
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (let index = 0; index < Math.min(submitted, retained); index++)
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "user_message",
+              text: attachments[index]!.text,
+              ...(identity === "missing" ? {} : { messageId: `native-${index}` }),
+            },
+          };
+      }
+    }
+    class HistoryClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new HistorySession(config);
+      }
+      override async resumeSession(): Promise<AgentSession> {
+        return new HistorySession({ provider: "codex", cwd: workdir });
+      }
+    }
+    const client = new HistoryClient();
+    let storage = new AgentStorage(storagePath, logger);
+    let manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    onTestFinished(async () => {
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    });
+    for (const [index, attachment] of attachments.entries()) {
+      await drainAsyncGenerator(
+        manager.streamAgent(agent.id, [attachment], { clientMessageId: `submission-${index}` }),
+      );
+    }
+    const expected = attachments.map((attachment) =>
+      expect.objectContaining({ type: "user_message", text: "", chatHistory: attachment }),
+    );
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual(expected);
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    storage = new AgentStorage(storagePath, logger);
+    manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    await manager.hydrateTimelineFromProvider(agent.id);
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual(expected);
+    retained = 1;
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual(
+      expected.slice(0, 1),
+    );
   },
 );
 

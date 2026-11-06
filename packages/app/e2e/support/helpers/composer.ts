@@ -20,7 +20,7 @@ export async function controlFileUploadCompletion(page: Page) {
 }
 
 function composerInput(page: Page) {
-  return page.getByRole("textbox", { name: "Message agent..." }).first();
+  return page.getByRole("textbox", { name: "Message agent..." }).filter({ visible: true }).first();
 }
 
 export function composerLocator(page: Page) {

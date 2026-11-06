@@ -81,6 +81,7 @@ export async function openMostRecentAssistantForkMenu(page: Page): Promise<void>
 export async function forkMostRecentAssistantTurnToNewTab(page: Page): Promise<void> {
   await openMostRecentAssistantForkMenu(page);
   await page.getByRole("menuitem", { name: "Fork in a new tab" }).click();
+  await expectChatHistoryAttachment(page);
 }
 
 export async function expectInFlightForkAvailable(page: Page): Promise<void> {
@@ -101,7 +102,10 @@ export async function forkMostRecentAssistantTurnToNewWorkspace(page: Page): Pro
 }
 
 export async function expectChatHistoryAttachment(page: Page): Promise<void> {
-  const attachment = page.getByRole("button", { name: "Open chat history attachment" }).first();
+  const attachment = page
+    .getByRole("button", { name: "Open chat history attachment" })
+    .filter({ visible: true })
+    .first();
   await expect(attachment).toBeVisible({ timeout: 30_000 });
   await expect(attachment).toContainText("Chat history");
 }
