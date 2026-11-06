@@ -5370,6 +5370,9 @@ test("model changes persist the resolved thinking and fresh provider handle befo
         thinkingOptionId: null,
       });
     }
+    override async getRuntimeInfo() {
+      return { ...(await super.getRuntimeInfo()), ...this.selection };
+    }
     describePersistence() {
       return { provider: "codex" as const, sessionId: this.id, metadata: { ...this.selection } };
     }
@@ -5451,6 +5454,62 @@ test("later explicit config mutations win over events emitted by earlier mutatio
 
   expect(manager.getAgent(snapshot.id)?.config.thinkingOptionId).toBe("high");
 });
+
+test.each([
+  { requested: "unavailable", effective: "source" },
+  { requested: "alias", effective: "canonical" },
+  { requested: null, effective: null },
+])(
+  "setAgentModel stores effective selections and preserves resets for $requested",
+  async ({ requested, effective }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-effective-model-"));
+    class SelectingSession extends TestAgentSession {
+      private model: string | null = "source";
+
+      async setModel(model: string | null): Promise<void> {
+        if (model && model !== "unavailable") this.model = model === "alias" ? "canonical" : model;
+      }
+
+      override async getRuntimeInfo() {
+        return { ...(await super.getRuntimeInfo()), model: this.model };
+      }
+    }
+    class SelectingClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new SelectingSession(config);
+      }
+    }
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new SelectingClient() },
+      registry: storage,
+      logger,
+    });
+    try {
+      const snapshot = await manager.createAgent(
+        { provider: "codex", cwd: workdir, model: "source" },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await manager.setAgentModel(snapshot.id, requested);
+      await manager.flush();
+
+      expect(manager.getAgent(snapshot.id)?.config.model).toBe(effective ?? undefined);
+      expect(manager.getAgent(snapshot.id)?.runtimeInfo?.model).toBe(effective);
+      const persisted = await storage.get(snapshot.id);
+      expect(persisted?.config?.model).toBe(effective ?? undefined);
+      expect(persisted?.runtimeInfo?.model).toBe(effective);
+
+      await manager.setAgentModel(snapshot.id, "target");
+      expect(manager.getAgent(snapshot.id)?.config.model).toBe("target");
+      expect(manager.getAgent(snapshot.id)?.runtimeInfo?.model).toBe("target");
+    } finally {
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("setAgentThinkingOption adopts the session's effective clamped level", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-thinking-clamp-"));

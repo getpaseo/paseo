@@ -2333,9 +2333,18 @@ export class AgentManager {
     }
     await this.drainSessionEvents(agentId);
 
-    agent.config.model = normalizedModelId ?? undefined;
+    let effectiveModelId = normalizedModelId;
+    // Clearing the preference still applies when the provider keeps its active model.
+    if (normalizedModelId !== null && agent.session.setModel) {
+      const runtimeInfo = await agent.session.getRuntimeInfo();
+      if (runtimeInfo.model !== undefined) {
+        effectiveModelId = runtimeInfo.model;
+      }
+    }
+
+    agent.config.model = effectiveModelId ?? undefined;
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
     }
     this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
