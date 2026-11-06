@@ -403,3 +403,30 @@ it("keeps a workspace whose archive is being undone when the host reports its re
     store.clearSession(serverId);
   }
 });
+
+it("keeps a workspace whose archive is being undone when a refresh snapshot omits it", () => {
+  const serverId = "workspace-archive-undo-refresh";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const restored = normalizeWorkspaceDescriptor(workspace("restored"));
+  const other = normalizeWorkspaceDescriptor(workspace("other"));
+  const workspaceIds = () => [
+    ...(useSessionStore.getState().sessions[serverId]?.workspaces.keys() ?? []),
+  ];
+
+  const undo = markWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
+  try {
+    replica.acceptWorkspaces([restored]);
+
+    replica.commitSnapshot({ workspaces: new Map([[other.id, other]]), projects: new Map() }, []);
+    expect(workspaceIds().sort()).toEqual(["other", "restored"]);
+
+    settleWorkspaceArchiveIntent(undo);
+    replica.commitSnapshot({ workspaces: new Map([[other.id, other]]), projects: new Map() }, []);
+    expect(workspaceIds()).toEqual(["other"]);
+  } finally {
+    settleWorkspaceArchiveIntent(undo);
+    store.clearSession(serverId);
+  }
+});

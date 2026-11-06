@@ -108,6 +108,15 @@ export class WorkspaceDirectoryReplica {
         workspaces.set(workspaceId, workspace);
       }
     }
+    // A snapshot taken while an undo runs can predate the restore; the host publishes the row.
+    for (const [workspaceId, workspace] of this.workspaces) {
+      if (
+        !workspaces.has(workspaceId) &&
+        shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId })
+      ) {
+        workspaces.set(workspaceId, workspace);
+      }
+    }
     for (const workspace of workspaces.values()) this.applySetupStatus(workspace);
     this.workspaces = workspaces;
     this.projects = new Map(snapshot.projects);
