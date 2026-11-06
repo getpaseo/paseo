@@ -29,10 +29,77 @@ describe("GenericACPAgentClient request errors", () => {
       await expect(created).rejects.toThrow("Internal error: Effort high is not allowed");
     });
   });
+
+  test.each([
+    ["reject-set-model", "Internal error: Requested model is unavailable"],
+    ["reject-model-config", "Internal error: Requested model is unavailable"],
+    ["missing-model-choice", "Model 'requested' is not a valid acp model config option"],
+    ["no-model-selector", "does not expose ACP model selection"],
+  ] as const)(
+    "fails creation instead of running on the default model: %s",
+    async (mode, message) => {
+      await withFakeACPAgent(mode, async (command, cwd) => {
+        const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+        await expect(
+          client.createSession({ provider: "acp", cwd, model: "requested" }),
+        ).rejects.toThrow(message);
+      });
+    },
+  );
+
+  test.each([
+    ["reject-set-model", "Internal error: Requested model is unavailable"],
+    ["reject-model-config", "Internal error: Requested model is unavailable"],
+    ["missing-model-choice", "Model 'requested' is not a valid acp model config option"],
+  ] as const)(
+    "rejects a later model switch and preserves the current model: %s",
+    async (mode, message) => {
+      await withFakeACPAgent(mode, async (command, cwd) => {
+        const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+        const session = await client.createSession({ provider: "acp", cwd });
+        try {
+          await expect(session.setModel("requested")).rejects.toThrow(message);
+          expect((await session.getRuntimeInfo()).model).toBe("default");
+        } finally {
+          await session.close();
+        }
+      });
+    },
+  );
+
+  test("uses config-option selection when set-model is not implemented", async () => {
+    await withFakeACPAgent("config-model-only", async (command, cwd) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+      const session = await client.createSession({ provider: "acp", cwd, model: "requested" });
+      try {
+        expect((await session.getRuntimeInfo()).model).toBe("requested");
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
+  test("fails resume when the requested model switch is rejected", async () => {
+    await withFakeACPAgent("reject-set-model", async (command, cwd) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+      const resumed = client.resumeSession(
+        { provider: "acp", sessionId: "session-1", metadata: { cwd } },
+        { model: "requested" },
+      );
+      await expect(resumed).rejects.toThrow("Internal error: Requested model is unavailable");
+    });
+  });
 });
 
 async function withFakeACPAgent(
-  mode: "reject-set-mode" | "reject-set-config-option",
+  mode:
+    | "reject-set-mode"
+    | "reject-set-config-option"
+    | "reject-set-model"
+    | "reject-model-config"
+    | "missing-model-choice"
+    | "no-model-selector"
+    | "config-model-only",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-request-errors-"));
@@ -62,17 +129,23 @@ rl.on("line", (line) => {
       id: message.id,
       result: {
         protocolVersion: message.params?.protocolVersion ?? 1,
-        agentCapabilities: { sessionCapabilities: { close: {} } },
+        agentCapabilities: { loadSession: true, sessionCapabilities: { close: {} } },
       },
     });
     return;
   }
 
-  if (message.method === "session/new") {
+  if (message.method === "session/new" || message.method === "session/load") {
     write({
       id: message.id,
       result: {
         sessionId: "session-1",
+        ...(mode === "reject-set-model" || mode === "config-model-only" ? {
+          models: { currentModelId: "default", availableModels: [
+            { modelId: "default", name: "Default" },
+            { modelId: "requested", name: "Requested" },
+          ] },
+        } : {}),
         modes: {
           currentModeId: "agent",
           availableModes: [
@@ -81,6 +154,11 @@ rl.on("line", (line) => {
           ],
         },
         configOptions: [
+          ...(mode === "no-model-selector" ? [] : [{
+            id: "model", name: "Model", category: "model", type: "select", currentValue: "default",
+            options: [{ value: "default", name: "Default" },
+              ...(mode === "missing-model-choice" ? [] : [{ value: "requested", name: "Requested" }])],
+          }]),
           {
             id: "effort",
             name: "Effort",
@@ -95,6 +173,26 @@ rl.on("line", (line) => {
         ],
       },
     });
+    return;
+  }
+
+  if (message.method === "session/set_model") {
+    write({ id: message.id, error: mode === "reject-set-model"
+      ? { code: -32603, message: "Internal error", data: { details: "Requested model is unavailable" } }
+      : { code: -32601, message: "Method not found" } });
+    return;
+  }
+
+  if (message.method === "session/set_config_option" && message.params.configId === "model") {
+    if (mode === "reject-model-config") {
+      write({ id: message.id, error: { code: -32603, message: "Internal error",
+        data: { details: "Requested model is unavailable" } } });
+    } else {
+      write({ id: message.id, result: { configOptions: [{
+        id: "model", name: "Model", category: "model", type: "select", currentValue: message.params.value,
+        options: [{ value: "default", name: "Default" }, { value: "requested", name: "Requested" }],
+      }] } });
+    }
     return;
   }
 
