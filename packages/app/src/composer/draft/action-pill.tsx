@@ -20,7 +20,7 @@ export function ComposerDraftActionPill({
   return (
     <Button
       variant="ghost"
-      size="xs"
+      size="sm"
       testID={testID}
       accessibilityLabel={label}
       onPress={onPress}

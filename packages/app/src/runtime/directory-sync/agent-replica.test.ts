@@ -390,4 +390,39 @@ describe("AgentDirectoryReplica", () => {
     expect(useSessionStore.getState().sessions[serverId]?.agents.has("agent")).toBe(true);
     store.clearSession(serverId);
   });
+  it("keeps unchanged agent fields when an update changes only the status", () => {
+    const serverId = "agent-replica-unchanged-fields";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    const agentInStore = () => useSessionStore.getState().sessions[serverId]?.agents.get("agent");
+    replica.commitSnapshot([entry(payload("agent"))], []);
+    const before = agentInStore();
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("agent"), status: "running", updatedAt: "2026-07-17T00:02:00.000Z" },
+      project: entry(payload("agent")).project,
+    });
+    const afterDelta = agentInStore();
+    replica.commitSnapshot(
+      [entry({ ...payload("agent"), status: "idle", updatedAt: "2026-07-17T00:03:00.000Z" })],
+      [],
+    );
+    const afterSnapshot = agentInStore();
+
+    expect(afterDelta?.status).toBe("running");
+    expect(afterSnapshot?.status).toBe("idle");
+    for (const agent of [afterDelta, afterSnapshot]) {
+      expect(agent?.capabilities).toBe(before?.capabilities);
+      expect(agent?.availableModes).toBe(before?.availableModes);
+      expect(agent?.labels).toBe(before?.labels);
+      expect(agent?.projectPlacement).toBe(before?.projectPlacement);
+    }
+    store.clearSession(serverId);
+  });
 });

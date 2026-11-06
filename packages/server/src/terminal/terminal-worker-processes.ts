@@ -1,15 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { z } from "zod";
 import { execCommand } from "../utils/spawn.js";
 import {
   createSystemManagedProcessTable,
   type ManagedProcessCommandRunner,
   type ManagedProcessInspection,
-  windowsPowerShellPath,
 } from "../server/managed-processes/managed-processes.js";
 
-// Process inspection for terminal worker ownership. Birth times are compared as the strings
-// `ps -o lstart` and Win32_Process.CreationDate print, so every reader must print them the same
+// POSIX terminal program birth times are compared as the strings `ps -o lstart` prints,
+// so every reader must print them the same
 // way: `ps` follows LC_TIME, and the worker, the daemon, the supervisor and the CLI can run
 // under different locales. Every `ps` here runs under LC_ALL=C.
 
@@ -27,6 +25,7 @@ export interface ProcessTableEntry {
 export interface TerminalWorkerProcessInspector {
   /** True where the process table names each process's session (Linux). */
   readonly reportsSessions: boolean;
+  readonly reportsBirthTimes: boolean;
   inspect(pid: number): Promise<ManagedProcessInspection>;
   /** One snapshot of every process, for walking descendants. Throws when it cannot be read. */
   listProcesses(): Promise<ProcessTableEntry[]>;
@@ -36,14 +35,6 @@ export interface TerminalWorkerProcessInspector {
    */
   readEnvironment(pid: number): Promise<string[] | null>;
 }
-
-const WindowsProcessListSchema = z.array(
-  z.object({
-    ProcessId: z.number().int(),
-    ParentProcessId: z.number().int().nullable().optional(),
-    CreationDate: z.string().nullable().optional(),
-  }),
-);
 
 function createLocaleNeutralCommandRunner(): ManagedProcessCommandRunner {
   return {
@@ -65,11 +56,16 @@ export function createTerminalWorkerProcessInspector(
   const table = createSystemManagedProcessTable({ platform, commandRunner });
   return {
     reportsSessions: platform === "linux",
-    inspect: (pid) => table.inspect(pid),
-    listProcesses: () =>
+    reportsBirthTimes: platform !== "win32",
+    inspect: (pid) =>
       platform === "win32"
-        ? listWindowsProcesses(commandRunner)
-        : listPosixProcesses(commandRunner, platform),
+        ? Promise.resolve({
+            status: "error",
+            error: new Error("Windows terminal programs have no birth times"),
+          })
+        : table.inspect(pid),
+    listProcesses: () =>
+      platform === "win32" ? Promise.resolve([]) : listPosixProcesses(commandRunner, platform),
     readEnvironment: (pid) => readLinuxEnvironment(platform, pid),
   };
 }
@@ -119,33 +115,6 @@ async function listPosixProcesses(
     throw new Error("ps returned no processes");
   }
   return entries;
-}
-
-async function listWindowsProcesses(
-  commandRunner: ManagedProcessCommandRunner,
-): Promise<ProcessTableEntry[]> {
-  const command =
-    "@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate) | ConvertTo-Json -Compress";
-  const { stdout } = await commandRunner.exec(windowsPowerShellPath(), [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    command,
-  ]);
-  const parsed: unknown = JSON.parse(stdout.trim());
-  const rows = WindowsProcessListSchema.parse(Array.isArray(parsed) ? parsed : [parsed]);
-  return rows.flatMap((row) =>
-    row.CreationDate
-      ? [
-          {
-            pid: row.ProcessId,
-            ppid: row.ParentProcessId ?? 0,
-            startedAt: row.CreationDate,
-            sessionId: null,
-          },
-        ]
-      : [],
-  );
 }
 
 /**
