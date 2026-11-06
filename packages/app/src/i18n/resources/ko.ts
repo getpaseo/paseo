@@ -1243,6 +1243,7 @@ export const ko: TranslationResources = {
       hosts: "호스트",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+      moreActions: "추가 작업",
     },
     footer: {
       usage: "사용량",
