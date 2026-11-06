@@ -189,7 +189,7 @@ test.describe("Composer toolbar rails on touch", () => {
     { device: "phone", width: 390, height: 844 },
     { device: "tablet", width: 1024, height: 1366 },
   ]) {
-    test(`the toolbar's outer ink sits on the text column edges on a ${viewport.device}`, async ({
+    test(`the toolbar starts on the text rail and ends in a disc nested in the corner on a ${viewport.device}`, async ({
       page,
     }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });

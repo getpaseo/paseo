@@ -87,26 +87,62 @@ export const ICON_BUTTON_SIZES = {
 } satisfies Record<"large" | "small", SizingValue>;
 
 /**
- * A control in a dense toolbar row, such as the composer's: an icon-only square or a labelled
- * pill. Touch-sized it is one touch target.
+ * The height of a dense toolbar row, such as the composer's. Touch-sized it is one touch target;
+ * its controls are disc-sized and centre in it.
  */
 export const TOOLBAR_CONTROL_SIZES = { touch: TOUCH_TARGET, pointer: 28 } satisfies SizingValue;
 export const TOOLBAR_CONTROL_HEIGHT = bySizing(TOOLBAR_CONTROL_SIZES);
 
 /**
- * The painted disc of a filled toolbar control, such as the composer's send and stop. The
- * control keeps the full toolbar hit frame and paints this smaller disc centered inside it, so
- * touch-sized it does not outweigh its unpainted neighbours. Pointer-sized it fills the frame.
+ * The disc of a filled toolbar control, such as the composer's send and stop, and the frame and
+ * highlight of every other toolbar control (`toolbarSlot`). Pointer-sized it fills the row.
  */
 export const TOOLBAR_DISC_SIZES = { touch: 36, pointer: 28 } satisfies SizingValue;
 export const TOOLBAR_DISC_SIZE = bySizing(TOOLBAR_DISC_SIZES);
 
 /**
- * The space between adjacent toolbar controls. Touch-sized the 44pt hit frames already space
- * their glyphs, so the frames sit edge to edge: one control every 44pt.
+ * The space between adjacent toolbar controls. Touch-sized it is the visible space between what
+ * the controls paint, because each control lays out at its painted width (`toolbarSlot`).
  */
-export const TOOLBAR_CONTROL_GAPS = { touch: 0, pointer: 4 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_GAPS = { touch: 20, pointer: 4 } satisfies SizingValue;
 export const TOOLBAR_CONTROL_GAP = bySizing(TOOLBAR_CONTROL_GAPS);
+
+/**
+ * A toolbar control's frame: a disc-sized circle, which is also its fully rounded highlight.
+ * Touch-sized it lays out at the width of the glyph it paints, `shapeWidth`, and the circle reaches
+ * into the gaps on either side, so the row spaces what you see. Pointer-sized it is the square
+ * control.
+ */
+export function toolbarSlot(shapeWidth: number): {
+  width: LayoutValue;
+  height: LayoutValue;
+  marginHorizontal: LayoutValue;
+} {
+  return {
+    width: TOOLBAR_DISC_SIZE,
+    height: TOOLBAR_DISC_SIZE,
+    marginHorizontal: bySizing({
+      touch: (shapeWidth - TOOLBAR_DISC_SIZES.touch) / 2,
+      pointer: 0,
+    }),
+  };
+}
+
+/**
+ * A toolbar control as wide as its content, such as a labelled picker: a disc-tall pill. Touch-sized
+ * its padding reaches into the gaps, so its content is what the row spaces.
+ */
+export function toolbarContentSlot(padding: number): {
+  height: LayoutValue;
+  paddingHorizontal: number;
+  marginHorizontal: LayoutValue;
+} {
+  return {
+    height: TOOLBAR_DISC_SIZE,
+    paddingHorizontal: padding,
+    marginHorizontal: bySizing({ touch: -padding, pointer: 0 }),
+  };
+}
 
 /**
  * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body
@@ -120,11 +156,9 @@ export function iconSizeFor(size: IconSize): SizingValue {
 }
 
 /**
- * The glyph a toolbar control paints. Touch-sized an icon-only control's glyph fills its 44pt
- * frame at 24pt with a 2px stroke and rests at `foreground`, so the row reads as solid controls;
- * a glyph beside a label stays at the label's scale, 20pt, so it does not dwarf the label's
- * x-height. Pointer-sized both are the `md` glyph at the app's stroke and rest muted until
- * hovered.
+ * The glyph a toolbar control paints. Touch-sized every toolbar glyph matches the header icons:
+ * 20pt at the app's 1.5px stroke, resting at `foreground`. Pointer-sized it is the `md` glyph at
+ * the same stroke and rests muted until hovered.
  */
 export type ToolbarGlyphTone = "foreground" | "muted";
 
@@ -149,8 +183,8 @@ const POINTER_TOOLBAR_GLYPH: ToolbarGlyph = {
 
 const TOOLBAR_GLYPHS: Record<ControlSizing, ToolbarGlyphs> = {
   touch: {
-    icon: { size: 24, strokeWidth: 2, tone: "foreground" },
-    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: 2, tone: "foreground" },
+    icon: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
+    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
   },
   pointer: { icon: POINTER_TOOLBAR_GLYPH, label: POINTER_TOOLBAR_GLYPH },
 };
@@ -166,9 +200,10 @@ export const TOOLBAR_GLYPH_SIZES = {
 } satisfies Record<keyof ToolbarGlyphs, LayoutValue>;
 
 /**
- * The context ring in a toolbar row. A full circle on a dim track reads smaller and lighter than
- * an outline glyph of the same box, so touch-sized it runs 2pt over the toolbar glyph with a
- * heavier stroke to match its neighbours' optical weight. Pointer-sized it is the `md` glyph.
+ * The context ring in a toolbar row. A full circle fills its box while an outline glyph's ink
+ * sits inset, so touch-sized the ring is 18pt, the height of a 20pt glyph's ink. Its 2px stroke
+ * is half a pixel over the glyphs' so the thin circle does not read lighter than them.
+ * Pointer-sized it is the `md` glyph.
  */
 export interface ToolbarRing {
   size: number;
@@ -176,7 +211,7 @@ export interface ToolbarRing {
 }
 
 export const TOOLBAR_RINGS = {
-  touch: { size: 26, strokeWidth: 3 },
+  touch: { size: 18, strokeWidth: 2 },
   pointer: { size: ICON_SIZE.md, strokeWidth: 2 },
 } satisfies Record<ControlSizing, ToolbarRing>;
 

@@ -34,14 +34,15 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
   TOOLBAR_CONTROL_GAP,
-  TOOLBAR_CONTROL_HEIGHT,
   TOOLBAR_DISC_GLYPH_SIZES,
   TOOLBAR_DISC_SIZE,
   TOOLBAR_RINGS,
   toolbarGlyphsFor,
   toolbarGlyphTone,
   type ToolbarGlyph,
+  toolbarSlot,
 } from "@/components/ui/control-geometry";
+import { COMPOSER_TOOLBAR_SHAPES } from "@/composer/input/toolbar-rails";
 import { usePanelStore } from "@/stores/panel-store";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
@@ -265,20 +266,22 @@ function resolveCheckoutRemoteUrl(
   return checkoutStatus?.remoteUrl ?? null;
 }
 
-function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean): object[] {
+function buildCancelButtonStyle(
+  pressed: boolean,
+  isConnected: boolean,
+  isCancellingAgent: boolean,
+): object[] {
+  const pressedStyle = pressed ? styles.discPressed : undefined;
   const disabled = !isConnected || isCancellingAgent ? styles.buttonDisabled : undefined;
-  return [styles.cancelButton, disabled].filter((value): value is object => Boolean(value));
+  return [styles.cancelButton, pressedStyle, disabled].filter((value): value is object =>
+    Boolean(value),
+  );
 }
 
-function buildRealtimeVoiceButtonStyle(
-  hovered: boolean | undefined,
-  voiceButtonDisabled: boolean,
-  reserveLeadingSpace: boolean,
-): object[] {
-  const hoveredStyle = hovered ? styles.iconButtonHovered : undefined;
+function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: boolean): object[] {
+  const pressedStyle = pressed ? styles.discPressed : undefined;
   const disabledStyle = voiceButtonDisabled ? styles.buttonDisabled : undefined;
-  const reserveStyle = reserveLeadingSpace ? styles.realtimeVoiceButtonCompactReserve : undefined;
-  return [styles.realtimeVoiceButton, reserveStyle, hoveredStyle, disabledStyle].filter(
+  return [styles.realtimeVoiceButton, pressedStyle, disabledStyle].filter(
     (value): value is object => Boolean(value),
   );
 }
@@ -1088,7 +1091,7 @@ function ComposerForgeBinding({
 
 interface ComposerCancelButtonProps {
   discGlyphSize: number;
-  cancelButtonStyle: (object | undefined)[];
+  cancelButtonStyle: (state: PressableStateCallbackType) => object[];
   handleCancelAgent: () => void;
   isConnected: boolean;
   isCancellingAgent: boolean;
@@ -1152,16 +1155,15 @@ function showsVoiceModeButton(input: {
   hasAgent: boolean;
   isAgentRunning: boolean;
   hasSendableContent: boolean;
-  isCompact: boolean;
   showVoice: boolean;
 }): boolean {
-  const hideVoiceForCompactInput = input.isCompact && input.hasSendableContent;
+  // Voice mode holds the trailing disc until there is something to send, then Send takes it.
   return (
     input.showVoice &&
     !input.isVoiceModeForAgent &&
     input.hasAgent &&
     !input.isAgentRunning &&
-    !hideVoiceForCompactInput
+    !input.hasSendableContent
   );
 }
 
@@ -1177,19 +1179,22 @@ function ComposerVoiceModeButton({
   const shortcutNode = voiceToggleKeys ? <Shortcut chord={voiceToggleKeys} /> : null;
   const renderTriggerContent = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
-      if (isVoiceSwitching) {
-        return <LoadingSpinner size="small" color="white" />;
-      }
       const colorMapping =
         toolbarGlyphTone(glyph, Boolean(hovered)) === "foreground"
           ? iconForegroundMapping
           : iconForegroundMutedMapping;
       return (
-        <ThemedAudioLines
-          size={glyph.size}
-          strokeWidth={glyph.strokeWidth}
-          uniProps={colorMapping}
-        />
+        <View style={styles.voiceModeDisc}>
+          {isVoiceSwitching ? (
+            <LoadingSpinner size="small" color="white" />
+          ) : (
+            <ThemedAudioLines
+              size={glyph.size}
+              strokeWidth={glyph.strokeWidth}
+              uniProps={colorMapping}
+            />
+          )}
+        </View>
       );
     },
     [glyph, isVoiceSwitching],
@@ -2017,8 +2022,9 @@ function ComposerContentImpl({
     [agentId, recall, replaceUserInput, serverId],
   );
 
-  const cancelButtonStyle = useMemo(
-    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
+  const cancelButtonStyle = useCallback(
+    (state: PressableStateCallbackType) =>
+      buildCancelButtonStyle(state.pressed, isConnected, isCancellingAgent),
     [isConnected, isCancellingAgent],
   );
 
@@ -2026,8 +2032,8 @@ function ComposerContentImpl({
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) =>
-      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled, isCompactLayout),
-    [isCompactLayout, voiceButtonDisabled],
+      buildRealtimeVoiceButtonStyle(state.pressed, voiceButtonDisabled),
+    [voiceButtonDisabled],
   );
 
   const activeActionContent = useMemo(
@@ -2060,7 +2066,6 @@ function ComposerContentImpl({
         hasAgent,
         isAgentRunning,
         hasSendableContent,
-        isCompact: isCompactLayout,
         showVoice: mode.showVoice,
       }) ? (
         <View style={styles.rightControls}>
@@ -2082,7 +2087,6 @@ function ComposerContentImpl({
       hasSendableContent,
       isAgentRunning,
       isConnected,
-      isCompactLayout,
       isVoiceModeForAgent,
       isVoiceSwitching,
       mode.showVoice,
@@ -2605,13 +2609,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: "100%",
     gap: theme.spacing[3],
   },
-  // The trigger is the hit frame and stays unpainted; the disc inside it carries the fill.
   cancelButton: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc),
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: TOOLBAR_CONTROL_GAP,
   },
   cancelButtonDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2627,20 +2628,21 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: TOOLBAR_CONTROL_GAP,
   },
   contextWindowMeterSlot: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.ring),
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
-  // In the compact layout voice mode replaces Send as the trailing control, so it keeps Send's
-  // leading space and the trailing rail does not move.
-  realtimeVoiceButtonCompactReserve: {
-    marginLeft: TOOLBAR_CONTROL_GAP,
+  voiceModeDisc: {
+    width: TOOLBAR_DISC_SIZE,
+    height: TOOLBAR_DISC_SIZE,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+    alignItems: "center",
+    justifyContent: "center",
   },
   realtimeVoiceButton: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -2649,8 +2651,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.palette.green[600],
     borderColor: theme.colors.palette.green[800],
   },
-  iconButtonHovered: {
-    backgroundColor: theme.colors.surface2,
+  discPressed: {
+    opacity: 0.7,
   },
   attachmentTray: {
     flexDirection: "row",

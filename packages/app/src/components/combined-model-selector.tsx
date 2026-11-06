@@ -14,8 +14,8 @@ import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
-  TOOLBAR_CONTROL_HEIGHT,
   TOOLBAR_GLYPH_SIZES,
+  toolbarContentSlot,
   type ToolbarGlyph,
 } from "@/components/ui/control-geometry";
 
@@ -299,15 +299,14 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   trigger: {
-    height: TOOLBAR_CONTROL_HEIGHT,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(theme.spacing[2]),
+    borderRadius: theme.borderRadius.full,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
@@ -323,7 +322,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   triggerPressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   triggerDisabled: {
     opacity: 0.5,

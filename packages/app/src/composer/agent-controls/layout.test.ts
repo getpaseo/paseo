@@ -186,18 +186,18 @@ describe("composer control layout", () => {
       caretSize: 14,
     });
     expect(TOUCH).toMatchObject({
-      controlSize: 44,
+      controlSize: 20,
       glyphs: {
-        icon: { size: 24, strokeWidth: 2, tone: "foreground" },
-        label: { size: 20, strokeWidth: 2, tone: "foreground" },
+        icon: { size: 20, strokeWidth: 1.5, tone: "foreground" },
+        label: { size: 20, strokeWidth: 1.5, tone: "foreground" },
       },
-      controlGap: 0,
+      controlGap: 20,
     });
   });
 
   it("budgets touch-sized controls, so a touch toolbar condenses at a width a pointer one fits", () => {
     const input = {
-      availableWidth: 410,
+      availableWidth: 400,
       currentDensity: "full" as const,
       controls: {
         hasModel: true,
@@ -213,8 +213,8 @@ describe("composer control layout", () => {
   });
 
   describe("touch toolbar on an iPad in portrait, sidebar docked", () => {
-    // Codex: model, thinking, mode and two toggle features. Touch controls sit edge to edge, so
-    // the toolbar is 280 wide with an empty draft and 240 once an attachment brings in send.
+    // Codex: model, thinking, mode and two toggle features. Touch controls lay out at what they
+    // paint, 20pt apart, so icon-only thinking, mode and features need 200.
     const controls = {
       hasModel: true,
       hasThinking: true,
@@ -248,7 +248,7 @@ describe("composer control layout", () => {
     it("folds thinking, mode and features into the model control below their width", () => {
       expect(
         resolveComposerControlDensity({
-          availableWidth: 212,
+          availableWidth: 180,
           currentDensity: "tight",
           geometry: TOUCH,
           controls,
@@ -259,7 +259,7 @@ describe("composer control layout", () => {
     it("drops the model label only after the controls are folded", () => {
       expect(
         resolveComposerControlDensity({
-          availableWidth: 80,
+          availableWidth: 64,
           currentDensity: "compact",
           geometry: TOUCH,
           controls,
@@ -285,7 +285,7 @@ describe("composer control layout", () => {
     expect(resolveComposerControlDensity({ ...input, availableWidth: 600 })).toBe("compact");
     // The thinking label is not budgeted: it gives way before the model family label does.
     expect(resolveComposerControlDensity({ ...input, availableWidth: 96 })).toBe("compact");
-    expect(resolveComposerControlDensity({ ...input, availableWidth: 80 })).toBe("iconOnly");
+    expect(resolveComposerControlDensity({ ...input, availableWidth: 64 })).toBe("iconOnly");
   });
 });
 

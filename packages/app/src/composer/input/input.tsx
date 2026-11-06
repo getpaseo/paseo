@@ -38,11 +38,16 @@ import {
   toolbarGlyphsFor,
   toolbarGlyphTone,
   type ToolbarGlyph,
+  toolbarSlot,
 } from "@/components/ui/control-geometry";
 import {
+  COMPOSER_PADDING_BOTTOM,
+  COMPOSER_PADDING_HORIZONTAL,
+  COMPOSER_CORNER_RADIUS,
+  COMPOSER_PADDING_TOP,
+  COMPOSER_TOOLBAR_SHAPES,
   composerToolbarOverhang,
   resolveComposerLeadingEdge,
-  resolveComposerTrailingEdge,
 } from "@/composer/input/toolbar-rails";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
@@ -1950,18 +1955,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     const attachButtonStyle = useCallback(
-      ({ hovered }: { hovered?: boolean }) => [
+      ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
         styles.attachButton,
-        Boolean(hovered) && styles.iconButtonHovered,
+        Boolean(hovered || pressed) && styles.iconButtonHovered,
         (!isConnected || disabled) && styles.buttonDisabled,
       ],
       [isConnected, disabled],
     );
 
     const voiceButtonStyle = useCallback(
-      ({ hovered }: { hovered?: boolean }) => [
+      ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
         styles.voiceButton,
-        Boolean(hovered) && !isDictating && styles.iconButtonHovered,
+        isDictating && styles.voiceButtonRecording,
+        Boolean(hovered || pressed) && !isDictating && styles.iconButtonHovered,
+        Boolean(pressed) && isDictating && styles.discPressed,
         !isDictationStartEnabled && styles.buttonDisabled,
       ],
       [isDictating, isDictationStartEnabled],
@@ -2002,6 +2009,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [mode.isMonospace],
     );
     // Fullscreen always shows Send; without content it is disabled, and looks it.
+    // With nothing to send and no voice mode, a disabled Send holds the trailing disc so the row
+    // does not shift when typing starts.
+    const presentedActionKind: PrimaryActionKind =
+      isFullscreen || (primaryActionKind === "none" && voiceModeContent == null)
+        ? "send"
+        : primaryActionKind;
     const isPresentedSendDisabled = resolvePresentationSendDisabled({
       fullscreen: isFullscreen,
       disabled: isSendButtonDisabled,
@@ -2010,8 +2023,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       hasExternalContent,
       allowEmpty: allowEmptySubmit,
     });
-    const sendButtonCombinedStyle = useMemo(
-      () => [styles.sendButton, isPresentedSendDisabled && styles.buttonDisabled],
+    const sendButtonCombinedStyle = useCallback(
+      ({ pressed }: { pressed?: boolean }) => [
+        styles.sendButton,
+        Boolean(pressed) && styles.discPressed,
+        isPresentedSendDisabled && styles.buttonDisabled,
+      ],
       [isPresentedSendDisabled],
     );
     const overlayContainerStyle = useMemo(
@@ -2046,7 +2063,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const sendButton = useMemo(
       () => (
         <PrimaryAction
-          kind={isFullscreen ? "send" : primaryActionKind}
+          kind={presentedActionKind}
           activeActionContent={activeActionContent}
           shouldShow
           canPressLoadingButton={canPressLoadingButton}
@@ -2067,8 +2084,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         />
       ),
       [
-        isFullscreen,
-        primaryActionKind,
+        presentedActionKind,
         activeActionContent,
         canPressLoadingButton,
         onSubmitLoadingPress,
@@ -2160,12 +2176,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       showsAttach: mode.showAttachments,
       showsAgentControls: leftContent != null,
     });
-    const trailingEdge = resolveComposerTrailingEdge({
-      hasPrimaryAction: isFullscreen || primaryActionKind !== "none",
-      showsVoiceMode: voiceModeContent != null,
-      showsDictation: mode.showVoice,
-      isDictating,
-    });
+    // The trailing control is always a disc: voice mode, then Send or Stop.
+    const trailingEdge = "disc";
     const buttonRowStyle = useMemo(
       () => [
         styles.buttonRow,
@@ -2343,20 +2355,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
-    borderRadius: theme.borderRadius["2xl"],
-    paddingTop: {
-      xs: theme.spacing[2],
-      md: theme.spacing[4],
-    },
-    // The button row bleeds 6px horizontally, so match its corner inset at the bottom.
-    paddingBottom: {
-      xs: theme.spacing[2],
-      md: theme.spacing[3],
-    },
-    paddingHorizontal: {
-      xs: theme.spacing[3],
-      md: theme.spacing[4],
-    },
+    borderRadius: COMPOSER_CORNER_RADIUS,
+    paddingTop: COMPOSER_PADDING_TOP,
+    paddingBottom: COMPOSER_PADDING_BOTTOM,
+    paddingHorizontal: COMPOSER_PADDING_HORIZONTAL,
     ...(isWeb
       ? {
           transitionProperty: "border-color",
@@ -2430,10 +2432,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  // The row keeps a full touch target's height; its disc-sized controls centre in it.
   buttonRow: {
+    minHeight: TOOLBAR_CONTROL_HEIGHT,
     flexShrink: 0,
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     justifyContent: "space-between",
   },
   leftButtonGroup: {
@@ -2441,8 +2445,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
     flexGrow: 1,
     flexDirection: "row",
-    alignItems: "flex-end",
-    gap: theme.spacing[0],
+    alignItems: "center",
+    gap: TOOLBAR_CONTROL_GAP,
   },
   rightButtonGroup: {
     flexShrink: 0,
@@ -2451,24 +2455,25 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: TOOLBAR_CONTROL_GAP,
   },
   attachButton: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.attach),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   attachButtonAnchor: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    width: TOOLBAR_DISC_SIZE,
+    height: TOOLBAR_DISC_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
   voiceButton: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.dictation),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
+  },
+  voiceButtonRecording: {
+    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
   },
   voiceButtonRecordingDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2478,13 +2483,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  // The trigger is the hit frame and stays unpainted; the disc inside it carries the fill.
   sendButton: {
-    minWidth: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    minWidth: TOOLBAR_DISC_SIZE,
+    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
+    height: TOOLBAR_DISC_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: TOOLBAR_CONTROL_GAP,
   },
   sendButtonDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2510,6 +2514,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  discPressed: {
+    opacity: 0.7,
   },
   tooltipRow: {
     flexDirection: "row",

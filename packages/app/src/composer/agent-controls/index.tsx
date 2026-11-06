@@ -64,9 +64,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
   TOOLBAR_CONTROL_GAP,
-  TOOLBAR_CONTROL_HEIGHT,
+  bySizing,
   toolbarGlyphColor,
   type ToolbarGlyphs,
+  TOUCH_ICON_SIZE,
+  toolbarContentSlot,
+  toolbarSlot,
 } from "@/components/ui/control-geometry";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
@@ -1980,16 +1983,19 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: TOOLBAR_CONTROL_GAP,
+    // Clips pickers that run out of room. Touch-sized the pickers' pills and circles reach 8 past
+    // what the row spaces, so the clip reaches as far.
     overflow: "hidden",
+    paddingHorizontal: bySizing({ touch: theme.spacing[2], pointer: 0 }),
+    marginHorizontal: bySizing({ touch: -theme.spacing[2], pointer: 0 }),
   },
   modeBadge: {
-    height: TOOLBAR_CONTROL_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(theme.spacing[2]),
+    borderRadius: theme.borderRadius.full,
   },
   modelControl: {
     minWidth: 0,
@@ -2001,8 +2007,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   modeIconBadge: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(TOUCH_ICON_SIZE.md),
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,
@@ -2014,7 +2019,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   modeBadgePressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   disabledBadge: {
     opacity: 0.5,

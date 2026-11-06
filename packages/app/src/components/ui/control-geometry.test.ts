@@ -24,6 +24,7 @@ import {
   toolbarGlyphColor,
   toolbarGlyphsFor,
   toolbarGlyphTone,
+  toolbarSlot,
   TOUCH_TARGET,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -118,21 +119,26 @@ describe("control sizing gate", () => {
 });
 
 describe("toolbar glyphs and spacing", () => {
-  it("sets touch toolbar controls one 44pt slot apart and keeps the pointer's 4px gap", () => {
-    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 0, pointer: 4 });
-    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 0, md: 4 });
-    expect(TOOLBAR_CONTROL_SIZES.touch + TOOLBAR_CONTROL_GAPS.touch).toBe(TOUCH_TARGET);
+  it("spaces touch toolbar controls by what they paint and keeps the pointer's 4px gap", () => {
+    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 20, pointer: 4 });
+    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 20, md: 4 });
+    // A 20pt glyph's disc-sized frame reaches 8 into the gap on each side.
+    expect(toolbarSlot(20)).toEqual({
+      width: TOOLBAR_DISC_SIZE,
+      height: TOOLBAR_DISC_SIZE,
+      marginHorizontal: { xs: -8, md: 0 },
+    });
   });
 
-  it("paints a 24pt, 2px foreground glyph on an icon-only touch control and leaves pointer unchanged", () => {
+  it("paints touch toolbar glyphs at the header icons' 20pt and 1.5px stroke and leaves pointer unchanged", () => {
     const pointerGlyph = { size: 16, strokeWidth: 1.5, tone: "muted" };
     expect(toolbarGlyphsFor("touch").icon).toEqual({
-      size: 24,
-      strokeWidth: 2,
+      size: 20,
+      strokeWidth: 1.5,
       tone: "foreground",
     });
     expect(toolbarGlyphsFor("pointer")).toEqual({ icon: pointerGlyph, label: pointerGlyph });
-    expect(TOOLBAR_GLYPH_SIZES.icon).toEqual({ xs: 24, md: 16 });
+    expect(TOOLBAR_GLYPH_SIZES.icon).toEqual({ xs: 20, md: 16 });
     expect(toolbarGlyphsFor("touch").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.touch);
     expect(toolbarGlyphsFor("pointer").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.pointer);
     // A disc's solid glyph stays at the `md` size so the stop square does not fill its disc.
@@ -142,15 +148,15 @@ describe("toolbar glyphs and spacing", () => {
   it("keeps a touch glyph beside a label at the label's 20pt scale", () => {
     expect(toolbarGlyphsFor("touch").label).toEqual({
       size: 20,
-      strokeWidth: 2,
+      strokeWidth: 1.5,
       tone: "foreground",
     });
     expect(TOOLBAR_GLYPH_SIZES.label).toEqual({ xs: 20, md: 16 });
   });
 
-  it("runs the touch context ring 2pt over the toolbar glyph and keeps the pointer ring", () => {
+  it("sizes the touch context ring to the toolbar glyph's ink and keeps the pointer ring", () => {
     expect(TOOLBAR_RINGS).toEqual({
-      touch: { size: 26, strokeWidth: 3 },
+      touch: { size: 18, strokeWidth: 2 },
       pointer: { size: 16, strokeWidth: 2 },
     });
   });

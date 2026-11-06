@@ -25,7 +25,12 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
-import { TOOLBAR_CONTROL_HEIGHT, type ToolbarGlyphs } from "@/components/ui/control-geometry";
+import {
+  TOUCH_ICON_SIZE,
+  toolbarContentSlot,
+  toolbarSlot,
+  type ToolbarGlyphs,
+} from "@/components/ui/control-geometry";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -519,18 +524,17 @@ function ModelSheetTrigger({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    height: TOOLBAR_CONTROL_HEIGHT,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(theme.spacing[2]),
+    borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
   },
   triggerIconOnly: {
-    width: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(TOUCH_ICON_SIZE.md),
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",
@@ -539,7 +543,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   triggerPressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   triggerDisabled: {
     opacity: 0.5,

@@ -41,23 +41,32 @@ export interface ComposerControlPresentation {
   showModelLabel: boolean;
 }
 
+/** What each toolbar control takes up in the row, which is what the density budget sums. */
 export interface ComposerToolbarGeometry {
+  /** An icon-only control's width in the row. */
   controlSize: number;
   glyphs: ToolbarGlyphs;
   controlGap: number;
   iconLabelGap: number;
+  /** A labelled control's padding on each side, as far as it takes room in the row. */
   labelPadding: number;
   caretSize: number;
 }
 
-/** The toolbar's measurements under a control sizing; see `resolveControlSizing`. */
+/**
+ * The toolbar's measurements under a control sizing; see `resolveControlSizing`. Touch-sized a
+ * control lays out at the width of what it paints (`toolbarSlot`, `toolbarContentSlot`), so an
+ * icon-only control takes its glyph's width and a picker's padding takes no room.
+ */
 export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarGeometry {
+  const glyphs = toolbarGlyphsFor(sizing);
+  const isTouch = sizing === "touch";
   return {
-    controlSize: TOOLBAR_CONTROL_SIZES[sizing],
-    glyphs: toolbarGlyphsFor(sizing),
+    controlSize: isTouch ? glyphs.icon.size : TOOLBAR_CONTROL_SIZES.pointer,
+    glyphs,
     controlGap: TOOLBAR_CONTROL_GAPS[sizing],
     iconLabelGap: 4,
-    labelPadding: 8,
+    labelPadding: isTouch ? 0 : 8,
     caretSize: 14,
   };
 }

@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View, useWindowDimensions } from "react-native";
+import {
+  Pressable,
+  type PressableStateCallbackType,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -9,7 +15,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useHostReportsUsage } from "@/usage";
 import type { Theme } from "@/styles/theme";
-import { TOOLBAR_CONTROL_HEIGHT, type ToolbarRing } from "@/components/ui/control-geometry";
+import { TOOLBAR_DISC_SIZE, type ToolbarRing } from "@/components/ui/control-geometry";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
 import { formatContextPercentage } from "./context-window-meter.utils";
@@ -184,6 +190,10 @@ export function ContextWindowMeter({
   const formattedSessionCost =
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
   const containerStyle = geometry.containerStyle;
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [containerStyle, pressed && styles.pressed],
+    [containerStyle],
+  );
   const ring = (
     <ContextWindowRing
       size={geometry.svgSize}
@@ -207,7 +217,7 @@ export function ContextWindowMeter({
     return (
       <>
         <Pressable
-          style={containerStyle}
+          style={pressableStyle}
           testID="context-window-meter"
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
@@ -241,7 +251,7 @@ export function ContextWindowMeter({
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
         <TooltipTrigger asChild triggerRefProp="ref">
           <Pressable
-            style={containerStyle}
+            style={pressableStyle}
             testID="context-window-meter"
             accessibilityRole="image"
             accessibilityLabel={accessibilityLabel}
@@ -307,19 +317,22 @@ export function ContextWindowMeter({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    width: TOOLBAR_DISC_SIZE,
+    height: TOOLBAR_DISC_SIZE,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   containerWithLabel: {
-    height: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_DISC_SIZE,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
+  },
+  pressed: {
+    backgroundColor: theme.colors.surface2,
   },
   percentageLabel: {
     color: theme.colors.foregroundMuted,

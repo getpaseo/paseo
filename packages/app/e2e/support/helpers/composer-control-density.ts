@@ -161,39 +161,39 @@ export async function expectNoFrameTruncatesModelBesideThinking(page: Page): Pro
   expect(wrong, `of ${frames.length} frames`).toEqual([]);
 }
 
-/** The composer's text column edges and its toolbar's outermost ink, in CSS pixels. */
+/** Where the composer toolbar's ends sit against the composer, in CSS pixels. */
 export interface ComposerToolbarRails {
+  /** Where the text column starts. */
   textLeft: number;
-  textRight: number;
+  /** Where the toolbar's leftmost ink starts. */
   inkLeft: number;
-  inkRight: number;
+  /** How far the trailing disc sits from the composer's right edge. */
+  discRightInset: number;
+  /** How far the trailing disc sits from the composer's bottom edge. */
+  discBottomInset: number;
 }
 
 /**
- * Reads where the toolbar's ink starts and ends against the text column. A control's ink is
- * its filled disc when it has one, otherwise its glyph's stroked geometry; the slot around
- * it is invisible and does not count.
+ * Reads where the toolbar's ink starts against the text column and where the trailing disc sits
+ * in the composer's corner. A control's ink is its filled disc when it has one, otherwise its
+ * glyph's stroked geometry.
  */
 export async function readComposerToolbarRails(page: Page): Promise<ComposerToolbarRails> {
   const root = page.locator('[data-testid="message-input-root"]:visible').first();
   return root.evaluate((element) => {
     const textarea = element.querySelector("textarea");
     if (!textarea) throw new Error("composer has no text input");
-    // The text column is inset equally from both sides of the composer. The text input itself
-    // stops short on the right to leave room for the focus hint, so mirror its left inset.
     const composerRect = element.getBoundingClientRect();
     const textLeft =
       textarea.getBoundingClientRect().left +
       Number.parseFloat(getComputedStyle(textarea).paddingLeft);
-    const textRight = composerRect.right - (textLeft - composerRect.left);
 
     const isFilled = (node: Element) => {
       const color = getComputedStyle(node).backgroundColor;
       return color !== "" && color !== "transparent" && !/rgba\(.*,\s*0\)$/.test(color);
     };
-    const glyphInk = (svg: SVGSVGElement) => {
+    const glyphInkLeft = (svg: SVGSVGElement) => {
       let left = Number.POSITIVE_INFINITY;
-      let right = Number.NEGATIVE_INFINITY;
       for (const shape of Array.from(
         svg.querySelectorAll<SVGGraphicsElement>("path, circle, rect, line, polyline"),
       )) {
@@ -202,34 +202,43 @@ export async function readComposerToolbarRails(page: Page): Promise<ComposerTool
         const box = shape.getBBox();
         const stroke = Number.parseFloat(getComputedStyle(shape).strokeWidth || "0");
         left = Math.min(left, matrix.a * (box.x - stroke / 2) + matrix.e);
-        right = Math.max(right, matrix.a * (box.x + box.width + stroke / 2) + matrix.e);
       }
-      return { left, right };
+      return left;
     };
 
     const band = composerRect.bottom - 64;
     let inkLeft = Number.POSITIVE_INFINITY;
-    let inkRight = Number.NEGATIVE_INFINITY;
+    let trailingDisc: DOMRect | null = null;
     for (const control of Array.from(element.querySelectorAll('[role="button"]'))) {
       const rect = control.getBoundingClientRect();
       if (rect.width === 0 || rect.top < band) continue;
       const disc = [control, ...Array.from(control.querySelectorAll("div"))].find(isFilled);
       const svg = control.querySelector("svg");
-      let ink: { left: number; right: number };
-      if (disc) ink = disc.getBoundingClientRect();
-      else if (svg) ink = glyphInk(svg);
-      else continue;
-      inkLeft = Math.min(inkLeft, ink.left);
-      inkRight = Math.max(inkRight, ink.right);
+      if (disc) {
+        const discRect = disc.getBoundingClientRect();
+        inkLeft = Math.min(inkLeft, discRect.left);
+        if (!trailingDisc || discRect.right > trailingDisc.right) trailingDisc = discRect;
+      } else if (svg) {
+        inkLeft = Math.min(inkLeft, glyphInkLeft(svg));
+      }
     }
-    return { textLeft, textRight, inkLeft, inkRight };
+    if (!trailingDisc) throw new Error("composer toolbar has no trailing disc");
+    return {
+      textLeft,
+      inkLeft,
+      discRightInset: composerRect.right - trailingDisc.right,
+      discBottomInset: composerRect.bottom - trailingDisc.bottom,
+    };
   });
 }
 
-/** The toolbar's outer ink sits on the text column's edges, within half a pixel. */
+/**
+ * The toolbar's left ink sits on the text column's edge, and its trailing disc nests into the
+ * corner, as far from the right edge as from the bottom edge. Within half a pixel.
+ */
 export async function expectComposerToolbarOnTextRails(page: Page): Promise<void> {
   const rails = await readComposerToolbarRails(page);
   // A precision of 0 digits passes within half a pixel.
   expect(rails.inkLeft).toBeCloseTo(rails.textLeft, 0);
-  expect(rails.inkRight).toBeCloseTo(rails.textRight, 0);
+  expect(rails.discRightInset).toBeCloseTo(rails.discBottomInset, 0);
 }
