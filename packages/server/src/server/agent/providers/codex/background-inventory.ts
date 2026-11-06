@@ -12,7 +12,7 @@ export class CodexBackgroundInventory {
   private client: Client | null = null;
   private thread: string | null = null;
   private readonly threads = new Set<string>();
-  private origins = new Map<string, string>();
+  private origins = new Map<string, { threadId: string; processId: string }>();
   private pending = false;
   private dirty = false;
   private unsupported = false;
@@ -23,16 +23,16 @@ export class CodexBackgroundInventory {
 
   async stopItem(id: string): Promise<void> {
     const client = this.client;
-    const threadId = this.origins.get(id);
+    const origin = this.origins.get(id);
     const generation = this.generation;
-    if (!client || !threadId || !this.current?.items?.some((item) => item.id === id))
+    if (!client || !origin || !this.current?.items?.some((item) => item.id === id))
       throw new Error("Background terminal is no longer available");
     const result = z
       .object({ terminated: z.boolean() })
       .parse(
         await client.request(
           "thread/backgroundTerminals/terminate",
-          { threadId, processId: id },
+          { threadId: origin.threadId, processId: origin.processId },
           10000,
         ),
       );
@@ -151,7 +151,7 @@ export class CodexBackgroundInventory {
 
 async function readInventories(client: Client, threads: string[]) {
   const items: NonNullable<InventoryEvent["items"]> = [];
-  const origins = new Map<string, string>();
+  const origins = new Map<string, { threadId: string; processId: string }>();
   const activeThreads = new Set<string>();
   for (const threadId of threads) {
     let cursor: string | null = null;
@@ -169,10 +169,11 @@ async function readInventories(client: Client, threads: string[]) {
           ),
         );
       for (const row of page.data) {
-        origins.set(row.processId, threadId);
+        const id = JSON.stringify([threadId, row.processId]);
+        origins.set(id, { threadId, processId: row.processId });
         activeThreads.add(threadId);
         items.push({
-          id: row.processId,
+          id,
           kind: "shell",
           canStop: true,
           description: null,

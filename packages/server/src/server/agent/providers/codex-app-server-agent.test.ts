@@ -2575,7 +2575,7 @@ describe("Codex app-server provider", () => {
         if (threadId === "thread-1" && live)
           return { data: [{ processId: "12", command: "sleep 180" }], nextCursor: null };
         if (threadId === "forked-thread")
-          return { data: [{ processId: "99", command: "sleep 99" }], nextCursor: null };
+          return { data: [{ processId: "12", command: "sleep 99" }], nextCursor: null };
         return { data: [], nextCursor: null };
       },
       "thread/backgroundTerminals/terminate": (params) => {
@@ -2598,7 +2598,7 @@ describe("Codex app-server provider", () => {
       appServer.completeTurn();
       await vi.waitFor(() =>
         expect(latestBackgroundWork(events)).toMatchObject({
-          items: [{ id: "12" }],
+          items: [{ command: "sleep 180" }],
         }),
       );
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -2613,7 +2613,7 @@ describe("Codex app-server provider", () => {
         threadId: "forked-thread",
         turnId: "turn-next",
         itemId: "new",
-        processId: "99",
+        processId: "12",
         command: "echo hello",
       });
       await vi.waitFor(() =>
@@ -2621,12 +2621,15 @@ describe("Codex app-server provider", () => {
       );
       await vi.waitFor(() =>
         expect(latestBackgroundWork(events)).toMatchObject({
-          items: [{ id: "12" }, { id: "99" }],
+          items: [{ command: "sleep 180" }, { command: "sleep 99" }],
         }),
       );
-      await session.stopBackgroundWork("12");
+      const items = latestBackgroundWork(events)?.items;
+      expect(items).toHaveLength(2);
+      expect(items![0].id).not.toBe(items![1].id);
+      await session.stopBackgroundWork(items![0].id);
       expect(latestBackgroundWork(events)).toMatchObject({
-        items: [{ id: "99" }],
+        items: [{ command: "sleep 99" }],
       });
     } finally {
       await session.close();

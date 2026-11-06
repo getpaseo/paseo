@@ -400,8 +400,8 @@ test("publishes every page of the current thread's live background terminals", a
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
       items: [
-        { id: "1", kind: "shell", description: null, command: "sleep 1" },
-        { id: "2", kind: "shell", description: null, command: "sleep 2" },
+        { kind: "shell", description: null, command: "sleep 1" },
+        { kind: "shell", description: null, command: "sleep 2" },
       ],
     }),
   );
@@ -444,7 +444,7 @@ test("discards a terminal list overtaken by a command event", async () => {
     }),
   );
   expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
-    expect.objectContaining({ items: [expect.objectContaining({ id: "old" })] }),
+    expect.objectContaining({ items: [expect.objectContaining({ command: "sleep 2" })] }),
   );
 });
 
@@ -471,7 +471,7 @@ test("does not publish a terminal response from a lost runtime", async () => {
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
-    expect.objectContaining({ items: [expect.objectContaining({ id: "old" })] }),
+    expect.objectContaining({ items: [expect.objectContaining({ command: "sleep 2" })] }),
   );
 });
 
@@ -498,7 +498,7 @@ test("accepts a slow terminal snapshot after the polling interval", async () => 
   pending.resolve({ data: [{ processId: "slow", command: "sleep 120" }], nextCursor: null });
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-      items: [{ id: "slow" }],
+      items: [{ command: "sleep 120" }],
     }),
   );
   expect(
@@ -560,10 +560,10 @@ test("retries transient inventory failures and cancels retries on stop", async (
     expect(calls).toBe(1);
     fail = false;
     await vi.advanceTimersByTimeAsync(5000);
-    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    expect(inventory.snapshot()?.items).toMatchObject([{ command: "sleep 120" }]);
     fail = true;
     await vi.advanceTimersByTimeAsync(5000);
-    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    expect(inventory.snapshot()?.items).toMatchObject([{ command: "sleep 120" }]);
     inventory.stop();
     const stoppedCalls = calls;
     await vi.advanceTimersByTimeAsync(15000);
@@ -625,14 +625,18 @@ test("stops only the selected live background terminal and confirms the roster",
   await session.connect();
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-      items: [{ id: "1" }, { id: "2" }],
+      items: [{ command: "sleep 1" }, { command: "sleep 2" }],
     }),
   );
-  await session.stopBackgroundWork("1");
+  const item = events
+    .findLast((event) => event.type === "background_work")
+    ?.items?.find((entry) => entry.command === "sleep 1");
+  expect(item).toBeDefined();
+  await session.stopBackgroundWork(item!.id);
   expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-    items: [{ id: "2" }],
+    items: [{ command: "sleep 2" }],
   });
-  await expect(session.stopBackgroundWork("1")).rejects.toThrow();
+  await expect(session.stopBackgroundWork(item!.id)).rejects.toThrow();
 });
 
 test("reports a rejected background stop and keeps the item available", async () => {
@@ -655,12 +659,14 @@ test("reports a rejected background stop and keeps the item available", async ()
   await session.connect();
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-      items: [{ id: "1" }],
+      items: [{ command: "sleep 1" }],
     }),
   );
-  await expect(session.stopBackgroundWork("1")).rejects.toThrow("not terminated");
+  const item = events.findLast((event) => event.type === "background_work")?.items?.[0];
+  expect(item).toBeDefined();
+  await expect(session.stopBackgroundWork(item!.id)).rejects.toThrow("not terminated");
   expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-    items: [{ id: "1" }],
+    items: [{ command: "sleep 1" }],
   });
 });
 
@@ -685,10 +691,12 @@ test("does not confirm a stop after the provider connection is lost", async () =
   await session.connect();
   await vi.waitFor(() =>
     expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
-      items: [{ id: "1" }],
+      items: [{ command: "sleep 1" }],
     }),
   );
-  const pending = session.stopBackgroundWork("1");
+  const item = events.findLast((event) => event.type === "background_work")?.items?.[0];
+  expect(item).toBeDefined();
+  const pending = session.stopBackgroundWork(item!.id);
   await appServer.waitForRequest("thread/backgroundTerminals/terminate");
   appServer.disconnect();
   response.resolve({ terminated: true });
