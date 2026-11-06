@@ -23,6 +23,10 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
+// Every footer variant (running, completed with Copy, completed with only its duration) gets
+// this content height, so a turn ending swaps the footer's controls without moving the rows
+// above it.
+const TURN_FOOTER_CONTENT_HEIGHT = 24;
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
@@ -208,7 +212,11 @@ function CompletedTurnFooter({
 
 function TurnFooterRow({ children }: { children: ReactNode }) {
   const rowStyle = useMemo(() => [stylesheet.streamItemWrapper, stylesheet.turnFooterRow], []);
-  return <View style={rowStyle}>{children}</View>;
+  return (
+    <View style={rowStyle} testID="turn-footer">
+      {children}
+    </View>
+  );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -229,11 +237,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    minHeight: 24,
+    height: TURN_FOOTER_CONTENT_HEIGHT + TURN_FOOTER_BOTTOM_SPACING,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
   turnFooterContent: {
-    height: 24,
+    height: TURN_FOOTER_CONTENT_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
