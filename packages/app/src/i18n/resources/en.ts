@@ -2710,6 +2710,11 @@ export const en = {
         moveUp: "Move up",
         moveDown: "Move down",
       },
+      focusColor: {
+        title: "Keyboard focus",
+        label: "Focus color",
+        hint: "Hex color, e.g. #8aabe0. Leave empty to follow the theme",
+      },
       fonts: {
         title: "Fonts",
         systemDefault: "System default",

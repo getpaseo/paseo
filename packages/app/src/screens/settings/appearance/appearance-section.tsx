@@ -305,6 +305,7 @@ export function AppearanceSection() {
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
 
+  const [focusColorDraft, setFocusColorDraft] = useState(settings.focusRingColor);
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
   const [uiBaseSizeDraft, setUiBaseSizeDraft] = useState(String(settings.uiBaseFontSize));
@@ -334,6 +335,20 @@ export function AppearanceSection() {
       void updateSettings({ syntaxTheme });
     },
     [updateSettings],
+  );
+
+  const commitFocusColor = useCallback(
+    (value: string) => {
+      const next = value.trim();
+      if (!/^(?:#[0-9a-fA-F]{6})?$/.test(next)) {
+        setFocusColorDraft(settings.focusRingColor);
+        return settings.focusRingColor;
+      }
+      setFocusColorDraft(next);
+      if (next !== settings.focusRingColor) void updateSettings({ focusRingColor: next });
+      return next;
+    },
+    [settings.focusRingColor, updateSettings],
   );
 
   const commitUiFontFamily = useCallback(
@@ -435,6 +450,23 @@ export function AppearanceSection() {
           <ThemePicker />
         </View>
       </SettingsSection>
+      {!isNative ? (
+        <SettingsSection title={t("settings.appearance.focusColor.title")}>
+          <View style={settingsStyles.card}>
+            <FontFamilyRow
+              title={t("settings.appearance.focusColor.label")}
+              hint={t("settings.appearance.focusColor.hint")}
+              accessibilityLabel={t("settings.appearance.focusColor.label")}
+              placeholder="#8aabe0"
+              value={settings.focusRingColor}
+              draft={focusColorDraft}
+              withBorder={false}
+              onChangeDraft={setFocusColorDraft}
+              onCommit={commitFocusColor}
+            />
+          </View>
+        </SettingsSection>
+      ) : null}
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
           {showInterfaceFontFamilyRow ? (

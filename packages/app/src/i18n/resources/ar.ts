@@ -2619,6 +2619,11 @@ export const ar: TranslationResources = {
         moveUp: "نقل لأعلى",
         moveDown: "نقل لأسفل",
       },
+      focusColor: {
+        title: "تركيز لوحة المفاتيح",
+        label: "لون التركيز",
+        hint: "لون سداسي مثل #8aabe0. اتركه فارغًا لاستخدام السمة",
+      },
       fonts: {
         title: "الخطوط",
         systemDefault: "الافتراضي للنظام",

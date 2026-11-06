@@ -2640,6 +2640,11 @@ export const es: TranslationResources = {
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
       },
+      focusColor: {
+        title: "Foco del teclado",
+        label: "Color del foco",
+        hint: "Color hexadecimal, p. ej. #8aabe0. Déjalo vacío para usar el tema",
+      },
       fonts: {
         title: "Fuentes",
         systemDefault: "Valor predeterminado del sistema",

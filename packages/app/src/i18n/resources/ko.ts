@@ -2597,6 +2597,11 @@ export const ko: TranslationResources = {
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
       },
+      focusColor: {
+        title: "키보드 포커스",
+        label: "포커스 색상",
+        hint: "16진수 색상 (예: #8aabe0). 비우면 테마를 따름",
+      },
       fonts: {
         title: "글꼴",
         systemDefault: "시스템 기본값",

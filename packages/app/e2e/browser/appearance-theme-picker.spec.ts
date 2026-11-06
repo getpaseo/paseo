@@ -96,3 +96,21 @@ test("applies the interface font size to settings text", async ({ page }) => {
   await expect(contentSizeInput).toHaveValue("21");
   await expect(sectionTitle).toHaveCSS("font-size", "10px");
 });
+
+test("customizes and resets the keyboard focus color", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+  await openSettingsSection(page, "appearance");
+
+  const input = page.getByLabel("Focus color");
+  await input.fill("#8aabe0");
+  await input.press("Tab");
+  await expect(page.locator("html")).toHaveCSS("--paseo-focus-ring", "#8aabe0");
+  await expect(page.locator(":focus-visible")).toHaveCSS("outline-color", "rgb(138, 171, 224)");
+  await page.reload();
+  await expect(input).toHaveValue("#8aabe0");
+  await expect(page.locator("html")).toHaveCSS("--paseo-focus-ring", "#8aabe0");
+  await input.fill("");
+  await input.press("Tab");
+  await expect(page.locator("html")).not.toHaveCSS("--paseo-focus-ring", "#8aabe0");
+});

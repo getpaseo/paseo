@@ -22,6 +22,7 @@ import {
 import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES } from "@/styles/theme";
 import { applyAppearance } from "./apply";
 import { AppearanceSystemBars } from "./system-bars";
+import { AppearanceFocusRing } from "./focus-ring";
 
 interface ContributedThemes {
   options: PluginThemeOption[];
@@ -110,6 +111,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   return (
     <ContributedThemesContext.Provider value={value}>
       <AppearanceSystemBars />
+      <AppearanceFocusRing override={settings.focusRingColor} />
       {children}
     </ContributedThemesContext.Provider>
   );

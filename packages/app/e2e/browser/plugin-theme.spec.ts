@@ -81,11 +81,13 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await latteItem.click();
       await expect(latteItem).toBeChecked();
       await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
+      await expect(page.locator("html")).toHaveCSS("--paseo-focus-ring", "#9ca0b0");
     });
 
     await mochaItem.click();
     await expect(mochaItem).toBeChecked();
     await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+    await expect(page.locator("html")).toHaveCSS("--paseo-focus-ring", "#6c7086");
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-applied.png"),
       fullPage: true,
@@ -95,6 +97,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await page.reload();
       await expect(mochaItem).toBeChecked({ timeout: 30_000 });
       await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+      await expect(page.locator("html")).toHaveCSS("--paseo-focus-ring", "#6c7086");
     });
 
     await test.step("removing the plugin falls back to the default theme", async () => {
