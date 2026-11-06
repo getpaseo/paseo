@@ -43,7 +43,7 @@ export interface AgentUpdatesService {
   clearSubscription(subscriptionId: string): void;
   hasSubscription(): boolean;
   includesLiveAgent(agent: ManagedAgent, subscriptionIds?: ReadonlySet<string>): Promise<boolean>;
-  forwardLiveAgent(agent: ManagedAgent): Promise<void>;
+  forwardLiveAgent(agent: ManagedAgent, options?: { usageRevision: null }): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
   dispose(): void;
@@ -326,7 +326,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return next;
   }
 
-  function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
+  function forwardLiveAgent(agent: ManagedAgent, options?: { usageRevision: null }): Promise<void> {
     if (!hasSubscription()) {
       const workspaceId = agent.workspaceId;
       return workspaceId
@@ -340,6 +340,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
+    if (options) payload.usageRevision = options.usageRevision;
     return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
   }
 

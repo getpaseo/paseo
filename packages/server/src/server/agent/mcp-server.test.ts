@@ -6823,6 +6823,68 @@ it("rejects hidden agent-worktree placement and directs callers to workspace cre
 describe("local durable finish subscription MCP wiring", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
+  it("keeps a permission checkpoint subscription through reload until actual completion", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-permission-reload-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    let mcp: Client | undefined;
+    try {
+      const parent = await manager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      // Providers can request permissions outside a foreground turn. Reloading
+      // this idle checkpoint must not be mistaken for closing the child.
+      childClient.sessions[0]!.requestPermission("before-reload");
+      await vi.waitFor(() => expect(manager.getAgent(child.id)!.pendingPermissions.size).toBe(1));
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+      await serverSubscriptions
+        .get(server)!
+        .register({ callerAgentId: parent.id, childAgentId: child.id });
+      const prompts = () =>
+        parentClient.sessions[0]!.prompts.flatMap((prompt) => parseAgentMessages(prompt) ?? [])
+          .map((message) => message.text)
+          .join("\n");
+      await vi.waitFor(() => expect(prompts()).toContain("before-reload"));
+
+      await manager.reloadAgentSession(child.id);
+      expect(prompts()).not.toContain("was closed");
+      expect(prompts()).not.toContain("finished.");
+      expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
+
+      const completed = manager.runAgent(child.id, "Continue after reload");
+      await vi.waitFor(() =>
+        expect(childClient.sessions[1]!.prompts).toContain("Continue after reload"),
+      );
+      childClient.sessions[1]!.finishTurn("Reloaded work complete");
+      await completed;
+      await vi.waitFor(() => expect(prompts()).toContain("Reloaded work complete"));
+      expect(prompts()).toContain("finished.");
+      expect(prompts()).not.toContain("was closed");
+      await vi.waitFor(() => expect(serverSubscriptionRecords.get(server)!.size).toBe(0));
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+
   it.each(["concurrent", "repeated"] as const)(
     "reports %s permission requests and final completion",
     async (sequence) => {

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { UsageSourceRegistry } from "./index.js";
+import { usageRevision } from "../../agent/usage-revision.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -418,6 +419,126 @@ test("session discovery reuses accounts, separates launches, and retains live ag
   await expect(registry.listReports({ agentId: "missing" })).rejects.toThrow("Unknown agent");
   await expect(registry.listReports({ agentId: "one", reportIds: [] })).rejects.toThrow("agentId");
 });
+
+test("stored closed agents return no usage without discovering or reopening a session", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    hasStoredAgent: async (id) => id === "closed",
+    usageSession: () => null,
+  });
+  let discoveries = 0;
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: async () => {
+      discoveries++;
+      return [{ key: "host", input: {} }];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  const revisions: Array<string | null> = [];
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["codex:host"]);
+  discoveries = 0;
+  expect(
+    await registry.listReports({
+      agentId: "closed",
+      onRevision: (revision) => revisions.push(revision),
+    }),
+  ).toEqual([]);
+  expect(revisions).toEqual([null]);
+  expect(discoveries).toBe(0);
+  await expect(registry.listReports({ agentId: "unknown" })).rejects.toThrow("Unknown agent");
+});
+
+test("agent revisions follow account switches and closed sessions never fall back to host usage", async () => {
+  let session: { provider: string; sessionKey: string; env: Record<string, string> } | null = {
+    provider: "codex",
+    sessionKey: "launch-a",
+    env: { CODEX_HOME: "/a" },
+  };
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => true,
+    usageSession: () => session,
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: async (scope) => [
+      { key: scope.kind === "global" ? "host" : scope.env.CODEX_HOME.slice(1), input: {} },
+    ],
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  const revisions: Array<string | null> = [];
+  const options = {
+    agentId: "agent",
+    onRevision: (revision: string | null) => revisions.push(revision),
+  };
+  const first = usageRevision(session);
+  expect((await registry.listReports(options)).map((r) => r.id)).toEqual(["codex:a"]);
+  session = { ...session, sessionKey: "launch-b", env: { CODEX_HOME: "/b" } };
+  const second = usageRevision(session);
+  expect(second).not.toBe(first);
+  expect((await registry.listReports(options)).map((r) => r.id)).toEqual(["codex:b"]);
+  session = null;
+  expect(await registry.listReports(options)).toEqual([]);
+  expect(revisions).toEqual([first, second, null]);
+});
+
+test.each([
+  ["discover", "launch-b"],
+  ["fetch", "launch-b"],
+  ["fetch", null],
+] as const)(
+  "rejects attribution changes during %s to %s and suppresses late reports",
+  async (stage, nextLaunch) => {
+    let session: { provider: string; sessionKey: string; env: Record<string, string> } | null = {
+      provider: "codex",
+      sessionKey: "launch-a",
+      env: {},
+    };
+    let resume!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: () => session !== null,
+      hasStoredAgent: async () => true,
+      usageSession: () => session,
+    });
+    registry.register({
+      id: "codex",
+      label: "Codex",
+      discover: async () => {
+        if (stage === "discover") {
+          started();
+          await held;
+        }
+        return [{ key: "a", input: {} }];
+      },
+      fetch: async () => {
+        if (stage === "fetch") {
+          started();
+          await held;
+        }
+        return { status: "available", windows: [] };
+      },
+    });
+    const emitted: string[] = [];
+    const pending = registry.listReports({
+      agentId: "agent",
+      onReport: (entry) => emitted.push(entry.id),
+    });
+    await entered;
+    session = nextLaunch === null ? null : { ...session, sessionKey: nextLaunch };
+    resume();
+    await expect(pending).rejects.toThrow("Agent usage attribution changed");
+    expect(emitted).toEqual([]);
+  },
+);
 
 test("reports arrive independently and a hung fetch settles as an error before completion", async () => {
   const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 25);

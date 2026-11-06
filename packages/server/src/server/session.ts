@@ -2058,18 +2058,8 @@ export class Session {
           return;
         }
 
-        if (event.type === "agent_state") {
-          this.sessionLogger.trace(
-            {
-              agentId: event.agent.id,
-              provider: event.agent.provider,
-              providerSessionId: event.agent.persistence?.sessionId ?? undefined,
-              turnId: event.agent.activeForegroundTurnId ?? undefined,
-              lifecycle: event.agent.lifecycle,
-            },
-            "agent.session.forward_update",
-          );
-          void this.agentUpdates.forwardLiveAgent(event.agent);
+        if (event.type === "agent_state" || event.type === "agent_usage_invalidated") {
+          this.forwardAgentSnapshot(event);
           return;
         }
 
@@ -2154,6 +2144,23 @@ export class Session {
       // listings see them; everything else above filters them out.
       { replayState: false, includeInternal: true },
     );
+  }
+
+  private forwardAgentSnapshot(
+    event: Extract<AgentManagerEvent, { type: "agent_state" | "agent_usage_invalidated" }>,
+  ): void {
+    this.sessionLogger.trace(
+      {
+        agentId: event.agent.id,
+        provider: event.agent.provider,
+        providerSessionId: event.agent.persistence?.sessionId ?? undefined,
+        turnId: event.agent.activeForegroundTurnId ?? undefined,
+        lifecycle: event.agent.lifecycle,
+      },
+      "agent.session.forward_update",
+    );
+    const options = event.type === "agent_usage_invalidated" ? { usageRevision: null } : undefined;
+    void this.agentUpdates.forwardLiveAgent(event.agent, options);
   }
 
   private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {

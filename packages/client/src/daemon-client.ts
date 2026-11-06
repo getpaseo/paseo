@@ -613,6 +613,7 @@ type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 interface UsageListReportsPayload {
   requestId: string;
+  usageRevision?: string | null;
   reports: UsageReportEntry[];
 }
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
@@ -5942,7 +5943,11 @@ export class DaemonClient {
             : null,
       });
       if (response.error !== null) throw new Error(response.error);
-      return { requestId, reports };
+      return {
+        requestId,
+        reports,
+        ...(response.usageRevision !== undefined ? { usageRevision: response.usageRevision } : {}),
+      };
     } finally {
       active = false;
       unsubscribe();

@@ -217,6 +217,34 @@ unsubscribe();
 await directory.subscription.release();
 ```
 
+## Read account usage for an agent
+
+```ts
+const { reports, usageRevision } = await agent.listUsageReports();
+```
+
+Reports describe the account quotas associated with the agent's current provider launch, not
+tokens consumed by this agent alone. They retain the usage source, account label, report ID,
+and availability state. When usage checking is enabled, a known agent without a live usage
+session returns an empty list and a `null` revision without reopening the session. The call
+never falls back to the host's default account. When the host's **Check usage** switch is off,
+requests reject before discovery or vendor calls.
+
+Observe `usageRevision` in agent snapshots. Clear cached reports when it changes, then query
+again when it is non-null. Before displaying a response, compare its revision with the latest
+snapshot and discard it if they differ. Reload and resume can change the revision while preserving
+the agent ID and provider conversation ID. A request that spans a revision change rejects; request again for the
+new snapshot. Discard pending responses after removing an agent or replacing its observation.
+
+The revision identifies the provider launch and model, not an account or quota freshness.
+It also changes on a same-account reload or a model switch. A change does not mean the account
+changed. Ordinary reads use the daemon's five-minute report cache; reserve `forceRefresh`, which
+bypasses that cache, for an explicit refresh rather than routine polling. It does not change
+credentials or detect credential-file edits inside an unchanged provider launch.
+Account-routing plugins must reopen the provider session to apply a different launch environment.
+This method requires a host advertising `server_info.features.agentUsageRevision`; older hosts
+reject with an update-host message.
+
 ## List the commands a session loaded
 
 ```ts

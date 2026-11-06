@@ -1,3 +1,4 @@
+import { usageRevision } from "../../agent/usage-revision.js";
 import { createHash } from "node:crypto";
 import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
@@ -32,6 +33,7 @@ interface KnownReport {
 
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
+  hasStoredAgent?(id: string): Promise<boolean>;
   usageSession(id: string): AgentUsageSession | null;
 }
 
@@ -40,6 +42,7 @@ export interface ListUsageReportsOptions {
   reportIds?: string[];
   agentId?: string;
   onReport?: (report: UsageReportEntry) => void;
+  onRevision?: (revision: string | null) => void;
 }
 
 interface AgentReports {
@@ -91,6 +94,14 @@ export class UsageSourceRegistry {
     if (options.agentId !== undefined && options.reportIds !== undefined)
       throw new Error("agentId and reportIds cannot be combined");
     this.pruneAgents();
+    const agentId = options.agentId;
+    const revision =
+      agentId === undefined ? undefined : usageRevision(this.agents.usageSession(agentId));
+    const assertCurrent = () => {
+      if (agentId !== undefined && usageRevision(this.agents.usageSession(agentId)) !== revision) {
+        throw new Error("Agent usage attribution changed. Request its reports again.");
+      }
+    };
     let ids: string[];
     let reports = this.known;
     if (options.agentId !== undefined) {
@@ -103,18 +114,23 @@ export class UsageSourceRegistry {
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
-    return Promise.all(
+    assertCurrent();
+    if (revision !== undefined) options.onRevision?.(revision);
+    const entries = await Promise.all(
       [...new Set(ids)].flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
+            assertCurrent();
             options.onReport?.(entry);
             return entry;
           }),
         ];
       }),
     );
+    assertCurrent();
+    return entries;
   }
 
   private pruneAgents(): void {
@@ -125,7 +141,8 @@ export class UsageSourceRegistry {
   }
 
   private async discoverAgent(agentId: string): Promise<string[]> {
-    if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
+    if (!this.agents.hasAgent(agentId) && !(await this.agents.hasStoredAgent?.(agentId)))
+      throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
     if (!session) {
       this.byAgent.delete(agentId);
@@ -145,7 +162,7 @@ export class UsageSourceRegistry {
       env: session.env,
     });
     // A query that finishes after a resume must not publish the previous launch's mapping.
-    if (this.agents.usageSession(agentId)?.sessionKey !== session.sessionKey) return [];
+    if (usageRevision(this.agents.usageSession(agentId)) !== usageRevision(session)) return [];
     this.byAgent.set(agentId, {
       sessionKey: session.sessionKey,
       provider: session.provider,

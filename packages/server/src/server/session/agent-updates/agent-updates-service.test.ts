@@ -7,6 +7,7 @@ import type {
   SessionOutboundMessage,
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
+import { toAgentPayload } from "../../agent/agent-projections.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 import { DirectorySyncService } from "../../directory-sync/index.js";
 
@@ -188,6 +189,9 @@ function buildHarness() {
       const payload = payloadById.get(id) ?? makeAgentPayload({ id });
       return {
         ...payload,
+        session: {
+          usageSession: () => ({ provider: payload.provider, sessionKey: `launch-${id}`, env: {} }),
+        },
         lifecycle: payload.status,
         config: {
           provider: payload.provider,
@@ -300,6 +304,27 @@ describe("matchesAgentUpdatesFilter", () => {
 });
 
 describe("forwardLiveAgent", () => {
+  test("usage invalidation preserves lifecycle and active turn in the client update", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "running" }));
+    h.useProjectedPayload();
+    const agent = h.managed("a");
+    agent.activeTurnId = "turn-a";
+    agent.activeTurnStartedAt = new Date("2026-01-01T00:00:00.000Z");
+    const before = toAgentPayload(agent);
+    expect(before.usageRevision).toEqual(expect.any(String));
+    await h.service.forwardLiveAgent(agent, { usageRevision: null });
+    expect(h.agentUpdates()).toEqual([
+      {
+        kind: "upsert",
+        agent: { ...before, usageRevision: null },
+        project: makeProject(),
+      },
+    ]);
+  });
+
   test("emits snapshots for one agent in forward call order", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });

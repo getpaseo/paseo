@@ -2019,6 +2019,7 @@ export class VoiceAssistantWebSocketServer {
         relayProtectedSecurity: true,
         usageSetting: true,
         usageSources: true,
+        agentUsageRevision: true,
         ownedSubscriptions: true,
         binaryChunkingV1: true,
         agentRequestReceipts: true,

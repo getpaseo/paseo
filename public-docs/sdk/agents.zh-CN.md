@@ -205,6 +205,29 @@ unsubscribe();
 await directory.subscription.release();
 ```
 
+## 读取 Agent 的账号用量 {#read-account-usage-for-an-agent}
+
+```ts
+const { reports, usageRevision } = await agent.listUsageReports();
+```
+
+报告描述当前 Provider 启动会话所关联账号的配额，不是该 Agent 单独消耗的 Token。
+报告保留用量来源、账号标签、报告 ID 和可用状态。启用用量检查时，没有活动用量会话的已知
+Agent 返回空列表和 `null` 版本，不会重新打开会话，也不会退回到主机的默认账号。
+主机的 **Check usage** 开关关闭时，请求会在发现账号或调用供应商接口之前被拒绝。
+
+观察 Agent 快照中的 `usageRevision`。版本变化时清除缓存，版本非空时重新查询。
+显示响应前，将响应版本与最新快照比较；若不同，则丢弃响应。重新加载或恢复会话可以改变版本，同时保留
+Agent ID 和 Provider 对话 ID。查询期间版本发生变化时，请求会失败；应根据新快照
+重新查询。移除 Agent 或替换观察订阅后，丢弃尚未完成的旧请求响应。
+
+此版本标识 Provider 启动会话和模型，不标识账号，也不表示配额的新鲜度。
+使用同一账号重新加载或切换模型时，版本也会变化；版本变化并不意味着账号变化。
+普通读取使用守护进程的五分钟报告缓存。`forceRefresh` 绕过缓存，应仅用于显式刷新，而不是常规轮询。
+它不会修改凭据，也不会检测同一 Provider 启动会话中的凭据文件变更。
+账号路由插件必须重新打开 Provider 会话才能应用不同的启动环境。此方法要求主机支持
+`server_info.features.agentUsageRevision`；旧主机会返回需要更新主机的错误。
+
 ## 列出会话加载的命令 {#list-the-commands-a-session-loaded}
 
 ```ts

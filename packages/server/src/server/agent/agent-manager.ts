@@ -253,6 +253,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "agent_usage_invalidated"; agent: ManagedAgent }
   | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | { type: "timeline_replacement"; agentId: string; epoch: string }
@@ -1742,6 +1743,8 @@ export class AgentManager {
       this.cancelRunningProviderSubagents(agentId);
       closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       await this.persistSnapshot(closedExisting);
+      // Usage clears during reload without telling finish observers the agent has closed.
+      this.dispatch({ type: "agent_usage_invalidated", agent: existing });
       this.assertAcceptingAgentRegistrations();
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
@@ -5505,7 +5508,7 @@ export class AgentManager {
       }
       if (
         subscriber.agentId &&
-        event.type === "agent_state" &&
+        (event.type === "agent_state" || event.type === "agent_usage_invalidated") &&
         subscriber.agentId !== event.agent.id
       ) {
         continue;
@@ -5533,7 +5536,8 @@ export class AgentManager {
   }
 
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
-    if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_state" || event.type === "agent_usage_invalidated")
+      return event.agent.internal === true;
     if (event.type === "agent_removed") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
     if (event.type !== "provider_subagent") return false;

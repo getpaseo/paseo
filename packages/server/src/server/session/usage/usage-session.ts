@@ -22,7 +22,11 @@ export class UsageSession {
     try {
       if (!this.options.isEnabled()) throw new Error("Usage is off on this host.");
       if (!this.options.runtime) throw new Error("Plugin runtime is unavailable");
+      let usageRevision: string | null | undefined;
       await this.options.runtime.listUsageReports({
+        onRevision: (revision) => {
+          usageRevision = revision;
+        },
         forceRefresh: msg.forceRefresh,
         reportIds: msg.reportIds,
         agentId: msg.agentId,
@@ -34,7 +38,11 @@ export class UsageSession {
       });
       this.options.emit({
         type: "usage.list_reports.response",
-        payload: { requestId: msg.requestId, error: null },
+        payload: {
+          requestId: msg.requestId,
+          error: null,
+          ...(usageRevision !== undefined ? { usageRevision } : {}),
+        },
       });
     } catch (error) {
       this.options.emit({
