@@ -71,6 +71,7 @@ export function createWorkspaceScriptsService(deps: {
   // Script status is daemon state, so it reaches every client, not only the requester.
   publishStatusUpdate: (message: ScriptStatusUpdateMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
+  runWorkspaceOperation?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
   assertAutomationAllowed: (workspaceId: string) => Promise<void>;
 }): WorkspaceScriptsService {
   const {
@@ -90,6 +91,7 @@ export function createWorkspaceScriptsService(deps: {
     emit,
     publishStatusUpdate,
     spawnWorkspaceScript,
+    runWorkspaceOperation = (_workspaceId, operation) => operation(),
     assertAutomationAllowed,
   } = deps;
 
@@ -176,39 +178,41 @@ export function createWorkspaceScriptsService(deps: {
   }
 
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {
-    const available = requireAvailable();
-    const globalServicePorts = await getGlobalServicePorts();
-    const workspace = await getWorkspace(input.workspaceId);
-    await assertAutomationAllowed(workspace.workspaceId);
-    const project = await projectRegistry.get(workspace.projectId);
-    const suppressedScriptNames = await getProjectLaunchNames(workspace, project);
-    if (suppressedScriptNames.has(input.scriptName)) {
-      throw new Error(
-        `Script '${input.scriptName}' is configured as a project launch; use 'paseo launch start ${input.scriptName}' instead`,
-      );
-    }
-    const gitMetadata = resolveGitMetadata(workspace, project);
-    const result = await spawnWorkspaceScript({
-      repoRoot: workspace.cwd,
-      workspaceId: workspace.workspaceId,
-      projectSlug: gitMetadata.projectSlug,
-      branchName: gitMetadata.currentBranch,
-      scriptName: input.scriptName,
-      suppressedScriptNames,
-      daemonPort: getDaemonTcpPort?.() ?? null,
-      daemonListenHost: getDaemonTcpHost?.() ?? null,
-      serviceProxyPublicBaseUrl,
-      serviceProxy: available.serviceProxy,
-      runtimeStore: available.runtimeStore,
-      terminalManager: available.terminalManager,
-      globalServicePorts,
-      workspaceRuntimeEnvironment: workspaceRuntimeEnvironment ?? undefined,
-      logger,
-      onLifecycleChanged: () => {
-        void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
-      },
+    return await runWorkspaceOperation(input.workspaceId, async () => {
+      const available = requireAvailable();
+      const globalServicePorts = await getGlobalServicePorts();
+      const workspace = await getWorkspace(input.workspaceId);
+      await assertAutomationAllowed(workspace.workspaceId);
+      const project = await projectRegistry.get(workspace.projectId);
+      const suppressedScriptNames = await getProjectLaunchNames(workspace, project);
+      if (suppressedScriptNames.has(input.scriptName)) {
+        throw new Error(
+          `Script '${input.scriptName}' is configured as a project launch; use 'paseo launch start ${input.scriptName}' instead`,
+        );
+      }
+      const gitMetadata = resolveGitMetadata(workspace, project);
+      const result = await spawnWorkspaceScript({
+        repoRoot: workspace.cwd,
+        workspaceId: workspace.workspaceId,
+        projectSlug: gitMetadata.projectSlug,
+        branchName: gitMetadata.currentBranch,
+        scriptName: input.scriptName,
+        suppressedScriptNames,
+        daemonPort: getDaemonTcpPort?.() ?? null,
+        daemonListenHost: getDaemonTcpHost?.() ?? null,
+        serviceProxyPublicBaseUrl,
+        serviceProxy: available.serviceProxy,
+        runtimeStore: available.runtimeStore,
+        terminalManager: available.terminalManager,
+        globalServicePorts,
+        workspaceRuntimeEnvironment: workspaceRuntimeEnvironment ?? undefined,
+        logger,
+        onLifecycleChanged: () => {
+          void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+        },
+      });
+      return { workspace, project, terminalId: result.terminalId };
     });
-    return { workspace, project, terminalId: result.terminalId };
   }
 
   async function launch(input: {

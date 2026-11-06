@@ -85,6 +85,8 @@ interface BuildOptions {
   runtimeStore?: Pick<WorkspaceRuntimeStore, "get">;
   automationError?: Error;
   getGlobalServicePorts?: () => Promise<PaseoServicePortAllocation | undefined>;
+  runWorkspaceOperation?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+  onSpawn?: () => void;
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -118,7 +120,9 @@ function buildService(options: BuildOptions = {}) {
     logger,
     emit: (message) => emitted.push(message),
     publishStatusUpdate: (message) => published.push(message),
+    runWorkspaceOperation: options.runWorkspaceOperation,
     async spawnWorkspaceScript(spawnOptions): Promise<WorktreeScriptResult> {
+      options.onSpawn?.();
       spawnCalls.push(spawnOptions);
       if (options.spawnThrows) {
         throw new Error(options.spawnThrows);
@@ -431,6 +435,23 @@ describe("stop", () => {
 });
 
 describe("start", () => {
+  test("runs the complete script launch inside the workspace operation lock", async () => {
+    const order: string[] = [];
+    const { service } = buildService({
+      runWorkspaceOperation: async (workspaceId, operation) => {
+        order.push(`lock:${workspaceId}:start`);
+        const result = await operation();
+        order.push(`lock:${workspaceId}:end`);
+        return result;
+      },
+      onSpawn: () => order.push("spawn"),
+    });
+
+    await service.start(request);
+
+    expect(order).toEqual(["lock:ws-1:start", "spawn", "lock:ws-1:end"]);
+  });
+
   test("refuses to start a script while repository automation is blocked", async () => {
     const { service, emitted, spawnCalls } = buildService({
       automationError: new Error(

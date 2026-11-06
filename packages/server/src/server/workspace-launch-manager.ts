@@ -59,6 +59,7 @@ export interface WorkspaceLaunchService {
   buildSnapshot(context: WorkspaceLaunchContext): Promise<WorkspaceLaunchPayload[]>;
   start(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
   stop(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
+  runWorkspaceOperation<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
   disposeWorkspace(workspaceId: string): Promise<void>;
 }
 
@@ -389,6 +390,10 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     await this.runExclusive(workspaceId, async () => {
       await this.disposeWorkspaceInternal(workspaceId);
     });
+  }
+
+  async runWorkspaceOperation<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    return await this.runExclusive(workspaceId, operation);
   }
 
   updateWorkspaceBranch(workspaceId: string, branchName: string | null): void {

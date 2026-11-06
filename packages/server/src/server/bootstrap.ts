@@ -1221,7 +1221,7 @@ export async function createPaseoDaemon(
     (await projectRegistry.list()).map((project) => [project.projectId, project]),
   );
   await workspaceLaunchManager.initialize(
-    (await workspaceRegistry.list())
+    (await workspaceRegistry.listAll())
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => {
         const project = launchProjects.get(workspace.projectId);
@@ -1640,6 +1640,8 @@ export async function createPaseoDaemon(
       emit: (message) => wsServer?.broadcast(wrapSessionMessage(message)),
       publishStatusUpdate: (message) => wsServer?.publishScriptStatusUpdate(message),
       spawnWorkspaceScript,
+      runWorkspaceOperation: (workspaceId, operation) =>
+        workspaceLaunchManager?.runWorkspaceOperation(workspaceId, operation) ?? operation(),
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
       getGlobalServicePorts: () => daemonConfigStore.readServicePorts(),

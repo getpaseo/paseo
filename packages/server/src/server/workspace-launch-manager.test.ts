@@ -1406,6 +1406,45 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("waits for an in-flight workspace script spawn before releasing its port block", async () => {
+    const workspaceId = "workspace-script-spawn-race";
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      checkPortAvailable: async () => true,
+      random: () => 0,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: null,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: runtimeEnvironment,
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const spawnStarted = createDeferred();
+    const allowSpawnToFinish = createDeferred();
+    const spawn = manager.runWorkspaceOperation(workspaceId, async () => {
+      const environment = await runtimeEnvironment.ensure({
+        workspaceId,
+        cwd: "/tmp/repo",
+        branchName: null,
+        allocation: undefined,
+      });
+      spawnStarted.resolve();
+      await allowSpawnToFinish.promise;
+      return environment;
+    });
+    await spawnStarted.promise;
+
+    const disposal = manager.disposeWorkspace(workspaceId);
+    await flushAsyncWork();
+    expect(runtimeEnvironment.get(workspaceId)).not.toBeNull();
+
+    allowSpawnToFinish.resolve();
+    await Promise.all([spawn, disposal]);
+    expect(runtimeEnvironment.get(workspaceId)).toBeNull();
+  });
+
   it.each([0, 17])(
     "observes real command exit %i without interactive shell integration",
     async (exitCode) => {

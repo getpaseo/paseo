@@ -1108,7 +1108,7 @@ export class Session {
       },
       projectRegistry: this.projectRegistry,
       onProjectConfigWritten: async (projectId) => {
-        const workspaceIds = (await this.workspaceRegistry.list())
+        const workspaceIds = (await this.workspaceRegistry.listAll())
           .filter((workspace) => workspace.projectId === projectId && !workspace.archivedAt)
           .map((workspace) => workspace.workspaceId);
         if (options.emitWorkspaceUpdatesForExternalWorkspaceIds) {
@@ -1275,6 +1275,8 @@ export class Session {
         else this.emit(message);
       },
       spawnWorkspaceScript,
+      runWorkspaceOperation: (workspaceId, operation) =>
+        this.workspaceLaunches?.runWorkspaceOperation(workspaceId, operation) ?? operation(),
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       getGlobalServicePorts: () => this.daemonConfigStore.readServicePorts(),
