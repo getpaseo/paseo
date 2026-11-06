@@ -5157,7 +5157,8 @@ export class AgentManager {
       if (attachment?.type === "text" && "mimeType" in attachment) {
         agent.forkContext = {
           clientMessageId,
-          providerMessageId: options?.providerMessageId,
+          providerMessageId:
+            options?.providerMessageId !== clientMessageId ? options?.providerMessageId : undefined,
           text,
           attachment: { ...attachment, contextKind: "chat_history" },
         };
@@ -5213,7 +5214,7 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
-      if (agent.forkContext?.clientMessageId === clientMessageId) {
+      if (agent.forkContext?.clientMessageId === clientMessageId && messageId !== clientMessageId) {
         agent.forkContext.providerMessageId = messageId;
         this.enqueueBackgroundPersist(agent);
       }

@@ -1,3 +1,4 @@
+import type { ChatHistoryAttachment } from "@getpaseo/protocol/messages";
 import { ChatHistoryTranscript } from "@/attachments/chat-history/transcript";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -715,7 +716,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         const collapsedTurn = getCollapsedTurn(item.id);
         const history = item.attachments?.filter(
-          (attachment) => attachment.type === "text" && attachment.contextKind === "chat_history",
+          (attachment): attachment is ChatHistoryAttachment =>
+            attachment.type === "text" && attachment.contextKind === "chat_history",
         );
         const attachments = item.attachments?.filter(
           (attachment) => attachment.type !== "text" || attachment.contextKind !== "chat_history",
@@ -723,7 +725,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         const hasMessage =
           item.text.trim().length > 0 ||
           Boolean(item.images?.length) ||
-          Boolean(attachments?.length);
+          Boolean(attachments?.length) ||
+          Boolean(history?.length);
         const message = (
           <>
             {history?.map((attachment) =>
@@ -744,6 +747,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 sender={item.sender}
                 images={item.images}
                 attachments={attachments}
+                chatHistory={history?.[0]}
                 timestamp={item.timestamp.getTime()}
                 capabilities={context.capabilities}
                 client={client}

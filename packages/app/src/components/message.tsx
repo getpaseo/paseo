@@ -34,7 +34,10 @@ import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  ChatHistoryAttachment as ChatHistorySnapshot,
+} from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Check,
@@ -100,6 +103,8 @@ interface UserMessageProps {
   message: string;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
+  /** Snapshot rendered above this message, still needed by copy and rewind. */
+  chatHistory?: ChatHistorySnapshot;
   timestamp?: number;
   capabilities?: AgentCapabilityFlags;
   client?: DaemonClient | null;
@@ -391,6 +396,86 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
+const UserMessageBubble = memo(function UserMessageBubble({
+  message,
+  images,
+  attachments,
+  onOpenImage,
+}: {
+  message: string;
+  images: UserMessageImageAttachment[];
+  attachments: AgentAttachment[];
+  onOpenImage: (image: UserMessageImageAttachment) => void;
+}) {
+  const { t } = useTranslation();
+  const hasText = message.trim().length > 0;
+  const hasImages = images.length > 0;
+  const hasAttachments = attachments.length > 0;
+  const imagePreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.imagePreviewContainer,
+      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasAttachments, hasText],
+  );
+  const attachmentPreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.attachmentPreviewContainer,
+      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasText],
+  );
+  return hasText || hasImages || hasAttachments ? (
+    <View style={userMessageStylesheet.bubble}>
+      <MessagePreview>
+        {hasImages ? (
+          <View style={imagePreviewContainerStyle}>
+            {images.map((image) => (
+              <UserMessageImagePill
+                key={image.id}
+                image={image}
+                onOpen={onOpenImage}
+                accessibilityLabel={t("composer.attachments.openImage")}
+              />
+            ))}
+          </View>
+        ) : null}
+        {hasAttachments ? (
+          <View style={attachmentPreviewContainerStyle}>
+            {attachments.map((attachment, index) => {
+              const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
+              if (attachment.type === "text" && attachment.contextKind === "chat_history") {
+                return (
+                  <ChatHistoryAttachment
+                    key={key}
+                    attachment={attachment}
+                    testID="message-chat-history-attachment"
+                  />
+                );
+              }
+              const content = getAgentAttachmentPillContent(attachment, t);
+              return (
+                <AttachmentFrame key={key}>
+                  <AttachmentLabel
+                    icon={content.icon}
+                    title={content.title}
+                    subtitle={content.subtitle}
+                  />
+                </AttachmentFrame>
+              );
+            })}
+          </View>
+        ) : null}
+        {hasText ? (
+          <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
+            {message}
+          </Text>
+        ) : null}
+      </MessagePreview>
+    </View>
+  ) : null;
+});
+
 export const UserMessage = memo(function UserMessage({
   sender,
   serverId,
@@ -399,6 +484,7 @@ export const UserMessage = memo(function UserMessage({
   message,
   images = [],
   attachments = [],
+  chatHistory: inheritedHistory,
   timestamp,
   capabilities,
   client,
@@ -418,9 +504,16 @@ export const UserMessage = memo(function UserMessage({
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
-  const hasAttachments = attachments.length > 0;
-  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
+  const chatHistory =
+    inheritedHistory ??
+    attachments.find(
+      (attachment): attachment is ChatHistorySnapshot =>
+        attachment.type === "text" && attachment.contextKind === "chat_history",
+    );
+  const showTrailingRow =
+    !isPending &&
+    (hasText || Boolean(chatHistory)) &&
+    (isCompact || isNative || isHovered || !hasText);
   const formattedTimestamp = useMemo(
     () => (timestamp === undefined ? null : formatMessageTimestamp(new Date(timestamp))),
     [timestamp],
@@ -429,9 +522,12 @@ export const UserMessage = memo(function UserMessage({
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const getMessageContent = useCallback(() => message, [message]);
+  const getMessageContent = useCallback(
+    () => message || chatHistory?.text || "",
+    [message, chatHistory],
+  );
   const handleRewind = useCallback(
-    (input: { mode: RewindMode; rewoundText: string }) => {
+    (input: { mode: RewindMode; rewoundText: string; chatHistory?: ChatHistorySnapshot }) => {
       return rewindMutation.rewindAgent(input);
     },
     [rewindMutation],
@@ -447,20 +543,6 @@ export const UserMessage = memo(function UserMessage({
       ],
     ],
     [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
-  );
-  const imagePreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.imagePreviewContainer,
-      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasAttachments, hasText],
-  );
-  const attachmentPreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.attachmentPreviewContainer,
-      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasText],
   );
   const trailingRowStyle = useMemo(
     () => [
@@ -480,54 +562,13 @@ export const UserMessage = memo(function UserMessage({
         onPointerLeave={handlePointerLeave}
       >
         {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
-        <View style={userMessageStylesheet.bubble}>
-          <MessagePreview>
-            {hasImages ? (
-              <View style={imagePreviewContainerStyle}>
-                {images.map((image) => (
-                  <UserMessageImagePill
-                    key={image.id}
-                    image={image}
-                    onOpen={setLightboxMetadata}
-                    accessibilityLabel={t("composer.attachments.openImage")}
-                  />
-                ))}
-              </View>
-            ) : null}
-            {hasAttachments ? (
-              <View style={attachmentPreviewContainerStyle}>
-                {attachments.map((attachment, index) => {
-                  const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
-                  if (attachment.type === "text" && attachment.contextKind === "chat_history") {
-                    return (
-                      <ChatHistoryAttachment
-                        key={key}
-                        attachment={attachment}
-                        testID="message-chat-history-attachment"
-                      />
-                    );
-                  }
-                  const content = getAgentAttachmentPillContent(attachment, t);
-                  return (
-                    <AttachmentFrame key={key}>
-                      <AttachmentLabel
-                        icon={content.icon}
-                        title={content.title}
-                        subtitle={content.subtitle}
-                      />
-                    </AttachmentFrame>
-                  );
-                })}
-              </View>
-            ) : null}
-            {hasText ? (
-              <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
-                {message}
-              </Text>
-            ) : null}
-          </MessagePreview>
-        </View>
-        {hasText ? (
+        <UserMessageBubble
+          message={message}
+          images={images}
+          attachments={attachments}
+          onOpenImage={setLightboxMetadata}
+        />
+        {hasText || chatHistory ? (
           <View
             style={trailingRowStyle}
             pointerEvents={showTrailingRow ? "auto" : "none"}
@@ -543,6 +584,7 @@ export const UserMessage = memo(function UserMessage({
                 capabilities={capabilities}
                 isPending={rewindMutation.isPending}
                 rewoundText={message}
+                chatHistory={chatHistory}
                 onRewind={handleRewind}
               />
             ) : null}

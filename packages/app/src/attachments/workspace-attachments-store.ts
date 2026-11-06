@@ -178,6 +178,19 @@ export function useWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScope):
   }, [cwd, draftId, isDraftScope, serverId, workspaceId]);
 }
 
+export function useAgentAttachmentScopeKey(input: { serverId: string; agentId: string }): string {
+  const { serverId, agentId } = input;
+  return useMemo(
+    () =>
+      [
+        "agent-attachments",
+        `server=${encodeScopePart(serverId)}`,
+        `agent=${encodeScopePart(agentId)}`,
+      ].join(":"),
+    [serverId, agentId],
+  );
+}
+
 export function useDraftWorkspaceAttachmentScopeKey(draftId: string | null | undefined): string {
   const normalizedDraftId = useMemo(() => draftId?.trim() ?? "", [draftId]);
   return useMemo(

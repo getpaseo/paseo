@@ -62,6 +62,7 @@ export function workspaceAttachmentToSubmitAttachment(
     };
   }
   if (attachment.kind === "chat_history") {
+    if (!attachment.source) return attachment.attachment;
     const { serverId, agentId, title } = attachment.source;
     return {
       ...attachment.attachment,

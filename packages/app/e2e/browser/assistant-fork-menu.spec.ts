@@ -1,7 +1,12 @@
 import {
   captureChatHistory,
+  expectRewoundHistoryIsPrivate,
+  rewindForkPrompt,
+  openChatHistory,
+  closeChatHistory,
   followChatHistorySource,
   expectInlineChatHistory,
+  expectResentChatHistory,
   expectSavedAnswerEnding,
   expectChatHistoryMessageStyles,
   sendChatHistoryFromAnotherClient,
@@ -123,6 +128,40 @@ test.describe("Assistant fork menu", () => {
     await expectSavedAnswerEnding(page, ending);
     await captureChatHistory(page, testInfo, "long-history-reloaded.png");
   });
+
+  for (const prompt of ["", "Continue the fork"]) {
+    test(`retains inherited context when rewinding the first fork prompt (${prompt || "history only"})`, async ({
+      page,
+      seedForkWorkspace,
+    }, testInfo) => {
+      const initialPrompt = "emit 1 coalesced agent stream updates for rewindable fork history.";
+      const session = await seedForkWorkspace({
+        repoPrefix: "fork-rewind-",
+        title: "Rewind source",
+        initialPrompt,
+        model: "ten-second-stream",
+      });
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await awaitAssistantMessage(page);
+      await session.client.waitForFinish(session.agentId, 45_000);
+      await forkMostRecentAssistantTurnToNewTab(page);
+      await submitMessage(page, prompt);
+      const forkId = await getActiveForkAgentId(page);
+      await session.client.waitForFinish(forkId, 45_000);
+      await page.reload();
+      await expectInlineChatHistory(page, [initialPrompt]);
+      await rewindForkPrompt(page);
+      await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
+      await submitMessage(page, prompt);
+      await session.client.waitForFinish(forkId, 45_000);
+      await page.reload();
+      await expectResentChatHistory(page, [initialPrompt]);
+      await captureChatHistory(page, testInfo, "history-after-rewind.png");
+    });
+  }
 
   test("shows history sent from another connected client without reloading", async ({
     page,

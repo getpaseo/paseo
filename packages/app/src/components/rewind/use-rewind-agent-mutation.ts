@@ -1,3 +1,4 @@
+import type { ChatHistoryAttachment } from "@getpaseo/protocol/messages";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,7 @@ interface UseRewindAgentMutationInput {
 interface RewindAgentInput {
   mode: RewindMode;
   rewoundText: string;
+  chatHistory?: ChatHistoryAttachment;
 }
 
 export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
@@ -52,7 +54,10 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       if (!shouldRestoreComposerForRewindMode(variables.mode)) {
         return;
       }
-      composerRestore?.completeRewind(variables.rewoundText);
+      composerRestore?.completeRewind({
+        text: variables.rewoundText,
+        chatHistory: variables.chatHistory,
+      });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : t("rewind.errors.failed"));

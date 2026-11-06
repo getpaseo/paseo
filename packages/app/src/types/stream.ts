@@ -263,6 +263,7 @@ function produceUserMessage(
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
+    attachments: presentation.attachments ?? incoming.attachments,
   });
   if (
     existing.id === merged.id &&

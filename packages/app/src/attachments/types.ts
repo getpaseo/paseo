@@ -83,7 +83,7 @@ export interface ChatHistoryContextAttachment {
   kind: "chat_history";
   id: string;
   attachment: Extract<AgentAttachment, { type: "text" }>;
-  source: ChatHistorySource & {
+  source?: ChatHistorySource & {
     boundaryMessageId?: string | null;
     boundaryCursor?: { epoch: string; seq: number } | null;
     itemCount?: number;
