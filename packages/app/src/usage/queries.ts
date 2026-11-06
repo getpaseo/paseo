@@ -166,7 +166,8 @@ const NO_REPORTS: UsageReportEntry[] = [];
 
 /**
  * The reports of the sidebar's usage host, which is connected and reports usage; none until they
- * load, or without a host.
+ * load, or without a host. Re-read every minute while the summary is shown, since the daemon never
+ * pushes report changes.
  */
 export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
   const setting = useUsageSetting(serverId);
@@ -177,6 +178,7 @@ export function useUsageHostReports(serverId: string | null): UsageReportEntry[]
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
+    refetchInterval: REPORTS_STALE_TIME_MS,
   });
   return setting.enabled ? (query.data ?? NO_REPORTS) : NO_REPORTS;
 }

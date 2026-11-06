@@ -469,3 +469,27 @@ test("visible usage summary requests reports on load", async ({ page }) => {
   await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
   expect(usage.listRequests()).toHaveLength(1);
 });
+
+test("visible usage summary picks up changed reports without opening Usage", async ({ page }) => {
+  test.setTimeout(180_000);
+  const usage = await installUsageReportsFixture(page, {
+    lists: [() => claudeSessionAt(31), () => claudeSessionAt(80)],
+  });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await page.setViewportSize(WIDE);
+  await page.clock.install();
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+  expect(usage.listRequests()).toHaveLength(1);
+
+  await page.clock.fastForward(61_000);
+  await expectPinnedUsage(page, ["80% 5h", "54% wk", "7% 5h", "12% wk"]);
+  await expect(usageModal(page)).toHaveCount(0);
+});
+
+function claudeSessionAt(usedPct: number) {
+  const reports = claudeAndCodexReports();
+  const claude = reports[0]!;
+  if (claude.report.status === "available") claude.report.windows[0]!.usedPct = usedPct;
+  return reports;
+}
