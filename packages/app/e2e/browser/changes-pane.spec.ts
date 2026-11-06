@@ -427,6 +427,15 @@ test("Changes shows the base as text on a host without the base-branch capabilit
   expect(baseRequests).toBe(0);
 });
 
+test("Changes shows no base on a checkout that is not a Paseo worktree", async ({ page }) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+  const header = page.getByTestId("changes-repository-header").filter({ visible: true });
+  await expect(header).toContainText("feature");
+  await expect(header).not.toContainText("main");
+  await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
+});
+
 test("Changes keeps a manual comparison when checkout dirtiness changes", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await openWorkspaceChanges(page, workspace);
