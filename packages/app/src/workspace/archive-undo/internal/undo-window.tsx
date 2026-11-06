@@ -3,6 +3,7 @@ import { i18n } from "@/i18n/i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   beginOptimisticWorkspaceArchive,
+  isWorkspaceListed,
   undoWorkspaceArchiveOptimistically,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
@@ -50,7 +51,7 @@ class UndoWindow {
   /** The host finished the archive. It commits now if undo is no longer offered. */
   archiveFinished(): void {
     this.archived = true;
-    if (this.phase === "closed") this.input.onArchiveCommitted();
+    if (this.phase === "closed") this.commit();
   }
 
   /** The archive failed on the host, so there is nothing left to undo. */
@@ -63,8 +64,14 @@ class UndoWindow {
     if (this.phase !== "open") return;
     this.phase = "closed";
     this.release();
-    if (this.archived) this.input.onArchiveCommitted();
+    if (this.archived) this.commit();
   };
+
+  /** Commits unless the workspace is back by now, for example restored from another client. */
+  private commit(): void {
+    if (isWorkspaceListed(this.input.workspace)) return;
+    this.input.onArchiveCommitted();
+  }
 
   readonly undo = (): boolean => {
     if (this.phase !== "open") return false;
@@ -87,7 +94,8 @@ class UndoWindow {
  * Archives a workspace and offers to undo it until the toast goes away.
  *
  * `onArchiveCommitted` runs once the archive both finished on the host and can no longer be
- * undone, so local state the undo would want back (tabs, layout) survives the window.
+ * undone, and only if the workspace is still gone then. Local state the undo would want back
+ * (tabs, layout) survives the window, and survives a restore from another client.
  * Rejects when the archive fails and was not undone; the row is back by then.
  */
 export async function archiveWorkspaceWithUndo(input: {

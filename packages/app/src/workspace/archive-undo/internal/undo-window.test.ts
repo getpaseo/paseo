@@ -164,6 +164,24 @@ describe("archiveWorkspaceWithUndo", () => {
     });
   });
 
+  it("keeps the layout when another client restores the workspace before the toast closes", async () => {
+    const host = createClient();
+    const toast = createToastHost();
+    const committed: string[] = [];
+
+    const archive = startArchive({ host, toast, workspaceId: "a", committed });
+    host.finishArchive("a");
+    await archive;
+    clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "a" });
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [workspace("a")]);
+    toast.timeOut();
+
+    expect({ committed, row: storedWorkspace("a") }).toEqual({
+      committed: [],
+      row: workspace("a"),
+    });
+  });
+
   it("commits when the archive finishes after its toast already timed out", async () => {
     const host = createClient();
     const toast = createToastHost();

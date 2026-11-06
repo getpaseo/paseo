@@ -55,15 +55,24 @@ function isWorkspaceArchiveFailure(error: unknown): error is WorkspaceArchiveFai
   );
 }
 
-function hideWorkspaceOptimistically(
-  workspace: WorkspaceArchiveTarget,
-): OptimisticWorkspaceArchiveSnapshot {
+function findListedWorkspace(workspace: WorkspaceArchiveTarget): WorkspaceDescriptor | null {
   const workspaces = useSessionStore.getState().sessions[workspace.serverId]?.workspaces;
   const workspaceKey = resolveWorkspaceMapKeyByIdentity({
     workspaces,
     workspaceId: workspace.workspaceId,
   });
-  const snapshot = workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null;
+  return workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null;
+}
+
+/** True when the workspace is in this client's list, for example after another client restored it. */
+export function isWorkspaceListed(workspace: WorkspaceArchiveTarget): boolean {
+  return findListedWorkspace(workspace) !== null;
+}
+
+function hideWorkspaceOptimistically(
+  workspace: WorkspaceArchiveTarget,
+): OptimisticWorkspaceArchiveSnapshot {
+  const snapshot = findListedWorkspace(workspace);
   const intent = markWorkspaceArchivePending({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
