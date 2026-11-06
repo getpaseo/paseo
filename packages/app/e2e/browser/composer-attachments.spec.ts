@@ -4,6 +4,7 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
   openAttachmentMenu,
+  composerLocator,
   expectAttachmentSheetRowsOnTitleRail,
   openGithubPickerFromMenu,
   attachImageFromMenu,
@@ -53,6 +54,37 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("pastes copied document text instead of its image representation", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "paste-document-text-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const text = "Document text with 한글 and two lines.\nSecond line.";
+    await page.evaluate(
+      async ({ content, png }) => {
+        const response = await fetch(`data:image/png;base64,${png}`);
+        const image = await response.blob();
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([content], { type: "text/plain" }),
+            "text/html": new Blob([`<p>${content}</p>`], { type: "text/html" }),
+            "image/png": image,
+          }),
+        ]);
+      },
+      { content: text, png: MINIMAL_PNG.toString("base64") },
+    );
+    await composerLocator(page).click();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expectComposerDraft(page, text);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,
