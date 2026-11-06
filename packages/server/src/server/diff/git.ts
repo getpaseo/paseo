@@ -1,3 +1,4 @@
+import { parseGitRevParsePath } from "../../utils/git-rev-parse-path.js";
 import { HighlightSources } from "./sources.js";
 import {
   prepareAllChangesIndex,
@@ -33,7 +34,10 @@ export interface Comparison extends Pick<
   files: ListedFile[];
   metrics: { highlightCalls: number };
   close(): Promise<void>;
-  read(file: ListedFile, budget?: number): Promise<DiffFileRead>;
+  read(
+    file: ListedFile,
+    budget?: { remainingBytes?: number; maxPatchBytes?: number },
+  ): Promise<DiffFileRead>;
 }
 export class DiffReadError extends Error {
   constructor(
@@ -60,7 +64,9 @@ export async function worktreeRoot(cwd: string): Promise<string> {
     acceptExitCodes: [0, 128],
   });
   if (result.exitCode !== 0) throw new DiffReadError("NOT_GIT_REPO", "Not a git repository");
-  return result.stdout.trim();
+  const root = parseGitRevParsePath(result.stdout);
+  if (root === null) throw new DiffReadError("NOT_GIT_REPO", "Git returned no working tree root");
+  return resolve(root);
 }
 async function resolveEndpoint(
   cwd: string,
@@ -192,6 +198,8 @@ async function readComparisonList(
       path = fields[++index];
     }
     const counts = stats.get(path);
+    // With -w, a raw metadata entry need not have a numstat record.
+    if (!counts && compare.ignoreWhitespace) continue;
     if (!counts) throw new Error(`Missing diff statistics for ${path}`);
     let change: DiffEntry["change"] = "modified";
     if (code === "A") change = "added";
@@ -234,10 +242,12 @@ async function readComparisonList(
     close: async () => {
       await privateIndex?.cleanup();
     },
-    async read(file, budget = PER_FILE_DIFF_MAX_BYTES) {
+    async read(file, budget = {}) {
+      const maxPatchBytes = budget.maxPatchBytes ?? PER_FILE_DIFF_MAX_BYTES;
+      const remainingBytes = budget.remainingBytes ?? maxPatchBytes;
       const paths = [file.entry.path];
       if (file.entry.oldPath !== null) paths.unshift(file.entry.oldPath);
-      if (file.source.kind === "untracked" && file.source.size > PER_FILE_DIFF_MAX_BYTES) {
+      if (file.source.kind === "untracked" && file.source.size > maxPatchBytes) {
         return { kind: "too_large" };
       }
       const command =
@@ -247,10 +257,10 @@ async function readComparisonList(
       const result = await runGitCommand(command, {
         ...options,
         acceptExitCodes: [0, 1],
-        maxOutputBytes: PER_FILE_DIFF_MAX_BYTES + 1,
+        maxOutputBytes: maxPatchBytes + 1,
       });
       const bytes = Buffer.byteLength(result.stdout);
-      if (result.truncated || bytes > budget || bytes > PER_FILE_DIFF_MAX_BYTES)
+      if (result.truncated || bytes > remainingBytes || bytes > maxPatchBytes)
         return { kind: "too_large" };
       const parsed = parseDiff(result.stdout)[0];
       if (!parsed) return { kind: "ready", body: { path: file.entry.path, hunks: [] }, bytes };

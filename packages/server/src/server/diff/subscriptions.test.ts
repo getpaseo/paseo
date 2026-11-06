@@ -105,7 +105,11 @@ test("shares computation, highlights only the changed file, recovers refs and re
     expect(subscriptions.getMetrics().metadataObservers).toBe(0);
     const missing: DiffFrame[] = [];
     const recovery = await subscriptions.subscribe(
-      { ...compare, base: { kind: "rev", rev: "refs/tags/later" } },
+      {
+        ...compare,
+        base: { kind: "rev", rev: "refs/tags/later" },
+        head: { kind: "rev", rev: "HEAD" },
+      },
       async (frame) => {
         missing.push(frame);
       },
@@ -291,3 +295,67 @@ test("moving, deleting and recreating a branch recovers, and staging changes the
     await rm(cwd, { recursive: true, force: true });
   }
 }, 30000);
+
+test("a cached replay completes before a live refresh can depend on it", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-replay-order-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  const subscriptions = new DiffSubscriptions({
+    async requestWorkingTreeWatch() {
+      return { repoRoot: cwd, unsubscribe: async () => {} };
+    },
+  });
+  let resume!: () => void;
+  let began!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const replayBegan = new Promise<void>((resolve) => {
+    began = resolve;
+  });
+  const frames: DiffFrame[] = [];
+  try {
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    await writeFile(join(cwd, "a.txt"), "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "a.txt"), "first\n");
+    const compare = {
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+    } as const;
+    const first = await subscriptions.subscribe(compare, async () => {});
+    await first.start();
+    const second = await subscriptions.subscribe(compare, async (frame) => {
+      frames.push(frame);
+      if (frames.length === 1) {
+        began();
+        await paused;
+      }
+    });
+    const replay = second.start();
+    await replayBegan;
+    await writeFile(join(cwd, "a.txt"), "second\n");
+    subscriptions.invalidateForCwd(cwd);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    resume();
+    await replay;
+    await expect
+      .poll(() => frames.filter((frame) => frame.opcode === DiffOpcode.End).length)
+      .toBe(2);
+    let committed = 0;
+    for (const frame of frames) {
+      if (frame.opcode === DiffOpcode.Begin) expect([0, committed]).toContain(frame.baseRevision);
+      if (frame.opcode === DiffOpcode.End) committed = frame.revision;
+    }
+    await second.release();
+    await first.release();
+  } finally {
+    resume();
+    await subscriptions.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

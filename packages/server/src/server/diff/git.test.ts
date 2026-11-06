@@ -240,3 +240,54 @@ async function readBody(comparison: Comparison) {
   if (record.kind !== "ready") throw new Error("Expected a readable file body");
   return record;
 }
+
+test.each(["worktree", "index", "rev"] as const)(
+  "%s whitespace filtering omits spacing-only edits and retains meaningful edits",
+  async (headKind) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-whitespace-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-b", "main");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "Test");
+      await writeFile(join(cwd, "a.ts"), "const x = 1;\n");
+      await writeFile(join(cwd, "b.txt"), "before\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD").trim();
+      await writeFile(join(cwd, "a.ts"), "const  x = 1;\n");
+      await writeFile(join(cwd, "b.txt"), "after\n");
+      if (headKind !== "worktree") git("add", ".");
+      if (headKind === "rev") git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+      const head = headKind === "rev" ? { kind: "rev" as const, rev: "HEAD" } : { kind: headKind };
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: base },
+        head,
+        ignoreWhitespace: true,
+        highlight: false,
+      });
+      expect(comparison.files.map((file) => file.entry.path)).toEqual(["b.txt"]);
+      await comparison.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "comparison roots preserve trailing folder spaces",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "diff-space-"));
+    const cwd = join(root, "repo ");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(cwd);
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd });
+      const { worktreeRoot } = await import("./git.js");
+      expect(await worktreeRoot(cwd)).toBe(cwd);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

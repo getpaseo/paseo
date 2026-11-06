@@ -1153,7 +1153,7 @@ function DiffBodyContent({
       </View>
     );
   }
-  if (diffTooLarge) {
+  if (diffTooLarge && !hasChanges) {
     return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {

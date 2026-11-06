@@ -295,11 +295,9 @@ test("large source diffs stay renderable for reads, subscriptions, and commit fi
 }, 60_000);
 
 test("streams whole-file batches and answers a same-socket ping before the revision ends", async () => {
-  const { WebSocket } = await import("ws");
-  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
   const ctx = await createDaemonTestContext();
   const cwd = mkdtempSync(join(tmpdir(), "diff-stream-wire-"));
-  let socket: InstanceType<typeof WebSocket> | null = null;
+  let probe: Awaited<ReturnType<typeof openDiffWireProbe>> | null = null;
   try {
     git(cwd, "init", "-b", "main");
     git(cwd, "config", "user.name", "Test");
@@ -310,7 +308,7 @@ test("streams whole-file batches and answers a same-socket ping before the revis
     for (let file = 0; file < 252; file++) {
       const content =
         Array.from(
-          { length: 90 },
+          { length: 80 },
           (_, line) =>
             `export const fn${line} = (param: string) => ({ key: param, value: ${file} });`,
         ).join("\n") + "\n";
@@ -322,82 +320,8 @@ test("streams whole-file batches and answers a same-socket ping before the revis
     const legacy = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
     const legacyJsonBytes = Buffer.byteLength(JSON.stringify(legacy.files));
     expect(legacyJsonBytes).toBeGreaterThanOrEqual(10 * 1024 * 1024);
-    const activeSocket = new WebSocket(`ws://127.0.0.1:${ctx.daemon.port}/ws`);
-    socket = activeSocket;
-    await new Promise<void>((resolve, reject) => {
-      activeSocket.once("open", resolve);
-      activeSocket.once("error", reject);
-    });
-    let encodedBytes = 0;
-    let endReceived = false;
-    let pingSent = false;
-    let pongDuringRevision = false;
-    let bodyFrames = 0;
-    let entryCount = 0;
-    const done = new Promise<void>((resolve, reject) => {
-      activeSocket.on("message", (data, binary) => {
-        try {
-          if (binary) {
-            if (!Buffer.isBuffer(data)) throw new Error("Expected buffer");
-            encodedBytes += data.byteLength;
-            const frame = decodeDiffFrame(new Uint8Array(data));
-            if (frame.opcode === DiffOpcode.Begin) entryCount = frame.entries.length;
-            if (frame.opcode === DiffOpcode.Bodies) {
-              bodyFrames++;
-              if (!pingSent) {
-                pingSent = true;
-                activeSocket.send(
-                  JSON.stringify({
-                    type: "session",
-                    message: { type: "ping", requestId: "mid-revision", clientSentAt: 1 },
-                  }),
-                );
-              }
-            }
-            if (frame.opcode === DiffOpcode.End) {
-              expect(frame.error).toBeNull();
-              endReceived = true;
-              resolve();
-            }
-          } else {
-            const envelope = JSON.parse(data.toString());
-            if (
-              envelope.message?.type === "pong" &&
-              envelope.message.payload.requestId === "mid-revision"
-            )
-              pongDuringRevision = !endReceived;
-            if (envelope.message?.payload?.status === "server_info")
-              activeSocket.send(
-                JSON.stringify({
-                  type: "session",
-                  message: {
-                    type: "diff.subscribe.request",
-                    requestId: "stream-diff",
-                    cwd,
-                    base: { kind: "rev", rev: "HEAD" },
-                    head: { kind: "worktree" },
-                  },
-                }),
-              );
-            if (envelope.message?.type === "diff.subscribe.response")
-              expect(envelope.message.payload.error).toBeNull();
-          }
-        } catch (error) {
-          reject(error);
-        }
-      });
-      activeSocket.once("error", reject);
-    });
-    activeSocket.send(
-      JSON.stringify({
-        type: "hello",
-        clientId: "diff-wire-test",
-        clientType: "browser",
-        protocolVersion: 1,
-        capabilities: { owned_subscriptions: true },
-      }),
-    );
-    await done;
+    probe = await openDiffWireProbe(ctx.daemon.port, cwd);
+    const { encodedBytes, bodyFrames, pongDuringRevision, entryCount } = await probe.done;
     expect(entryCount).toBe(252);
     expect(bodyFrames).toBeGreaterThan(1);
     expect(pongDuringRevision).toBe(true);
@@ -411,11 +335,97 @@ test("streams whole-file batches and answers a same-socket ping before the revis
       JSON.stringify({ legacyJsonBytes, encodedBytes, bodyFrames, pongDuringRevision }, null, 2),
     );
   } finally {
-    socket?.terminate();
+    probe?.socket.terminate();
     await ctx.cleanup();
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 60_000);
+
+interface DiffWireResult {
+  encodedBytes: number;
+  bodyFrames: number;
+  pongDuringRevision: boolean;
+  entryCount: number;
+}
+async function openDiffWireProbe(port: number, cwd: string) {
+  const { WebSocket } = await import("ws");
+  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
+  const activeSocket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  await new Promise<void>((resolve, reject) => {
+    activeSocket.once("open", resolve);
+    activeSocket.once("error", reject);
+  });
+  let encodedBytes = 0;
+  let endReceived = false;
+  let pingSent = false;
+  let pongDuringRevision = false;
+  let bodyFrames = 0;
+  let entryCount = 0;
+  const done = new Promise<DiffWireResult>((resolve, reject) => {
+    activeSocket.on("message", (data, binary) => {
+      try {
+        if (binary) {
+          if (!Buffer.isBuffer(data)) throw new Error("Expected buffer");
+          encodedBytes += data.byteLength;
+          const frame = decodeDiffFrame(new Uint8Array(data));
+          if (frame.opcode === DiffOpcode.Begin) entryCount = frame.entries.length;
+          if (frame.opcode === DiffOpcode.Bodies) {
+            bodyFrames++;
+            if (!pingSent) {
+              pingSent = true;
+              activeSocket.send(
+                JSON.stringify({
+                  type: "session",
+                  message: { type: "ping", requestId: "mid-revision", clientSentAt: 1 },
+                }),
+              );
+            }
+          }
+          if (frame.opcode === DiffOpcode.End) {
+            expect(frame.error).toBeNull();
+            endReceived = true;
+            resolve({ encodedBytes, bodyFrames, pongDuringRevision, entryCount });
+          }
+        } else {
+          const envelope = JSON.parse(data.toString());
+          if (
+            envelope.message?.type === "pong" &&
+            envelope.message.payload.requestId === "mid-revision"
+          )
+            pongDuringRevision = !endReceived;
+          if (envelope.message?.payload?.status === "server_info")
+            activeSocket.send(
+              JSON.stringify({
+                type: "session",
+                message: {
+                  type: "diff.subscribe.request",
+                  requestId: "stream-diff",
+                  cwd,
+                  base: { kind: "rev", rev: "HEAD" },
+                  head: { kind: "worktree" },
+                },
+              }),
+            );
+          if (envelope.message?.type === "diff.subscribe.response")
+            expect(envelope.message.payload.error).toBeNull();
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+    activeSocket.once("error", reject);
+  });
+  activeSocket.send(
+    JSON.stringify({
+      type: "hello",
+      clientId: "diff-wire-test",
+      clientType: "browser",
+      protocolVersion: 1,
+      capabilities: { owned_subscriptions: true },
+    }),
+  );
+  return { socket: activeSocket, done };
+}
 
 test("SDK diff journey publishes a tag tree, commits a one-file refresh and shares two sockets", async () => {
   const ctx = await createDaemonTestContext();
@@ -486,3 +496,28 @@ test("SDK diff journey publishes a tag tree, commits a one-file refresh and shar
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 45000);
+
+test("commit-file RPC keeps the existing read ceiling for patches larger than one MiB", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "commit-file-budget-"));
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "large.txt"), "base\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    writeFileSync(join(cwd, "large.txt"), ("x".repeat(100) + "\n").repeat(11000));
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "large change");
+    const sha = git(cwd, "rev-parse", "HEAD").trim();
+    const { getCommitFileDiff } = await import("../../utils/checkout-git.js");
+    const expected = await getCommitFileDiff({ cwd, sha, path: "large.txt" });
+    const actual = await ctx.client.getCommitFileDiff(cwd, sha, "large.txt");
+    expect(expected?.hunks.length).toBeGreaterThan(0);
+    expect(actual.file?.hunks).toEqual(expected?.hunks);
+  } finally {
+    await ctx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);

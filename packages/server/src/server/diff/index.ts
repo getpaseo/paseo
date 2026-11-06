@@ -1,5 +1,5 @@
 import { TOTAL_DIFF_MAX_BYTES } from "../../utils/checkout-git.js";
-import { runGitCommand } from "../../utils/run-git-command.js";
+import { DEFAULT_MAX_OUTPUT_BYTES, runGitCommand } from "../../utils/run-git-command.js";
 import { expandTilde } from "../../utils/path.js";
 import { packBodies } from "./batches.js";
 import { setImmediate } from "node:timers/promises";
@@ -35,6 +35,7 @@ interface RecordCache {
 interface Listener {
   emit(frame: DiffFrame): Promise<void>;
   active: boolean;
+  delivery: Promise<void>;
 }
 interface Target {
   key: string;
@@ -99,7 +100,7 @@ export class DiffSubscriptions {
       input.signal?.throwIfAborted();
       const file = comparison.files.find((candidate) => candidate.entry.path === input.path);
       if (!file || file.entry.content === "binary") return null;
-      const record = await comparison.read(file);
+      const record = await comparison.read(file, { maxPatchBytes: DEFAULT_MAX_OUTPUT_BYTES });
       input.signal?.throwIfAborted();
       return materializeDiffFile(
         file.entry,
@@ -182,16 +183,20 @@ export class DiffSubscriptions {
     }
     if (target.closed) throw new Error("Diff subscription cancelled");
     const current = target;
-    const listener: Listener = { emit, active: false };
+    const listener: Listener = { emit, active: false, delivery: Promise.resolve() };
     current.listeners.add(listener);
     let released = false;
     return {
       start: async () => {
-        if (current.refresh) await current.refresh;
+        while (current.refresh) await current.refresh;
         if (current.closed || released) return;
         listener.active = true;
         if (!current.committed) await this.refresh(current);
-        else await this.replay(current, listener);
+        else {
+          const replay = this.replay(current, listener);
+          listener.delivery = replay.catch(() => {});
+          await replay;
+        }
       },
       release: async () => {
         if (released) return;
@@ -225,7 +230,11 @@ export class DiffSubscriptions {
     await Promise.all(
       [...target.listeners]
         .filter((listener) => listener.active)
-        .map((listener) => listener.emit(frame)),
+        .map((listener) => {
+          const sent = listener.delivery.then(() => listener.emit(frame));
+          listener.delivery = sent.catch(() => {});
+          return sent;
+        }),
     );
     await setImmediate();
   }
@@ -371,7 +380,9 @@ export class DiffSubscriptions {
       if (entry.content === "binary") continue;
       let record = target.cache.get(entry.path);
       if (entry.body || !record) {
-        const read = await comparison.read(file, TOTAL_DIFF_MAX_BYTES - state.total);
+        const read = await comparison.read(file, {
+          remainingBytes: TOTAL_DIFF_MAX_BYTES - state.total,
+        });
         if (read.kind === "too_large") {
           state.omitted.push(entry.path);
           continue;

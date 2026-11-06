@@ -1744,12 +1744,12 @@ async function resolveCommitComparisonRef(
   name: string,
   context?: CheckoutContext,
 ): Promise<string> {
-  await runGitCommand(["rev-parse", "--verify", `${name}^{commit}`], {
+  await getRunGitCommand(context)(["rev-parse", "--verify", `${name}^{commit}`], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
     logger: context?.logger,
   });
-  const result = await runGitCommand(["rev-parse", "--symbolic-full-name", name], {
+  const result = await getRunGitCommand(context)(["rev-parse", "--symbolic-full-name", name], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
     logger: context?.logger,

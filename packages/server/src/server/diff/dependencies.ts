@@ -29,8 +29,8 @@ export class DiffDependencyObserver {
       });
       const roots = new Set(
         paths.stdout
-          .trim()
-          .split("\n")
+          .split(/\r?\n/)
+          .filter((path) => path.length > 0)
           .map((path) => resolve(input.cwd, path)),
       );
       for (const root of roots) {

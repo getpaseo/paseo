@@ -1,9 +1,11 @@
 import {
   decodeDiffFrame,
   type DiffEntry as WireEntry,
+  type DiffBegin,
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
-  DiffEndpoint,
+  DiffSubscribeRequest,
+  SubscribeCheckoutDiffRequest,
   DiffError,
   DiffSubscribeResponse,
   SubscribeCheckoutDiffResponse,
@@ -12,20 +14,11 @@ import type {
 import type { OwnedSubscription, SubscriptionObserver } from "../connection/index.js";
 import { DiffStream } from "./stream.js";
 export type { DiffEndpoint } from "@getpaseo/protocol/messages";
-export interface DiffCompare {
-  cwd: string;
-  base: DiffEndpoint;
-  head: DiffEndpoint;
-  mergeBase?: boolean;
-  ignoreWhitespace?: boolean;
-  highlight?: boolean;
-}
+export type DiffCompare = Omit<DiffSubscribeRequest, "type" | "requestId">;
+
 export type DiffEntry = Omit<WireEntry, "body">;
-export interface ResolvedShas {
-  baseSha: string;
-  headSha: string;
-  mergeBaseSha: string;
-}
+export type ResolvedShas = Pick<DiffBegin, "baseSha" | "headSha" | "mergeBaseSha">;
+
 export type DiffState =
   | { phase: "loading"; revision: number; entries: DiffEntry[] }
   | {
@@ -36,11 +29,8 @@ export type DiffState =
       files: ParsedDiffFile[];
     }
   | { phase: "error"; revision: number; error: DiffError };
-interface LegacyCompare {
-  mode: "uncommitted" | "base" | "all";
-  baseRef?: string;
-  ignoreWhitespace?: boolean;
-}
+type LegacyCompare = SubscribeCheckoutDiffRequest["compare"];
+
 interface Port {
   modern(compare: DiffCompare): OwnedSubscription<DiffSubscribeResponse["payload"]>;
   legacy(

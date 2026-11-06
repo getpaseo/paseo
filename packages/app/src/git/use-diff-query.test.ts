@@ -86,3 +86,10 @@ it("shows the announced tree while file bodies are still loading", () => {
   expect(result.entries).toEqual(entries);
   expect(result.files).toEqual([]);
 });
+
+it("settles a comparison without a base and leaves Uncommitted available", async () => {
+  const { checkoutDiffComparisonError } = await import("./diff-snapshot");
+  expect(checkoutDiffComparisonError({ mode: "all" })).toMatchObject({ code: "INVALID_COMPARE" });
+  expect(checkoutDiffComparisonError({ mode: "base" })).toMatchObject({ code: "INVALID_COMPARE" });
+  expect(checkoutDiffComparisonError({ mode: "uncommitted" })).toBeNull();
+});

@@ -5,7 +5,11 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { deriveCheckoutDiffResult, type CheckoutDiffSnapshot } from "./diff-snapshot";
+import {
+  checkoutDiffComparisonError,
+  deriveCheckoutDiffResult,
+  type CheckoutDiffSnapshot,
+} from "./diff-snapshot";
 export { deriveCheckoutDiffResult } from "./diff-snapshot";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
@@ -79,7 +83,11 @@ export function useCheckoutDiffQuery({
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
   }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(queryEnabled && isConnected && cwd && !requiresUpdate);
+  const comparisonError =
+    queryEnabled && isConnected ? checkoutDiffComparisonError(normalizedCompare) : null;
+  const routeEnabled = Boolean(
+    queryEnabled && isConnected && cwd && !requiresUpdate && !comparisonError,
+  );
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -99,14 +107,13 @@ export function useCheckoutDiffQuery({
     }),
   });
 
-  return deriveCheckoutDiffResult(
+  const boundaryError =
     requiresUpdate && isConnected
-      ? {
-          requestId: "unsupported",
-          cwd,
-          files: [],
-          error: { code: "UNKNOWN", message: "Update the host to view All changes" },
-        }
+      ? { code: "UNKNOWN" as const, message: "Update the host to view All changes" }
+      : comparisonError;
+  return deriveCheckoutDiffResult(
+    boundaryError
+      ? { requestId: "unavailable", cwd, files: [], error: boundaryError }
       : (query.data ?? null),
   );
 }

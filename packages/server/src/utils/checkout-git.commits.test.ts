@@ -428,6 +428,8 @@ it("compares tag-based worktrees in status, history and legacy diff modes", asyn
 it("announces a usable comparison base while checked out on the base branch", async () => {
   const cwd = makeTempDir();
   git(["init", "-b", "main"], cwd);
+  git(["config", "user.name", "Test"], cwd);
+  git(["config", "user.email", "test@example.com"], cwd);
   writeFileSync(join(cwd, "a.txt"), "before\n");
   git(["add", "."], cwd);
   commit(cwd, "base");

@@ -1,5 +1,9 @@
 import type { DiffState, DiffEntry } from "@getpaseo/client";
-import type { DiffError, ParsedDiffFile } from "@getpaseo/protocol/messages";
+import type {
+  DiffError,
+  ParsedDiffFile,
+  SubscribeCheckoutDiffRequest,
+} from "@getpaseo/protocol/messages";
 export type DiffFileHeader = Omit<ParsedDiffFile, "hunks">;
 export interface CheckoutDiffSnapshot {
   requestId: string;
@@ -56,5 +60,15 @@ export function deriveCheckoutDiffResult(payload: CheckoutDiffSnapshot | null): 
     isFetching: false,
     isError: Boolean(payloadError),
     error: null,
+  };
+}
+
+export function checkoutDiffComparisonError(
+  compare: Pick<SubscribeCheckoutDiffRequest["compare"], "mode" | "baseRef">,
+): DiffError | null {
+  if (compare.mode === "uncommitted" || compare.baseRef?.trim()) return null;
+  return {
+    code: "INVALID_COMPARE",
+    message: "Comparison base is unavailable. Select Uncommitted to view pending changes.",
   };
 }

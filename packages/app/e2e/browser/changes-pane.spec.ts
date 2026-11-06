@@ -8,7 +8,11 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  openChangesPanel,
+  openChangesTreePanel,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
@@ -262,11 +266,28 @@ test.afterEach(async () => {
   }
 });
 
+test("Changes without a comparison base explains how to view pending changes", async ({ page }) => {
+  const workspace = await createWorkspaceWithManyTinyDiffs(2, "dev");
+  await openWorkspaceChangesTree(page, workspace);
+  await expect(
+    page.getByText("Comparison base is unavailable. Select Uncommitted to view pending changes."),
+  ).toBeVisible();
+  await selectChangesComparison(page, "Uncommitted");
+  await expect(changesTree(page).getByText("file-0000.ts", { exact: true })).toBeVisible();
+});
+async function openWorkspaceChangesTree(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
+}
+
 test("streamed Changes shows the tree before completion and applies a one-file refresh", async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
   const workspace = await createLargeStreamedWorkspace();
+  await addOversizedSibling(workspace);
   const stream = await holdDiffCompletion(page);
   await openWorkspaceChangesSurface(page, workspace, 90_000);
   await expectAnnouncedTreeAndLoader(page);
@@ -301,6 +322,9 @@ async function createLargeStreamedWorkspace(): Promise<DirtyWorkspace> {
   );
   return workspace;
 }
+async function addOversizedSibling(workspace: DirtyWorkspace): Promise<void> {
+  await writeFile(path.join(workspace.repoPath, "zz-too-large.txt"), "x".repeat(1024 * 1024 + 1));
+}
 async function addOneLineToFirstFile(workspace: DirtyWorkspace): Promise<void> {
   const file = path.join(workspace.repoPath, "src/file-0000.ts");
   await writeFile(file, (await readFile(file, "utf8")) + "export const refreshed = true;\n");
@@ -312,17 +336,26 @@ async function holdDiffCompletion(page: Page) {
   let completed = 0;
   const completions: Array<() => void> = [];
   const changedBodies: number[] = [];
+  const bodyCounts = new Map<number, number>();
   await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
     connections++;
     const serverSocket = browserSocket.connectToServer();
     browserSocket.onMessage((message) => serverSocket.send(message));
     serverSocket.onMessage((message) => {
-      if (typeof message !== "string" && message[0] === DiffOpcode.Begin) {
+      if (
+        typeof message !== "string" &&
+        message[0] >= DiffOpcode.Begin &&
+        message[0] <= DiffOpcode.End
+      ) {
         const frame = decodeDiffFrame(message);
-        if (frame.opcode === DiffOpcode.Begin)
-          changedBodies.push(frame.entries.filter((entry) => entry.body).length);
+        if (frame.opcode === DiffOpcode.Begin) bodyCounts.set(frame.slot, 0);
+        else if (frame.opcode === DiffOpcode.Bodies)
+          bodyCounts.set(frame.slot, (bodyCounts.get(frame.slot) ?? 0) + frame.files.length);
+        else {
+          completed++;
+          changedBodies.push(bodyCounts.get(frame.slot) ?? 0);
+        }
       }
-      if (typeof message !== "string" && message[0] === DiffOpcode.End) completed++;
       if (holding && typeof message !== "string" && message[0] === DiffOpcode.End) {
         completions.push(() => browserSocket.send(message));
         return;
@@ -343,6 +376,10 @@ async function holdDiffCompletion(page: Page) {
       completions.splice(0).forEach((send) => send());
     },
   };
+}
+async function expectWorkingDiffLoaded(page: Page, timeout: number): Promise<void> {
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toBeAttached({ timeout });
 }
 async function expectAnnouncedTreeAndLoader(page: Page): Promise<void> {
   await expect(changesTree(page).first()).toBeVisible();
@@ -1418,11 +1455,13 @@ test("canvas diff uses the overlay scrollbar and its thumb controls vertical scr
 test("canvas headers keep a many-file diff bounded while scrolling end to end", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const workspace = await createWorkspaceWithManyTinyDiffs(2_000);
   await useUnwrappedDiffLines(page);
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
+  // Measure document bounds after delivery, independently of the cold Git read.
+  await expectWorkingDiffLoaded(page, 240_000);
   const root = page.getByTestId("git-diff-canvas-root");
   const scroller = page.getByTestId("git-diff-scroll");
   await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
@@ -2001,12 +2040,16 @@ async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
-async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<DirtyWorkspace> {
+async function createWorkspaceWithManyTinyDiffs(
+  fileCount: number,
+  branch = "main",
+): Promise<DirtyWorkspace> {
   const files = Array.from({ length: fileCount }, (_, index) => ({
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
     content: "export const value = 0;\n",
   }));
   const repo = await createTempGitRepo("changes-canvas-many-files-", { files });
+  if (branch !== "main") execFileSync("git", ["branch", "-m", branch], { cwd: repo.path });
   await Promise.all(
     files.map((file, index) =>
       writeFile(path.join(repo.path, file.path), `export const value = ${index + 1};\n`),

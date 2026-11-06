@@ -89,8 +89,8 @@ export class CheckoutDiffManager {
         return;
       }
       let payload: CheckoutDiffSnapshotPayload;
-      if (frame.error || frame.diffTooLarge) {
-        const message = frame.error ? frame.error.message : "Diff too large to display";
+      if (frame.error) {
+        const message = frame.error.message;
         payload = {
           cwd,
           files: [],
@@ -100,14 +100,17 @@ export class CheckoutDiffManager {
         files.clear();
       } else {
         const next = new Map<string, ParsedDiffFile>();
+        const omitted = new Set(frame.omitted);
         for (const entry of pending.entries) {
           const previous = pending.baseRevision ? files.get(entry.path) : undefined;
           const body = bodies.get(entry.path) ?? null;
-          const file = materializeDiffFile(entry, body, false);
-          if (!entry.body && previous && entry.content === "text") file.hunks = previous.hunks;
+          const file = materializeDiffFile(entry, body, omitted.has(entry.path));
+          if (!entry.body && previous && entry.content === "text" && !omitted.has(entry.path))
+            file.hunks = previous.hunks;
           next.set(entry.path, file);
         }
         files = next;
+        // Stream omissions remain file placeholders; the JSON budget rejects a legacy snapshot.
         payload = legacySnapshot(cwd, [...next.values()]);
       }
       pending = null;
@@ -178,13 +181,17 @@ function legacySnapshot(cwd: string, files: ParsedDiffFile[]): CheckoutDiffSnaps
   for (let index = 0; index < files.length; index++) {
     bytes += Buffer.byteLength(JSON.stringify(files[index])) + Number(index > 0);
     if (bytes > CHECKOUT_DIFF_MAX_STRUCTURED_BYTES) {
-      return {
-        cwd,
-        files: [],
-        diffTooLarge: true,
-        error: toCheckoutError(new Error("Diff too large to display")),
-      };
+      return legacyTooLarge(cwd);
     }
   }
   return { cwd, files, error: null };
+}
+
+function legacyTooLarge(cwd: string): CheckoutDiffSnapshotPayload {
+  return {
+    cwd,
+    files: [],
+    diffTooLarge: true,
+    error: toCheckoutError(new Error("Diff too large to display")),
+  };
 }

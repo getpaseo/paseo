@@ -165,3 +165,31 @@ test("moving a tag refreshes binary file metadata even though binary files have 
     await subscription.unsubscribe();
   });
 }, 30000);
+
+test("legacy diffs retain successful bodies when an oversized sibling is removed", async () => {
+  await withCheckout(async ({ cwd, manager }) => {
+    await writeFile(join(cwd, "a.ts"), "const value = 1;\n");
+    await writeFile(join(cwd, "b.txt"), "x".repeat(1024 * 1024 + 1));
+    const updates: CheckoutDiffSnapshotPayload[] = [];
+    const subscription = await manager.subscribe(
+      { cwd, compare: { mode: "uncommitted" } },
+      (snapshot) => updates.push(snapshot),
+    );
+    expect(subscription.initial.files).toMatchObject([
+      { path: "a.ts", status: "ok" },
+      { path: "b.txt", status: "too_large" },
+    ]);
+    await rm(join(cwd, "b.txt"));
+    manager.scheduleRefreshForCwd(cwd);
+    await expect.poll(() => updates.at(-1)?.error).toBeNull();
+    expect(updates.at(-1)?.files[0]).toMatchObject({
+      path: "a.ts",
+      hunks: [
+        {
+          lines: expect.arrayContaining([expect.objectContaining({ content: "const value = 1;" })]),
+        },
+      ],
+    });
+    subscription.unsubscribe();
+  });
+});
