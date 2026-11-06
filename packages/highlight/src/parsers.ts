@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { ruby } from "@codemirror/legacy-modes/mode/ruby";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -26,6 +27,8 @@ import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
 }
+
+const rubyLanguage = StreamLanguage.define(ruby);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -78,6 +81,15 @@ const languagesByExtension: Record<string, Language> = {
   swift: StreamLanguage.define(swift),
   // Dart
   dart: StreamLanguage.define(dart),
+  // Ruby
+  rb: rubyLanguage,
+  rbw: rubyLanguage,
+  rake: rubyLanguage,
+  gemspec: rubyLanguage,
+  ru: rubyLanguage,
+  jbuilder: rubyLanguage,
+  podspec: rubyLanguage,
+  thor: rubyLanguage,
   // C#
   cs: csharpLanguage,
   // Nix
@@ -90,7 +102,27 @@ const languagesByExtension: Record<string, Language> = {
   mdx: language(markdownParser),
 };
 
+/** Extensionless files whose whole name identifies the language, matched case-sensitively. */
+const languagesByFilename = new Map<string, Language>([
+  // Ruby
+  ["Gemfile", rubyLanguage],
+  ["Rakefile", rubyLanguage],
+  ["Guardfile", rubyLanguage],
+  ["Capfile", rubyLanguage],
+  ["Podfile", rubyLanguage],
+  ["Vagrantfile", rubyLanguage],
+  ["Brewfile", rubyLanguage],
+  ["Berksfile", rubyLanguage],
+  ["Thorfile", rubyLanguage],
+  ["Fastfile", rubyLanguage],
+  ["Appfile", rubyLanguage],
+  ["Dangerfile", rubyLanguage],
+]);
+
 export function getLanguageForFile(filename: string): Language | null {
+  const basename = filename.split(/[\\/]/).pop() ?? filename;
+  const byFilename = languagesByFilename.get(basename);
+  if (byFilename) return byFilename;
   const ext = filename.split(".").pop()?.toLowerCase();
   if (!ext) return null;
   return languagesByExtension[ext] ?? null;
