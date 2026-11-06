@@ -31,6 +31,7 @@
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",
     "profile:composer-typing": "node ./scripts/profile-composer-typing.mjs",
     "profile:explorer-toggle": "node ./scripts/profile-explorer-toggle.mjs",
+    "profile:many-agent-tabs": "playwright test --config playwright.many-tabs.config.ts",
     "profile:side-pane": "playwright test --config playwright.profile.config.ts side-pane-performance.spec.ts",
     "profile:workspace-switching": "node ./scripts/profile-workspace-switching.mjs",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
