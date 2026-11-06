@@ -12,6 +12,21 @@ function reply(id: string): StreamItem {
   return { kind: "assistant_message", id, text: id, timestamp: at };
 }
 
+function pluginReply(sourceId: string, part = "0"): StreamItem {
+  return {
+    kind: "plugin",
+    id: `math/${sourceId}/${part}`,
+    sourceId,
+    sourceKind: "assistant_message",
+    timestamp: at,
+    pluginId: "math",
+    pluginItemId: `${sourceId}/${part}`,
+    itemKind: "formula",
+    version: 1,
+    data: { text: "$$x^2$$" },
+  };
+}
+
 function thought(id: string): StreamItem {
   return { kind: "thought", id, text: id, timestamp: at, status: "ready" };
 }
@@ -49,6 +64,44 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("keeps every card of the final reply outside the folded turn", () => {
+    const items = [
+      user("prompt"),
+      reply("acknowledgment"),
+      shell("call"),
+      pluginReply("final", "left"),
+      pluginReply("final", "right"),
+    ];
+    const result = collapse(items);
+    expect(ids(result.tail)).toEqual(["prompt", "math/final/left", "math/final/right"]);
+    expect(result.hostIdByFoldedMessageId.get("acknowledgment")).toBe("prompt");
+    expect(result.hostIdByFoldedMessageId.has("final")).toBe(false);
+    const expanded = collapse(items, { expandedHostIds: new Set(["prompt"]) });
+    expect(expanded.tail).toEqual(items);
+    expect([...expanded.nestedItemIds]).toEqual(["acknowledgment", "call"]);
+  });
+
+  it("folds intermediate plugin replies even without tool calls", () => {
+    const result = collapse([user("prompt"), pluginReply("intermediate"), pluginReply("final")]);
+    expect(ids(result.tail)).toEqual(["prompt", "math/final/0"]);
+    expect(result.hostIdByFoldedMessageId.get("intermediate")).toBe("prompt");
+  });
+
+  it.each([undefined, "thought", "tool_call"] as const)(
+    "does not treat a plugin row with source kind %s as a reply",
+    (sourceKind) => {
+      const card = { ...pluginReply("card"), sourceKind };
+      const items = [user("prompt"), shell("call"), card];
+      expect(collapse(items).tail).toEqual(items);
+      expect(collapse(items).turnsByHostId.size).toBe(0);
+    },
+  );
+
+  it("keeps a plugin-rendered reply and its work unfolded while the turn is open", () => {
+    const items = [user("prompt"), shell("call"), pluginReply("final")];
+    expect(collapse(items, { isLatestTurnOpen: true }).tail).toEqual(items);
+  });
+
   // A history row renders again only when its item changes, so a prompt that is already retained
   // when its turn closes needs its row revised to show the summary line.
   it("reports the hosts whose summary line appeared, changed or went away", () => {
