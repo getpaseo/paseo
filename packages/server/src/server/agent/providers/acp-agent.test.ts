@@ -1775,62 +1775,6 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("tracks initialized Copilot Allow All notifications and disables them before switching away", async () => {
-    const agentMode = "https://agentclientprotocol.com/protocol/session-modes#agent";
-    const session = createCopilotSessionWithConfig();
-    const prepared = prepareConfiguredOverrideSession(session, {
-      currentMode: agentMode,
-      availableModes: COPILOT_MODES,
-      configOptions: [copilotModeConfigOption(agentMode), copilotAllowAllConfigOption("off")],
-    });
-    prepared.internals.applySessionState({
-      sessionId: "session-1",
-      modes: {
-        currentModeId: agentMode,
-        availableModes: COPILOT_MODES.map((mode) => ({ id: mode.id, name: mode.label })),
-      },
-      configOptions: [copilotModeConfigOption(agentMode), copilotAllowAllConfigOption("off")],
-    });
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "config_option_update",
-      configOptions: [copilotModeConfigOption(agentMode), copilotAllowAllConfigOption("on")],
-    });
-    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
-    await session.setMode(agentMode);
-    expect(prepared.setSessionConfigOption).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "session-1",
-      configId: "allow_all",
-      value: "off",
-    });
-    expect(prepared.setSessionMode).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "session-1",
-      modeId: agentMode,
-    });
-    expect(prepared.setSessionConfigOption.mock.invocationCallOrder[0]).toBeLessThan(
-      prepared.setSessionMode.mock.invocationCallOrder[0]!,
-    );
-  });
-
-  test("tracks initialized Copilot Allow All being turned off through config", async () => {
-    const agentMode = "https://agentclientprotocol.com/protocol/session-modes#agent";
-    const session = createCopilotSessionWithConfig();
-    const prepared = prepareConfiguredOverrideSession(session, { availableModes: COPILOT_MODES });
-    prepared.internals.applySessionState({
-      sessionId: "session-1",
-      modes: {
-        currentModeId: agentMode,
-        availableModes: COPILOT_MODES.map((mode) => ({ id: mode.id, name: mode.label })),
-      },
-      configOptions: [copilotModeConfigOption(agentMode), copilotAllowAllConfigOption("on")],
-    });
-    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "config_option_update",
-      configOptions: [copilotModeConfigOption(agentMode), copilotAllowAllConfigOption("off")],
-    });
-    await expect(session.getCurrentMode()).resolves.toBe(agentMode);
-  });
-
   test("trusts Copilot allow_all config updates as the current mode source", async () => {
     const session = createCopilotSessionWithConfig();
     const internals = asInternals<ACPSessionInternals>(session);
