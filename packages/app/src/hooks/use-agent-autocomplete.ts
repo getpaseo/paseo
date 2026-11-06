@@ -441,7 +441,11 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const { commands, isError, error } = commandsQuery;
   const isCommandsLoading = canListCommands && commandsQuery.isLoading;
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  // Keep the panel mounted while the command list loads: its own loading row
+  // (`agentAutocomplete.loadingCommands`, see `resolveAutocompleteIsLoading`)
+  // is the only feedback the composer has in that window. Hiding the panel
+  // here made `/` look broken on hosts where listing commands is slow.
+  const isVisible = canShowAutocomplete;
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
