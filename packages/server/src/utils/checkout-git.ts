@@ -906,6 +906,7 @@ export interface CheckoutStatusGitNonPaseo {
   isDirty: boolean;
   baseRef: string | null;
   baseRefExact?: string | null;
+  comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   // Remote-tracking ref for currentBranch, e.g. "refs/remotes/origin/main". Null when the
   // branch has no upstream or git could not resolve it. aheadOfOrigin/behindOfOrigin are
@@ -926,6 +927,7 @@ export interface CheckoutStatusGitPaseo {
   isDirty: boolean;
   baseRef: string;
   baseRefExact?: string | null;
+  comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   upstreamRef: string | null;
   aheadOfOrigin: number | null;
@@ -1748,6 +1750,24 @@ function isQualifiedBranchRef(ref: string): boolean {
   return ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/");
 }
 
+async function resolveCommitComparisonRef(
+  cwd: string,
+  name: string,
+  context?: CheckoutContext,
+): Promise<string> {
+  await runGitCommand(["rev-parse", "--verify", `${name}^{commit}`], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
+  const result = await runGitCommand(["rev-parse", "--symbolic-full-name", name], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
+  return result.stdout.trim() || name;
+}
+
 async function resolveBestComparisonBaseRef(
   cwd: string,
   baseRef: string,
@@ -1774,11 +1794,7 @@ async function resolveBestComparisonBaseRef(
     return normalized.localName;
   }
 
-  const refName =
-    baseRef.startsWith("origin/") || baseRef.startsWith("refs/remotes/origin/")
-      ? normalized.originRef
-      : normalized.localName;
-  throw new Error(`Base branch not found locally or on origin: ${refName}`);
+  return resolveCommitComparisonRef(cwd, baseRef, context);
 }
 
 async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<string> {
@@ -1801,7 +1817,7 @@ async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<st
     return `origin/${normalizedBaseRef}`;
   }
   if (!hasLocal && !hasOrigin) {
-    throw new Error(`Base branch not found locally or on origin: ${normalizedBaseRef}`);
+    return resolveCommitComparisonRef(cwd, baseRef);
   }
 
   const { stdout } = await runGitCommand(
@@ -2421,6 +2437,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
+      comparisonBaseRef: facts.comparisonBaseRef,
       aheadBehind,
       upstreamRef,
       aheadOfOrigin,
@@ -2440,6 +2457,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,
+    comparisonBaseRef: facts.comparisonBaseRef,
     aheadBehind,
     upstreamRef,
     aheadOfOrigin,

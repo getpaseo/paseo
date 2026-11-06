@@ -3437,7 +3437,9 @@ export class Session {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame, source);
       return;
     }
-    this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
+    if (binaryFrame.kind === "terminal") {
+      this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
+    }
   }
 
   private async handleRestartServerRequest(
