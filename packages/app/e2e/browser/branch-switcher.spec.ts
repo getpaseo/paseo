@@ -1,3 +1,5 @@
+import { writeFile, unlink } from "node:fs/promises";
+import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { gotoAppShell } from "../support/helpers/app";
@@ -16,14 +18,20 @@ import {
 } from "../support/helpers/workspace-ui";
 
 // Hold the real daemon response until the test has observed the pending UI.
-async function holdBranchSuggestions(page: Page): Promise<() => void> {
+async function holdBranchSuggestions(page: Page) {
+  let requestCount = 0;
   let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
+  let gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
-    browser.onMessage((message) => server.send(message));
+    browser.onMessage((message) => {
+      const envelope = JSON.parse(message.toString());
+      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_request")
+        requestCount++;
+      server.send(message);
+    });
     server.onMessage(async (message) => {
       const envelope = JSON.parse(message.toString());
       if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_response") {
@@ -32,7 +40,15 @@ async function holdBranchSuggestions(page: Page): Promise<() => void> {
       browser.send(message);
     });
   });
-  return release;
+  return {
+    release: () => release(),
+    holdNextResponse: () => {
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    requestCount: () => requestCount,
+  };
 }
 
 async function expectInitialBranchLoading(page: Page, release: () => void): Promise<void> {
@@ -44,6 +60,44 @@ async function expectInitialBranchLoading(page: Page, release: () => void): Prom
   await expect(picker.getByText("dev", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(picker).not.toBeVisible();
+}
+
+async function expectFailedRefreshRecovery(
+  page: Page,
+  repoPath: string,
+  responses: Awaited<ReturnType<typeof holdBranchSuggestions>>,
+) {
+  // Expire the actual query freshness window before reopening the cached picker.
+  const started = Date.now();
+  await expect.poll(() => Date.now() - started, { timeout: 20_000 }).toBeGreaterThan(15_000);
+  const picker = page.getByTestId("combobox-desktop-container");
+  const packedRefs = path.join(repoPath, ".git", "packed-refs");
+  await writeFile(packedRefs, "invalid packed refs\n");
+  try {
+    await page
+      .getByRole("button", { name: "Current branch: dev. Press to switch branch." })
+      .click();
+    await expect(picker.getByRole("alert")).toHaveText("Could not load branches. Try again.");
+  } finally {
+    await unlink(packedRefs);
+  }
+  await expect(picker.getByText("No branches found.", { exact: true })).toHaveCount(0);
+  responses.holdNextResponse();
+  const beforeRetry = responses.requestCount();
+  // Enter on Retry must run the focused button, not select a cached branch.
+  await page.getByRole("button", { name: "Retry", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Loading...", exact: true })).toBeDisabled();
+  await expect(picker).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect.poll(responses.requestCount).toBe(beforeRetry + 1);
+  await expect(picker).toBeVisible();
+  responses.release();
+  await expect(picker.getByRole("alert")).toHaveCount(0);
+  await expect(picker.getByText("main", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expectWorkspaceBranch(page, "dev");
+  expect(responses.requestCount()).toBe(beforeRetry + 1);
 }
 
 async function renameWorkspaceViaSidebar(
@@ -115,9 +169,10 @@ test.describe("Branch switcher", () => {
       // and switching it checks out the real branch on disk.
       await openChangesPanel(page);
       await expectWorkspaceBranch(page, "main");
-      await expectInitialBranchLoading(page, releaseBranches);
+      await expectInitialBranchLoading(page, releaseBranches.release);
       await switchBranchFromChangesPanel(page, { from: "main", to: "dev" });
       await expectWorkspaceBranch(page, "dev");
+      await expectFailedRefreshRecovery(page, workspace.repoPath, releaseBranches);
 
       // The custom title is unaffected by the branch switch.
       await expect(headerTitle).toHaveText(customTitle, { timeout: 30_000 });

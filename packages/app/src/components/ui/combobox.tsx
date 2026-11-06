@@ -71,6 +71,7 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+const COMBOBOX_FOOTER_DATA_SET = { comboboxFooter: true };
 
 export type ComboboxOption = ComboboxOptionModel;
 export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
@@ -869,6 +870,11 @@ function dispatchDesktopKey(
   event?: KeyboardInputEvent,
 ): boolean {
   if (!input.isOpen) return false;
+  // Footer controls own their keyboard interaction; list shortcuts must not
+  // select a branch when Enter is pressed on an action such as Retry.
+  if (isWeb && key !== "Escape" && document.activeElement?.closest("[data-combobox-footer]")) {
+    return false;
+  }
   // A native mobile bail used to live here because native had no key source, so
   // nothing could call this. It has one now, and the sheet highlights an active
   // row like the popover does, so a hardware keyboard drives both.
@@ -1047,7 +1053,12 @@ function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children
     [safeAreaBottom],
   );
   const footerView = useMemo(
-    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
+    () =>
+      footer ? (
+        <View style={footerStyle} dataSet={COMBOBOX_FOOTER_DATA_SET}>
+          {footer}
+        </View>
+      ) : undefined,
     [footer, footerStyle],
   );
   return (
@@ -1257,7 +1268,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
               renderOption={props.renderOption}
             />
           )}
-          {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+          {props.footer ? (
+            <View style={styles.footer} dataSet={COMBOBOX_FOOTER_DATA_SET}>
+              {props.footer}
+            </View>
+          ) : null}
         </FloatingSurface>
       </View>
     </OverlayLayerProvider>

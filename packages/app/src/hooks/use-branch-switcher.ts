@@ -23,6 +23,7 @@ interface UseBranchSwitcherInput {
 interface UseBranchSwitcherResult {
   branchOptions: ComboboxOption[];
   isLoadingBranches: boolean;
+  isFetchingBranches: boolean;
   branchError: Error | null;
   retryBranches: () => void;
   isOpen: boolean;
@@ -74,7 +75,7 @@ export function useBranchSwitcher({
 
   const { refetch } = branchSuggestionsQuery;
   const retryBranches = useCallback(() => {
-    void refetch();
+    void refetch({ cancelRefetch: false });
   }, [refetch]);
 
   const branchOptions = useMemo<ComboboxOption[]>(() => {
@@ -196,6 +197,7 @@ export function useBranchSwitcher({
   return {
     branchOptions,
     isLoadingBranches: branchSuggestionsQuery.isPending,
+    isFetchingBranches: branchSuggestionsQuery.isFetching,
     branchError: branchSuggestionsQuery.error,
     retryBranches,
     isOpen,
