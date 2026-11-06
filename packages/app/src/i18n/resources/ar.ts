@@ -938,6 +938,9 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "الفرع الأساسي",
+        },
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
@@ -1241,6 +1244,7 @@ export const ar: TranslationResources = {
       hosts: "المضيفون",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+      moreActions: "المزيد من الإجراءات",
     },
     footer: {
       usage: "الاستخدام",

@@ -929,6 +929,9 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
@@ -1232,6 +1235,7 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      moreActions: "更多操作",
     },
     footer: {
       usage: "使用情况",

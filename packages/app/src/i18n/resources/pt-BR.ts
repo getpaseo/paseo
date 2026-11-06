@@ -963,6 +963,9 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branch base",
+        },
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
@@ -1269,6 +1272,7 @@ export const ptBR: TranslationResources = {
       hosts: "Hosts",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      moreActions: "Mais ações",
     },
     footer: {
       usage: "Uso",

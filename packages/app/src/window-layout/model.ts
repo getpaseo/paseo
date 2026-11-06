@@ -9,7 +9,23 @@ export interface WindowLayout {
   bounds: WindowLayoutRect;
   verticalBarEdge: "none" | "leading" | "trailing";
   verticalBar: WindowLayoutRect | null;
+  /**
+   * Points from the window's bottom edge to where a bottom bar rests, or null where
+   * the system has no bottom bar guide. Zero is a measured value.
+   */
+  bottomClearance?: number | null;
   divisions: WindowLayoutRect[];
+}
+
+/** The window's measured bottom clearance replaces the rectangular safe-area bottom. */
+export function resolveSafeAreaInsets<Insets extends { bottom: number }>(
+  systemInsets: Insets,
+  layout: WindowLayout | null,
+): Insets {
+  const clearance = layout?.bottomClearance;
+  return typeof clearance === "number" && clearance !== systemInsets.bottom
+    ? { ...systemInsets, bottom: clearance }
+    : systemInsets;
 }
 
 export interface DesktopDivisionLayout {

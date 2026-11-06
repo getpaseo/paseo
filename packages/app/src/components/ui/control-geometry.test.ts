@@ -14,6 +14,8 @@ import {
   getControlInteractionPhase,
   TOOLBAR_CONTROL_HEIGHT,
   TOOLBAR_CONTROL_SIZES,
+  TOOLBAR_DISC_SIZE,
+  TOOLBAR_DISC_SIZES,
   TOUCH_TARGET,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -90,6 +92,11 @@ describe("control sizing gate", () => {
     // Composer toolbar controls: a full target on touch, unchanged 28 on pointer.
     expect(TOOLBAR_CONTROL_SIZES).toEqual({ touch: TOUCH_TARGET, pointer: 28 });
     expect(TOOLBAR_CONTROL_HEIGHT).toEqual({ xs: TOUCH_TARGET, md: 28 });
+    // A filled toolbar control paints a 36pt disc inside its 44pt touch frame, and fills its
+    // 28pt pointer frame exactly, so desktop is unchanged. Its glyph is the `md` glyph.
+    expect(TOOLBAR_DISC_SIZES).toEqual({ touch: 36, pointer: TOOLBAR_CONTROL_SIZES.pointer });
+    expect(TOOLBAR_DISC_SIZE).toEqual({ xs: 36, md: 28 });
+    expect(iconSizeFor("md")).toEqual({ touch: 20, pointer: 16 });
     for (const size of ["sm", "md"] as const) {
       expect(controlHeightForLayout(size, true)).toBeGreaterThan(
         controlHeightForLayout(size, false),

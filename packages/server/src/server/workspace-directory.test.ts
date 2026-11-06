@@ -343,6 +343,21 @@ describe("WorkspaceDirectory", () => {
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
   });
 
+  test("an errored root agent shows failed only until its error is read", async () => {
+    const unread = new WorkspaceStatus();
+    unread.hasRootAgent({
+      id: "root-agent",
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    await expect(unread.workspaceStatus()).resolves.toBe("failed");
+
+    const read = new WorkspaceStatus();
+    read.hasRootAgent({ id: "root-agent", status: "error", requiresAttention: false });
+    await expect(read.workspaceStatus()).resolves.toBe("done");
+  });
+
   test("a running background agent does not make its workspace running", async () => {
     const workspace = new WorkspaceStatus();
 

@@ -2123,7 +2123,53 @@ test("workspace mark unread selects a finished cross-workspace child with scoped
   }
 });
 
-test("workspace mark unread rejects workspaces without a finished root agent", async () => {
+test("workspace mark unread marks a read errored root agent", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const markedAgentIds: string[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      markAgentUnread: async (agentId: string) => {
+        markedAgentIds.push(agentId);
+      },
+    },
+  });
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "errored-agent",
+      cwd: REPO_CWD,
+      workspaceId: workspace.workspaceId,
+      status: "error",
+      updatedAt: "2026-03-30T16:00:00.000Z",
+      requiresAttention: false,
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "workspace.mark_unread.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-mark-unread",
+  });
+
+  expect(markedAgentIds).toEqual(["errored-agent"]);
+  expect(findByType(emitted, "workspace.mark_unread.response").payload).toMatchObject({
+    markedAgentId: "errored-agent",
+    success: true,
+  });
+});
+
+test("workspace mark unread rejects workspaces without a read root agent", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: REPO_CWD,
@@ -2150,7 +2196,7 @@ test("workspace mark unread rejects workspaces without a finished root agent", a
     workspaceId: workspace.workspaceId,
     markedAgentId: null,
     success: false,
-    error: `Workspace has no finished agent to mark unread: ${workspace.workspaceId}`,
+    error: `Workspace has no read agent to mark unread: ${workspace.workspaceId}`,
   });
 });
 

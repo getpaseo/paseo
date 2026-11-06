@@ -945,6 +945,9 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "기준 브랜치",
+        },
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -1248,6 +1251,7 @@ export const ko: TranslationResources = {
       hosts: "호스트",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+      moreActions: "추가 작업",
     },
     footer: {
       usage: "사용량",

@@ -81,7 +81,13 @@ export async function scrollWorkspaceList(page: Page): Promise<void> {
 }
 
 export async function expectWorkspaceHoverCardOpen(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
+  const cards = page.getByTestId("workspace-hover-card");
+  // Keyboard navigation can leave the previous card closing while the next opens.
+  // Retry both checks together: another card may mount between count and visibility.
+  await expect(async () => {
+    expect(await cards.count()).toBe(1);
+    expect(await cards.isVisible()).toBe(true);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function expectWorkspaceHoverCardStaysOpen(page: Page): Promise<void> {
