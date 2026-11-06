@@ -11,6 +11,8 @@ export class CodexBackgroundInventory {
   private generation = 0;
   private client: Client | null = null;
   private thread: string | null = null;
+  private readonly threads = new Set<string>();
+  private origins = new Map<string, string>();
   private pending = false;
   private dirty = false;
   private unsupported = false;
@@ -21,7 +23,7 @@ export class CodexBackgroundInventory {
 
   async stopItem(id: string): Promise<void> {
     const client = this.client;
-    const threadId = this.thread;
+    const threadId = this.origins.get(id);
     const generation = this.generation;
     if (!client || !threadId || !this.current?.items?.some((item) => item.id === id))
       throw new Error("Background terminal is no longer available");
@@ -82,6 +84,8 @@ export class CodexBackgroundInventory {
     this.notify();
     this.client = null;
     this.thread = null;
+    this.threads.clear();
+    this.origins.clear();
     this.pending = false;
     this.dirty = false;
     this.retrying = false;
@@ -91,18 +95,8 @@ export class CodexBackgroundInventory {
     this.current = null;
   }
   changed(thread: string | null) {
-    if (this.thread !== thread) {
-      this.generation++;
-      this.notify();
-      this.thread = thread;
-      this.pending = false;
-      this.dirty = false;
-      this.retrying = false;
-      if (this.timer) clearTimeout(this.timer);
-      this.timer = null;
-      if (this.current) this.emit({ type: "background_work", provider: "codex", items: null });
-      this.current = null;
-    }
+    this.thread = thread;
+    if (thread) this.threads.add(thread);
     if (!this.client || !thread || this.unsupported) return;
     this.dirty = true;
     if (!this.retrying) this.refresh();
@@ -115,37 +109,16 @@ export class CodexBackgroundInventory {
     this.dirty = false;
     const generation = this.generation;
     const client = this.client;
-    const threadId = this.thread;
+    const threads = [...this.threads];
     void (async () => {
       let failed = false;
       try {
-        const items: NonNullable<InventoryEvent["items"]> = [];
-        let cursor: string | null = null;
-        do {
-          const page = z
-            .object({
-              data: z.array(z.object({ processId: z.string(), command: z.string() })),
-              nextCursor: z.string().nullable(),
-            })
-            .parse(
-              await client.request(
-                "thread/backgroundTerminals/list",
-                { threadId, ...(cursor ? { cursor } : {}) },
-                10_000,
-              ),
-            );
-          items.push(
-            ...page.data.map((row) => ({
-              id: row.processId,
-              kind: "shell",
-              canStop: true,
-              description: null,
-              ...(row.command ? { command: row.command } : {}),
-            })),
-          );
-          cursor = page.nextCursor;
-        } while (cursor);
+        const { items, origins, activeThreads } = await readInventories(client, threads);
         if (generation !== this.generation || this.dirty) return;
+        this.origins = origins;
+        this.threads.clear();
+        for (const threadId of activeThreads) this.threads.add(threadId);
+        if (this.thread) this.threads.add(this.thread);
         this.current = { type: "background_work", provider: "codex", items };
         this.emit(this.current);
         this.notify();
@@ -174,4 +147,40 @@ export class CodexBackgroundInventory {
       }
     })();
   }
+}
+
+async function readInventories(client: Client, threads: string[]) {
+  const items: NonNullable<InventoryEvent["items"]> = [];
+  const origins = new Map<string, string>();
+  const activeThreads = new Set<string>();
+  for (const threadId of threads) {
+    let cursor: string | null = null;
+    do {
+      const page = z
+        .object({
+          data: z.array(z.object({ processId: z.string(), command: z.string() })),
+          nextCursor: z.string().nullable(),
+        })
+        .parse(
+          await client.request(
+            "thread/backgroundTerminals/list",
+            { threadId, ...(cursor ? { cursor } : {}) },
+            10_000,
+          ),
+        );
+      for (const row of page.data) {
+        origins.set(row.processId, threadId);
+        activeThreads.add(threadId);
+        items.push({
+          id: row.processId,
+          kind: "shell",
+          canStop: true,
+          description: null,
+          ...(row.command ? { command: row.command } : {}),
+        });
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+  return { items, origins, activeThreads };
 }
