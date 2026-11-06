@@ -206,6 +206,26 @@ export async function expectNoTerminalTabs(page: Page): Promise<void> {
   await expect(page.locator('[data-testid^="workspace-tab-terminal_"]')).toHaveCount(0);
 }
 
+export async function panWorkspaceTabsWithWheel(page: Page): Promise<void> {
+  const strip = page.getByTestId("workspace-tabs-scroll").filter({ visible: true }).first();
+  await expect(strip).toBeVisible({ timeout: 30_000 });
+
+  const overflow = () => strip.evaluate((element) => element.scrollWidth - element.clientWidth);
+  const scrollLeft = () => strip.evaluate((element) => element.scrollLeft);
+  await expect.poll(overflow).toBeGreaterThan(0);
+  expect(await scrollLeft()).toBe(0);
+
+  await strip.hover();
+  await page.mouse.wheel(0, 200);
+  await expect.poll(scrollLeft).toBeGreaterThan(0);
+
+  await page.mouse.wheel(0, await overflow());
+  await expect.poll(async () => (await overflow()) - (await scrollLeft())).toBeLessThanOrEqual(1);
+
+  await page.mouse.wheel(0, -(await strip.evaluate((element) => element.scrollWidth)));
+  await expect.poll(scrollLeft).toBe(0);
+}
+
 export async function clickFirstTerminalTab(
   page: Page,
   options?: { timeout?: number },
