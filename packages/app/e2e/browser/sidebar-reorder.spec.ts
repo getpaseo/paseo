@@ -1,5 +1,6 @@
 import { dragTabAfter, openIndependentCompactClient } from "../support/helpers/shared-order";
 import { gotoWorkspace } from "../support/helpers/launcher";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
   openMobileAgentSidebar,
   expectMobileAgentSidebarVisible,
@@ -272,6 +273,74 @@ test("manual workspace, pinned and tab reorder propagate to an independent compa
     await seed.cleanup();
   }
 });
+test("tab drags keep their order when moved between split panes", async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const seed = await seedWorkspace({ repoPrefix: "shared-order-split-" });
+  let secondContext: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+  try {
+    for (const title of ["First", "Second", "Third"]) {
+      await seed.client.createAgent({
+        provider: "mock",
+        cwd: seed.repoPath,
+        workspaceId: seed.workspaceId,
+        title,
+      });
+    }
+    await gotoWorkspace(page, seed.workspaceId);
+    await expect.poll(() => agentTabIds(page)).toHaveLength(3);
+    const ids = await agentTabIds(page);
+    const independent = await openIndependentCompactClient({ browser, page });
+    secondContext = independent.context;
+    await openCompactTabs(independent.page);
+    await expect.poll(() => compactAgentTabIds(independent.page)).toEqual(ids);
+    await closeCompactTabs(independent.page);
+    await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+    const emptyPane = page
+      .getByTestId("split-group-child")
+      .filter({
+        has: page.getByTestId("workspace-new-tab-panel"),
+      })
+      .first();
+    await expect(emptyPane).toBeVisible();
+    const source = page.getByTestId(ids[2]!).filter({ visible: true });
+    const sourceBox = await source.boundingBox();
+    const paneBox = await emptyPane.boundingBox();
+    if (!sourceBox || !paneBox) throw new Error("Expected source and target pane");
+    await page.mouse.move(sourceBox.x + 20, sourceBox.y + sourceBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(sourceBox.x + 32, sourceBox.y + sourceBox.height / 2);
+    await page.mouse.move(paneBox.x + paneBox.width / 2, paneBox.y + paneBox.height / 2, {
+      steps: 20,
+    });
+    await page.mouse.up();
+    const targetPane = page
+      .getByTestId("split-group-child")
+      .filter({ has: page.getByTestId(ids[2]!) });
+    await expect(targetPane).toBeVisible();
+    await openCompactTabs(independent.page);
+    const beforeMove = await compactAgentTabIds(independent.page);
+    await closeCompactTabs(independent.page);
+    await dragTabAfter({ page, sourceTestId: ids[0]!, targetTestId: ids[2]! });
+    await expect
+      .poll(() => rowTestIds(targetPane.locator('[data-testid^="workspace-tab-agent_"]')))
+      .toEqual([ids[2], ids[0]]);
+    await openCompactTabs(independent.page);
+    const targetOrder = [ids[2], ids[0]];
+    const expected = beforeMove.map((id) =>
+      id === ids[0] || id === ids[2] ? targetOrder.shift()! : id,
+    );
+    await expect.poll(() => compactAgentTabIds(independent.page)).toEqual(expected);
+    await page.reload();
+    await expect
+      .poll(() => rowTestIds(targetPane.locator('[data-testid^="workspace-tab-agent_"]')))
+      .toEqual([ids[2], ids[0]]);
+  } finally {
+    await secondContext?.close();
+    await seed.cleanup();
+  }
+});
+
 async function selectWorkspaceSort(
   page: Page,
   name: "Manual" | "Created" | "Last prompt",
