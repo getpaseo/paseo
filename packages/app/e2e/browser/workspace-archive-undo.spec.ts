@@ -9,9 +9,13 @@ import {
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { expectWorkspaceAbsentFromSidebar } from "../support/helpers/sidebar";
+import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import { getWorkspaceTabTestIds } from "../support/helpers/workspace-tabs";
 import {
   archiveFromRowButton,
+  createGatedTeardown,
   expectDirectoryPresence,
   expectHostWorkspaceSettledActive,
   outlastUndoWindow,
@@ -129,6 +133,46 @@ test.describe("Workspace archive undo", () => {
     // The toast took the undo with it.
     await pressUndoShortcut(page);
     await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
+  });
+
+  test("opening the workspace while its undo is still running keeps its tabs", async ({ page }) => {
+    const teardown = createGatedTeardown();
+    const repo = await createTempGitRepo("archive-undo-tabs-", {
+      paseoConfig: teardown.paseoConfig,
+    });
+    const seedClient = await connectSeedClient();
+    try {
+      await openProjectViaDaemon(client, repo.path);
+      const worktree = await createWorktreeViaDaemon(client, {
+        cwd: repo.path,
+        slug: `archive-undo-tabs-${Date.now()}`,
+      });
+      worktreeDirectories.add(worktree.workspaceDirectory);
+      const target = { cwd: worktree.workspaceDirectory, workspaceId: worktree.workspaceId };
+      const agents = [
+        await createMockIdleAgent(seedClient, { ...target, title: "first" }),
+        await createMockIdleAgent(seedClient, { ...target, title: "second" }),
+      ] as const;
+      await openWorkspaceWithAgents(page, [agents[0], agents[1]]);
+      const tabsBefore = await getWorkspaceTabTestIds(page);
+
+      await archiveFromRowButton(page, worktree.workspaceId);
+      // The archive has taken its agents down and now parks in teardown.
+      await teardown.expectStarted();
+      await undoButton(page).click();
+      await workspaceRow(page, worktree.workspaceId).click();
+
+      for (const agent of agents) {
+        await expect(page.getByTestId(`workspace-tab-agent_${agent.id}`).first()).toBeVisible();
+      }
+      teardown.release();
+      await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
+      await expect.poll(() => getWorkspaceTabTestIds(page)).toEqual(tabsBefore);
+    } finally {
+      teardown.release();
+      await seedClient.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    }
   });
 
   test("Cmd/Ctrl+Z without an archive to undo leaves the sidebar alone", async ({ page }) => {

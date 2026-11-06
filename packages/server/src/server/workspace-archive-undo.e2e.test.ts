@@ -220,6 +220,43 @@ test.skipIf(process.platform === "win32")(
   60000,
 );
 
+test.skipIf(process.platform === "win32")(
+  "the undo response arrives after the client has seen its agents restored",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, agentId } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      "undo-update-order",
+    );
+    await ctx.client.fetchAgents({ subscribe: {} });
+    // An archived agent leaves a default subscription; a restored one comes back as active.
+    let seenState: "active" | "archived" | "removed" = "active";
+    const stop = ctx.client.on("agent_update", (message) => {
+      if (message.payload.kind === "remove" && message.payload.agentId === agentId) {
+        seenState = "removed";
+      }
+      if (message.payload.kind === "upsert" && message.payload.agent.id === agentId) {
+        seenState = message.payload.agent.archivedAt ? "archived" : "active";
+      }
+    });
+
+    try {
+      await ctx.client.archiveWorkspace(workspaceId);
+      await expect.poll(() => seenState, { timeout: 15000 }).not.toBe("active");
+
+      await ctx.client.undoWorkspaceArchive(workspaceId);
+
+      // An app holds its agent tabs open until this response; an agent it still sees as
+      // archived at that point gets its tab closed.
+      expect(seenState).toBe("active");
+    } finally {
+      stop();
+    }
+  },
+  60000,
+);
+
 test("an undo on a workspace that was never archived leaves it as it was", async () => {
   const repo = createRepoWithGatedTeardown();
   repo.releaseTeardown();

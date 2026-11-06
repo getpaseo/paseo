@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect } from "../fixtures";
 import type { connectNewWorkspaceDaemonClient } from "./new-workspace";
@@ -72,4 +74,24 @@ export async function expectHostWorkspaceSettledActive(
 
 export async function expectDirectoryPresence(directory: string, present: boolean): Promise<void> {
   await expect.poll(() => existsSync(directory), { timeout: 30_000 }).toBe(present);
+}
+
+export interface GatedTeardown {
+  /** The `paseo.json` config whose worktree teardown parks until released. */
+  paseoConfig: Record<string, unknown>;
+  expectStarted(): Promise<void>;
+  release(): void;
+}
+
+/** A worktree teardown that parks an archive mid-flight, so an undo lands while it runs. */
+export function createGatedTeardown(): GatedTeardown {
+  const gateDir = mkdtempSync(path.join(tmpdir(), "archive-undo-gate-"));
+  const startedPath = path.join(gateDir, "started");
+  const releasePath = path.join(gateDir, "release");
+  const teardown = `node -e "const fs=require('fs');fs.writeFileSync('${startedPath}','started');const timer=setInterval(()=>{if(fs.existsSync('${releasePath}'))clearInterval(timer)},20)"`;
+  return {
+    paseoConfig: { worktree: { teardown: [teardown] } },
+    expectStarted: () => expectDirectoryPresence(startedPath, true),
+    release: () => writeFileSync(releasePath, "release\n"),
+  };
 }

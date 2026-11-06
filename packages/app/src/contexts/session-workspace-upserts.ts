@@ -15,6 +15,7 @@ export interface WorkspaceArchiveIntent {
 }
 
 const intentsByServer = new Map<string, Map<string, WorkspaceArchiveIntent>>();
+const intentListeners = new Set<() => void>();
 const targetByIntent = new WeakMap<
   WorkspaceArchiveIntent,
   { serverId: string; workspaceId: string }
@@ -51,6 +52,7 @@ function setIntent(
   const intents = intentsByServer.get(target.serverId) ?? new Map();
   intents.set(target.workspaceId, intent);
   intentsByServer.set(target.serverId, intents);
+  notifyIntentListeners();
   return intent;
 }
 
@@ -59,6 +61,19 @@ function deleteIntent(target: { serverId: string; workspaceId: string }): void {
   if (!intents) return;
   intents.delete(target.workspaceId);
   if (intents.size === 0) intentsByServer.delete(target.serverId);
+  notifyIntentListeners();
+}
+
+function notifyIntentListeners(): void {
+  for (const listener of intentListeners) listener();
+}
+
+/** Calls `listener` whenever any workspace's archive intent changes. */
+export function subscribeWorkspaceArchiveIntents(listener: () => void): () => void {
+  intentListeners.add(listener);
+  return () => {
+    intentListeners.delete(listener);
+  };
 }
 
 function clearIntentOfKind(
