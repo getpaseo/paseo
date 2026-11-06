@@ -13,11 +13,26 @@ export interface HistoryStartPaginationInput {
   isLoadingOlderHistory: boolean;
   isReady: boolean;
   progressKey: string | null;
+  /** A native viewport cannot begin a scroll gesture if its content does not fill the screen. */
+  autoFillUnscrollable?: boolean;
 }
 
 export interface HistoryStartPaginationTransition {
   state: HistoryStartPaginationState;
   shouldLoad: boolean;
+}
+
+export function isHistoryViewportUnscrollable(input: {
+  viewportHeight: number;
+  contentHeight: number;
+}): boolean {
+  return (
+    Number.isFinite(input.viewportHeight) &&
+    Number.isFinite(input.contentHeight) &&
+    input.viewportHeight > 0 &&
+    input.contentHeight > 0 &&
+    input.contentHeight <= input.viewportHeight + 1
+  );
 }
 
 export function createHistoryStartPaginationState(): HistoryStartPaginationState {
@@ -48,10 +63,28 @@ export function abandonHistoryStartPaginationRequest(
   return { status: "latched" };
 }
 
+function armUnscrollableHistoryStart(
+  state: HistoryStartPaginationState,
+  input: HistoryStartPaginationInput,
+): HistoryStartPaginationState {
+  if (
+    state.status === "dormant" &&
+    input.autoFillUnscrollable &&
+    input.isReady &&
+    input.hasOlderHistory &&
+    !input.isLoadingOlderHistory &&
+    input.progressKey !== null
+  ) {
+    return { status: "ready" };
+  }
+  return state;
+}
+
 export function evaluateHistoryStartPagination(
   state: HistoryStartPaginationState,
   input: HistoryStartPaginationInput,
 ): HistoryStartPaginationTransition {
+  state = armUnscrollableHistoryStart(state, input);
   if (state.status === "dormant") {
     return { state, shouldLoad: false };
   }

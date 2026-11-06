@@ -4,6 +4,7 @@ import {
   createHistoryStartPaginationState,
   evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
+  isHistoryViewportUnscrollable,
   rearmHistoryStartPagination,
   settleHistoryStartPagination,
   type HistoryStartPaginationInput,
@@ -43,6 +44,70 @@ describe("history start pagination", () => {
     const evaluated = evaluateHistoryStartPagination(dormant, visibleHistoryStart);
 
     expect(evaluated).toEqual({ state: { status: "dormant" }, shouldLoad: false });
+  });
+
+  it.each([
+    [500, 400, true],
+    [500, 500, true],
+    [500, 501, true],
+    [500, 502, false],
+    [0, 1, false],
+    [500, 0, false],
+    [Number.NaN, 100, false],
+    [500, Number.POSITIVE_INFINITY, false],
+  ])(
+    "detects a measured unscrollable viewport (%s, %s)",
+    (viewportHeight, contentHeight, expected) => {
+      expect(isHistoryViewportUnscrollable({ viewportHeight, contentHeight })).toBe(expected);
+    },
+  );
+
+  it("loads older history without a gesture when the measured native viewport cannot scroll", () => {
+    const first = evaluateHistoryStartPagination(createHistoryStartPaginationState(), {
+      ...visibleHistoryStart,
+      autoFillUnscrollable: isHistoryViewportUnscrollable({
+        viewportHeight: 600,
+        contentHeight: 450,
+      }),
+    });
+    expect(first.shouldLoad).toBe(true);
+    expect(first.state).toEqual({
+      status: "loading",
+      requestedProgressKey: "epoch-1:20",
+      requestObserved: false,
+    });
+  });
+
+  it("does not auto-load an unready, exhausted, or already-loading history", () => {
+    const input = { ...visibleHistoryStart, autoFillUnscrollable: true };
+    const variations: Partial<HistoryStartPaginationInput>[] = [
+      { isReady: false },
+      { hasOlderHistory: false },
+      { isLoadingOlderHistory: true },
+      { progressKey: null },
+      { autoFillUnscrollable: false },
+    ];
+    for (const variation of variations) {
+      expect(
+        evaluateHistoryStartPagination(createHistoryStartPaginationState(), {
+          ...input,
+          ...variation,
+        }),
+      ).toEqual({ state: { status: "dormant" }, shouldLoad: false });
+    }
+  });
+
+  it("does not repeat an automatic request that finishes without progress", () => {
+    const input = { ...visibleHistoryStart, autoFillUnscrollable: true };
+    const first = evaluateHistoryStartPagination(createHistoryStartPaginationState(), input);
+    const inFlight = evaluateHistoryStartPagination(first.state, {
+      ...input,
+      isLoadingOlderHistory: true,
+    });
+    const finished = evaluateHistoryStartPagination(inFlight.state, input);
+    const repeated = evaluateHistoryStartPagination(finished.state, input);
+    expect(finished.state).toEqual({ status: "latched" });
+    expect(repeated).toEqual({ state: { status: "latched" }, shouldLoad: false });
   });
 
   it("waits for anchored page geometry before authorizing another page", () => {
