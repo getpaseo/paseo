@@ -160,7 +160,7 @@ function makeCheckoutSession(options?: {
     },
     generatePullRequestText: async (cwd, baseRef) => {
       generatorCalls.generatePullRequestText.push({ cwd, baseRef });
-      return { title: "", body: "" };
+      return { title: "", body: "", draft: false };
     },
     ...options?.gitMetadataGenerator,
   };
@@ -1788,6 +1788,7 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
       baseRef: "main",
       title: "Feature",
       body: "Description",
+      draft: true,
       requestId: "right-base",
     });
     expect(emitted.at(-1)).toMatchObject({
@@ -1801,6 +1802,7 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
         head: created.branchName,
         title: "Feature",
         body: "Description",
+        draft: true,
       },
     ]);
     expect(git(remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(

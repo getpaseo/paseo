@@ -4822,7 +4822,7 @@ export class DaemonClient {
 
   async checkoutPrCreate(
     cwd: string,
-    input: { title?: string; body?: string; baseRef?: string },
+    input: { title?: string; body?: string; draft?: boolean; baseRef?: string },
     requestId?: string,
   ): Promise<CheckoutPrCreatePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4832,6 +4832,7 @@ export class DaemonClient {
         cwd,
         title: input.title,
         body: input.body,
+        draft: input.draft,
         baseRef: input.baseRef,
       },
       responseType: "checkout_pr_create_response",

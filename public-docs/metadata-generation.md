@@ -77,9 +77,13 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
     "title": { "instructions": "Keep titles to a few words, no leading verb." },
     "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
-    "pullRequest": { "instructions": "Include a Testing section in the body." }
+    "pullRequest": {
+      "instructions": "Include a Testing section in the body. Create as draft until verification is evidenced."
+    }
   }
 }
 ```
 
 Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.
+
+Pull request instructions can also choose draft versus ready-to-review creation. If the instructions make readiness conditional on evidence the generator has not received, Paseo creates a draft. These instructions do not search for issues or make other forge changes yet.
