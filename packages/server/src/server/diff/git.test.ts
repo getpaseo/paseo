@@ -450,3 +450,72 @@ test.each(["worktree", "index", "rev"] as const)(
     }
   },
 );
+
+test("highlighted BOM source content survives the production frame codec", async () => {
+  const { encodeDiffFrame, decodeDiffFrame } =
+    await import("@getpaseo/protocol/binary-frames/index");
+  const cwd = await mkdtemp(join(tmpdir(), "diff-bom-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  try {
+    git("init", "-b", "main");
+    await writeFile(join(cwd, "bom.ts"), "\uFEFFexport const value = 1;\n");
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "empty" },
+      head: { kind: "worktree" },
+    });
+    try {
+      const record = await readBody(comparison);
+      const frame = { opcode: 0x41 as const, slot: 0, revision: 1, files: [record.body] };
+      expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
+      expect(
+        record.body.hunks
+          .flatMap((hunk) => hunk.lines)
+          .some((line) => line.content.startsWith("\uFEFF")),
+      ).toBe(true);
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")(
+  "symlink replacement retains both patch sections",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-type-change-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    const { symlink, unlink } = await import("node:fs/promises");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await symlink("old-target", join(cwd, "file.txt"));
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await unlink(join(cwd, "file.txt"));
+      await writeFile(join(cwd, "file.txt"), "replacement contents\n");
+      const comparison = await listComparison({
+        cwd,
+        base: { kind: "rev", rev: "HEAD" },
+        head: { kind: "worktree" },
+        highlight: false,
+      });
+      try {
+        expect(comparison.files[0].entry).toMatchObject({ additions: 1, deletions: 1 });
+        const record = await readBody(comparison);
+        expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toEqual(
+          expect.arrayContaining([
+            { type: "remove", content: "old-target" },
+            { type: "add", content: "replacement contents" },
+          ]),
+        );
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

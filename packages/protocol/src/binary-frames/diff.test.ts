@@ -238,3 +238,33 @@ test("roundtrips generated entry lists across varint boundaries", () => {
     expect(decodeDiffFrame(encodeDiffFrame(begin))).toEqual(begin);
   }
 });
+
+test.each([true, false])(
+  "preserves BOM-prefixed paths and source lines with runs=%s",
+  (highlight) => {
+    const frame = {
+      opcode: 0x41 as const,
+      slot: 0,
+      revision: 1,
+      files: [
+        {
+          path: "\uFEFFbom.ts",
+          hunks: [
+            {
+              oldStart: 1,
+              oldCount: 1,
+              newStart: 1,
+              newCount: 1,
+              lines: (["add", "remove", "context"] as const).map((type) => ({
+                type,
+                content: "\uFEFFvalue",
+                runs: highlight ? [{ style: null, length: 6 }] : undefined,
+              })),
+            },
+          ],
+        },
+      ],
+    };
+    expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
+  },
+);

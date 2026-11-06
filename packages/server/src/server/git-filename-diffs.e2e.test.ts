@@ -29,6 +29,8 @@ test("a rename-only commit returns zero added or deleted lines through the clien
     expect(await client.getCommitFileDiff(cwd, sha, "new.txt")).toEqual({
       file: {
         path: "new.txt",
+        oldPath: "old.txt",
+        status: "ok",
         isNew: false,
         isDeleted: false,
         additions: 0,
@@ -98,3 +100,45 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("streamed Changes preserves BOM-prefixed paths and highlighted content", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "stream-bom-diff-"));
+  const daemon = await createTestPaseoDaemon({ agentClients: {} });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd });
+    writeFileSync(join(cwd, "\uFEFFbom.ts"), "\uFEFFexport const value = 1;\n");
+    writeFileSync(join(cwd, "other.txt"), "other edit\n");
+    await client.connect();
+    const states: import("@getpaseo/client").DiffState[] = [];
+    const observation = client.observeDiff({
+      cwd,
+      base: { kind: "empty" },
+      head: { kind: "worktree" },
+    });
+    const unsubscribe = observation.subscribe({
+      snapshot: (state) => states.push(state),
+      update: () => {},
+    });
+    try {
+      await expect.poll(() => states.at(-1)?.phase, { timeout: 15000 }).toBe("ready");
+      const readyState = states.at(-1);
+      if (readyState?.phase !== "ready") throw new Error("Expected ready diff");
+      expect(readyState.files.map((file) => file.path)).toContain("other.txt");
+      const bomFile = readyState.files.find((file) => file.path === "\uFEFFbom.ts");
+      const addedLine = bomFile?.hunks
+        .flatMap((hunk) => hunk.lines)
+        .find((line) => line.type === "add");
+      expect(addedLine?.content).toBe("\uFEFFexport const value = 1;");
+      expect(addedLine?.tokens?.map((token) => token.text).join("")).toBe(addedLine?.content);
+      expect(states.some((state) => state.phase === "error")).toBe(false);
+    } finally {
+      unsubscribe();
+      await observation.release();
+    }
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

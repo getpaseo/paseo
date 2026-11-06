@@ -93,7 +93,7 @@ export type DiffFrame = DiffBegin | DiffBodies | DiffEnd;
 export class InvalidDiffFrameError extends Error {}
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 class Writer {
   private bytes: number[] = [];

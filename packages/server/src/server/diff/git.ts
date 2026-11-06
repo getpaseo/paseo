@@ -268,10 +268,20 @@ async function readComparisonList(
       const bytes = Buffer.byteLength(result.stdout);
       if (result.truncated || bytes > remainingBytes || bytes > maxPatchBytes)
         return { kind: "too_large" };
-      const parsed = parseDiff(result.stdout).find(
+      // File-type changes have a deletion and addition section for the same path.
+      const sections = parseDiff(result.stdout).filter(
         (candidate) => candidate.path === file.entry.path,
       );
-      if (!parsed) return { kind: "ready", body: { path: file.entry.path, hunks: [] }, bytes };
+      if (!sections.length)
+        return { kind: "ready", body: { path: file.entry.path, hunks: [] }, bytes };
+      const parsed = {
+        path: file.entry.path,
+        isNew: file.entry.change === "added",
+        isDeleted: file.entry.change === "deleted",
+        additions: file.entry.additions,
+        deletions: file.entry.deletions,
+        hunks: sections.flatMap((section) => section.hunks),
+      };
       let highlighted = parsed;
       if (compare.highlight !== false) {
         metrics.highlightCalls++;
