@@ -407,7 +407,6 @@ test("opening a turn keeps the received message above it clipped on every frame"
       .getByTestId("user-message")
       .filter({ has: page.getByRole("button", { name: "Sent by Reviewer", exact: true }) });
     await expect(bubble.getByRole("button", { name: "Show more", exact: true })).toBeVisible();
-    await bubble.scrollIntoViewIfNeeded();
 
     await watchReceivedMessagePreview(page, "Sent by Reviewer");
     await page
