@@ -4,7 +4,7 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import {
   downloadFileFromExplorer,
-  expectFileTabOpen,
+  downloadFileFromTab,
   openFileExplorer,
   openFileFromExplorer,
 } from "../support/helpers/file-explorer";
@@ -479,19 +479,15 @@ test("downloads an opened file from its tab menu", async ({ page }, testInfo) =>
   await gotoWorkspace(page, workspace.workspaceId);
   await openFileExplorer(page);
   await openFileFromExplorer(page, fileName);
-  await expectFileTabOpen(page, fileName);
-
-  const tab = page.getByTestId(`workspace-tab-file_${fileName}`).filter({ visible: true }).first();
-  await tab.click({ button: "right" });
-  const downloadItem = page.getByTestId(`workspace-tab-context-file_${fileName}-download-file`);
-  await expect(downloadItem).toBeVisible();
-  await testInfo.attach("tab-download-menu", {
-    body: await page.screenshot({ path: testInfo.outputPath("tab-download-menu.png") }),
-    contentType: "image/png",
+  const downloaded = await downloadFileFromTab(page, fileName, {
+    onMenuReady: async () => {
+      await testInfo.attach("tab-download-menu", {
+        body: await page.screenshot({ path: testInfo.outputPath("tab-download-menu.png") }),
+        contentType: "image/png",
+      });
+    },
   });
 
-  const downloaded = page.waitForEvent("download");
-  await downloadItem.click();
   const savedFile = testInfo.outputPath(fileName);
   const download = await downloaded;
   await download.saveAs(savedFile);

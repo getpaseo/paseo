@@ -46,3 +46,19 @@ export async function downloadFileFromExplorer(page: Page, fileName: string): Pr
   await page.getByRole("menuitem", { name: "Download", exact: true }).click();
   return downloaded;
 }
+
+export async function downloadFileFromTab(
+  page: Page,
+  filePath: string,
+  options?: { onMenuReady?: () => Promise<void> },
+): Promise<Download> {
+  await expectFileTabOpen(page, filePath);
+  const tab = page.getByTestId(`workspace-tab-file_${filePath}`).filter({ visible: true }).first();
+  await tab.click({ button: "right" });
+  const downloadItem = page.getByTestId(`workspace-tab-context-file_${filePath}-download-file`);
+  await expect(downloadItem).toBeVisible();
+  await options?.onMenuReady?.();
+  const downloaded = page.waitForEvent("download");
+  await downloadItem.click();
+  return downloaded;
+}
