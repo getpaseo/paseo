@@ -18,6 +18,7 @@ import type {
   UnsubscribeTerminalsRequest,
 } from "../server/messages.js";
 import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/workspace-archive-service.js";
+import { assertAbsolutePath } from "../server/path-utils.js";
 import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,
@@ -341,6 +342,7 @@ export class TerminalSessionController {
     ownership: SessionDelivery,
   ): Promise<void> {
     if (!this.terminalManager) throw new Error("Terminal manager not available");
+    assertAbsolutePath(msg.cwd);
     let subscription: TerminalDirectorySubscription | undefined;
     const owner = ownership.begin(
       "terminal-directories",
