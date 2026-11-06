@@ -438,6 +438,8 @@ interface NewWorkspaceRouteOptions {
   displayName?: string;
   projectId?: string;
   draftId?: string;
+  /** Labels the created workspace starts with, such as the label section it was started from. */
+  labels?: readonly string[];
 }
 
 function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
@@ -457,6 +459,9 @@ function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
   }
   if (options.draftId) {
     params.set("draftId", options.draftId);
+  }
+  for (const label of options.labels ?? []) {
+    params.append("label", label);
   }
   return params.toString();
 }
