@@ -12,6 +12,10 @@ import {
   WorkspaceSetupSnapshotSchema,
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
+  CheckoutStatusResponseSchema,
+  BranchSuggestionsRequestSchema,
+  WorkspaceBaseBranchSetRequestSchema,
+  WorkspaceBaseBranchSetResponseSchema,
 } from "./messages.js";
 
 test("cross-client user images survive wire parsing without requiring images on older messages", async () => {
@@ -41,6 +45,80 @@ test("cross-client user images survive wire parsing without requiring images on 
     messageId: z.string().optional(),
   });
   expect(legacySchema.parse(withImages)).toEqual(legacy);
+});
+
+test("timeline image references remain compatible with older user messages", () => {
+  const legacy = { type: "user_message" as const, text: "photo", messageId: "user-1" };
+  const item = {
+    ...legacy,
+    imageRefs: [{ id: "a".repeat(64), mimeType: "image/png", size: 307_200 }],
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+  const oldUserMessage = z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    messageId: z.string().optional(),
+  });
+  expect(oldUserMessage.parse(item)).toEqual(legacy);
+  expect(
+    AgentTimelineItemPayloadSchema.safeParse({
+      ...item,
+      imageRefs: [{ ...item.imageRefs[0], id: "../outside" }],
+    }).success,
+  ).toBe(false);
+});
+
+test("base selection RPCs are correlated while older checkout and branch messages remain valid", () => {
+  const payload = {
+    cwd: "/repo",
+    requestId: "status",
+    error: null,
+    isGit: true,
+    isPaseoOwnedWorktree: false,
+    repoRoot: "/repo",
+    currentBranch: "feature",
+    isDirty: false,
+    baseRef: "release",
+    aheadBehind: null,
+    aheadOfOrigin: null,
+    behindOfOrigin: null,
+    hasRemote: false,
+    remoteUrl: null,
+  };
+  expect(
+    CheckoutStatusResponseSchema.safeParse({ type: "checkout_status_response", payload }).success,
+  ).toBe(true);
+  expect(
+    CheckoutStatusResponseSchema.parse({
+      type: "checkout_status_response",
+      payload: { ...payload, baseRefExact: "refs/remotes/upstream/release" },
+    }).payload.baseRefExact,
+  ).toBe("refs/remotes/upstream/release");
+  expect(
+    BranchSuggestionsRequestSchema.safeParse({
+      type: "branch_suggestions_request",
+      cwd: "/repo",
+      requestId: "branches",
+    }).success,
+  ).toBe(true);
+  const request = {
+    type: "workspace.base_branch.set.request",
+    workspaceId: "workspace",
+    baseRef: "refs/heads/release",
+    requestId: "base",
+  };
+  expect(WorkspaceBaseBranchSetRequestSchema.parse(request)).toEqual(request);
+  const response = {
+    type: "workspace.base_branch.set.response",
+    payload: {
+      workspaceId: "workspace",
+      baseRef: "refs/heads/release",
+      requestId: "base",
+      accepted: true,
+      error: null,
+    },
+  };
+  expect(WorkspaceBaseBranchSetResponseSchema.parse(response)).toEqual(response);
 });
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {

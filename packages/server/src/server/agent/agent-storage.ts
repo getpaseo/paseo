@@ -75,6 +75,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
+  background: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
 });
@@ -104,9 +105,14 @@ export class AgentStorage {
   private deleting: Set<string> = new Set();
   private daemonAgentIdsByExecution: Map<string, string> = new Map();
   private daemonExecutionKeysByAgentId: Map<string, string> = new Map();
+  private readonly idsByWorkspace = new Map<string, Set<string>>();
+  private readonly workspaceById = new Map<string, string>();
+  private readonly activeIds = new Set<string>();
+  private readonly promptTimeByAgent = new Map<string, string>();
+  private readonly promptTimes = new Map<string, string>();
   private loaded = false;
   private baseDir: string;
-  private loadPromise: Promise<StoredAgentRecord[]> | null = null;
+  private loadPromise: Promise<void> | null = null;
   private logger: Logger;
 
   constructor(baseDir: string, logger: Logger) {
@@ -118,9 +124,117 @@ export class AgentStorage {
     await this.load();
   }
 
-  async list(): Promise<StoredAgentRecord[]> {
+  async listAll(): Promise<StoredAgentRecord[]> {
     await this.load();
     return Array.from(this.cache.values());
+  }
+
+  async listActive(options?: { includeArchived?: boolean }): Promise<StoredAgentRecord[]> {
+    await this.load();
+    return Array.from(
+      options?.includeArchived ? this.cache.keys() : this.activeIds,
+      (id) => this.cache.get(id)!,
+    );
+  }
+
+  async listByWorkspaces(
+    workspaceIds: Iterable<string>,
+    options?: { includeArchived?: boolean },
+  ): Promise<StoredAgentRecord[]> {
+    await this.load();
+    const records: StoredAgentRecord[] = [];
+    for (const workspaceId of new Set(workspaceIds)) {
+      for (const id of this.idsByWorkspace.get(workspaceId) ?? []) {
+        const record = this.cache.get(id)!;
+        if (options?.includeArchived || !record.archivedAt) records.push(record);
+      }
+    }
+    return records;
+  }
+
+  async lastUserMessageAtByWorkspace(
+    workspaceIds?: Iterable<string>,
+    options?: { excludeAgentIds?: Iterable<string> },
+  ): Promise<ReadonlyMap<string, string>> {
+    await this.load();
+    const times = new Map<string, string>();
+    const excluded = new Set(options?.excludeAgentIds);
+    const affected = new Set(Array.from(excluded, (id) => this.workspaceById.get(id)));
+    for (const id of workspaceIds ?? this.promptTimes.keys()) {
+      let at = this.promptTimes.get(id);
+      if (affected.has(id)) {
+        at = undefined;
+        for (const agentId of this.idsByWorkspace.get(id) ?? []) {
+          const record = this.cache.get(agentId)!;
+          if (
+            !excluded.has(agentId) &&
+            !record.internal &&
+            !record.background &&
+            record.lastUserMessageAt &&
+            record.lastUserMessageAt > (at ?? "")
+          ) {
+            at = record.lastUserMessageAt;
+          }
+        }
+      }
+      if (at) times.set(id, at);
+    }
+    return times;
+  }
+
+  private indexWorkspace(record: StoredAgentRecord): void {
+    const previous = this.workspaceById.get(record.id);
+    if (previous) this.idsByWorkspace.get(previous)?.delete(record.id);
+    this.workspaceById.delete(record.id);
+    this.activeIds.delete(record.id);
+    if (!record.archivedAt) this.activeIds.add(record.id);
+    if (record.workspaceId) {
+      const ids = this.idsByWorkspace.get(record.workspaceId) ?? new Set<string>();
+      ids.add(record.id);
+      this.idsByWorkspace.set(record.workspaceId, ids);
+      this.workspaceById.set(record.id, record.workspaceId);
+    }
+    this.indexPromptTime(record, previous);
+  }
+
+  private indexPromptTime(record: StoredAgentRecord, previous: string | undefined): void {
+    const previousTime = this.promptTimeByAgent.get(record.id);
+    const nextTime =
+      !record.internal && !record.background ? (record.lastUserMessageAt ?? undefined) : undefined;
+    if (nextTime) this.promptTimeByAgent.set(record.id, nextTime);
+    else this.promptTimeByAgent.delete(record.id);
+    if (previous === record.workspaceId && previousTime === nextTime) return;
+    if (
+      previous &&
+      previousTime &&
+      this.promptTimes.get(previous) === previousTime &&
+      (previous !== record.workspaceId || !nextTime || nextTime < previousTime)
+    ) {
+      this.refreshPromptTime(previous);
+    }
+    if (
+      record.workspaceId &&
+      nextTime &&
+      nextTime > (this.promptTimes.get(record.workspaceId) ?? "")
+    ) {
+      this.promptTimes.set(record.workspaceId, nextTime);
+    }
+  }
+
+  private refreshPromptTime(workspaceId: string): void {
+    this.promptTimes.delete(workspaceId);
+    let latest = "";
+    for (const id of this.idsByWorkspace.get(workspaceId) ?? []) {
+      const record = this.cache.get(id)!;
+      if (
+        !record.internal &&
+        !record.background &&
+        record.lastUserMessageAt &&
+        record.lastUserMessageAt > latest
+      )
+        latest = record.lastUserMessageAt;
+    }
+    if (latest) this.promptTimes.set(workspaceId, latest);
   }
 
   async get(agentId: string): Promise<StoredAgentRecord | null> {
@@ -142,8 +256,7 @@ export class AgentStorage {
   }
 
   async listByWorkspace(workspaceId: string): Promise<StoredAgentRecord[]> {
-    await this.load();
-    return Array.from(this.cache.values()).filter((record) => record.workspaceId === workspaceId);
+    return this.listByWorkspaces([workspaceId], { includeArchived: true });
   }
 
   async findByDaemonExecution(owner: DaemonAgentOwner): Promise<StoredAgentRecord | null> {
@@ -233,6 +346,14 @@ export class AgentStorage {
       }),
     );
 
+    const workspaceId = this.workspaceById.get(agentId);
+    this.workspaceById.delete(agentId);
+    this.promptTimeByAgent.delete(agentId);
+    this.activeIds.delete(agentId);
+    if (workspaceId) {
+      this.idsByWorkspace.get(workspaceId)?.delete(agentId);
+      this.refreshPromptTime(workspaceId);
+    }
     this.cache.delete(agentId);
     this.removeOwnerIndex(agentId);
     this.pathById.delete(agentId);
@@ -261,6 +382,8 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      // Background is fixed at creation; a runtime opened without it cannot clear it.
+      if (existing?.background) record.background = true;
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
       return record;
@@ -283,9 +406,9 @@ export class AgentStorage {
     await Promise.allSettled(writes);
   }
 
-  private async load(): Promise<StoredAgentRecord[]> {
+  private async load(): Promise<void> {
     if (this.loaded) {
-      return Array.from(this.cache.values());
+      return;
     }
 
     if (!this.loadPromise) {
@@ -295,7 +418,7 @@ export class AgentStorage {
     return this.loadPromise;
   }
 
-  private async doLoad(): Promise<StoredAgentRecord[]> {
+  private async doLoad(): Promise<void> {
     this.cache.clear();
     this.pathById.clear();
     this.pathsById.clear();
@@ -303,28 +426,25 @@ export class AgentStorage {
     this.daemonExecutionKeysByAgentId.clear();
 
     try {
-      const records = await this.scanDisk();
+      await this.scanDisk();
       this.loaded = true;
-      return records;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.loaded = true;
-        return [];
+        return;
       }
       this.logger.error({ err: error }, "Failed to load agents");
       this.loaded = true;
-      return [];
     }
   }
 
-  private async scanDisk(): Promise<StoredAgentRecord[]> {
-    const records: StoredAgentRecord[] = [];
+  private async scanDisk(): Promise<void> {
     let entries: Dirent[] = [];
     try {
       entries = await fs.readdir(this.baseDir, { withFileTypes: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return [];
+        return;
       }
       throw error;
     }
@@ -361,14 +481,11 @@ export class AgentStorage {
     for (const item of loaded) {
       if (!item) continue;
       const { record, filePath } = item;
-      records.push(record);
       this.cache.set(record.id, record);
       this.indexOwner(record);
       this.pathById.set(record.id, filePath);
       this.addIndexedPath(record.id, filePath);
     }
-
-    return records;
   }
 
   private async readRecordFile(filePath: string): Promise<StoredAgentRecord | null> {
@@ -405,6 +522,7 @@ export class AgentStorage {
   }
 
   private indexOwner(record: StoredAgentRecord): void {
+    this.indexWorkspace(record);
     this.removeOwnerIndex(record.id);
     if (record.owner?.kind === "daemon") {
       const key = daemonExecutionKey(record.owner);

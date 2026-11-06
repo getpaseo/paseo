@@ -98,7 +98,7 @@ test("opt-out consumes pending recovery and excludes archived, private, owned an
     enabled = true;
     recovery.resumePending();
     expect(dispatched).toEqual([]);
-    expect((await storage.list()).every((record) => !record.resumeOnStartup)).toBe(true);
+    expect((await storage.listAll()).every((record) => !record.resumeOnStartup)).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

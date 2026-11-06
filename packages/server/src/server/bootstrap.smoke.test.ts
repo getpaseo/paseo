@@ -1139,11 +1139,13 @@ test("disabled recovery closes stale active records without resuming sessions", 
           : record.lastStatus,
     }));
     expect(
-      (await handle.daemon.agentStorage.list()).sort((a, b) => a.id.localeCompare(b.id)),
+      (await handle.daemon.agentStorage.listAll()).sort((a, b) => a.id.localeCompare(b.id)),
     ).toEqual(expected.sort((a, b) => a.id.localeCompare(b.id)));
     // A fresh reader proves the repaired states were written, rather than projected only in memory.
     expect(
-      (await new AgentStorage(storagePath, logger).list()).sort((a, b) => a.id.localeCompare(b.id)),
+      (await new AgentStorage(storagePath, logger).listAll()).sort((a, b) =>
+        a.id.localeCompare(b.id),
+      ),
     ).toEqual(expected);
     expect(handle.daemon.agentManager.listAgents()).toEqual([]);
     expect(sessionsCreated).toBe(0);

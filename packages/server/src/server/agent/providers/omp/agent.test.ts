@@ -16,6 +16,7 @@ import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
+import { TimelineImageStore } from "../../timeline-images.js";
 import { imageHistory } from "./fixtures/image-history.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
@@ -72,6 +73,7 @@ test.each(["message ID", "branch lookup"])(
     let manager = new AgentManager({
       clients: { omp: client },
       registry: storage,
+      timelineImages: new TimelineImageStore(root),
       paseoToolsEnabled: false,
       logger,
     });
@@ -128,13 +130,17 @@ test.each(["message ID", "branch lookup"])(
       const canonical = manager
         .getTimeline(agent.id)
         .filter((item) => item.type === "user_message");
+      const imageRef = await new TimelineImageStore(root).put(agent.id, {
+        bytes: Buffer.from(imageHistory.originalImage.data, "base64"),
+        mimeType: imageHistory.originalImage.mimeType,
+      });
       expect(canonical).toEqual([
         {
           type: "user_message",
           text,
           clientMessageId: imageHistory.clientMessageId,
           messageId: imageHistory.clientMessageId,
-          images: [imageHistory.originalImage],
+          imageRefs: [imageRef],
         },
       ]);
       await manager.closeAgent(agent.id);
@@ -154,6 +160,7 @@ test.each(["message ID", "branch lookup"])(
         manager = new AgentManager({
           clients: { omp: new OmpAgentClient({ logger, runtime: restoredRuntime }) },
           registry: reloadedStorage,
+          timelineImages: new TimelineImageStore(root),
           paseoToolsEnabled: false,
           logger,
         });

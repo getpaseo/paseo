@@ -1,5 +1,6 @@
 import type {
   AgentTimelineImage,
+  AgentTimelineImageReference,
   AgentFeature,
   AgentFeatureSelect,
   AgentFeatureToggle,
@@ -405,6 +406,7 @@ export type AgentTimelineItem =
       messageId?: string;
       clientMessageId?: string;
       images?: AgentTimelineImage[];
+      imageRefs?: AgentTimelineImageReference[];
     }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }

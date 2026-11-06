@@ -717,6 +717,20 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
+export const UploadedImageSchema = z.object({
+  id: z.string().regex(/^upload_[0-9a-f-]{36}$/),
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  size: z.number().int().nonnegative(),
+});
+export type UploadedImage = z.infer<typeof UploadedImageSchema>;
+
+export const AgentTimelineImageReferenceSchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{64}$/),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+});
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
@@ -724,6 +738,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     type: z.literal("user_message"),
     text: z.string(),
     images: z.array(ImageAttachmentSchema).optional(),
+    imageRefs: z.array(AgentTimelineImageReferenceSchema).optional(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
   }),
@@ -897,6 +912,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
   internal: z.boolean().optional(),
+  // Background agent: hidden from default discovery, tabs, tracks and notifications.
+  // Fixed at creation. Effective background also includes the workspace's flag.
+  background: z.boolean().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -1040,6 +1058,13 @@ export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
   pinned: z.boolean(),
+  requestId: z.string(),
+});
+
+export const WorkspaceBaseBranchSetRequestSchema = z.object({
+  type: z.literal("workspace.base_branch.set.request"),
+  workspaceId: z.string(),
+  baseRef: z.string(),
   requestId: z.string(),
 });
 
@@ -1262,6 +1287,7 @@ export const SendAgentMessageSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1433,6 +1459,7 @@ export const SendAgentMessageRequestSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1794,6 +1821,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
@@ -1803,7 +1831,8 @@ export const CreateAgentRequestMessageSchema = z.object({
   // in the config schema, which is reused for updates. Retained for wire parsing;
   // public internal creation is no longer supported.
   internal: z.boolean().optional(),
-  // Workspace creation intent, rejected when selecting an existing workspace.
+  // The created agent is a background agent. A workspace this request creates inherits it.
+  // Omitted on agent-scoped creation, the caller agent's own value applies.
   background: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
@@ -2194,6 +2223,17 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspaceBaseBranchSetResponseSchema = z.object({
+  type: z.literal("workspace.base_branch.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    baseRef: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("recoverable"),
@@ -2511,6 +2551,7 @@ export const BranchSuggestionsRequestSchema = z.object({
   cwd: z.string(),
   query: z.string().optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  refMode: z.literal("exact").optional(),
   requestId: z.string(),
 });
 
@@ -2847,6 +2888,13 @@ export const FileExplorerRequestSchema = z.object({
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
   maxBytes: z.number().int().positive().optional(),
+});
+
+export const AgentTimelineImageReadRequestSchema = z.object({
+  type: z.literal("agent.timeline.image.read.request"),
+  agentId: z.string(),
+  imageId: z.string().regex(/^[0-9a-f]{64}$/),
+  requestId: z.string(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -3325,6 +3373,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceBaseBranchSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3456,6 +3505,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  AgentTimelineImageReadRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3695,6 +3745,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(internalWorkspaces): added in v0.9.0; remove gate after 2027-03-17.
         internalWorkspaces: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
+        // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
+        backgroundAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
@@ -3707,6 +3759,10 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceBaseBranch): added after v0.11.2, remove gate after 2027-10-14.
+        workspaceBaseBranch: z.boolean().optional(),
+        // COMPAT(timelineImages): added in v0.15.x, remove gate after 2027-11-06.
+        timelineImages: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -5400,6 +5456,7 @@ const CheckoutStatusCommonSchema = z.object({
   cwd: z.string(),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
+  baseRefExact: z.string().nullable().optional(),
   // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
   // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a
   // "refs/heads/..." ref for a branch tracking a local branch. Null when there is no
@@ -6182,6 +6239,11 @@ export const FileExplorerResponseSchema = z.object({
     error: z.string().nullable(),
     requestId: z.string(),
   }),
+});
+
+export const AgentTimelineImageReadResponseSchema = z.object({
+  type: z.literal("agent.timeline.image.read.response"),
+  payload: z.object({ requestId: z.string(), error: z.string().nullable() }),
 });
 
 export const FileSubscribeResponseSchema = z.object({
@@ -7198,6 +7260,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceBaseBranchSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -7242,6 +7305,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  AgentTimelineImageReadResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,
@@ -7559,6 +7623,7 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceBaseBranchSetRequest = z.infer<typeof WorkspaceBaseBranchSetRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
@@ -7687,6 +7752,8 @@ export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttent
 export type WorkspaceMarkUnreadRequest = z.infer<typeof WorkspaceMarkUnreadRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type AgentTimelineImageReadRequest = z.infer<typeof AgentTimelineImageReadRequestSchema>;
+export type AgentTimelineImageReadResponse = z.infer<typeof AgentTimelineImageReadResponseSchema>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;
@@ -7803,6 +7870,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
+      [CLIENT_CAPS.backgroundAgents]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

@@ -181,13 +181,18 @@ describe("OpenCodeBridge", () => {
         expect(createDefinition.inputSchema).toMatchObject({
           properties: { notifyOnFinish: { default: true } },
         });
-        expect(createDefinition.inputSchema.properties).not.toHaveProperty("background");
+        expect(createDefinition.inputSchema.properties).toHaveProperty("background");
         expect(sendDefinition.inputSchema).toMatchObject({
           properties: { notifyOnFinish: { default: true } },
         });
-        await expect(
-          catalog.executeTool("create_agent", { ...createInput, background: true }),
-        ).rejects.toThrow("background");
+        await catalog.executeTool("create_agent", {
+          ...createInput,
+          title: "Background child",
+          background: true,
+        });
+        expect(
+          agentManager.listAgents().find((agent) => agent.config.title === "Background child"),
+        ).toMatchObject({ background: true });
 
         const v1Module = await import(plugin.pluginUrl);
         const hooks = await v1Module.default({}, plugin);

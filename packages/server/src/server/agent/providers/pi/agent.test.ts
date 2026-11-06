@@ -27,6 +27,7 @@ import {
 } from "./agent.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
+import { TimelineImageStore } from "../../timeline-images.js";
 import { imageHistory } from "./fixtures/image-history.js";
 import { getUserMessageText } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
@@ -2198,6 +2199,33 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test.each([false, true])(
+    "rejects new turns with Reload guidance after the Pi process exits (active: %s)",
+    async (active) => {
+      const { pi, session, events } = await createSession();
+      try {
+        if (active) {
+          await session.startTurn("before crash");
+        }
+        const runtime = pi.latestSession();
+        runtime.emit({ type: "process_exit", error: "Pi exited" });
+        if (active) {
+          await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+        }
+        const promptCount = runtime.prompts.length;
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await expect(session.startTurn("after crash")).rejects.toThrow(
+            "Pi process exited. Reload agent before sending another message.",
+          );
+        }
+        expect(runtime.prompts).toHaveLength(promptCount);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("fails an autonomous turn when the Pi process exits before settlement", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -3997,6 +4025,7 @@ test("captured Pi image history keeps canonical identities across disk reload an
   let manager = new AgentManager({
     clients: { pi: createClient(pi) },
     registry: storage,
+    timelineImages: new TimelineImageStore(workdir),
     paseoToolsEnabled: false,
     logger,
   });
@@ -4025,13 +4054,24 @@ test("captured Pi image history keeps canonical identities across disk reload an
     }
     const canonical = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
     expect(canonical).toHaveLength(2);
-    expect(canonical.map((item) => item.images)).toEqual(
-      users.map((entry) =>
-        entry.message.role === "user" && Array.isArray(entry.message.content)
-          ? entry.message.content.flatMap((part) =>
-              part.type === "image" ? [{ data: part.data, mimeType: part.mimeType }] : [],
-            )
-          : [],
+    expect(canonical.map((item) => item.imageRefs)).toEqual(
+      await Promise.all(
+        users.map(async (entry) =>
+          entry.message.role === "user" && Array.isArray(entry.message.content)
+            ? Promise.all(
+                entry.message.content.flatMap((part) =>
+                  part.type === "image"
+                    ? [
+                        new TimelineImageStore(workdir).put(agent.id, {
+                          bytes: Buffer.from(part.data, "base64"),
+                          mimeType: part.mimeType,
+                        }),
+                      ]
+                    : [],
+                ),
+              )
+            : [],
+        ),
       ),
     );
     await manager.closeAgent(agent.id);
@@ -4060,6 +4100,7 @@ test("captured Pi image history keeps canonical identities across disk reload an
     manager = new AgentManager({
       clients: { pi: createClient(resumedPi) },
       registry: reloadedStorage,
+      timelineImages: new TimelineImageStore(workdir),
       paseoToolsEnabled: false,
       logger,
     });

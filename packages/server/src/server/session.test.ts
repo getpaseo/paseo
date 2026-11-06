@@ -36,6 +36,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { TimelineImageStore } from "./agent/timeline-images.js";
 import {
   terminalCleanupRecordPath,
   terminalWorkerDirectory,
@@ -1248,6 +1249,59 @@ describe("file explorer binary responses", () => {
     tempDirs.push(root);
     return root;
   }
+
+  test("timeline images stream in bounded frames only for their owning agent", async () => {
+    const paseoHome = makeRoot();
+    const bytes = Buffer.alloc(512 * 1024, 0xa5);
+    const stored = await new TimelineImageStore(paseoHome).put("agent-a", {
+      bytes,
+      mimeType: "image/png",
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const binaryMessages: Uint8Array[] = [];
+    const session = createSessionForTest({
+      paseoHome,
+      messages,
+      binaryMessages,
+      agentManager: { getAgent: (id: string) => ({ id, internal: false }) },
+    });
+    await session.handleMessage({
+      type: "agent.timeline.image.read.request",
+      agentId: "agent-a",
+      imageId: stored.id,
+      requestId: "image-read",
+    });
+    const frames = binaryMessages.map((frame) => decodeFileTransferFrame(frame)!);
+    expect(frames.map((frame) => frame.opcode)).toEqual([
+      FileTransferOpcode.FileBegin,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileEnd,
+    ]);
+    expect(
+      Buffer.concat(
+        frames
+          .filter((frame) => frame.opcode === FileTransferOpcode.FileChunk)
+          .map((frame) => frame.payload),
+      ),
+    ).toEqual(bytes);
+    expect(messages).toContainEqual({
+      type: "agent.timeline.image.read.response",
+      payload: { requestId: "image-read", error: null },
+    });
+    binaryMessages.length = 0;
+    await session.handleMessage({
+      type: "agent.timeline.image.read.request",
+      agentId: "agent-b",
+      imageId: stored.id,
+      requestId: "other-agent",
+    });
+    expect(binaryMessages).toEqual([]);
+    expect(messages).toContainEqual({
+      type: "agent.timeline.image.read.response",
+      payload: { requestId: "other-agent", error: expect.any(String) },
+    });
+  });
 
   test("old clients get legacy JSON file content from a new daemon", async () => {
     const cwd = makeRoot();
@@ -4239,7 +4293,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: {
         list: vi.fn().mockResolvedValue([project]),
         get: vi.fn().mockResolvedValue(project),
@@ -4319,7 +4373,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
       workspaceGitService: {
         getSnapshot: vi.fn(),

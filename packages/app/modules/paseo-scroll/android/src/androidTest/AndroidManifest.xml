@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Hosts a scroll view in a real window, so layout clamps and draws run as they do on device. -->
+    <activity android:name="android.app.Activity" android:exported="false" />
+  </application>
+</manifest>

@@ -377,6 +377,12 @@ export interface AgentTimelineImage {
   mimeType: string;
 }
 
+export interface AgentTimelineImageReference {
+  id: string;
+  mimeType: string;
+  size: number;
+}
+
 export type AgentTimelineItem =
   | {
       type: "user_message";
@@ -384,6 +390,7 @@ export type AgentTimelineItem =
       messageId?: string;
       clientMessageId?: string;
       images?: AgentTimelineImage[];
+      imageRefs?: AgentTimelineImageReference[];
     }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }

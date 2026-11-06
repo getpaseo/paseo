@@ -15,6 +15,7 @@ import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -42,6 +43,8 @@ interface CompactModelSheetProps {
   disabled?: boolean;
   serverId?: string | null;
   glyphSize: number;
+  /** False when the toolbar is too narrow for labels: the trigger shows the provider glyph only. */
+  showLabels: boolean;
   canSwitchProvider: boolean;
   children: ReactNode;
 }
@@ -94,6 +97,7 @@ export function CompactModelSheet({
   disabled = false,
   serverId = null,
   glyphSize,
+  showLabels,
   canSwitchProvider,
   children,
 }: CompactModelSheetProps) {
@@ -229,14 +233,16 @@ export function CompactModelSheet({
     open();
   }, [close, isOpen, open]);
 
+  const iconOnly = !showLabels && hasSelectedProvider;
   const triggerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType) => [
       styles.trigger,
+      iconOnly && styles.triggerIconOnly,
       hovered && styles.triggerHovered,
       (pressed || isOpen) && styles.triggerPressed,
       disabled && styles.triggerDisabled,
     ],
-    [disabled, isOpen],
+    [disabled, iconOnly, isOpen],
   );
   const mobileRootContent = useMemo(
     () => (
@@ -280,16 +286,18 @@ export function CompactModelSheet({
             <ModelIcon size={glyphSize} color={styles.providerIcon.color} />
           </ComposerToolbarGlyph>
         ) : null}
-        <View style={styles.triggerLabels}>
-          <Text style={styles.triggerText} numberOfLines={1}>
-            {shortModelLabel(rootBrowser.triggerLabel)}
-          </Text>
-          {thinkingLabel ? (
-            <Text style={styles.triggerThinking} numberOfLines={1}>
-              {thinkingLabel}
+        {!iconOnly ? (
+          <View style={styles.triggerLabels}>
+            <Text style={styles.triggerText} numberOfLines={1}>
+              {shortModelLabel(rootBrowser.triggerLabel)}
             </Text>
-          ) : null}
-        </View>
+            {thinkingLabel ? (
+              <Text style={styles.triggerThinking} numberOfLines={1}>
+                {thinkingLabel}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </ComboboxTrigger>
 
       <AdaptiveModalSheet
@@ -374,7 +382,7 @@ export function CompactModelSheet({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    height: 28,
+    height: TOOLBAR_CONTROL_HEIGHT,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
@@ -383,6 +391,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
     backgroundColor: "transparent",
+  },
+  triggerIconOnly: {
+    width: TOOLBAR_CONTROL_HEIGHT,
+    flexShrink: 0,
+    paddingHorizontal: 0,
+    justifyContent: "center",
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

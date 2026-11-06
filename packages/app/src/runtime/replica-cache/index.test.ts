@@ -513,6 +513,23 @@ describe("ReplicaCache", () => {
     expect(storage.changes[0]?.deletes).toEqual([]);
   });
 
+  it("keeps a background agent background across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const helper = { ...agent("helper"), background: true };
+    const visible = agent("visible");
+    writer.commitDirectoryMutations(SERVER_ID, [
+      { kind: "agent", type: "upsert", id: helper.id, value: helper },
+      { kind: "agent", type: "upsert", id: visible.id, value: visible },
+    ]);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.agents.get("helper")?.background).toBe(true);
+    expect(restored.agents.get("visible")?.background).toBe(false);
+  });
+
   it("round-trips identified and anonymous open turns without changing protocol status", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -1186,6 +1203,29 @@ it("cross-client inline images survive a durable timeline cache round trip", asy
   const value = {
     agentId: "agent-1",
     items: [message],
+    range: { epoch: "image-epoch", startSeq: 1, endSeq: 1 },
+    hasOlder: false,
+  };
+  writer.commitTimeline(SERVER_ID, "agent-1", value);
+  await writer.flush();
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});
+
+it("timeline image references survive a durable cache round trip", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const value = {
+    agentId: "agent-1",
+    items: [
+      {
+        kind: "user_message" as const,
+        id: "image",
+        text: "",
+        timestamp: new Date("2026-10-12T00:00:00.000Z"),
+        timelineCursor: { epoch: "image-epoch", seq: 1 },
+        imageRefs: [{ id: "a".repeat(64), mimeType: "image/png", size: 307_200 }],
+      },
+    ],
     range: { epoch: "image-epoch", startSeq: 1, endSeq: 1 },
     hasOlder: false,
   };

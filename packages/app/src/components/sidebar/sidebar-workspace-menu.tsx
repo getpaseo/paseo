@@ -36,6 +36,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { bySizing } from "@/components/ui/control-geometry";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
@@ -438,18 +439,18 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    // Larger on compact so the kebab is an easy tap target.
-    width: { xs: 32, md: 18 },
-    height: { xs: 32, md: 18 },
+    // Larger on touch so the kebab is an easy tap target.
+    width: bySizing({ touch: 32, pointer: 18 }),
+    height: bySizing({ touch: 32, pointer: 18 }),
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 4,
     marginLeft: 2,
-    // Center the compact box on the 20px title line it is anchored to.
-    marginTop: { xs: -6, md: 0 },
+    // Center the touch box on the 20px title line it is anchored to.
+    marginTop: bySizing({ touch: -6, pointer: 0 }),
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
-    marginRight: { xs: -14, md: -7 },
+    marginRight: bySizing({ touch: -14, pointer: -7 }),
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

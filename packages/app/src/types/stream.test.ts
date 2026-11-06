@@ -86,6 +86,21 @@ it("cross-client canonical images reconcile into a locally submitted row without
   expect(result.acknowledgedClientMessageIds).toEqual(["client-image"]);
 });
 
+it("keeps image-only references in live and restored timeline rows", () => {
+  const imageRefs = [{ id: "a".repeat(64), mimeType: "image/png", size: 307_200 }];
+  const event = {
+    type: "timeline" as const,
+    provider: "omp",
+    item: { type: "user_message" as const, text: "", messageId: "image", imageRefs },
+  };
+  const timestamp = new Date(1);
+  expect(hydrateStreamState([{ event, timestamp }])).toMatchObject([
+    { kind: "user_message", imageRefs },
+  ]);
+  const result = applyStreamEvent({ tail: [], head: [], event, timestamp });
+  expect(result.tail).toMatchObject([{ kind: "user_message", imageRefs }]);
+});
+
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 it("updates a resolved Claude plan at its proposal position across a follow-up", () => {

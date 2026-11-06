@@ -938,6 +938,9 @@ export const en = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Change base",
+        },
         openChangesTab: "Open Changes tab",
         openDiffTab: "Open Diff tab",
         closeChangesTab: "Close Changes tab",
@@ -1241,6 +1244,7 @@ export const en = {
       hosts: "Hosts",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+      moreActions: "More actions",
     },
     footer: {
       usage: "Usage",
@@ -2384,7 +2388,7 @@ export const en = {
       installing: "Installing…",
       logs: {
         action: "Logs",
-        title: "Logs: {{id}}",
+        title: "Logs: {{name}}",
         loading: "Loading logs…",
         refresh: "Refresh",
         refreshing: "Refreshing…",
@@ -2393,7 +2397,8 @@ export const en = {
       },
       status: { running: "running", disabled: "disabled", failed: "failed" },
       actions: {
-        menu: "Actions for {{id}}",
+        menu: "Actions for {{name}}",
+        settings: "Settings",
         reload: "Reload",
         reloading: "Reloading…",
         enable: "Enable",
@@ -2404,16 +2409,16 @@ export const en = {
         removing: "Removing…",
       },
       feedback: {
-        installed: "Installed {{id}}",
-        reload: "Reloaded {{id}}",
-        enable: "Enabled {{id}}",
-        disable: "Disabled {{id}}",
-        remove: "Removed {{id}}",
-        kept: "Kept {{id}}",
+        installed: "Installed {{name}}",
+        reload: "Reloaded {{name}}",
+        enable: "Enabled {{name}}",
+        disable: "Disabled {{name}}",
+        remove: "Removed {{name}}",
+        kept: "Kept {{name}}",
         globalEnabled: "Plugins enabled",
         globalDisabled: "Plugins disabled",
       },
-      removeConfirmTitle: "Remove {{id}}?",
+      removeConfirmTitle: "Remove {{name}}?",
       removeConfirmMessage: "This removes the configuration. The source directory is not deleted.",
       states: {
         offlineTitle: "Plugin host is offline",

@@ -3,7 +3,7 @@ import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -47,7 +47,7 @@ export function ResizeHandle({
   onResizeSplit,
 }: ResizeHandleProps) {
   const { theme } = useUnistyles();
-  const finePointer = useHasFinePointer();
+  const { finePointer } = usePointerCapabilities();
   const pointerStatesRef = useRef(new Map<number, PointerState>());
   const touchStateRef = useRef<PointerState | null>(null);
   const cursorBeforeDragRef = useRef<string | null>(null);
