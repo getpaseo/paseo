@@ -87,11 +87,12 @@ function BuiltInThemeTile({
       selected={selected}
       onPress={handlePress}
       previewTheme={option && "theme" in option ? option.theme : "system"}
+      swatch={option && "swatch" in option ? option.swatch : undefined}
     />
   );
 }
 
-function PluginThemeTile({
+export function PluginThemeTile({
   option,
   selected,
   onSelect,
@@ -107,6 +108,7 @@ function PluginThemeTile({
       selected={selected}
       onPress={handlePress}
       previewTheme={option.theme}
+      swatch={option.swatch}
     />
   );
 }
@@ -116,12 +118,14 @@ function ThemeTile({
   selected,
   onPress,
   previewTheme,
+  swatch,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
   /** "system" follows the OS, so its preview shows both halves. */
   previewTheme: Theme | "system";
+  swatch?: string;
 }) {
   const accessibilityState = useMemo(() => ({ checked: selected }), [selected]);
   const tileStyle = useCallback(
@@ -149,9 +153,17 @@ function ThemeTile({
             <ThemePreview theme={previewTheme} />
           )}
         </View>
-        <Text style={styles.label} numberOfLines={1}>
-          {label}
-        </Text>
+        <View style={styles.labelRow}>
+          {swatch ? (
+            <View
+              testID="theme-picker-swatch"
+              style={[styles.swatch, { backgroundColor: swatch }]}
+            />
+          ) : null}
+          <Text style={styles.label} numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
       </PressHighlight>
     </View>
   );
@@ -232,10 +244,24 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     overflow: "hidden",
   },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
+  },
+  swatch: {
+    width: 10,
+    height: 10,
+    flexShrink: 0,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
   label: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    paddingHorizontal: theme.spacing[1],
   },
   preview: {
     width: "100%",
