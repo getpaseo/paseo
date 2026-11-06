@@ -1,7 +1,9 @@
-import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
-import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
+import {
+  acceptAgentDirectoryUpdate,
+  keepUnchangedAgentFields,
+} from "@/utils/agent-directory-update-policy";
 import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
@@ -117,7 +119,7 @@ export class AgentStoreProjection {
     for (const [agentId, fetchedAgent] of fetched) {
       const existing = current.get(agentId);
       const merged = mergeSnapshotTurn(existing, fetchedAgent);
-      agents.set(agentId, existing && equal(existing, merged) ? existing : merged);
+      agents.set(agentId, existing ? keepUnchangedAgentFields(existing, merged) : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
       }
