@@ -129,9 +129,9 @@ describe("resolveTopBand", () => {
 describe("resolveTopBandClearance", () => {
   // The full workspace header with the sidebar closed spans the window.
   const fullHeader = { x: 0, y: duo.topBar.y, width: 669, height: 44 };
-  // The compact header beside a 320pt sidebar: 8pt top padding, 56pt row.
-  const compactHeader = { x: 320, y: duo.topBar.y + 8, width: 349, height: 56 };
-  const compactMinimum = 12 + 44 + 8 + 96 + 8 + 132;
+  // A row beside a 320pt sidebar whose controls need more width than the status region leaves.
+  const narrowRow = { x: 320, y: duo.topBar.y + 8, width: 349, height: 56 };
+  const narrowMinimum = 300;
 
   it("trims the trailing side to the status region", () => {
     expect(
@@ -156,9 +156,9 @@ describe("resolveTopBandClearance", () => {
   it("starts below the status region when the controls no longer fit beside it", () => {
     expect(
       resolveTopBandClearance({
-        row: compactHeader,
+        row: narrowRow,
         occlusions: [duo.statusRegion],
-        minimumWidth: compactMinimum,
+        minimumWidth: narrowMinimum,
       }),
     ).toEqual({ trailing: 0, top: 48 });
   });
@@ -166,9 +166,9 @@ describe("resolveTopBandClearance", () => {
   it("starts below the lowest of several overlapping occlusions", () => {
     expect(
       resolveTopBandClearance({
-        row: compactHeader,
+        row: narrowRow,
         occlusions: [duo.statusRegion, { x: 600, y: 0, width: 69, height: 96 }],
-        minimumWidth: compactMinimum,
+        minimumWidth: narrowMinimum,
       }),
     ).toEqual({ trailing: 0, top: 62 });
   });

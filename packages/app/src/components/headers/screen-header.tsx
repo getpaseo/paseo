@@ -1,5 +1,5 @@
 import { ComposerDockBackground } from "@/composer/dock";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,11 +12,7 @@ import {
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { useTopBandRow } from "@/window-layout";
-
-// Leading content that must stay readable in the top band: a navigation button and a title.
-const MIN_LEADING_WIDTH = TOUCH_TARGET + 8 + 96;
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -46,15 +42,11 @@ export function ScreenHeader({
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
-  const [rightWidth, setRightWidth] = useState(0);
-  const measureRight = useCallback(
-    (event: LayoutChangeEvent) => setRightWidth(event.nativeEvent.layout.width),
-    [],
-  );
   const topBand = useTopBandRow({
     offset: insets.top + topPadding,
     height: isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT,
-    minimumWidth: baseHorizontalPadding + MIN_LEADING_WIDTH + rightWidth,
+    // The header stays in the band in every sidebar state; the title gives up width instead.
+    minimumWidth: 0,
   });
   const innerStyle = useMemo(
     () => [styles.inner, { paddingTop: insets.top + topPadding + topBand.top }],
@@ -85,9 +77,7 @@ export function ScreenHeader({
         >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>
-          <View style={rightCombinedStyle} onLayout={measureRight}>
-            {right}
-          </View>
+          <View style={rightCombinedStyle}>{right}</View>
         </WindowChromeSafeArea>
       </View>
     </ComposerDockBackground>

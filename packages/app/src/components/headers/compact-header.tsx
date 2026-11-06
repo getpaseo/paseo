@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View, type LayoutChangeEvent } from "react-native";
+import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { ArrowLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,7 +12,6 @@ import {
   iconButtonChromeGlyphSize,
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
-import { TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { SPACING } from "@/styles/theme";
 import { useTopBandRow } from "@/window-layout";
@@ -22,9 +21,6 @@ const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
 const NO_SHORTCUT: ShortcutKey[] = [];
 const ROW_PADDING = SPACING[3];
-const ROW_GAP = SPACING[2];
-// Below this the title is unreadable; the row starts below the system's occlusions instead.
-const MIN_TITLE_WIDTH = 96;
 
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
@@ -58,21 +54,12 @@ export function CompactHeader({
   actions,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
-  const [actionsWidth, setActionsWidth] = useState(0);
-  const measureActions = useCallback(
-    (event: LayoutChangeEvent) => setActionsWidth(event.nativeEvent.layout.width),
-    [],
-  );
   // The trailing side gives way to the occlusion, so it needs no padding of its own.
   const topBand = useTopBandRow({
     offset: insets.top + HEADER_TOP_PADDING_MOBILE,
     height: HEADER_INNER_HEIGHT_MOBILE,
-    minimumWidth:
-      ROW_PADDING +
-      TOUCH_TARGET +
-      ROW_GAP +
-      MIN_TITLE_WIDTH +
-      (actions ? ROW_GAP + actionsWidth : 0),
+    // The header stays in the band in every sidebar state; the title gives up width instead.
+    minimumWidth: 0,
   });
   const rootStyle = useMemo(
     () => [
@@ -102,11 +89,7 @@ export function CompactHeader({
               subtitle={subtitle}
             />
           </View>
-          {actions ? (
-            <View style={styles.island} onLayout={measureActions}>
-              {actions}
-            </View>
-          ) : null}
+          {actions ? <View style={styles.island}>{actions}</View> : null}
         </View>
       </View>
     </IconButtonChromeProvider>
@@ -174,7 +157,7 @@ const styles = StyleSheet.create((theme) => ({
     height: HEADER_INNER_HEIGHT_MOBILE,
     flexDirection: "row",
     alignItems: "center",
-    gap: ROW_GAP,
+    gap: theme.spacing[2],
   },
   titleGroup: {
     flex: 1,
