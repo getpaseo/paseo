@@ -2,6 +2,8 @@ import { expect, test, type Page } from "../support/fixtures";
 import {
   pasteRichTextIntoComposer,
   selectComposerDraftRange,
+  undoComposerEdit,
+  redoComposerEdit,
   blurComposerInput,
   roundTripComposerTabBeforePaint,
   composerLocator,
@@ -30,6 +32,7 @@ import {
   openMobileAgentSidebarWithKeyboard,
   swipeOpenMobileExplorer,
 } from "../support/helpers/sidebar";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
 import {
   expectTimelinePromptPositionPreserved,
@@ -131,6 +134,7 @@ test("submitting a message leaves the composer ready for the next message", asyn
     title: "Composer focus",
   });
 
+  const connection = await installDaemonWebSocketGate(page);
   try {
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
@@ -149,11 +153,38 @@ test("submitting a message leaves the composer ready for the next message", asyn
       page,
       "Investigate: [this FR](https://example.com/issues/39150). Thanks",
     );
+    await undoComposerEdit(page);
+    await expectComposerDraft(page, "Investigate: replace this. Thanks");
+    await redoComposerEdit(page);
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150). Thanks",
+    );
     await typeIntoFocusedComposer(page, " next");
     await expectComposerDraft(
       page,
       "Investigate: [this FR](https://example.com/issues/39150) next. Thanks",
     );
+    await connection.drop();
+    await connection.waitForBlockedConnection();
+    await pasteRichTextIntoComposer(
+      page,
+      '<a href="https://example.com/offline">offline link</a>',
+      "offline link",
+    );
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150) next[offline link](https://example.com/offline). Thanks",
+    );
+    const copiedTable =
+      "| Resource | Status |\n| --- | --- |\n| [issue](https://example.com/1) | ~~closed~~ |";
+    await composerLocator(page).fill("");
+    await pasteRichTextIntoComposer(
+      page,
+      '<table><tr><th>Resource</th><th>Status</th></tr><tr><td><a href="https://example.com/1">issue</a></td><td><s>closed</s></td></tr></table>',
+      copiedTable,
+    );
+    await expectComposerDraft(page, copiedTable);
     await expectComposerFocused(page);
   } finally {
     await agent.cleanup();

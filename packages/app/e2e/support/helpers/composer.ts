@@ -587,3 +587,10 @@ export async function pasteRichTextIntoComposer(
   );
   await composerInput(page).press("ControlOrMeta+v");
 }
+
+export async function undoComposerEdit(page: Page): Promise<void> {
+  await composerInput(page).press("ControlOrMeta+z");
+}
+export async function redoComposerEdit(page: Page): Promise<void> {
+  await composerInput(page).press("ControlOrMeta+Shift+z");
+}
