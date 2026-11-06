@@ -544,7 +544,7 @@ The provider draws some of those keys in the composer by reporting `controls` an
 built-in providers ([options flow](providers.md#options-flow)). `PluginAgentSession` in
 `packages/server/src/server/agent/plugin-provider.ts` is that adapter. A provider still reporting
 `settings` is read through `plugin-provider-options.ts`, which turns each setting into a control and
-its value into an option and is sent both shapes in `session.configure` (`settings` holds only the keys it reports); delete it with
+its value into an option and is sent both shapes in `session.configure`; delete it with
 `COMPAT(plugin-provider-settings)`. The ACP shim still reports `settings`.
 
 Providers add an optional veto to daemon baseline cleanup through the per-session

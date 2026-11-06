@@ -1430,7 +1430,7 @@ class PluginAgentSession implements AgentSession {
   private async applyOptionsNow(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentOptions();
-    const { controls, legacySettings } = readPluginOptionState(this.bridge.config);
+    const { legacySettings } = readPluginOptionState(this.bridge.config);
     // The plugin applies every key it is given or rejects the whole request.
     const settings: Record<string, JsonValue> = {};
     for (const [id, value] of Object.entries(options)) {
@@ -1440,18 +1440,10 @@ class PluginAgentSession implements AgentSession {
     this.applyingOptions = true;
     try {
       // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01. A plugin
-      // reporting `settings` reads only its own settings, so it is sent those.
+      // reporting `settings` is sent the same keys under that name.
       await this.bridge.configure({
         providerOptions: settings,
-        ...(legacySettings
-          ? {
-              settings: Object.fromEntries(
-                Object.entries(settings).filter(([id]) =>
-                  controls.some((control) => control.key === id),
-                ),
-              ),
-            }
-          : {}),
+        ...(legacySettings ? { settings } : {}),
       });
     } catch (error) {
       // Nothing is stored for a refused patch, so what the plugin moved is reported once the

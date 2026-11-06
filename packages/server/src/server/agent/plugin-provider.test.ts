@@ -1481,8 +1481,10 @@ describe("PluginAgentClientRegistry", () => {
         changes: { providerOptions: object; settings?: object };
       };
       expect(configure.changes.providerOptions).toEqual({ loud: true, launch_key: "changed" });
-      // A plugin reporting `settings` reads only the ones it reports.
-      expect(configure.changes.settings).toEqual(shape === "settings" ? { loud: true } : undefined);
+      // A plugin reporting `settings` is sent the same keys under that name.
+      expect(configure.changes.settings).toEqual(
+        shape === "settings" ? { loud: true, launch_key: "changed" } : undefined,
+      );
       await session.close();
     });
 
