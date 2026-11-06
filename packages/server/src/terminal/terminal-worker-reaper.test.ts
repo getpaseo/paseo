@@ -692,7 +692,6 @@ describe("terminal worker reaper without process identity", () => {
     const home = makeHome();
     const recordPath = writeRecord(home, {
       pid: await goneProcessPid(),
-      identity: { unavailable: "spawn UNKNOWN" },
       terminals: [{ id: "t1", pid: await goneProcessPid(), startedAt: null }],
     });
 
@@ -748,7 +747,6 @@ describe("terminal worker reaper without process identity", () => {
     const listener = await spawnSilentListener(socketPath);
     writeRecord(home, {
       pid: listener.pid!,
-      identity: { unavailable: "spawn UNKNOWN" },
       socketPath,
     });
 
@@ -768,7 +766,6 @@ describe("terminal worker reaper without process identity", () => {
     const reusedWorkerPid = spawnIdle().pid!;
     const recordPath = writeRecord(home, {
       pid: reusedWorkerPid,
-      identity: { unavailable: "spawn UNKNOWN" },
     });
 
     const result = await reapTerminalWorkers({ paseoHome: home, inspector: noIdentity });

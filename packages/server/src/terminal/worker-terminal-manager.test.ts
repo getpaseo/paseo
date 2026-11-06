@@ -2834,7 +2834,6 @@ it("launches past stale records without signaling an unrelated live pid", async 
         pid,
         bootId: currentBootId(),
         createdAt: new Date().toISOString(),
-        identity: { unavailable: "spawn UNKNOWN" },
         protocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION,
         paseoVersion: "0.0.0-test",
         socketPath: join(paseoHome, `gone-${pid}.sock`),

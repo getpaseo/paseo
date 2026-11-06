@@ -31,7 +31,8 @@ import {
 // uses for its own kill stop. Every kill intent (stop, quit, --force, a kill restart whose
 // shutdown hung, a dead or stopped worker, a program that ignores HUP) ends here:
 //
-// 1. Classify the worker and every terminal program of each record on its own, by birth time.
+// 1. Classify each record's worker by its pid and socket, and every terminal program on its
+//    own, by birth time (Windows records none; its programs end with their worker's console).
 //    A record from an earlier boot names only processes the reboot ended: retire it unsignaled.
 //    Descendants of owned programs (and, on Linux, members of their sessions) join the
 //    candidates from one process-table snapshot taken before anything is signaled. Once a
@@ -39,11 +40,10 @@ import {
 //    program's session joins only when its environment carries that terminal's id. When the
 //    table cannot be read, nothing in the record is signaled: ending a program would reparent
 //    the children only the table can find, and a retry could never reach them again.
-// 2. An owned worker, or one its process cannot identify, gets an authenticated `shutdown`: it
-//    kills each terminal and waits for it. A worker that cannot be identified gets it even when
-//    the caller skips the grace period, since nothing else can stop it.
-// 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
-//    each signal.
+// 2. A worker whose socket accepts is owned and gets an authenticated `shutdown`: it kills each
+//    terminal and waits for it.
+// 3. After `gracefulMs`, SIGKILL whatever owned process is left, checking its socket or birth
+//    time again right before each signal.
 // 4. Succeed only when every candidate is gone or proven unrelated. Otherwise keep a record of
 //    the unresolved entries, marked closing, in a cleanup record no worker rewrites, and throw
 //    TerminalCleanupNotConfirmedError. An unreadable record is never reported confirmed.

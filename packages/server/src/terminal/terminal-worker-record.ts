@@ -5,7 +5,6 @@ import { z } from "zod";
 import { writePrivateFileAtomicSync, writePrivateFileAtomic } from "../server/private-files.js";
 
 // Owner-only metadata used to find and authenticate workers in the locked home.
-// Legacy identity fields are accepted but worker ownership comes from the recorded socket.
 
 const TerminalWorkerTerminalEntrySchema = z.object({
   id: z.string().min(1),
@@ -14,15 +13,12 @@ const TerminalWorkerTerminalEntrySchema = z.object({
   startedAt: z.string().min(1).nullable(),
 });
 
-const TerminalWorkerIdentitySchema = z.union([
-  z.object({
-    startedAt: z.string().min(1),
-    commandLine: z.string().min(1),
-  }),
-  // Why the worker could not read its own identity. Such a worker is driven and shut down only
-  // over its authenticated socket.
-  z.object({ unavailable: z.string().min(1) }),
-]);
+// The birth time and command line workers up to 0.15.1 recorded about themselves. Still read
+// from their records, never written, and never consulted: the socket identifies a worker.
+const LegacyTerminalWorkerIdentitySchema = z.object({
+  startedAt: z.string().min(1),
+  commandLine: z.string().min(1),
+});
 
 // One process a cleanup could not confirm gone, kept so a later caller (a retry, or a remote
 // client reading daemon status) can name it.
@@ -38,7 +34,7 @@ const TerminalWorkerRecordSchema = z.object({
   pid: z.number().int().positive(),
   bootId: z.string().nullable(),
   createdAt: z.string().min(1),
-  identity: TerminalWorkerIdentitySchema.optional(),
+  identity: LegacyTerminalWorkerIdentitySchema.optional(),
   // Read loosely: a version this daemon cannot interpret marks a worker from a newer Paseo
   // (classifyTerminalWorkerProtocol), not an unreadable record.
   protocolVersion: z.union([z.number(), z.string()]),
@@ -55,7 +51,6 @@ const TerminalWorkerRecordSchema = z.object({
 });
 
 export type TerminalWorkerTerminalEntry = z.infer<typeof TerminalWorkerTerminalEntrySchema>;
-export type TerminalWorkerIdentity = z.infer<typeof TerminalWorkerIdentitySchema>;
 export type TerminalCleanupUnresolved = z.infer<typeof TerminalCleanupUnresolvedSchema>;
 export type TerminalWorkerRecord = z.infer<typeof TerminalWorkerRecordSchema>;
 
