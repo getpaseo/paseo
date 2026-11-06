@@ -2392,6 +2392,12 @@ export const ko: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "백그라운드 연결",
+        label: "백그라운드에서 연결 유지",
+        description:
+          "상시 알림이 표시되고 배터리 사용량이 늘어날 수 있습니다. 일부 휴대전화에서는 시스템 설정에서 백그라운드 활동도 허용해야 합니다.",
+      },
       title: "일반",
       sending: "전송",
       setup: {

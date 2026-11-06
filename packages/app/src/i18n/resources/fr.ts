@@ -2431,6 +2431,12 @@ export const fr: TranslationResources = {
       },
     },
     general: {
+      backgroundConnection: {
+        section: "Connexion en arrière-plan",
+        label: "Maintenir la connexion en arrière-plan",
+        description:
+          "Affiche une notification permanente et peut augmenter la consommation de batterie. Certains téléphones nécessitent aussi d'autoriser l'activité en arrière-plan dans les paramètres système.",
+      },
       title: "Général",
       sending: "Envoi",
       setup: {

@@ -44,6 +44,32 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("defaults the background connection to off and persists the user's choice", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ language: "zh-CN" }),
+      }),
+    });
+    const queryClient = new QueryClient();
+    expect((await loadAppSettingsFromStorage(deps)).backgroundConnectionEnabled).toBe(false);
+
+    await saveAppSettings({ queryClient, deps, updates: { backgroundConnectionEnabled: true } });
+    expect((await loadAppSettingsFromStorage(deps)).backgroundConnectionEnabled).toBe(true);
+    await saveAppSettings({ queryClient, deps, updates: { backgroundConnectionEnabled: false } });
+    const restored = await loadAppSettingsFromStorage(deps);
+    expect(restored.backgroundConnectionEnabled).toBe(false);
+    expect(restored.language).toBe("zh-CN");
+  });
+
+  it("does not enable the background connection for an invalid stored value", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ backgroundConnectionEnabled: "yes" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).backgroundConnectionEnabled).toBe(false);
+  });
+
   it("persists file panel associations, including panels absent from this host", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();

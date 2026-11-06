@@ -102,6 +102,8 @@ export interface AppSettings {
   sidebarFooterItems: SidebarNavPreference[];
   /** How usage reads and which windows the sidebar summary shows. */
   usage: UsagePreferences;
+  /** Android-only opt-in for keeping host connections active in the background. */
+  backgroundConnectionEnabled: boolean;
   autoExpandReasoning: boolean;
   chatDisplay: ChatDisplay;
   chatOutlineEnabled: boolean;
@@ -159,6 +161,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarNavItems: [],
   sidebarFooterItems: [],
   usage: DEFAULT_USAGE_PREFERENCES,
+  backgroundConnectionEnabled: false,
   autoExpandReasoning: false,
   chatDisplay: "collapseTurns",
   chatOutlineEnabled: true,
@@ -256,6 +259,7 @@ const StoredAppSettingsSchema = z
     sidebarNavItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     sidebarFooterItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     usage: UsagePreferencesSchema,
+    backgroundConnectionEnabled: z.boolean().catch(false),
     autoExpandReasoning: z.boolean().catch(false),
     chatDisplay: z.enum(["full", "collapseToolCalls", "collapseTurns"]).optional().catch("full"),
     // COMPAT(toolCallDetailLevel): replaced by chatDisplay in v0.13, remove after 2027-04-24.
