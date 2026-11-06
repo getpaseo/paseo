@@ -12,9 +12,16 @@ vi.mock("@/constants/platform", async (importOriginal) => ({
   isNative: false,
 }));
 vi.mock("@/desktop/host", () => ({ getDesktopHost: () => undefined }));
+const runtime = vi.hoisted(() => ({
+  acquireDirectoryDemand: () => () => undefined,
+  subscribeAll: () => () => undefined,
+  getVersion: () => 0,
+  getSnapshot: () => ({ agentDirectoryStatus: "ready" as const }),
+}));
+
 vi.mock("@/runtime/host-runtime", () => ({
   useHosts: () => [],
-  getHostRuntimeStore: () => ({ acquireDirectoryDemand: () => () => undefined }),
+  getHostRuntimeStore: () => runtime,
 }));
 
 const SERVER_ID = "srv_a";
