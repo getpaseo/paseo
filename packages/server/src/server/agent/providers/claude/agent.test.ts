@@ -2985,7 +2985,7 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
-  test("classifies Claude root-only commands separately from inline skills", async () => {
+  test("classifies Claude root-only commands separately from inline skills and hides internal ones", async () => {
     const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       void prompt;
       return {
@@ -3016,6 +3016,11 @@ describe("ClaudeAgentSession context window usage", () => {
           {
             name: "clear",
             description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+          {
+            name: "__remote-workflow",
+            description: "Run a remote workflow (server-launched sessions only)",
             argumentHint: "",
           },
         ],
