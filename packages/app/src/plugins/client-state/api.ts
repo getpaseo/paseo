@@ -15,11 +15,11 @@ interface InstallationApi {
 }
 // Registry presentation clones share the installation lifetime and its client pool.
 const apis = new WeakMap<AbortSignal, InstallationApi>();
-const state = createPluginClientStateSource();
 
 export function getPluginClientApi(plugin: InstalledPlugin): InstallationApi {
   const cached = apis.get(plugin.lifetime.signal);
   if (cached) return cached;
+  const state = createPluginClientStateSource();
   const hosts = createPluginHosts(getHostRuntimeStore(), plugin.lifetime.signal);
   const paseo = createPluginReferenceApi({
     paseo: plugin.paseo,

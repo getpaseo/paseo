@@ -113,6 +113,19 @@ localized `indicatorLabel` to display the status Paseo shows. `status` remains t
 status. Agent snapshots include their workspace and parent refs. Project snapshots provide
 `displayName`, `rootPath`, `kind` and `iconRevision`.
 
+## List terminals
+
+The terminals example selects a host, lists its terminals, focuses a terminal tab and closes a
+terminal through its handle. `useTerminals({ hosts: [hostId] })` requires a host advertising
+`terminalCollection`. A terminal reader throws an update-host error for an unsupported queried
+host; other entity hooks continue working. Keep host selection outside an error boundary so the
+user can select another host. Omit `hosts` to require the capability on every connected host.
+
+Terminal snapshots contain `workspace`, `title`, `isScript` and `createdAt`. A terminal kept alive
+by a worker from before timestamp tracking has `createdAt: null`. Script ownership follows
+workspace script runtime entries. The host observation follows terminal creation, closure, title
+changes and reconnects, and releases when its last plugin subscriber leaves.
+
 ## Act on a ref
 
 `usePaseo()` routes ref-based actions to the ref's host:

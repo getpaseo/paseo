@@ -5,6 +5,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { connectedPluginHosts } from "./connected-hosts";
+import { pluginTerminals } from "./terminals";
 import { entityRefs } from "./refs";
 import {
   createPluginAgentSnapshot,
@@ -20,13 +21,10 @@ export interface PluginConnectedHostsSource {
 export interface PluginTerminalsSource {
   subscribe(listener: () => void): () => void;
   getSnapshot(): readonly PluginTerminalSnapshot[];
+  getErrors?(): ReadonlyMap<string, Error>;
 }
 
 const emptyTerminals: readonly PluginTerminalSnapshot[] = Object.freeze([]);
-const noTerminals: PluginTerminalsSource = {
-  subscribe: () => () => {},
-  getSnapshot: () => emptyTerminals,
-};
 const listeners = new Set<() => void>();
 let releaseStores: (() => void) | null = null;
 
@@ -139,12 +137,15 @@ export function createPluginClientStateSource(
   serverId?: string,
   options: { hosts?: PluginConnectedHostsSource; terminals?: PluginTerminalsSource } = {},
 ): PluginClientStateSource {
-  const terminals = options.terminals ?? noTerminals;
+  const terminals = options.terminals ?? pluginTerminals;
   const hosts = options.hosts ?? connectedPluginHosts;
   const subscribers = new Set<() => void>();
+  const terminalSubscribers = new Set<() => void>();
+  let releaseTerminals: (() => void) | null = null;
   let release: (() => void) | null = null;
   let previousProjections: readonly HostProjection[] = [];
   let previousTerminals = emptyTerminals;
+  let previousTerminalErrors: ReadonlyMap<string, Error> | undefined;
   let snapshot: PluginClientSnapshot = {
     workspaces: [],
     agents: [],
@@ -159,41 +160,58 @@ export function createPluginClientStateSource(
       if (projection) projections.push(projection);
     }
     const terminalSnapshots = terminals.getSnapshot();
-    if (sameSequence(previousProjections, projections) && previousTerminals === terminalSnapshots)
+    const terminalErrors = terminals.getErrors?.();
+    if (
+      sameSequence(previousProjections, projections) &&
+      previousTerminals === terminalSnapshots &&
+      previousTerminalErrors === terminalErrors
+    )
       return snapshot;
     previousProjections = projections;
     previousTerminals = terminalSnapshots;
+    previousTerminalErrors = terminalErrors;
     snapshot = Object.freeze({
       workspaces: Object.freeze(projections.flatMap((host) => host.snapshot.workspaces)),
       agents: Object.freeze(projections.flatMap((host) => host.snapshot.agents)),
       projects: Object.freeze(projections.flatMap((host) => host.snapshot.projects)),
       terminals: terminalSnapshots,
+      terminalErrors,
     });
     return snapshot;
   }
   return {
-    subscribe(listener) {
+    subscribe(listener, subscriptionOptions) {
       subscribers.add(listener);
+      if (subscriptionOptions?.terminals) {
+        terminalSubscribers.add(listener);
+        releaseTerminals ??= terminals.subscribe(() => {
+          for (const subscriber of terminalSubscribers) subscriber();
+        });
+      }
       if (!release) {
         const notify = () => {
           for (const subscriber of subscribers) subscriber();
         };
         const releaseStore = subscribeStores(notify);
         const releaseHosts = hosts.subscribe(notify);
-        const releaseTerminals = terminals.subscribe(notify);
         release = () => {
           releaseStore();
           releaseHosts();
-          releaseTerminals();
         };
       }
       return () => {
         subscribers.delete(listener);
+        terminalSubscribers.delete(listener);
+        if (terminalSubscribers.size === 0 && releaseTerminals) {
+          releaseTerminals();
+          releaseTerminals = null;
+        }
         if (subscribers.size === 0 && release) {
           release();
           release = null;
           previousProjections = [];
           previousTerminals = emptyTerminals;
+          previousTerminalErrors = undefined;
           snapshot = { workspaces: [], agents: [], projects: [], terminals: emptyTerminals };
         }
       };
@@ -221,6 +239,10 @@ export function createPluginClientStateSource(
       return detail && workspaceId ? createPluginAgentSnapshot(detail, workspaceId) : null;
     },
     getProject: (ref) => projectHost(ref.hostId)?.projectById.get(ref.id) ?? null,
-    getTerminal: (ref) => terminals.getSnapshot().find((terminal) => terminal.ref === ref) ?? null,
+    getTerminal(ref) {
+      const error = terminals.getErrors?.().get(ref.hostId);
+      if (error) throw error;
+      return terminals.getSnapshot().find((terminal) => terminal.ref === ref) ?? null;
+    },
   };
 }

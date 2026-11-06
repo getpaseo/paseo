@@ -11,7 +11,7 @@ import { createCollectionQuery, type Query, type Group } from "./query.js";
 import { shallowEqual } from "./shallow.js";
 
 export interface PluginClientStateSource {
-  subscribe(listener: () => void): () => void;
+  subscribe(listener: () => void, options?: { terminals?: boolean }): () => void;
   getWorkspace(id: string | WorkspaceRef): PluginWorkspaceSnapshot | null;
   getAgent(id: string | AgentRef): PluginAgentSnapshot | null;
   getProject(ref: ProjectRef): PluginProjectSnapshot | null;
@@ -24,6 +24,7 @@ export interface PluginClientSnapshot {
   readonly agents: readonly PluginAgentSnapshot[];
   readonly projects: readonly PluginProjectSnapshot[];
   readonly terminals: readonly PluginTerminalSnapshot[];
+  readonly terminalErrors?: ReadonlyMap<string, Error>;
 }
 
 const PluginClientStateContext = createContext<PluginClientStateSource | null>(null);
@@ -44,8 +45,24 @@ export function usePaseoSelector<Entity, Selection>(
 
 type Equality<T> = { equals(left: T, right: T): boolean }["equals"];
 
+function useStateSource(terminals: boolean) {
+  const source = usePluginClientStateSource();
+  if (!source) throw new Error("Plugin state hooks must run inside a plugin host");
+  return useMemo(
+    () =>
+      terminals
+        ? {
+            ...source,
+            subscribe: (listener: () => void) => source.subscribe(listener, { terminals: true }),
+          }
+        : source,
+    [source, terminals],
+  );
+}
+
 function createEntityHook<Ref, Entity>(
   read: (source: PluginClientStateSource, ref: Ref) => Entity | null,
+  terminals = false,
 ) {
   function useEntity(
     ref: Ref,
@@ -62,8 +79,7 @@ function createEntityHook<Ref, Entity>(
     selector?: (entity: Entity) => Selection,
     equals?: Equality<Entity | Selection | null>,
   ): Entity | Selection | null {
-    const source = usePluginClientStateSource();
-    if (!source) throw new Error("Plugin state hooks must run inside a plugin host");
+    const source = useStateSource(terminals);
     function select(entity: Entity | null): Entity | Selection | null {
       return entity !== null && selector ? selector(entity) : entity;
     }
@@ -80,10 +96,14 @@ export const useWorkspace = createEntityHook((source, ref: WorkspaceRef | string
 // COMPAT(plugin-entity-id): string ids accepted since 0.16; remove after 2027-03.
 export const useAgent = createEntityHook((source, ref: AgentRef | string) => source.getAgent(ref));
 export const useProject = createEntityHook((source, ref: ProjectRef) => source.getProject(ref));
-export const useTerminal = createEntityHook((source, ref: TerminalRef) => source.getTerminal(ref));
+export const useTerminal = createEntityHook(
+  (source, ref: TerminalRef) => source.getTerminal(ref),
+  true,
+);
 
 function createCollectionHook<Snapshot extends { readonly ref: unknown; readonly hostId: string }>(
-  read: (source: PluginClientStateSource) => readonly Snapshot[],
+  read: (source: PluginClientStateSource, query: Query<Snapshot>) => readonly Snapshot[],
+  terminals = false,
 ) {
   function useCollection(
     query: Query<Snapshot> & { groupBy: NonNullable<Query<Snapshot>["groupBy"]> },
@@ -97,12 +117,11 @@ function createCollectionHook<Snapshot extends { readonly ref: unknown; readonly
   function useCollection(
     query: Query<Snapshot> = {},
   ): readonly Snapshot["ref"][] | readonly Group<Snapshot["ref"]>[] {
-    const source = usePluginClientStateSource();
-    if (!source) throw new Error("Plugin state hooks must run inside a plugin host");
+    const source = useStateSource(terminals);
     const project = useMemo(() => createCollectionQuery<Snapshot>(), []);
     return usePaseoSelector(
       source,
-      () => read(source),
+      () => read(source, query),
       (snapshots) => project(snapshots, query),
       Object.is,
     );
@@ -113,7 +132,13 @@ function createCollectionHook<Snapshot extends { readonly ref: unknown; readonly
 export const useWorkspaces = createCollectionHook((source) => source.getSnapshot().workspaces);
 export const useAgents = createCollectionHook((source) => source.getSnapshot().agents);
 export const useProjects = createCollectionHook((source) => source.getSnapshot().projects);
-export const useTerminals = createCollectionHook((source) => source.getSnapshot().terminals);
+export const useTerminals = createCollectionHook<PluginTerminalSnapshot>((source, query) => {
+  const snapshot = source.getSnapshot();
+  for (const [hostId, error] of snapshot.terminalErrors ?? []) {
+    if (!query.hosts || query.hosts.includes(hostId)) throw error;
+  }
+  return snapshot.terminals;
+}, true);
 
 export function PluginClientStateProvider({
   children,

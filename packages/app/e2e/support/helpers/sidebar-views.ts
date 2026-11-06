@@ -134,6 +134,38 @@ function sidebarViews(
         )
         .toEqual(["Inbox"]);
     },
+    async exerciseTerminals() {
+      await choose("Example terminals");
+      const slot = visibleTestId(page, "plugin-sidebar-view");
+      await slot
+        .getByRole("button", { name: `Terminals on ${getServerId()}`, exact: true })
+        .click();
+      await expect(slot.getByText("No terminals", { exact: true })).toBeVisible();
+      const workspace = (await client.fetchWorkspaces()).entries.find(
+        (item) => item.id === workspaceId,
+      )!;
+      const created = await client.createTerminal(
+        workspace.workspaceDirectory,
+        "Sidebar terminal",
+        undefined,
+        { workspaceId },
+      );
+      if (!created.terminal) throw new Error(created.error ?? "Terminal creation failed");
+      try {
+        await expect(
+          slot.getByTestId(`sidebar-terminal-open-${created.terminal.id}`),
+        ).toBeVisible();
+        await slot.getByTestId(`sidebar-terminal-open-${created.terminal.id}`).click();
+        await expect(page.getByTestId("terminal-surface").first()).toBeVisible();
+        await slot.getByTestId(`sidebar-terminal-kill-${created.terminal.id}`).click();
+        await expect
+          .poll(async () => (await client.listTerminals()).terminals.map((item) => item.id))
+          .not.toContain(created.terminal!.id);
+        await expect(slot.getByText("No terminals", { exact: true })).toBeVisible();
+      } finally {
+        await client.killTerminal(created.terminal.id);
+      }
+    },
     async restoreDefault() {
       await choose("Default view");
       await expectDefault();

@@ -133,5 +133,6 @@ export interface PluginTerminalSnapshot {
   readonly workspace: WorkspaceRef;
   readonly title: string;
   readonly isScript: boolean;
-  readonly createdAt: string;
+  /** Null for terminals owned by workers started before timestamps were tracked. */
+  readonly createdAt: string | null;
 }

@@ -17,6 +17,8 @@ type NewWorkspaceDaemonClient = Pick<
   | "connect"
   | "createPaseoWorktree"
   | "createWorkspace"
+  | "createTerminal"
+  | "killTerminal"
   | "fetchAgents"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"

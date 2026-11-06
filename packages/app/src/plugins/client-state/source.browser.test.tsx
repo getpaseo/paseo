@@ -7,7 +7,7 @@ import { fr } from "@/i18n/resources/fr";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
+import { createEntityRefs, PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import {
   useAgents,
   useWorkspaces,
@@ -376,4 +376,45 @@ describe("sidebar data hooks through the app store and plugin provider", () => {
     expect(source.getSnapshot().projects).toHaveLength(2);
     expect(new Set(source.getSnapshot().workspaces.map((item) => item.ref.key)).size).toBe(4);
   });
+});
+
+it("observes terminals only while a terminal reader is subscribed", () => {
+  let active = 0;
+  const source = createPluginClientStateSource(undefined, {
+    hosts: { getSnapshot: () => [], subscribe: () => () => {} },
+    terminals: {
+      getSnapshot: () => [],
+      subscribe: () => {
+        active++;
+        return () => {
+          active--;
+        };
+      },
+    },
+  });
+  const releaseWorkspace = source.subscribe(() => {});
+  expect(active).toBe(0);
+  const releaseTerminal = source.subscribe(() => {}, { terminals: true });
+  const releaseSecond = source.subscribe(() => {}, { terminals: true });
+  expect(active).toBe(1);
+  releaseTerminal();
+  expect(active).toBe(1);
+  releaseSecond();
+  expect(active).toBe(0);
+  releaseWorkspace();
+});
+
+it("terminal row reads propagate only the referenced host's observation error", () => {
+  const error = new Error("Update the host");
+  const source = createPluginClientStateSource(undefined, {
+    hosts: { getSnapshot: () => [], subscribe: () => () => {} },
+    terminals: {
+      getSnapshot: () => [],
+      subscribe: () => () => {},
+      getErrors: () => new Map([["unsupported", error]]),
+    },
+  });
+  const refs = createEntityRefs();
+  expect(() => source.getTerminal(refs.terminal("unsupported", "retained"))).toThrow(error);
+  expect(source.getTerminal(refs.terminal("supported", "missing"))).toBeNull();
 });
