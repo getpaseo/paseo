@@ -1,4 +1,4 @@
-import type { Agent, SessionState, useSessionStore } from "@/stores/session-store";
+import type { Agent, SessionState } from "@/stores/session-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 
 const NO_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
@@ -26,7 +26,10 @@ export function getAgentTabsNeedingOpenLabel(input: {
   return [...agentIds];
 }
 
-type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
+/** The part of the session store the open-tab label selector reads. */
+export interface AgentMapsState {
+  sessions: Record<string, Pick<SessionState, "agents" | "agentDetails">>;
+}
 
 // Session-store selectors run on every store update, including stream ticks that leave the agent
 // maps untouched. Reuse the previous key until one of those maps changes, so the hook's
@@ -36,7 +39,7 @@ export function createAgentTabsNeedingOpenLabelKeySelector(input: {
   serverId: string;
   tabs: WorkspaceTab[];
   label: string;
-}): (state: SessionStoreSnapshot) => string {
+}): (state: AgentMapsState) => string {
   let previousAgents: SessionState["agents"] | undefined;
   let previousAgentDetails: SessionState["agentDetails"] | undefined;
   let previousKey: string | null = null;

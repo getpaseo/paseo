@@ -4,6 +4,7 @@ import type { WorkspaceTab } from "@/workspace-tabs/model";
 import {
   getAgentTabsNeedingOpenLabel,
   createAgentTabsNeedingOpenLabelKeySelector,
+  type AgentMapsState,
 } from "./open-tab-labels";
 
 const label = "paseo.open-agent-tab.client-1";
@@ -58,10 +59,8 @@ describe("getAgentTabsNeedingOpenLabel", () => {
 describe("createAgentTabsNeedingOpenLabelKeySelector", () => {
   const tabs = [tab("child", 1), tab("root", 2)];
 
-  type Snapshot = Parameters<ReturnType<typeof createAgentTabsNeedingOpenLabelKeySelector>>[0];
-
-  function snapshot(agents: Map<string, Agent>): Snapshot {
-    return { sessions: { s: { agents, agentDetails: new Map() } } } as unknown as Snapshot;
+  function snapshot(agents: Map<string, Agent>): AgentMapsState {
+    return { sessions: { s: { agents, agentDetails: new Map() } } };
   }
 
   function create() {
@@ -100,7 +99,7 @@ describe("createAgentTabsNeedingOpenLabelKeySelector", () => {
 
     expect(select(state)).toBe("child");
     const lookups = get.mock.calls.length;
-    expect(select({ ...state } as Snapshot)).toBe("child");
+    expect(select({ ...state })).toBe("child");
     expect(get.mock.calls.length).toBe(lookups);
   });
 });

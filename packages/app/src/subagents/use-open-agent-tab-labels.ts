@@ -15,7 +15,7 @@ function increment(value: number): number {
 }
 
 export function useOpenAgentTabLabels(input: {
-  client: DaemonClient | null;
+  client: Pick<DaemonClient, "updateAgent"> | null;
   serverId: string;
   tabs: WorkspaceTab[];
   enabled: boolean;
@@ -48,8 +48,10 @@ export function useOpenAgentTabLabels(input: {
     [],
   );
 
+  // Until the client id resolves, retry the lookup on the same changes that re-ran labelling
+  // before: the client, enabled flag, tabs, and either agent map. The map listeners don't render.
   useEffect(() => {
-    if (label) {
+    if (label || !input.client || !input.enabled) {
       return;
     }
     let cancelled = false;
@@ -67,17 +69,20 @@ export function useOpenAgentTabLabels(input: {
       }
     };
     void resolveLabel();
-    // A failed lookup is retried on the next agent map change. This listener doesn't render, so
-    // the screen still doesn't subscribe to the maps.
-    const unsubscribe = useSessionStore.subscribe(
+    const unsubscribeAgents = useSessionStore.subscribe(
       (state) => state.sessions[input.serverId]?.agents,
+      () => void resolveLabel(),
+    );
+    const unsubscribeAgentDetails = useSessionStore.subscribe(
+      (state) => state.sessions[input.serverId]?.agentDetails,
       () => void resolveLabel(),
     );
     return () => {
       cancelled = true;
-      unsubscribe();
+      unsubscribeAgents();
+      unsubscribeAgentDetails();
     };
-  }, [input.serverId, label]);
+  }, [input.client, input.enabled, input.serverId, input.tabs, label]);
 
   useEffect(() => {
     const client = input.client;
