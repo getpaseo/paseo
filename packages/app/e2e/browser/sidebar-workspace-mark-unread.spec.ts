@@ -1,6 +1,5 @@
 import type { Page } from "@playwright/test";
 import { test as base, expect } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
 import {
   openAgentRoute,
   seedMockAgentWorkspace,
@@ -101,11 +100,13 @@ async function leaveMarkedWorkspaceAndReopen(page: Page, { subject, other }: Fin
 }
 
 async function completeTurnAndLeave(page: Page, { subject, other }: FinishedWorkspaces) {
-  await test.step("ordinary completion still clears on departure", async () => {
+  await test.step("ordinary completion stays unread on departure and clears on return", async () => {
     await subject.client.sendAgentMessage(subject.agentId, "Finish another turn.");
     await subject.client.waitForFinish(subject.agentId, 20_000);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, other.workspaceId);
+    await expectStatus(page, subject.workspaceId, "attention");
+    await openWorkspace(page, subject.workspaceId);
     await expectStatus(page, subject.workspaceId, "done");
   });
 }
@@ -141,13 +142,15 @@ async function leaveMarkedWorkspaceAndReopenOnCompact(
 }
 
 async function completeTurnAndLeaveOnCompact(page: Page, { subject, other }: FinishedWorkspaces) {
-  await test.step("ordinary completion still clears on departure", async () => {
+  await test.step("ordinary completion stays unread on departure and clears on return", async () => {
     await closeMobileAgentSidebar(page);
     await subject.client.sendAgentMessage(subject.agentId, "Finish another turn.");
     await subject.client.waitForFinish(subject.agentId, 20_000);
     await openMobileAgentSidebar(page);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, other.workspaceId);
+    await expectStatus(page, subject.workspaceId, "attention");
+    await openWorkspaceOnCompact(page, subject.workspaceId);
     await expectStatus(page, subject.workspaceId, "done");
   });
 }
@@ -194,11 +197,12 @@ async function markUnreadThenResumeChat(page: Page, workspaceId: string) {
   });
 }
 
-test("manual unread survives departure and clears on reopening without changing normal completions", async ({
+test("manual unread survives departure and clears on reopening and ordinary completion survives departure", async ({
   page,
   workspaces,
 }) => {
-  await gotoAppShell(page);
+  await openAgentRoute(page, workspaces.subject);
+  await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   await openWorkspace(page, workspaces.other.workspaceId);
   await markBackgroundWorkspaceAndReopen(page, workspaces.subject.workspaceId);
   await leaveMarkedWorkspaceAndRead(page, workspaces);
@@ -207,16 +211,19 @@ test("manual unread survives departure and clears on reopening without changing 
   await markBackgroundWorkspaceAndRead(page, workspaces.subject.workspaceId);
 });
 
-test("clicking a multi-agent workspace reveals and clears its marked agent", async ({
+test("clicking a multi-agent workspace preserves its selected agent and leaves the other unread", async ({
   page,
   workspaces,
 }) => {
   await openAgentRoute(page, workspaces.subject);
+  await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   await expectSelectedAgent(page, workspaces.subject.agentId);
   await openWorkspace(page, workspaces.other.workspaceId);
-  const newest = await addFinishedAgent(workspaces.subject);
-  await markBackgroundWorkspaceAndReopen(page, workspaces.subject.workspaceId);
-  await expectSelectedAgent(page, newest.id);
+  await addFinishedAgent(workspaces.subject);
+  await markAsUnread(page, workspaces.subject.workspaceId);
+  await openWorkspace(page, workspaces.subject.workspaceId);
+  await expectSelectedAgent(page, workspaces.subject.agentId);
+  await expectStatus(page, workspaces.subject.workspaceId, "attention");
 });
 
 test("manual unread survives leaving the current workspace on compact layout", async ({
@@ -270,4 +277,20 @@ test("reopening a marked unread workspace restores only its agent tab and curren
   await test.step("restore the main tab without Explorer entries and load its latest history", async () => {
     await expectRestoredCompactChat(page);
   });
+});
+
+test("clicking the already focused timeline acknowledges a new completion", async ({
+  page,
+  workspaces,
+}) => {
+  await openAgentRoute(page, workspaces.subject);
+  await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
+  await workspaces.subject.client.sendAgentMessage(
+    workspaces.subject.agentId,
+    "Finish another turn.",
+  );
+  await workspaces.subject.client.waitForFinish(workspaces.subject.agentId, 20_000);
+  await expectStatus(page, workspaces.subject.workspaceId, "attention");
+  await page.getByText("Finish another turn.", { exact: true }).click();
+  await expectStatus(page, workspaces.subject.workspaceId, "done");
 });
