@@ -372,8 +372,26 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export interface AgentTimelineImage {
+  data: string;
+  mimeType: string;
+}
+
+export interface AgentTimelineImageReference {
+  id: string;
+  mimeType: string;
+  size: number;
+}
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: AgentTimelineImage[];
+      imageRefs?: AgentTimelineImageReference[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

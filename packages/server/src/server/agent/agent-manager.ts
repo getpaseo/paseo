@@ -77,6 +77,7 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
+import type { TimelineImageStore } from "./timeline-images.js";
 import {
   AgentRunState,
   type ForegroundTurnWaiter,
@@ -118,6 +119,14 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
+type SubmittedTimelineItem = Extract<AgentTimelineItem, { type: "user_message" }>;
+
+function submittedPromptImages(prompt: AgentPromptInput) {
+  if (typeof prompt === "string") return [];
+  return prompt.flatMap((block) =>
+    block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+  );
+}
 
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
@@ -282,6 +291,11 @@ export interface SubscribeOptions {
   includeInternal?: boolean;
 }
 
+interface RecordHistoryTimelineEventInput {
+  agentId: string;
+  event: Extract<AgentStreamEvent, { type: "timeline" }>;
+}
+
 interface HydrateTimelineOptions {
   force?: boolean;
   broadcast?: boolean | (() => boolean);
@@ -364,6 +378,7 @@ export interface AgentManagerOptions {
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   timelineStore?: InMemoryAgentTimelineStore;
   durableTimelineStore?: AgentTimelineStore;
+  timelineImages?: TimelineImageStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
@@ -720,7 +735,7 @@ function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): A
       rows.push({
         seq: rows.length + 1,
         timestamp: entry.timestamp ?? new Date().toISOString(),
-        item: limitAgentTimelineItemContent(item),
+        item,
       });
     }
   }
@@ -812,6 +827,7 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
+  private readonly timelineImages?: TimelineImageStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
@@ -850,6 +866,7 @@ export class AgentManager {
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
+    this.timelineImages = options.timelineImages;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
@@ -882,6 +899,48 @@ export class AgentManager {
   private configurePaseoTools(options: AgentManagerOptions): void {
     this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
     this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
+  }
+
+  private async persistTimelineImages(
+    agentId: string,
+    item: AgentTimelineItem,
+  ): Promise<AgentTimelineItem> {
+    if (item.type !== "user_message" || !item.images?.length) return item;
+    if (!this.timelineImages) throw new Error("Timeline image storage is unavailable");
+    const imageRefs = await Promise.all(
+      item.images.map((image) =>
+        this.timelineImages!.put(agentId, {
+          bytes: Buffer.from(image.data, "base64"),
+          mimeType: image.mimeType,
+        }),
+      ),
+    );
+    const { images: _, ...message } = item;
+    return { ...message, imageRefs: [...(message.imageRefs ?? []), ...imageRefs] };
+  }
+
+  private async prepareTimelineEvent(
+    agentId: string,
+    event: AgentStreamEvent,
+  ): Promise<AgentStreamEvent> {
+    if (event.type !== "timeline") return event;
+    return { ...event, item: await this.persistTimelineImages(agentId, event.item) };
+  }
+
+  private async prepareSubmittedPrompt(
+    agentId: string,
+    prompt: AgentPromptInput,
+    clientMessageId: string,
+  ): Promise<SubmittedTimelineItem> {
+    const images = submittedPromptImages(prompt);
+    const item = await this.persistTimelineImages(agentId, {
+      type: "user_message",
+      text: submittedPromptText(prompt),
+      ...(images.length ? { images } : {}),
+      clientMessageId,
+    });
+    if (item.type !== "user_message") throw new Error("Expected a submitted user message");
+    return item;
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
@@ -1677,6 +1736,11 @@ export class AgentManager {
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
+      for (const row of timelineRows) {
+        row.item = limitAgentTimelineItemContent(
+          await this.persistTimelineImages(resolvedAgentId, row.item),
+        );
+      }
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
@@ -2743,7 +2807,8 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
+      const item = await this.prepareSubmittedPrompt(agentId, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, item, "accepted");
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2781,7 +2846,7 @@ export class AgentManager {
     item: AgentTimelineItem,
   ): Promise<{ seq: number; epoch: string }> {
     const agent = this.requireAgent(agentId);
-    item = limitAgentTimelineItemContent(item);
+    item = limitAgentTimelineItemContent(await this.persistTimelineImages(agentId, item));
     this.touchUpdatedAt(agent);
     const row = this.recordTimeline(agentId, item);
     this.dispatchStream(
@@ -2803,6 +2868,7 @@ export class AgentManager {
 
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
+    item = await this.persistTimelineImages(agentId, item);
     this.touchUpdatedAt(agent);
     this.dispatchStream(agentId, {
       type: "timeline",
@@ -2817,14 +2883,21 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
-  }): Promise<string> {
+  }): Promise<{ turnId: string; submitted: SubmittedTimelineItem | undefined }> {
     const { agent, agentId, pendingRun, prompt, options } = params;
+    let submitted: SubmittedTimelineItem | undefined;
     try {
+      if (options?.clientMessageId) {
+        submitted = await this.prepareSubmittedPrompt(agentId, prompt, options.clientMessageId);
+      }
+      if (pendingRun.settled) {
+        throw new Error(`Agent ${agentId} run was canceled before its turn started`);
+      }
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
-      return result.turnId;
+      return { turnId: result.turnId, submitted };
     } catch (error) {
       if (pendingRun.settled) {
         throw error;
@@ -2841,8 +2914,8 @@ export class AgentManager {
       this.runs.settleForegroundStart(pendingRun, { status: "failed", error: errorMsg });
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
-        if (options?.clientMessageId) {
-          this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
+        if (options?.clientMessageId && submitted) {
+          this.recordSubmittedPrompt(agent, submitted, "rejected", {
             messageId: options.clientMessageId,
           });
         }
@@ -2950,13 +3023,14 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
-      turnId = await this.startPendingForegroundTurn({
+      const started = await this.startPendingForegroundTurn({
         agent,
         agentId,
         pendingRun,
         prompt,
         options,
       });
+      turnId = started.turnId;
 
       if (isReplacement) {
         agent.pendingReplacement = false;
@@ -2984,8 +3058,8 @@ export class AgentManager {
               event.item.clientMessageId === options.clientMessageId,
           )
         : undefined;
-      if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
+      if (options?.clientMessageId && started.submitted) {
+        this.recordSubmittedPrompt(agent, started.submitted, "accepted", {
           messageId: options.clientMessageId,
           turnId,
           providerMessageId:
@@ -3150,6 +3224,9 @@ export class AgentManager {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      const submitted = options?.clientMessageId
+        ? await this.prepareSubmittedPrompt(agentId, prompt, options.clientMessageId)
+        : undefined;
       const admission = await agent.session.steerActiveTurn!(prompt, {
         ...options,
         expectedTurnId,
@@ -3157,7 +3234,7 @@ export class AgentManager {
       if (admission.status === "accepted") {
         await this.recordAcceptedSteer(
           agent,
-          prompt,
+          submitted,
           options?.clientMessageId,
           expectedTurnId,
           admission.providerMessageId,
@@ -3189,6 +3266,9 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          const submitted = options?.clientMessageId
+            ? await this.prepareSubmittedPrompt(agentId, prompt, options.clientMessageId)
+            : undefined;
           const admission = await agent.session.steerActiveTurn!(prompt, {
             ...options,
             expectedTurnId,
@@ -3196,7 +3276,7 @@ export class AgentManager {
           if (admission.status === "accepted") {
             await this.recordAcceptedSteer(
               agent,
-              prompt,
+              submitted,
               options?.clientMessageId,
               expectedTurnId,
               admission.providerMessageId,
@@ -3302,15 +3382,15 @@ export class AgentManager {
 
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
-    prompt: AgentPromptInput,
+    submitted: SubmittedTimelineItem | undefined,
     clientMessageId: string | undefined,
     expectedTurnId: string,
     providerMessageId: string | undefined,
   ): Promise<void> {
-    if (!clientMessageId) {
+    if (!clientMessageId || !submitted) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
+    this.recordSubmittedPrompt(agent, submitted, "accepted", {
       messageId: clientMessageId,
       turnId: expectedTurnId,
       ...(providerMessageId ? { providerMessageId } : {}),
@@ -3975,7 +4055,9 @@ export class AgentManager {
       const startupHistory: AgentStreamEvent[] = [];
       if (session.initialTimeline?.length && !managed.historyPrimed) {
         for await (const event of session.streamHistory()) {
-          startupHistory.push(limitAgentStreamEventContent(event));
+          startupHistory.push(
+            limitAgentStreamEventContent(await this.prepareTimelineEvent(resolvedAgentId, event)),
+          );
         }
       }
 
@@ -3990,7 +4072,11 @@ export class AgentManager {
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
           for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
-            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
+            this.recordTimeline(
+              managed.id,
+              await this.persistTimelineImages(managed.id, entry.item),
+              { timestamp: entry.timestamp },
+            );
           }
         }
         this.refreshSessionPersistence(managed);
@@ -4509,6 +4595,23 @@ export class AgentManager {
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
+  private recordHistoryTimelineEvent({
+    agentId,
+    event,
+  }: RecordHistoryTimelineEventInput): AgentTimelineRow {
+    const item = event.item;
+    const providerMessageId =
+      item.type === "user_message" && item.clientMessageId ? item.messageId : undefined;
+    if (item.type === "user_message" && item.clientMessageId) {
+      // Replay carries native identity; the manager owns the submitted wire identity.
+      event.item = { ...item, messageId: item.clientMessageId };
+    }
+    return this.recordTimeline(agentId, event.item, {
+      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+      ...(providerMessageId ? { providerMessageId } : {}),
+    });
+  }
+
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
@@ -4517,7 +4620,9 @@ export class AgentManager {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
+      const event = limitAgentStreamEventContent(
+        await this.prepareTimelineEvent(agent.id, rawEvent),
+      );
       if (event.type === "timeline") {
         for (const item of projectAgentMessages(event.item)) {
           historyEvents.push({ ...event, item });
@@ -4545,11 +4650,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -4578,7 +4679,9 @@ export class AgentManager {
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
       for await (const rawEvent of history) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const event = limitAgentStreamEventContent(
+          await this.prepareTimelineEvent(agent.id, rawEvent),
+        );
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
           continue;
@@ -4614,11 +4717,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (deferredBroadcast) {
         timelineEvents.push({ event, row });
       } else if (broadcast) {
@@ -4675,7 +4774,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    event = limitAgentStreamEventContent(event);
+    event = limitAgentStreamEventContent(await this.prepareTimelineEvent(agent.id, event));
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
     const eventTurnId = identified.turnId;
@@ -5188,15 +5287,12 @@ export class AgentManager {
 
   private recordSubmittedPrompt(
     agent: ActiveManagedAgent,
-    prompt: AgentPromptInput,
-    clientMessageId: string,
+    submitted: SubmittedTimelineItem,
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
     const items = projectAgentMessages({
-      type: "user_message",
-      text: submittedPromptText(prompt),
-      clientMessageId,
+      ...submitted,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
     for (const item of items) {
@@ -5249,6 +5345,10 @@ export class AgentManager {
         messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      // A confirmed echo can add native identity and original attachment data to the handle.
+      // Persist it now even if this turn has not completed yet.
+      this.refreshSessionPersistence(agent);
+      this.enqueueBackgroundPersist(agent);
     }
     return existing;
   }

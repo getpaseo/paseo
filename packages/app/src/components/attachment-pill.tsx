@@ -134,10 +134,15 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
 /** Square image preview pill body. */
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
   const uri = useAttachmentPreviewUrl(metadata);
-  const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
   if (!uri) {
     return <View style={styles.thumbnailPlaceholder} />;
   }
+  return <AttachmentUriThumbnail uri={uri} />;
+}
+
+/** A timeline image already carries portable bytes and needs no local store lookup. */
+export function AttachmentUriThumbnail({ uri }: { uri: string }) {
+  const source = useMemo(() => ({ uri }), [uri]);
   return <Image source={source} style={styles.thumbnail} />;
 }
 

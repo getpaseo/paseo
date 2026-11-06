@@ -3,7 +3,11 @@ import { setImmediate } from "node:timers/promises";
 import { basename, extname, join } from "node:path";
 import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
+import {
+  OmpHistoryMapper,
+  type OmpCapturedUserMessageEntry,
+  type OmpSubmittedUserMessage,
+} from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
@@ -73,6 +77,7 @@ export async function* streamOmpHistory(input: {
   provider: AgentProvider;
   bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
+  submittedUserMessages?: ReadonlyMap<string, OmpSubmittedUserMessage>;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
     return;
@@ -117,6 +122,7 @@ export async function* streamOmpHistory(input: {
     userEntries,
     OMP_HISTORY_MAPPER_HOOKS,
     input.bridgedTools,
+    input.submittedUserMessages,
   );
   let replayed = 0;
   for (const replayEntry of replayEntries) {

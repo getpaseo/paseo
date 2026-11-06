@@ -20,6 +20,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { TimelineImageStore } from "./timeline-images.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
@@ -12711,6 +12712,155 @@ test.each([false, true])(
     }
   },
 );
+
+test.each(["", "Describe this image"])(
+  "cross-client submitted images survive canonical acceptance with text %j",
+  async (text) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-images-"));
+    const imageStore = new TimelineImageStore(workdir);
+    const imageBytes = Buffer.alloc(300 * 1024, 0xa5);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      timelineImages: imageStore,
+      logger,
+    });
+    let agentId: string | null = null;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      await drainAsyncGenerator(
+        manager.streamAgent(
+          agent.id,
+          [
+            { type: "text", text },
+            { type: "image", data: imageBytes.toString("base64"), mimeType: "image/png" },
+          ],
+          { clientMessageId: "client-image" },
+        ),
+      );
+      const messages = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+      expect(messages).toEqual([
+        {
+          type: "user_message",
+          text,
+          clientMessageId: "client-image",
+          messageId: "client-image",
+          imageRefs: [{ id: expect.any(String), size: imageBytes.length, mimeType: "image/png" }],
+        },
+      ]);
+      const message = messages[0];
+      if (message.type !== "user_message" || !message.imageRefs)
+        throw new Error("missing image reference");
+      expect(await imageStore.read(agent.id, message.imageRefs[0].id)).toEqual(imageBytes);
+      expect(
+        manager
+          .fetchTimeline(agent.id, { limit: 0 })
+          .rows.filter((row) => row.item.type === "user_message")
+          .map((row) => row.item),
+      ).toEqual(messages);
+    } finally {
+      if (agentId) await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([false, true])(
+  "history ingestion canonicalizes explicit client identity with force=%s",
+  async (force) => {
+    class IdentifiedHistory extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "same",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+            messageId: "native-1",
+            clientMessageId: "client-1",
+          },
+        };
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "same",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+            messageId: "native-external",
+          },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession() {
+        return new IdentifiedHistory({ provider: "codex", cwd: tmpdir() });
+      }
+    })();
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-images-"));
+    const manager = new AgentManager({
+      clients: { codex: client },
+      timelineImages: new TimelineImageStore(workdir),
+      logger,
+    });
+    const agent = await manager.resumeAgentFromPersistence({
+      provider: "codex",
+      sessionId: "identified",
+    });
+    try {
+      await manager.hydrateTimelineFromProvider(agent.id, { force });
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toMatchObject([
+        {
+          providerMessageId: "native-1",
+          item: {
+            type: "user_message",
+            messageId: "client-1",
+            clientMessageId: "client-1",
+            imageRefs: [{ id: expect.any(String), mimeType: "image/png", size: 1 }],
+          },
+        },
+        {
+          item: {
+            type: "user_message",
+            messageId: "native-external",
+            imageRefs: [{ id: expect.any(String), mimeType: "image/png", size: 1 }],
+          },
+        },
+      ]);
+      expect(manager.getTimeline(agent.id)).toHaveLength(2);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("image storage failure rejects the prompt before the provider starts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-image-failure-"));
+  const client = new SessionRecordingAgentClient();
+  const store = new TimelineImageStore(workdir);
+  vi.spyOn(store, "put").mockRejectedValue(new Error("image storage failed"));
+  const manager = new AgentManager({ clients: { codex: client }, timelineImages: store, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+  const startTurn = vi.spyOn(client.sessions[0], "startTurn");
+  try {
+    await expect(
+      drainAsyncGenerator(
+        manager.streamAgent(agent.id, [{ type: "image", data: "AA==", mimeType: "image/png" }], {
+          clientMessageId: "failed-image",
+        }),
+      ),
+    ).rejects.toThrow("image storage failed");
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(manager.getTimeline(agent.id).some((item) => item.type === "user_message")).toBe(false);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test.each([
   {

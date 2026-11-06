@@ -1015,6 +1015,7 @@ interface PendingBinaryFileRead {
   cwd: string;
   path: string;
   maxBytes?: number;
+  timelineImage?: boolean;
 }
 
 interface BinaryFileTransferState extends PendingBinaryFileRead {
@@ -3274,6 +3275,21 @@ export class DaemonClient {
       return this.lastServerInfoMessage?.features?.[feature] === true;
     },
     requestId: () => this.createRequestId(),
+    prepare: (kind, input) => {
+      const agent = kind === "agent" ? input : (input.agent as Record<string, unknown> | undefined);
+      if (!agent) return null;
+      const images = agent.images as CreateAgentRequestOptions["images"];
+      if (!images?.length) return null;
+      return this.uploadPromptImages(images).then((imageUploads) => {
+        const prepared = {
+          ...agent,
+          clientMessageId: agent.clientMessageId ?? crypto.randomUUID(),
+          images: undefined,
+          imageUploads,
+        };
+        return kind === "agent" ? prepared : { ...input, agent: prepared };
+      });
+    },
     request: (kind, input) =>
       kind === "workspace"
         ? this.sendCorrelatedSessionRequest({
@@ -3339,6 +3355,7 @@ export class DaemonClient {
       );
     }
     if (options.background !== undefined) this.requireBackgroundCreation(options);
+    if (options.images?.length) this.requireTimelineImages();
     const result = await this.creations.createAgent({
       ...options,
       config: resolveAgentConfig(options),
@@ -4037,6 +4054,9 @@ export class DaemonClient {
     ) {
       throw new Error("Update the Paseo host to send messages with a qualified agent address.");
     }
+    const imageUploads = options.images?.length
+      ? await this.uploadPromptImages(options.images)
+      : undefined;
     const requestId = this.createRequestId();
     const messageId = options.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
@@ -4049,7 +4069,7 @@ export class DaemonClient {
       sessionMode: options.sessionMode,
       ...(messageId ? { messageId } : {}),
       activeTurnBehavior: options.activeTurnBehavior,
-      images: options.images,
+      imageUploads,
       attachments: options.attachments,
     });
     const payload = await this.sendRequest({
@@ -5165,6 +5185,7 @@ export class DaemonClient {
     if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    if (input.agent?.images?.length) this.requireTimelineImages();
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
@@ -5384,6 +5405,53 @@ export class DaemonClient {
       this.pendingBinaryFileReads.delete(resolvedRequestId);
       this.activeBinaryFileTransfers.delete(resolvedRequestId);
     }
+  }
+
+  async readTimelineImage(agentId: string, imageId: string): Promise<Uint8Array> {
+    const requestId = this.createRequestId();
+    this.pendingBinaryFileReads.set(requestId, { cwd: "", path: imageId, timelineImage: true });
+    try {
+      const payload =
+        await this.sendNamespacedCorrelatedSessionRequest<"agent.timeline.image.read.response">({
+          requestId,
+          message: { type: "agent.timeline.image.read.request", agentId, imageId },
+          timeout: 0,
+        });
+      if (payload.error) throw new Error(payload.error);
+      const result = this.completedBinaryFileReads.get(requestId);
+      if (!result) throw new Error("Timeline image transfer was incomplete");
+      return result.bytes;
+    } finally {
+      this.pendingBinaryFileReads.delete(requestId);
+      this.activeBinaryFileTransfers.delete(requestId);
+      this.completedBinaryFileReads.delete(requestId);
+    }
+  }
+
+  private requireTimelineImages(): void {
+    if (this.lastServerInfoMessage?.features?.timelineImages !== true) {
+      throw new Error("Update the host to send images.");
+    }
+  }
+
+  private async uploadPromptImages(images: Array<{ data: string; mimeType: string }>) {
+    this.requireTimelineImages();
+    const uploads = [];
+    for (const image of images) {
+      const result = await this.uploadFile({
+        fileName: "image",
+        mimeType: image.mimeType,
+        bytes: decodeBase64ToBytes(image.data),
+      });
+      if (!result.file) throw new Error(result.error ?? "Image upload failed");
+      uploads.push({
+        id: result.file.id,
+        fileName: result.file.fileName,
+        mimeType: result.file.mimeType,
+        size: result.file.size,
+      });
+    }
+    return uploads;
   }
 
   observeFile(input: {
@@ -7319,6 +7387,7 @@ export class DaemonClient {
       modifiedAt: transfer.modifiedAt,
       revision: transfer.revision,
     });
+    if (transfer.timelineImage) return;
     this.handleSessionMessage({
       type: "file_explorer_response",
       payload: {

@@ -57,6 +57,244 @@ describe("daemon E2E - timeline window", () => {
     await ctx.cleanup();
   }, 60_000);
 
+  test.each([
+    {
+      direction: "tail" as const,
+      limit: 0,
+      cursorSeq: 8,
+      expectedStart: 5,
+      nextDirection: "before" as const,
+      nextCursor: 5,
+      nextStart: 1,
+    },
+    {
+      direction: "before" as const,
+      limit: 0,
+      cursorSeq: 9,
+      expectedStart: 5,
+      nextDirection: "before" as const,
+      nextCursor: 5,
+      nextStart: 1,
+    },
+    {
+      direction: "after" as const,
+      limit: 0,
+      cursorSeq: 0,
+      expectedStart: 1,
+      nextDirection: "after" as const,
+      nextCursor: 4,
+      nextStart: 5,
+    },
+    {
+      direction: "after" as const,
+      limit: undefined,
+      cursorSeq: 0,
+      expectedStart: 1,
+      nextDirection: "after" as const,
+      nextCursor: 4,
+      nextStart: 5,
+    },
+  ])(
+    "bounds image history by bytes for $direction with limit $limit and preserves continuation",
+    async ({
+      direction,
+      limit,
+      cursorSeq,
+      expectedStart,
+      nextDirection,
+      nextCursor,
+      nextStart,
+    }) => {
+      const cwd = tmpCwd();
+      const image = { data: "A".repeat(3 * 1024 * 1024), mimeType: "image/png" };
+      try {
+        const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+        for (let index = 1; index <= 8; index += 1) {
+          await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+            type: "user_message",
+            text: `image ${index}`,
+            images: [image],
+          });
+        }
+        const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, { limit: 1 }).epoch;
+        const page = await ctx.client.fetchAgentTimeline(agent.id, {
+          direction,
+          cursor: { epoch, seq: cursorSeq },
+          limit,
+        });
+        expect(page.entries).toHaveLength(4);
+        expect(page.entries.map((entry) => entry.item)).toEqual(
+          Array.from({ length: 4 }, (_, index) => ({
+            type: "user_message",
+            text: `image ${expectedStart + index}`,
+            images: [image],
+          })),
+        );
+        expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(16 * 1024 * 1024);
+        expect(page.startCursor).toEqual({ epoch, seq: expectedStart });
+        expect(page.endCursor).toEqual({ epoch, seq: expectedStart + 3 });
+        const next = await ctx.client.fetchAgentTimeline(agent.id, {
+          direction: nextDirection,
+          cursor: { epoch, seq: nextCursor },
+          limit,
+        });
+        expect(next.entries).toHaveLength(4);
+        expect(next.entries.map((entry) => entry.item)).toEqual(
+          Array.from({ length: 4 }, (_, index) => ({
+            type: "user_message",
+            text: `image ${nextStart + index}`,
+            images: [image],
+          })),
+        );
+        expect((await ctx.client.fetchAgent(agent.id))?.agent.id).toBe(agent.id);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("uses retained pager defaults for image history when after limit is omitted", async () => {
+    const cwd = tmpCwd();
+    const image = { data: "AA==", mimeType: "image/png" };
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+      for (let index = 1; index <= 300; index += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `image ${index}`,
+          images: [image],
+        });
+      }
+      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, { limit: 1 }).epoch;
+      const first = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch, seq: 0 },
+      });
+      expect(first.entries).toHaveLength(200);
+      expect(first.entries.map((entry) => entry.item)).toEqual(
+        Array.from({ length: 200 }, (_, index) => ({
+          type: "user_message",
+          text: `image ${index + 1}`,
+          images: [image],
+        })),
+      );
+      const cursor = { epoch, seq: 200 };
+      expect(first.startCursor).toEqual({ epoch, seq: 1 });
+      expect(first.endCursor).toEqual(cursor);
+      expect(first.hasNewer).toBe(true);
+      const next = await ctx.client.fetchAgentTimeline(agent.id, { direction: "after", cursor });
+      expect(next.entries.map((entry) => entry.item)).toEqual(
+        Array.from({ length: 100 }, (_, index) => ({
+          type: "user_message",
+          text: `image ${index + 201}`,
+          images: [image],
+        })),
+      );
+      expect(next.startCursor).toEqual({ epoch, seq: 201 });
+      expect(next.endCursor).toEqual({ epoch, seq: 300 });
+      expect(next.hasNewer).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["tail", "before"] as const)(
+    "keeps image prompts with their complete response for whole-turn %s pages",
+    async (direction) => {
+      const cwd = tmpCwd();
+      try {
+        const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+        const image = { data: "AA==", mimeType: "image/png" };
+        const items = [
+          { type: "user_message" as const, text: "older prompt" },
+          { type: "assistant_message" as const, text: "older response" },
+          { type: "user_message" as const, text: "image prompt", images: [image] },
+          { type: "assistant_message" as const, text: "image response" },
+        ];
+        for (const item of items)
+          await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, item);
+        const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, { limit: 1 }).epoch;
+        const page = await ctx.client.fetchAgentTimeline(agent.id, {
+          direction,
+          limit: 1,
+          wholeTurns: true,
+          ...(direction === "before" ? { cursor: { epoch, seq: 4 } } : {}),
+        });
+        expect(page.entries.map((entry) => entry.item)).toEqual(items.slice(2));
+        expect(page.startCursor).toEqual({ epoch, seq: 3 });
+        expect(page.endCursor).toEqual({ epoch, seq: 4 });
+        expect(page.hasOlder).toBe(true);
+        expect(page.hasNewer).toBe(false);
+        expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(16 * 1024 * 1024);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("rejects an oversized timeline item without disconnecting", async () => {
+    const cwd = tmpCwd();
+    const statuses: string[] = [];
+    const unsubscribe = ctx.client.subscribeConnectionStatus((state) =>
+      statuses.push(state.status),
+    );
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "oversized image",
+        images: [{ data: "A".repeat(17 * 1024 * 1024), mimeType: "image/png" }],
+      });
+      await expect(ctx.client.fetchAgentTimeline(agent.id)).rejects.toThrow(
+        "exceeds the 16 MiB history page limit",
+      );
+      expect((await ctx.client.fetchAgent(agent.id))?.agent.id).toBe(agent.id);
+      expect(statuses).toEqual(["connected"]);
+    } finally {
+      unsubscribe();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not split an oversized timeline group across lifecycle coverage", async () => {
+    const cwd = tmpCwd();
+    const image = { data: "A".repeat(9 * 1024 * 1024), mimeType: "image/png" };
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+      const tool = {
+        type: "tool_call" as const,
+        callId: "interleaved",
+        name: "shell",
+        error: null,
+        detail: { type: "unknown" as const, input: null, output: null },
+      };
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        ...tool,
+        status: "running",
+      });
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "first image",
+        images: [image],
+      });
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "second image",
+        images: [image],
+      });
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        ...tool,
+        status: "completed",
+      });
+      await expect(ctx.client.fetchAgentTimeline(agent.id, { limit: 1 })).rejects.toThrow(
+        "inseparable history group",
+      );
+      expect((await ctx.client.fetchAgent(agent.id))?.agent.id).toBe(agent.id);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("canonical tail limit returns one finalized committed assistant row at the window boundary", async () => {
     const cwd = tmpCwd();
     try {
