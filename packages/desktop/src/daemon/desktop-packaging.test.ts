@@ -79,6 +79,17 @@ describe("desktop packaging", () => {
     expect(config).toContain('minimumSystemVersion: "13.0.0"');
   });
 
+  it("declares the Apple Events entitlement and usage text so agents can automate Mac apps", () => {
+    const entitlements = readFileSync(join(packageRoot, "build", "entitlements.mac.plist"), "utf8");
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+    const macSection = config.match(/^mac:\n(?:[ \t].*\n|\n)*/m)?.[0] ?? "";
+
+    expect(entitlements).toMatch(
+      /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/,
+    );
+    expect(macSection).toMatch(/^  extendInfo:\n    NSAppleEventsUsageDescription: .+$/m);
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
