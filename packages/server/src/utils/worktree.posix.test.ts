@@ -881,6 +881,41 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(portValue).toBeGreaterThan(0);
     });
 
+    it("runs setup commands as a plugin prepares them and stops at a refused one", async () => {
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: { setup: ['echo "$HOOK_MARK" > first.log', "echo second > second.log"] },
+        }),
+      );
+      const seen: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        prepareCommand: async ({ command, env }) => {
+          seen.push(`${command} ${env.PASEO_BRANCH_NAME}`);
+          if (command.startsWith("echo second")) throw new Error("not in this workspace");
+          return { command, env: { ...env, HOOK_MARK: "prepared" } };
+        },
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        message: "Worktree setup command refused: echo second > second.log\nnot in this workspace",
+        results: [expect.objectContaining({ exitCode: 0 })],
+      });
+      expect(seen).toEqual(['echo "$HOOK_MARK" > first.log main', "echo second > second.log main"]);
+      expect(readFileSync(join(repoDir, "first.log"), "utf8").trim()).toBe("prepared");
+      expect(existsSync(join(repoDir, "second.log"))).toBe(false);
+    });
+
     it("runs string setup scripts from paseo.json as a single shell command", async () => {
       const paseoConfig = {
         worktree: {

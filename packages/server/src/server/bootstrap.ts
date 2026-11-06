@@ -183,6 +183,7 @@ import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { startWorkerTerminalManager } from "../terminal/worker-terminal-manager.js";
+import { withTerminalCreateHook } from "../terminal/terminal-create-hook.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
@@ -720,12 +721,15 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
-  const terminalManager = await startWorkerTerminalManager({
-    paseoHome: config.paseoHome,
-    paseoVersion: daemonVersion,
-    logger,
-    getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
-  });
+  const terminalManager = withTerminalCreateHook(
+    await startWorkerTerminalManager({
+      paseoHome: config.paseoHome,
+      paseoVersion: daemonVersion,
+      logger,
+      getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    }),
+    pluginRuntime,
+  );
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
   const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
@@ -1204,6 +1208,7 @@ export async function createPaseoDaemon(
   });
 
   setupAutoArchiveOnMerge({
+    lifecycle: pluginRuntime,
     paseoHome: config.paseoHome,
     paseoWorktreesBaseRoot: config.worktreesRoot,
     daemonConfigStore,
@@ -1229,6 +1234,7 @@ export async function createPaseoDaemon(
   ) => {
     return createPaseoWorktreeWorkflow(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         worktreesRoot: config.worktreesRoot,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
@@ -1292,6 +1298,7 @@ export async function createPaseoDaemon(
   const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
     archiveByScope(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
         github,
@@ -1315,6 +1322,7 @@ export async function createPaseoDaemon(
       { scope: { kind: "workspace", workspaceId }, requestId },
     );
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
+    lifecycle: pluginRuntime,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     agentManager,
@@ -1413,6 +1421,7 @@ export async function createPaseoDaemon(
   const archiveScheduleWorkspaceExternal = async (workspaceId: string) => {
     await archiveByScope(
       {
+        lifecycle: pluginRuntime,
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
         github,
@@ -1545,6 +1554,7 @@ export async function createPaseoDaemon(
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+    lifecycle: pluginRuntime,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
     projectRegistry,

@@ -1401,6 +1401,7 @@ export class AgentManager {
       const request = await this.pluginLifecycle.before("agent.create.before", {
         config,
         env: options.env,
+        workspaceId: options.workspaceId ?? null,
       });
       config = { ...request.config, internal: config.internal };
       options = { ...options, env: request.env };

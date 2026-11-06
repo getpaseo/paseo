@@ -24,7 +24,7 @@ export default function contribute(server: PluginServerContext) {
 
 ## Naming and timing
 
-Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `worktree` covers only git worktrees.
+Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `worktree` covers only git worktrees. `terminal` covers every terminal Paseo starts in a workspace; `command` covers worktree setup and teardown commands.
 
 - Waiting hooks finish before Paseo continues. Throwing, returning invalid data, or exceeding 30 seconds fails the operation with `Plugin <id> <hook> failed: …`. Request-changing hooks receive `{ request }` and may return a complete replacement request or `undefined`.
 - Notifications receive the event object and return `Promise<void>`. Paseo does not wait; errors are logged against the plugin and the operation continues. `agent.turn.before` and `agent.permission.before` are notifications fired when a turn starts or a permission becomes pending.
@@ -49,22 +49,24 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                | Handler may change                             |
-| ------------------------- | ----- | -------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                          | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                        |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                        |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                          | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
-| `agent.create.after`      | no    | `{ agent }`                            |                                                |
-| `agent.open.before`       | yes   | `{ request }`                          | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                            |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                    |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }` |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                   |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`     |                                                |
+| Hook                      | Waits | Payload                                      | Handler may change                             |
+| ------------------------- | ----- | -------------------------------------------- | ---------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                                | Entire create request                          |
+| `workspace.create.after`  | no    | `{ workspace }`                              |                                                |
+| `workspace.archive.after` | no    | `{ workspace }`                              |                                                |
+| `worktree.create.before`  | yes   | `{ request }`                                | Creation options and destination               |
+| `worktree.create.after`   | yes   | `{ worktree }`                               | Files in the worktree; throw to abort creation |
+| `agent.create.before`     | yes   | `{ request: { config, env?, workspaceId } }` | Saved config except `cwd`; `env`               |
+| `agent.create.after`      | no    | `{ agent }`                                  |                                                |
+| `agent.open.before`       | yes   | `{ request }`                                | Launch-only `env`, `tools`, `mcpServers`       |
+| `agent.close.after`       | no    | `{ agent }`                                  |                                                |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                      |                                                |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                          |                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }`       |                                                |
+| `agent.permission.before` | no    | `{ agent, request }`                         |                                                |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`           |                                                |
+| `terminal.create.before`  | yes   | `{ request }`                                | `command`, `args`, `env`; throw to refuse      |
+| `command.run.before`      | yes   | `{ request }`                                | `command`, `env`; throw to refuse              |
 
 ## Shared payloads
 
@@ -200,9 +202,66 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 });
 ```
 
+## terminal.create.before {#terminalcreatebefore}
+
+Paseo waits for this hook before it starts a terminal in a workspace:
+
+- **New terminal** and terminal profiles in the app, and terminals created through the CLI, SDK, and plugins
+- terminals agents open with Paseo tools
+- the terminals `paseo.json` scripts, services, and worktree terminals run in
+
+Receives `{ request }`; return a replacement request or `undefined`. Throwing refuses the terminal, and whoever asked for it gets `Plugin <id> terminal.create.before failed: …`.
+
+```ts
+server.addHook("terminal.create.before", async ({ request }) => {
+  if (!sandboxed.has(request.workspaceId)) return;
+  return {
+    ...request,
+    command: "/usr/local/bin/sandbox-run",
+    args: request.command ? [request.command, ...request.args] : [],
+  };
+});
+```
+
+| Request field     | Meaning                                                                                                                                                                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`     | Read-only; the terminal's workspace                                                                                                                                           |
+| `cwd`             | Read-only; where the terminal starts                                                                                                                                          |
+| `source`          | Read-only. `agent`: an agent's Paseo tool. `script`: a `paseo.json` script or service. `worktree`: a `paseo.json` worktree terminal. `client`: the app, CLI, SDK, or a plugin |
+| `name`            | Read-only; the tab name, or null                                                                                                                                              |
+| `input`           | Read-only. For `script` and `worktree`, the command Paseo types into the shell once it starts; otherwise null                                                                 |
+| `command`, `args` | The program and its arguments. Without `command`, Paseo starts the default shell                                                                                              |
+| `env`             | Variables Paseo adds to the terminal's environment                                                                                                                            |
+
+Scripts, services, and worktree terminals start the default shell and then type their command into it, so a hook that wraps the shell also wraps what they run. A terminal that survives a daemon restart is adopted, not created again, and doesn't run the hook again. A plugin that creates a terminal from inside this hook runs the hook for that terminal too.
+
+## command.run.before {#commandrunbefore}
+
+Paseo waits for this hook before each `paseo.json` worktree `setup` and `teardown` command. Receives `{ request }`; return a replacement request or `undefined`. Throwing refuses the command: setup stops and reports the plugin's error, and teardown stops and keeps the worktree directory, as a failing command does.
+
+```ts
+server.addHook("command.run.before", async ({ request }) => ({
+  ...request,
+  command: 'sandbox-run sh -c "$SANDBOXED_COMMAND"',
+  env: { ...request.env, SANDBOXED_COMMAND: request.command },
+}));
+```
+
+| Request field | Meaning                                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | Read-only; the workspace, or null when a worktree is archived by path and no workspace record remains                                    |
+| `cwd`         | Read-only; where the command runs                                                                                                        |
+| `purpose`     | Read-only; `setup` or `teardown`                                                                                                         |
+| `command`     | A shell command: Paseo runs it with `bash -c` on macOS and Linux, and with PowerShell or `cmd.exe` on Windows                            |
+| `env`         | Variables Paseo adds to the daemon's environment: `PASEO_SOURCE_CHECKOUT_PATH`, `PASEO_WORKTREE_PATH`, `PASEO_BRANCH_NAME`, and the rest |
+
+Setup starts after the workspace is registered and `workspace.create.after` is emitted, and runs alongside the first agent. When setup runs again, such as from **Run setup** on a worktree whose setup was blocked, each command runs the hook again. Teardown runs when the last workspace on a worktree is archived, before Paseo removes the directory.
+
 ## agent.create.before
 
-Receives `{ request: { config, env? } }`. Config changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
+Receives `{ request: { config, env?, workspaceId } }`. Config changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd` or `workspaceId`. A throw, invalid result, or timeout fails creation.
+
+`workspaceId` is the workspace the agent is created in, or null. Use it rather than `config.cwd` to find the workspace: several workspaces can share a directory, and an agent can be created in one workspace with a directory inside another.
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
@@ -630,12 +689,12 @@ replaces that scope's prior value.
 
 ## Complete examples
 
-| Plugin                                                                                                 | Includes                                                                         |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent, workspace, and worktree hooks; JSON logs with environment values redacted |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection     |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                 |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                   |
+| Plugin                                                                                                 | Includes                                                                                            |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent, workspace, worktree, terminal, and command hooks; JSON logs with environment values redacted |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection                        |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                                    |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                                      |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 
