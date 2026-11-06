@@ -624,7 +624,10 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       await writeFile(join(worktree, 'ignored', 'noise'), 'noise');
       await symlink(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
       const subscription = await service.requestWorkingTreeWatch(alias, () => { notifications++; });
-      const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: join(i % 2 ? alias : worktree, 'ignored', 'noise') }));
+      // The observer hashes and coalesces paths in a Map before delivery. Reuse
+      // two prepared strings instead of constructing 10,000 equal-valued strings.
+      const noisePaths = [join(worktree, 'ignored', 'noise'), join(alias, 'ignored', 'noise')];
+      const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: noisePaths[i % 2] }));
       let fsCalls = 0;
       const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
       // Collect repository setup and event-fixture garbage before measuring
@@ -648,15 +651,18 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       assert.equal(unrelatedWorkStarted, false, 'control work must not contaminate the cold filter');
       hook.enable();
       let blockingMs;
+      let elapsedMs;
+      let cpu;
       try {
         // This callback is synchronous: measure its own span, without waiting
         // for marker IO, loader messages or other event-loop callbacks.
         const startedAt = performance.now();
         const startedCpu = threadCpuUsage();
         callback(null, events);
-        const cpu = threadCpuUsage(startedCpu);
+        cpu = threadCpuUsage(startedCpu);
         // Cap coarse Windows CPU accounting by elapsed time; exclude descheduling.
-        blockingMs = Math.min(performance.now() - startedAt, (cpu.user + cpu.system) / 1000);
+        elapsedMs = performance.now() - startedAt;
+        blockingMs = Math.min(elapsedMs, (cpu.user + cpu.system) / 1000);
       } finally {
         hook.disable();
         await marker('FILTER_END');
@@ -665,7 +671,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       assert.equal(unrelatedWorkStarted, true, 'control work must run outside the filter span');
       assert.equal(fsCalls, 0, "filesystem calls");
       assert.equal(notifications, 0, "ignored event notification");
-      assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
+      assert.ok(blockingMs < 20, 'blocking filter work: ' + JSON.stringify({ blockingMs, elapsedMs, cpu }));
       console.log(JSON.stringify({ blockingMs, fsCalls }));
       // Alias identity remains useful after deletion: no per-event realpath can recover this file.
       callback(null, [{ type: 'delete', path: join(worktree, 'tracked.txt') }]);
@@ -842,9 +848,18 @@ test.skipIf(process.platform !== "linux")(
     };
     try {
       await expect
-        .poll(() => degraded && service.getMetrics().workspaceRefreshInFlightCount === 0, {
-          timeout: 15_000,
-        })
+        .poll(
+          () => {
+            const metrics = service.getMetrics();
+            // Metadata observation writes a canary after the working tree degrades.
+            return (
+              degraded &&
+              metrics.workspaceRefreshInFlightCount === 0 &&
+              metrics.workspaceObservationSetupInFlightCount === 0
+            );
+          },
+          { timeout: 15_000 },
+        )
         .toBe(true);
       rmSync(cwd, { recursive: true, force: true });
       await expect.poll(() => suspended, { timeout: 15_000 }).toBe(true);
@@ -867,10 +882,17 @@ test.skipIf(process.platform !== "linux")(
         reason: "refresh-button",
       });
       expect(snapshot.git).toMatchObject({ isGit: true, currentBranch: "restored" });
-      await expect.poll(() => service.getMetrics().repositoryWorkspaceLinkCount).toBe(1);
+      await expect
+        .poll(() => service.getMetrics(), { timeout: 15_000 })
+        .toMatchObject({
+          repositoryWorkspaceLinkCount: 1,
+          workspaceObservationSetupInFlightCount: 0,
+        });
     } finally {
       subscription.unsubscribe();
       await service.dispose();
+      // The diagnostic sink outlives Git commands and owns writes into this fixture.
+      await flushGitCommandTrace();
       if (previousTrace === undefined) delete process.env.PASEO_GIT_TRACE_FILE;
       else process.env.PASEO_GIT_TRACE_FILE = previousTrace;
       rmSync(root, { recursive: true, force: true });

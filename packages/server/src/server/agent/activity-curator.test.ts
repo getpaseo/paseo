@@ -454,6 +454,34 @@ second line'`,
     ).toThrow("Fork from a later completed response");
   });
 
+  it("forks from a checkpoint when a plugin card was updated after it", () => {
+    const card = (seq: number, turns: number) =>
+      row(seq, {
+        type: "plugin",
+        id: "memory-receipt",
+        pluginId: "memorise",
+        kind: "memory-receipt",
+        version: 1,
+        data: { turns },
+      });
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "First question", messageId: "user-1" }),
+        card(2, 1),
+        row(3, { type: "assistant_message", text: "First answer.", messageId: "assistant-1" }),
+        row(4, { type: "user_message", text: "Second question", messageId: "user-2" }),
+        row(5, { type: "assistant_message", text: "Second answer.", messageId: "assistant-2" }),
+        card(6, 2),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("[User] First question");
+    expect(result.attachment.text).toContain("[Assistant] First answer.");
+    expect(result.attachment.text).not.toContain("Second question");
+    expect(result.attachment.text).not.toContain("memory-receipt");
+  });
+
   it("selects a synthetic assistant error by its timeline cursor", () => {
     const result = buildAgentForkContextAttachment({
       cursorBoundary: {

@@ -78,7 +78,8 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
-    await page.setViewportSize({ width: 1400, height: 900 });
+    // Keep both workspace rails visible alongside app navigation and Explorer.
+    await page.setViewportSize({ width: 1900, height: 900 });
     await openAgentRoute(page, {
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,

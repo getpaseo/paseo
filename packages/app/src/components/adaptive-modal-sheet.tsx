@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -6,12 +7,7 @@ import { Keyboard, Pressable, Text, View } from "react-native";
 import type { DimensionValue, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useWebOverlayRegistration,
-} from "../lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useGlobalOverlayLayer } from "../lib/overlay-root";
 import {
   BottomSheetHandle,
   useBottomSheetGestureHandlers,
@@ -236,6 +232,28 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 const WEB_EXIT_DURATION_MS = 160;
+const WEB_ENTER_DURATION_MS = 160;
+const WEB_ENTER_ANIMATION_NAME = "paseo-modal-enter";
+
+// The desktop card fades in; the dim lands at once, so the screen behind is never seen undimmed
+// while the dialog arrives. A CSS animation runs from the card's first paint, so a dialog that opens
+// on its own, like first-run setup, never pops in. Closing fades the whole overlay. With reduced
+// motion the keyframes are never defined, so the card appears at once.
+function ensureWebEnterKeyframes() {
+  if (!isWeb || typeof document === "undefined") return;
+  if (document.getElementById(WEB_ENTER_ANIMATION_NAME)) return;
+  const style = document.createElement("style");
+  style.id = WEB_ENTER_ANIMATION_NAME;
+  style.textContent = `@media (prefers-reduced-motion: no-preference) { @keyframes ${WEB_ENTER_ANIMATION_NAME} { from { opacity: 0; } to { opacity: 1; } } }`;
+  document.head.appendChild(style);
+}
+ensureWebEnterKeyframes();
+// The CSS animation props are not part of ViewStyle without the generated expo-env.d.ts.
+const WEB_ENTER_STYLE = {
+  animationName: WEB_ENTER_ANIMATION_NAME,
+  animationDuration: `${WEB_ENTER_DURATION_MS}ms`,
+  animationTimingFunction: "ease-out",
+} as unknown as ViewStyle;
 
 /** The compact sheet's surface: Gorhom's `backgroundComponent` for every bottom sheet. */
 export function SheetBackground({ style }: BottomSheetBackgroundProps) {
@@ -655,7 +673,7 @@ export function AdaptiveModalSheet({
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
   const [isWebClosing, setIsWebClosing] = useState(false);
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
+  const modalLayer = useGlobalOverlayLayer("modal", visible || shouldRenderWeb);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
     onDismiss?.();
@@ -666,6 +684,7 @@ export function AdaptiveModalSheet({
       styles.desktopCard,
       desktopHeight != null && { height: desktopHeight },
       desktopMaxWidth != null && { maxWidth: desktopMaxWidth },
+      isWeb && WEB_ENTER_STYLE,
     ],
     [desktopMaxWidth, desktopHeight],
   );
@@ -683,8 +702,8 @@ export function AdaptiveModalSheet({
     [isWebClosing, modalLayer],
   );
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (event.key !== "Escape") return false;
       event.preventDefault();
       event.stopPropagation();
@@ -693,10 +712,11 @@ export function AdaptiveModalSheet({
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && !isMobile && visible,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: visible,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   useEffect(() => {
@@ -735,18 +755,20 @@ export function AdaptiveModalSheet({
         accessible={false}
         presentation={presentation}
       >
-        <CompactSheetBody
-          header={header}
-          onClose={onClose}
-          testID={testID}
-          footer={footerView}
-          isKeyboardVisible={isKeyboardVisible}
-          scrollable={scrollable}
-          bodyStyle={bodyStyle}
-          contentStyle={contentStyle}
-        >
-          {children}
-        </CompactSheetBody>
+        <OverlayLayerProvider layer={modalLayer}>
+          <CompactSheetBody
+            header={header}
+            onClose={onClose}
+            testID={testID}
+            footer={footerView}
+            isKeyboardVisible={isKeyboardVisible}
+            scrollable={scrollable}
+            bodyStyle={bodyStyle}
+            contentStyle={contentStyle}
+          >
+            {children}
+          </CompactSheetBody>
+        </OverlayLayerProvider>
       </IsolatedBottomSheetModal>
     );
   }
@@ -790,13 +812,7 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View
-        ref={setWebOverlayScope}
-        style={desktopCardStyle}
-        role="dialog"
-        aria-modal
-        tabIndex={-1}
-      >
+      <View ref={setOverlayScope} style={desktopCardStyle} role="dialog" aria-modal tabIndex={-1}>
         {cardInner}
       </View>
     </View>

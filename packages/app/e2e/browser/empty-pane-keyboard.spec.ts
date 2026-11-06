@@ -56,9 +56,9 @@ test.describe("New tab keyboard launcher", () => {
       await expectLauncherSelection(launcher, "Diff");
       await page.keyboard.press("Enter");
 
-      await expect(
-        page.getByTestId("workspace-tab-working_diff").filter({ visible: true }),
-      ).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("working-diff-panel").filter({ visible: true })).toBeVisible({
+        timeout: 30_000,
+      });
     } finally {
       await workspace.cleanup();
     }

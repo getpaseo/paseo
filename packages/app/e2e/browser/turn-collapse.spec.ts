@@ -2,6 +2,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
   holdOlderHistoryPages,
+  scrollTimelineRowIntoView,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
@@ -529,6 +530,7 @@ async function expectThinkingPresentation(page: Page, autoExpandReasoning: boole
       .last();
     await expect(group).toContainText(/read 1 file/i);
     await expect(group.getByRole("button").first()).not.toContainText(/thought/i);
+    await scrollTimelineRowIntoView(page, group);
     await group.getByRole("button").first().click();
     // Expand thinking is off: the group opens its rows, but the thought row stays closed
     // until the reader opens it.

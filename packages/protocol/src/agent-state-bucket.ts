@@ -19,11 +19,17 @@ const WORKSPACE_STATE_BUCKET_PRIORITY = {
   done: 4,
 } as const satisfies Record<WorkspaceStateBucket, number>;
 
+// An error is a notification like a finish: once the user has seen it, the agent stops showing as
+// failed even though its lifecycle stays "error" until the next turn starts.
+function hasUnreadError(input: AgentStateBucketInput): boolean {
+  return input.requiresAttention === true && input.attentionReason === "error";
+}
+
 export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
   if ((input.pendingPermissionCount ?? 0) > 0 || input.attentionReason === "permission") {
     return "needs_input";
   }
-  if (input.status === "error" || input.attentionReason === "error") {
+  if (hasUnreadError(input)) {
     return "failed";
   }
   if (input.status === "running") {
@@ -43,7 +49,7 @@ export function getAgentStatusPriority(input: AgentStateBucketInput): number {
   if ((input.pendingPermissionCount ?? 0) > 0 || input.attentionReason === "permission") {
     return 0;
   }
-  if (input.status === "error" || input.attentionReason === "error") {
+  if (hasUnreadError(input)) {
     return 1;
   }
   if (input.status === "running") {

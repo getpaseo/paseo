@@ -58,6 +58,9 @@ import type {
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
+import { OpenCodeV2AgentClient } from "./providers/opencode/v2/agent.js";
+import { V2Harness } from "./providers/opencode/test-utils/v2-harness.js";
+
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
 
@@ -669,6 +672,33 @@ async function startAndSteerThroughManager(
   });
   return { manager, agentId: agent.id, workdir };
 }
+
+test("stops an OpenCode execution already active when its conversation is reopened", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-resume-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const harness = new V2Harness();
+  harness.info.location.directory = workdir;
+  harness.startExecution();
+  const client = new OpenCodeV2AgentClient({ logger, runtime: harness.runtime });
+  const manager = new AgentManager({ clients: { opencode: client }, logger });
+  const agent = await manager.resumeAgentFromPersistence({
+    provider: "opencode",
+    sessionId: "session",
+    nativeHandle: "session",
+    metadata: { cwd: workdir },
+  });
+  try {
+    expect(await manager.cancelAgentRun(agent.id)).toEqual({ status: "settled" });
+    expect(harness.active).toBe(false);
+    for await (const _event of manager.streamAgent(agent.id, "continue after restart")) {
+      // Drain the next turn through the same interface used by callers.
+    }
+    expect(harness.prompts).toEqual(["continue after restart"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await client.shutdown();
+  }
+});
 
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
@@ -2771,6 +2801,53 @@ test("closing during reload leaves the replacement closed", async () => {
   }
 });
 
+test("every failed reload raises error attention, replacing unread finished attention", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-error-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+    onAgentAttention: ({ reason }) => attentionReasons.push(reason),
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.markAgentUnread(created.id);
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      attentionReason: "finished",
+    });
+
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("error");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error"]);
+
+    await manager.clearAgentAttention(created.id);
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    expect(attentionReasons).toEqual(["error", "error"]);
+
+    client.finishClosing();
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retrying a timed-out reload waits for the original close to finish", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -4062,7 +4139,7 @@ test("createAgent rejects a disabled provider without creating a session", async
     ),
   ).rejects.toThrow("Provider 'codex' is disabled");
   expect(disabledClient.createSessionCalls).toBe(0);
-  expect(await storage.list()).toHaveLength(0);
+  expect(await storage.listAll()).toHaveLength(0);
 });
 
 test("updateProviderRegistry re-enables a previously disabled provider", async () => {
@@ -5775,6 +5852,52 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   const last = events[events.length - 1];
   expect(last.id).toBe(created.id);
   expect(last.lifecycle).toBe("closed");
+});
+
+test("markAgentUnread restores error attention on a read errored agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ErrorClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new ErrorClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Selected model is at capacity.",
+  });
+  await failed;
+  await manager.clearAgentAttention(agent.id);
+
+  await manager.markAgentUnread(agent.id);
+
+  expect(manager.getAgent(agent.id)?.attention).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+  expect(await storage.get(agent.id)).toMatchObject({
+    lastStatus: "error",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
 });
 
 test("markAgentUnread dispatches stored attention to every subscriber", async () => {
@@ -8243,7 +8366,7 @@ test("archiveAgent closes an internal agent without writing a record", async () 
   expect(Number.isNaN(Date.parse(archivedAt))).toBe(false);
   expect(manager.getAgent(internalAgentId)).toBeNull();
   expect(await storage.get(internalAgentId)).toBeNull();
-  expect(await storage.list()).toEqual([]);
+  expect(await storage.listAll()).toEqual([]);
   expect(manager.getRetiredInternalAgent(internalAgentId)).toEqual({
     record: expect.objectContaining({
       id: internalAgentId,
@@ -9349,8 +9472,8 @@ test("archiveAgent re-reads a child before deciding whether to cascade", async (
   class ChildOpensAfterCascadeListStorage extends AgentStorage {
     childId: string | null = null;
 
-    override async list(): Promise<StoredAgentRecord[]> {
-      const records = await super.list();
+    override async listActive(): Promise<StoredAgentRecord[]> {
+      const records = await super.listAll();
       const parentIsArchived = records.some(
         (record) => record.id !== this.childId && Boolean(record.archivedAt),
       );
@@ -10987,6 +11110,88 @@ test("concurrent explicit closes tear down the runtime once", async () => {
     expect(closeCount).toBe(1);
   } finally {
     closeAllowed.resolve();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("close drains provider tool cleanup before retiring the runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const timeline = new InMemoryAgentTimelineStore();
+  class CleanupSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "cleanup-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      for (const callId of ["first-tool", "second-tool"]) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "tool_call",
+            callId,
+            name: "Bash",
+            detail: { type: "shell", command: "sleep 10" },
+            status: "running",
+            error: null,
+          },
+        });
+      }
+      return { turnId };
+    }
+    override async close(): Promise<void> {
+      for (const callId of ["first-tool", "second-tool"]) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId: "cleanup-turn",
+          item: {
+            type: "tool_call",
+            callId,
+            name: "Bash",
+            detail: { type: "shell", command: "sleep 10" },
+            status: "canceled",
+            error: null,
+          },
+        });
+      }
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CleanupSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    timelineStore: timeline,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = drainAsyncGenerator(manager.streamAgent(agent.id, "run both tools"));
+  try {
+    await manager.waitForAgentRunStart(agent.id);
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+    await run;
+    await manager.flush();
+    expect(
+      timeline
+        .getItems(agent.id)
+        .filter((item) => item.type === "tool_call")
+        .map((item) => ({ callId: item.callId, status: item.status })),
+    ).toEqual([
+      { callId: "first-tool", status: "canceled" },
+      { callId: "second-tool", status: "canceled" },
+    ]);
+    expect((await storage.get(agent.id))?.lastStatus).toBe("closed");
+  } finally {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await run;
+    await manager.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

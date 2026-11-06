@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.15.2 - 2026-11-05
+
+### Added
+
+- Added a first-run setup on Paseo Desktop and web that walks new users through theme, providers, projects, agent orchestration and the mobile app, with Settings → General → Show setup again to reopen it ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Added project suggestions from the folders where you ran Claude Code, Codex, OpenCode or Pi, shown in the setup Projects step ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+### Improved
+
+- Changed the theme picker to a grid of tiles with a preview of each theme ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Replaced the "Loading…" text in Providers settings with skeleton rows ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed controls to two sizes: default controls are 32px tall on desktop and 44px on phones, and compact controls are 28px ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed first launch to go from the loading screen straight into setup instead of showing the empty home first ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- Changed dialogs on desktop and web to fade in over about 160ms ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- Changed modal and sheet backgrounds to match the screen background ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- Changed documentation links in Settings sections to a `Label ↗` link beside the section title ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+## 0.15.1 - 2026-11-05
+
+### Fixed
+
+- Fixed the daemon failing to start when the terminal worker cannot read its own process identity, which left Paseo Desktop without a daemon on Windows machines where Windows PowerShell 5.1 cannot run `Get-CimInstance` ([#8810](https://github.com/getpaseo/paseo/pull/8810))
+
 ## 0.15.0 - 2026-11-03
 
 Daemon restarts now keep terminal programs running. Interrupted agents can resume in their existing conversations when you turn on agent recovery.

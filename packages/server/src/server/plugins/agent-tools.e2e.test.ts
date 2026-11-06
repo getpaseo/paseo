@@ -735,6 +735,13 @@ export default function contribute(server) {
     await h.client.reloadPlugin("unrelated-plugin");
     await sendAndFinish(h, agent.id, "after tool description changed");
     expect(h.launches).toHaveLength(2);
+    expect(
+      await (
+        await h.mcp(agent.id)
+      ).callTool({ name: "dynamic_tool", arguments: { query: "test" } }),
+    ).toMatchObject({
+      content: [{ type: "text", text: "ok" }],
+    });
   } finally {
     await rm(configFile, { force: true });
     await h.close();
