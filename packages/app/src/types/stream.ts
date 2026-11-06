@@ -891,6 +891,18 @@ export function handoffCreatedAgentUserMessageToStream(params: {
   });
 }
 
+function normalizeUserMessageContent(
+  text: string,
+  chatHistory?: Extract<AgentTimelineItem, { type: "user_message" }>["chatHistory"],
+) {
+  const normalized = normalizeChunk(text);
+  return {
+    ...normalized,
+    hasContent: normalized.hasContent || chatHistory !== undefined,
+    attachments: chatHistory ? [chatHistory] : undefined,
+  };
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
@@ -902,8 +914,8 @@ function appendUserMessage(
   turnId?: string,
   chatHistory?: Extract<AgentTimelineItem, { type: "user_message" }>["chatHistory"],
 ): StreamItem[] {
-  const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent && !chatHistory) {
+  const { chunk, hasContent, attachments } = normalizeUserMessageContent(text, chatHistory);
+  if (!hasContent) {
     return state;
   }
 
@@ -915,7 +927,7 @@ function appendUserMessage(
     timelineCursor,
     turnId,
     text: chunk,
-    ...(chatHistory ? { attachments: [chatHistory] } : {}),
+    attachments,
     timestamp,
   });
   return upsertUserMessage(state, nextItem);
@@ -1877,7 +1889,7 @@ function applyCanonicalUserMessageEvent(params: {
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
-  const normalized = normalizeChunk(event.item.text);
+  const normalized = normalizeUserMessageContent(event.item.text, event.item.chatHistory);
 
   const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
   const flushedHead = head.length > 0 ? [] : head;
@@ -1890,6 +1902,7 @@ function applyCanonicalUserMessageEvent(params: {
     turnId: event.turnId,
     timelineCursor,
     text: normalized.chunk,
+    attachments: normalized.attachments,
     timestamp,
   });
   if (unmatchedInsert === "head") {

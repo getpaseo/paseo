@@ -1,6 +1,16 @@
+import {
+  captureChatHistory,
+  closeChatHistory,
+  followChatHistorySource,
+  openChatHistory,
+  sendChatHistoryFromAnotherClient,
+  setChatHistoryViewport,
+} from "../support/helpers/chat-history";
 import { expect, test as base } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
+  getActiveForkAgentId,
+  expectActiveForkAgent,
   expectChatHistoryAttachment,
   expectInFlightForkAvailable,
   expectLiveAssistantText,
@@ -54,62 +64,45 @@ test.describe("Assistant fork menu", () => {
     await awaitAssistantMessage(page);
     await session.client.waitForFinish(session.agentId, 45_000);
     await forkMostRecentAssistantTurnToNewTab(page);
-    await page.getByTestId("composer-chat-history-attachment-pill").click();
-    const preview = page.getByTestId("chat-history-preview");
-    await expect(page.getByTestId("chat-history-content")).toContainText(initialPrompt);
-    await expect(page.getByRole("button", { name: "Open source chat" })).toBeVisible();
-    // Settle the sheet's spring animation and hide Expo's development-only overlay for QA.
-    await page.waitForTimeout(600);
-    await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
-    await page.screenshot({
-      path: testInfo.outputPath("history-wide.png"),
-      animations: "disabled",
-    });
-    await preview.getByRole("button", { name: "Close", exact: true }).click();
+    await openChatHistory(page, "draft", [initialPrompt]);
+    await captureChatHistory(page, testInfo, "history-wide.png");
+    await closeChatHistory(page);
     await submitMessage(page, "emit 1 coalesced agent stream updates for the fork.");
-    await expect(page.getByTestId("message-chat-history-attachment")).toBeVisible();
-    const selectedTab = page
-      .getByTestId("workspace-tabs-row")
-      .getByRole("button")
-      .and(page.locator('[aria-selected="true"]'));
-    const tabId = await selectedTab.getAttribute("data-testid");
-    expect(tabId).toMatch(/^workspace-tab-agent_/);
-    const forkAgentId = tabId!.replace("workspace-tab-agent_", "");
+    const forkAgentId = await getActiveForkAgentId(page);
     await session.client.waitForFinish(forkAgentId, 45_000);
+
     await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
     await page.reload();
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByTestId("message-chat-history-attachment").click();
-    await expect(page.getByTestId("chat-history-content")).toContainText(initialPrompt);
-    // Settle the sheet's spring animation and hide Expo's development-only overlay for QA.
-    await page.waitForTimeout(600);
-    await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
-    await page.screenshot({
-      path: testInfo.outputPath("history-compact.png"),
-      animations: "disabled",
-    });
-    await page.getByRole("button", { name: "Open source chat" }).click();
-    await expect(preview).not.toBeVisible();
-    await page.setViewportSize({ width: 1280, height: 720 });
-    await expect(page.getByTestId(`workspace-tab-agent_${session.agentId}`)).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await setChatHistoryViewport(page, "compact");
+    await openChatHistory(page, "sent", [initialPrompt]);
+    await captureChatHistory(page, testInfo, "history-compact.png");
+    await followChatHistorySource(page);
+    await setChatHistoryViewport(page, "wide");
+    await expectActiveForkAgent(page, session.agentId);
 
-    // Fork the fork, then follow its immediate source rather than guessing by title.
     await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
-    await expect(page.getByTestId(`workspace-tab-agent_${forkAgentId}`)).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expectActiveForkAgent(page, forkAgentId);
     await forkMostRecentAssistantTurnToNewTab(page);
-    await page.getByTestId("composer-chat-history-attachment-pill").click();
-    await expect(page.getByTestId("chat-history-content")).toContainText("updates for the fork.");
-    await page.getByRole("button", { name: "Open source chat" }).click();
-    await expect(page.getByTestId(`workspace-tab-agent_${forkAgentId}`)).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await openChatHistory(page, "draft", [initialPrompt, "updates for the fork."]);
+    await followChatHistorySource(page);
+    await expectActiveForkAgent(page, forkAgentId);
+  });
+
+  test("shows history sent from another connected client without reloading", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-live-history-",
+      title: "Live history recipient",
+      model: "ten-second-stream",
+    });
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    const history = "[User] Context inherited on another device.";
+    await sendChatHistoryFromAnotherClient(session, history);
+    await openChatHistory(page, "sent", [history]);
+    await session.client.waitForFinish(session.agentId, 45_000);
   });
 
   test("forks a failed assistant turn that has no provider message id", async ({

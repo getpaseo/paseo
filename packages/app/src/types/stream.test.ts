@@ -182,6 +182,47 @@ describe("user message identity", () => {
     },
   );
 
+  it.each([
+    { text: "", insert: "tail" },
+    { text: "Continue", insert: "tail" },
+    { text: "", insert: "head" },
+    { text: "Continue", insert: "head" },
+  ] as const)("delivers fork history to a live viewer ($insert, $text)", ({ text, insert }) => {
+    const chatHistory = {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      text: "[User] Original question",
+      chatHistorySource: { serverId: "source-host", agentId: "source-agent" },
+    } as const;
+    const event = {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text, messageId: "fork-message", chatHistory },
+    } as const;
+    const first = applyStreamEvent({
+      tail: [],
+      head: [],
+      event,
+      timestamp: new Date(0),
+      unmatchedUserMessageInsert: insert,
+    });
+    expect(first[insert]).toHaveLength(1);
+    expect(first[insert][0]).toMatchObject({
+      kind: "user_message",
+      text,
+      attachments: [chatHistory],
+    });
+    const repeated = applyStreamEvent({
+      ...first,
+      event,
+      timestamp: new Date(0),
+      unmatchedUserMessageInsert: insert,
+    });
+    expect([...repeated.tail, ...repeated.head]).toHaveLength(1);
+    expect([...repeated.tail, ...repeated.head][0]).toMatchObject({ attachments: [chatHistory] });
+  });
+
   it("replaces provisional optimistic turn membership with canonical membership", () => {
     const optimistic = createUserMessage({
       clientMessageId: "hello-client",

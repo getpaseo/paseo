@@ -1,3 +1,4 @@
+import { extractChatHistoryBody } from "@getpaseo/protocol/chat-history";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
@@ -53,15 +54,7 @@ export function ChatHistoryAttachment({
       ) : undefined,
     [source, openSource, t],
   );
-  const history = useMemo(() => {
-    const text = attachment.text;
-    const bodyStart = text.indexOf("\n\n");
-    return text.startsWith("<chat-history-summary>\n") &&
-      text.endsWith("\n</chat-history-summary>") &&
-      bodyStart !== -1
-      ? text.slice(bodyStart + 2, -"\n</chat-history-summary>".length)
-      : text;
-  }, [attachment.text]);
+  const history = useMemo(() => extractChatHistoryBody(attachment.text), [attachment.text]);
   const content = getAgentAttachmentPillContent(attachment, t);
   const label = (
     <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />
