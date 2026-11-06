@@ -8,17 +8,38 @@ import { AntigravityError } from "./wire.js";
 interface EncodedPrompt {
   text: string;
   nativeText: string;
+  /**
+   * Whether `agy` must expand a leading `/name`: commands need expansion, a
+   * message starting with `/` must reach the model literally, and any other
+   * message works either way (`null`).
+   */
+  slashCommands: boolean | null;
 }
+
+/** Native `agy` slash commands that Paseo publishes for Antigravity sessions. */
+export const commands = [
+  {
+    name: "goal",
+    description: "Keep working until an objective is complete",
+    argumentHint: "<objective>",
+  },
+];
 
 export class PromptFiles {
   private directory: string | null = null;
 
   async encode(prompt: ProviderPrompt): Promise<EncodedPrompt> {
-    if (
-      prompt.input.type !== "message" ||
-      prompt.delivery === "steer" ||
-      prompt.outputSchema !== undefined
-    )
+    if (prompt.delivery === "steer" || prompt.outputSchema !== undefined)
+      throw new AntigravityError("Antigravity supports messages only");
+    if (prompt.input.type === "command") {
+      const { name } = prompt.input;
+      if (!commands.some((command) => command.name === name))
+        throw new AntigravityError(`Antigravity command is unavailable: /${name}`);
+      const args = prompt.input.arguments.trim();
+      const text = args ? `/${name} ${args}` : `/${name}`;
+      return { text, nativeText: text, slashCommands: true };
+    }
+    if (prompt.input.type !== "message")
       throw new AntigravityError("Antigravity supports messages only");
     const parts = prompt.input.content.map((part) => {
       if (part.type === "text") return part;
@@ -43,7 +64,12 @@ export class PromptFiles {
         native.push(`Attached image: ${file}`);
       }
     }
-    return { text: text.join("\n"), nativeText: native.join("\n") };
+    const nativeText = native.join("\n");
+    return {
+      text: text.join("\n"),
+      nativeText,
+      slashCommands: nativeText.trimStart().startsWith("/") ? false : null,
+    };
   }
 
   async close(): Promise<void> {
