@@ -441,6 +441,108 @@ test("project actions subscribe to existing project updates", async () => {
   await client.close();
 });
 
+test("project actions read a project icon through the existing RPC", async () => {
+  const { client, ws } = await connectClient();
+
+  const iconPromise = client.projects.icon("project_sdk", "project-icon-request");
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "project.icon.get.request",
+    requestId: "project-icon-request",
+    projectId: "project_sdk",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "project.icon.get.response",
+      payload: {
+        requestId: "project-icon-request",
+        projectId: "project_sdk",
+        icon: { data: "aWNvbg==", mimeType: "image/png" },
+        error: null,
+      },
+    }),
+  );
+
+  await expect(iconPromise).resolves.toEqual({
+    requestId: "project-icon-request",
+    projectId: "project_sdk",
+    icon: { data: "aWNvbg==", mimeType: "image/png" },
+    error: null,
+  });
+  await client.close();
+});
+
+test("workspace actions list label definitions and observe label updates", async () => {
+  const { client, ws } = await connectClient();
+  const sync = { mode: "snapshot", generation: "labels-generation", headSeq: 2, removals: [] };
+
+  const listPromise = client.workspaces.listLabels({ requestId: "labels-request" });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.label.list.request",
+    requestId: "labels-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.list.response",
+      payload: {
+        requestId: "labels-request",
+        labels: [{ name: "upstream", color: "violet" }],
+        sync,
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toEqual({
+    requestId: "labels-request",
+    labels: [{ name: "upstream", color: "violet" }],
+    sync,
+  });
+
+  const observedPromise = client.workspaces.listLabels({ subscribe: {} });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "workspace.label.list.request", subscribe: {} });
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.list.response",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: "labels-sdk",
+        labels: [{ name: "upstream", color: "violet" }],
+        sync,
+      },
+    }),
+  );
+  const observed = await observedPromise;
+  expect(observed).toMatchObject({
+    subscriptionId: "labels-sdk",
+    labels: [{ name: "upstream", color: "violet" }],
+  });
+
+  const updates: string[] = [];
+  observed.subscription.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      if (message.type === "workspace.label.update" && message.payload.kind === "upsert")
+        updates.push(`${message.payload.label.name}:${message.payload.label.color}`);
+    },
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.update",
+      payload: {
+        subscriptionId: "labels-sdk",
+        kind: "upsert",
+        label: { name: "hotfix", color: "red" },
+        generation: "labels-generation",
+        seq: 3,
+      },
+    }),
+  );
+  expect(updates).toEqual(["hotfix:red"]);
+
+  await observed.subscription.release();
+  await client.close();
+});
+
 test("agent actions list the daemon directory without exposing the low-level client", async () => {
   const { client, ws } = await connectClient();
   const listedAgent = createAgent({ title: "Planner" });
