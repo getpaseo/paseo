@@ -4,10 +4,12 @@ import { gotoAppShell } from "../support/helpers/app";
 import {
   chooseFooterOverflowAction,
   expectFooterLine,
+  expectFooterNeverClipped,
   expectFooterOverflowActions,
   footerOverflowMenu,
   openFooterOverflow,
   seedDockedSidebarWidth,
+  watchFooterClipping,
 } from "../support/helpers/sidebar-footer-overflow";
 import { openCompactSidebar } from "../support/helpers/usage-sidebar-item";
 
@@ -35,8 +37,10 @@ test.describe("Sidebar footer on a touch screen", () => {
     page,
   }) => {
     await seedDockedSidebarWidth(page, MIN_SIDEBAR_WIDTH);
+    await watchFooterClipping(page);
     await gotoAppShell(page);
     await expectFooterLine(page, { testIDs: NARROW_TOUCH_LINE, controlSize: TOUCH_CONTROL });
+    await expectFooterNeverClipped(page);
 
     await test.step("Help opens as a page of the overflow menu", async () => {
       await openFooterOverflow(page);
@@ -77,9 +81,11 @@ test.describe("Sidebar footer in a compact overlay narrower than the footer", ()
   test.use({ viewport: { width: 220, height: 800 }, hasTouch: true });
 
   test("the overflow menu reaches the hidden actions", async ({ page }) => {
+    await watchFooterClipping(page);
     await gotoAppShell(page);
     await openCompactSidebar(page);
     await expectFooterLine(page, { testIDs: NARROW_TOUCH_LINE, controlSize: TOUCH_CONTROL });
+    await expectFooterNeverClipped(page);
     await openFooterOverflow(page);
     await expectFooterOverflowActions(page, ["Usage", "Help and support"]);
   });

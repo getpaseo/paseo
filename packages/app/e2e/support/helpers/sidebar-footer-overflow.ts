@@ -20,6 +20,38 @@ export async function seedDockedSidebarWidth(page: Page, width: number): Promise
   }, width);
 }
 
+/**
+ * From the first frame, record any frame in which a footer button reaches past its row, so a row
+ * laid out before it measured shows up even if it lasted one frame.
+ */
+export async function watchFooterClipping(page: Page): Promise<void> {
+  await page.addInitScript((testIDs) => {
+    const clippedFrames: string[] = [];
+    Object.assign(window, { __footerClippedFrames: clippedFrames });
+    const sample = () => {
+      for (const row of document.querySelectorAll('[data-testid="sidebar-footer-bottom-line"]')) {
+        const rowRect = row.getBoundingClientRect();
+        if (rowRect.width === 0) continue;
+        for (const testID of testIDs) {
+          const button = row.querySelector(`[data-testid="${testID}"]`);
+          if (button && button.getBoundingClientRect().right > rowRect.right + 0.5) {
+            clippedFrames.push(testID);
+          }
+        }
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }, FOOTER_LINE_TEST_IDS);
+}
+
+export async function expectFooterNeverClipped(page: Page): Promise<void> {
+  const clipped = await page.evaluate(
+    () => (window as unknown as { __footerClippedFrames: string[] }).__footerClippedFrames,
+  );
+  expect(clipped).toEqual([]);
+}
+
 function footerLine(page: Page): Locator {
   return page.locator('[data-testid="sidebar-footer-bottom-line"]:visible');
 }

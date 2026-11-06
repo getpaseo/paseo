@@ -47,7 +47,11 @@ import {
   SIDEBAR_FOOTER_ACTIONS,
   type SidebarFooterAction,
 } from "@/components/sidebar-footer-layout";
-import { controlSizingForLayout, TOOLBAR_CONTROL_SIZES } from "@/components/ui/control-geometry";
+import {
+  controlSizingForLayout,
+  mapLayout,
+  TOOLBAR_CONTROL_SIZES,
+} from "@/components/ui/control-geometry";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
@@ -986,9 +990,11 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border,
   },
   // Buttons sit edge to edge; their own inset spaces the glyphs.
+  // As tall as its buttons from the first frame, which places none until the row has measured.
   sidebarFooter: {
     flexDirection: "row",
     alignItems: "center",
+    minHeight: mapLayout(density.iconButton, (height) => height + theme.spacing[1.5] * 2),
     paddingHorizontal: FOOTER_ROW_PADDING,
     paddingVertical: theme.spacing[1.5],
   },

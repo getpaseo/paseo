@@ -31,7 +31,7 @@ export interface SidebarFooterLayout {
 /**
  * Splits the footer's actions between the row and the overflow menu. Buttons keep their full size;
  * when they don't all fit, the caret takes one slot and the actions that lose their place move
- * behind it, Help first and Settings last.
+ * behind it, Help first and Settings last. Nothing is placed until the row has a measured width.
  */
 export function resolveSidebarFooterLayout(input: {
   rowWidth: number;
@@ -40,10 +40,15 @@ export function resolveSidebarFooterLayout(input: {
   actions: readonly SidebarFooterAction[];
 }): SidebarFooterLayout {
   const { rowWidth, controlSize, rowPadding, actions } = input;
+  // An unmeasured row stays empty: any guess would paint a clipped row for a frame on a narrow
+  // sidebar before the real width arrives.
+  if (rowWidth <= 0) {
+    return { inline: [], overflow: [] };
+  }
   const slots = Math.floor(
     (rowWidth - rowPadding * 2 + MEASUREMENT_TOLERANCE) / Math.max(controlSize, 1),
   );
-  if (rowWidth <= 0 || slots >= actions.length) {
+  if (slots >= actions.length) {
     return { inline: [...actions], overflow: [] };
   }
   const inlineCount = Math.max(slots - 1, 0);

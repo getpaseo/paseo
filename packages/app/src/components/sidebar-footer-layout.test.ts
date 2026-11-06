@@ -80,7 +80,10 @@ describe("sidebar footer layout", () => {
     ).toEqual({ inline: ["add-project", "hosts", "settings"], overflow: [] });
   });
 
-  it("keeps every action inline before the row has been measured", () => {
-    expect(layout(0, TOUCH).overflow).toEqual([]);
+  // Laying out against a guessed width would paint a clipped row for a frame on narrow sidebars.
+  it("places nothing before the row has been measured", () => {
+    for (const controlSize of [TOUCH, POINTER]) {
+      expect(layout(0, controlSize)).toEqual({ inline: [], overflow: [] });
+    }
   });
 });
