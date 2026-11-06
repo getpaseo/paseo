@@ -11,7 +11,10 @@ import {
   type DiffBody,
 } from "@getpaseo/protocol/binary-frames/index";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
-import { resolveCheckoutDiffBase } from "../utils/checkout-git.js";
+import {
+  CHECKOUT_DIFF_MAX_STRUCTURED_BYTES,
+  resolveCheckoutDiffBase,
+} from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 
@@ -105,7 +108,7 @@ export class CheckoutDiffManager {
           next.set(entry.path, file);
         }
         files = next;
-        payload = { cwd, files: [...next.values()], error: null };
+        payload = legacySnapshot(cwd, [...next.values()]);
       }
       pending = null;
       if (delivered) listener(payload);
@@ -168,4 +171,20 @@ export class CheckoutDiffManager {
   async dispose(): Promise<void> {
     await this.streams.close();
   }
+}
+
+function legacySnapshot(cwd: string, files: ParsedDiffFile[]): CheckoutDiffSnapshotPayload {
+  let bytes = 2;
+  for (let index = 0; index < files.length; index++) {
+    bytes += Buffer.byteLength(JSON.stringify(files[index])) + Number(index > 0);
+    if (bytes > CHECKOUT_DIFF_MAX_STRUCTURED_BYTES) {
+      return {
+        cwd,
+        files: [],
+        diffTooLarge: true,
+        error: toCheckoutError(new Error("Diff too large to display")),
+      };
+    }
+  }
+  return { cwd, files, error: null };
 }
