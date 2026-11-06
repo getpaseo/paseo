@@ -1209,6 +1209,8 @@ export async function createPaseoDaemon(
     terminalManager,
     serviceProxy,
     workspaceRuntimeEnvironment,
+    assertAutomationAllowed: (workspaceId) =>
+      assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
     scriptRuntimeStore,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     serviceProxyPublicBaseUrl,

@@ -100,6 +100,7 @@ export interface WorkspaceLaunchManagerDependencies {
   terminalManager: TerminalManager | null;
   serviceProxy: ServiceProxySubsystem | null;
   workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService;
+  assertAutomationAllowed: (workspaceId: string) => Promise<void>;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
   serviceProxyPublicBaseUrl: string | null;
@@ -196,9 +197,11 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     context: WorkspaceLaunchContext,
     launchName: string,
   ): Promise<WorkspaceLaunchPayload> {
-    return await this.runExclusive(context.workspaceId, () =>
-      this.startInternal(context, launchName),
-    );
+    return await this.runExclusive(context.workspaceId, async () => {
+      // Archive/disposal can finish while this request waits behind another operation.
+      await this.deps.assertAutomationAllowed(context.workspaceId);
+      return await this.startInternal(context, launchName);
+    });
   }
 
   private async startInternal(

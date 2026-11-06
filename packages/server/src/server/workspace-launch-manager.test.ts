@@ -54,6 +54,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -163,6 +164,7 @@ describe("WorkspaceLaunchManager", () => {
         reads++;
         return policy;
       },
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -219,6 +221,7 @@ describe("WorkspaceLaunchManager", () => {
     const dependencies = {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -312,6 +315,7 @@ describe("WorkspaceLaunchManager", () => {
         terminalManager: terminalManager.manager,
         serviceProxy: null,
         workspaceRuntimeEnvironment: environment,
+        assertAutomationAllowed: async () => {},
         getDaemonTcpPort: null,
         serviceProxyPublicBaseUrl: null,
         resolveScriptHealth: null,
@@ -374,6 +378,7 @@ describe("WorkspaceLaunchManager", () => {
       const dependencies = {
         terminalManager: terminalManager.manager,
         serviceProxy: null,
+        assertAutomationAllowed: async () => {},
         getDaemonTcpPort: null,
         serviceProxyPublicBaseUrl: null,
         resolveScriptHealth: null,
@@ -454,6 +459,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: null,
       workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: null,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -528,6 +534,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -578,6 +585,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -619,6 +627,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -693,6 +702,7 @@ describe("WorkspaceLaunchManager", () => {
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
       scriptRuntimeStore: runtimeStore,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -775,6 +785,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -845,6 +856,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -889,6 +901,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy,
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -952,6 +965,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -995,6 +1009,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1068,6 +1083,7 @@ describe("WorkspaceLaunchManager", () => {
         random: () => 0,
         checkPortAvailable: async () => true,
       }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1124,6 +1140,7 @@ describe("WorkspaceLaunchManager", () => {
         random: () => 0,
         checkPortAvailable: async () => true,
       }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1179,6 +1196,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1251,6 +1269,7 @@ describe("WorkspaceLaunchManager", () => {
         random: () => 0,
         checkPortAvailable: async () => true,
       }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1310,6 +1329,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1378,6 +1398,7 @@ describe("WorkspaceLaunchManager", () => {
         random: () => 0,
         checkPortAvailable: async () => true,
       }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1406,6 +1427,44 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("revalidates a queued start after workspace archive and disposal", async () => {
+    const workspaceId = "workspace-archived-start";
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+    let archived = false;
+    const assertAutomationAllowed = vi.fn(async () => {
+      if (archived) throw new Error(`Workspace not found: ${workspaceId}`);
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: null,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed,
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const operationStarted = createDeferred();
+    const finishOperation = createDeferred();
+    const operation = manager.runWorkspaceOperation(workspaceId, async () => {
+      operationStarted.resolve();
+      await finishOperation.promise;
+    });
+    await operationStarted.promise;
+    const disposal = manager.disposeWorkspace(workspaceId);
+    const start = manager.start(
+      { workspaceId, workspaceDirectory: "/removed/repo", projectSlug: "repo", branchName: null },
+      "dev",
+    );
+    const rejectedStart = expect(start).rejects.toThrow(`Workspace not found: ${workspaceId}`);
+    expect(assertAutomationAllowed).not.toHaveBeenCalled();
+    archived = true;
+    finishOperation.resolve();
+    await Promise.all([operation, disposal, rejectedStart]);
+    expect(assertAutomationAllowed).toHaveBeenCalledWith(workspaceId);
+    expect(runtimeEnvironment.get(workspaceId)).toBeNull();
+  });
+
   it("waits for an in-flight workspace script spawn before releasing its port block", async () => {
     const workspaceId = "workspace-script-spawn-race";
     const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
@@ -1416,6 +1475,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: null,
       serviceProxy: null,
       workspaceRuntimeEnvironment: runtimeEnvironment,
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1462,6 +1522,7 @@ describe("WorkspaceLaunchManager", () => {
         terminalManager,
         serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
         workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+        assertAutomationAllowed: async () => {},
         getDaemonTcpPort: () => 6767,
         serviceProxyPublicBaseUrl: null,
         resolveScriptHealth: null,
@@ -1520,6 +1581,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1570,6 +1632,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy,
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1641,6 +1704,7 @@ describe("WorkspaceLaunchManager", () => {
         random: () => 0,
         checkPortAvailable: async () => true,
       }),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1697,6 +1761,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
@@ -1784,6 +1849,7 @@ describe("WorkspaceLaunchManager", () => {
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
