@@ -73,6 +73,15 @@ describe("filterAndRankCommandAutocompleteEntries on an empty query", () => {
   it("still selects a typed Paseo action", () => {
     expect(selectedOnEnter("exit")).toBe("exit");
   });
+
+  it("waits for a search when Paseo actions are all there is", () => {
+    const clientOnly = rootEntries.filter((entry) => entry.source === "client");
+
+    expect(filterAndRankCommandAutocompleteEntries(clientOnly, "")).toEqual([]);
+    expect(
+      filterAndRankCommandAutocompleteEntries(clientOnly, "ex").map((entry) => entry.command.name),
+    ).toEqual(["exit"]);
+  });
 });
 
 describe("findActiveSlashCommand", () => {

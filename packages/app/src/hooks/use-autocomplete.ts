@@ -43,9 +43,10 @@ export function useAutocomplete<
     optionsPosition: input.optionsPosition,
   });
 
+  // A choice belongs to one search. Until this clears it, the query check above ignores it.
   useEffect(() => {
-    if (!input.isVisible) setChoice(null);
-  }, [input.isVisible]);
+    setChoice(null);
+  }, [input.isVisible, input.query]);
 
   const onKeyPress = useCallback(
     (event: TKeyPressEvent) => {

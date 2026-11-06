@@ -15,9 +15,9 @@ interface CommandAutocompleteEntry {
   };
 }
 
-// The list renders reversed above the input with the first entry selected, so an empty query
-// selects a provider command and keeps Paseo's own actions (`/exit` archives at once) farthest
-// from the input.
+// The list renders reversed above the input with the first entry selected. Paseo's own actions
+// run at once (`/exit` archives), so an empty query never selects one: they sort farthest from
+// the input, and with nothing else to list the menu waits for a search.
 const EMPTY_QUERY_SOURCE_ORDER: Record<CommandAutocompleteSource, number> = {
   provider: 0,
   plugin: 1,
@@ -62,6 +62,7 @@ export function filterAndRankCommandAutocompleteEntries<TEntry extends CommandAu
 ): TEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) {
+    if (entries.every((entry) => entry.source === "client")) return [];
     return entries.toSorted(
       (a, b) => EMPTY_QUERY_SOURCE_ORDER[a.source] - EMPTY_QUERY_SOURCE_ORDER[b.source],
     );
