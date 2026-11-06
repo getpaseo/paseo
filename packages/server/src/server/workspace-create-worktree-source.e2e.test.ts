@@ -1,8 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
@@ -13,7 +15,7 @@ import {
   DaemonClient as SocketDaemonClient,
   type WebSocketLike,
 } from "@getpaseo/client/internal/daemon-client";
-import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 // The reshaped workspace.create.request forwards its worktree `source`
 // (action/refName/branchName/githubPrNumber/worktreeSlug) into createWorktreeCore.
@@ -929,3 +931,107 @@ test("agent creation rejects legacy worktree intent without provisioning or exec
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("archiving a local import preserves the containing worktree owned by another daemon", async () => {
+  const artifacts = path.resolve(".artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const root = mkdtempSync(path.join(artifacts, "local-import-archive-"));
+  const daemons: TestPaseoDaemon[] = [];
+  const clients: DaemonClient[] = [];
+  try {
+    const repo = path.join(root, "repo");
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+    mkdirSync(repo);
+    git("init", "-b", "main");
+    git("config", "user.name", "Paseo Test");
+    git("config", "user.email", "test@getpaseo.local");
+    mkdirSync(path.join(repo, "fixtures"));
+    writeFileSync(path.join(repo, "fixtures", "inside.txt"), "inside\n");
+    writeFileSync(path.join(repo, "outside.txt"), "outside\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "fixture");
+    for (const name of ["owner", "importer"]) {
+      const daemon = await createTestPaseoDaemon({
+        paseoHomeRoot: path.join(root, name),
+        staticDir: path.join(root, name, "static"),
+        agentClients: {},
+      });
+      daemons.push(daemon);
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      clients.push(client);
+      await client.connect();
+    }
+    const importer = daemons[1]!;
+    const created = await clients[0]!.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repo,
+        branchName: "feature/local-import",
+        baseBranch: "main",
+      },
+    });
+    expect(created.error).toBeNull();
+    if (!created.workspace) throw new Error("Missing owner workspace");
+    const worktree = created.workspace.workspaceDirectory;
+    const nested = path.join(worktree, "fixtures");
+    writeFileSync(path.join(worktree, "untracked.txt"), "keep me\n");
+    const cli = async (...args: string[]) => {
+      const result = await promisify(execFile)(
+        process.execPath,
+        [
+          "--conditions=source",
+          "--import",
+          import.meta.resolve("tsx"),
+          fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url)),
+          "--host",
+          `127.0.0.1:${importer.port}`,
+          ...args,
+          "--json",
+        ],
+        {
+          cwd: repo,
+          env: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+            ),
+            PASEO_HOME: importer.paseoHome,
+          },
+          timeout: 30000,
+        },
+      );
+      return JSON.parse(result.stdout);
+    };
+    const imported = await cli("workspace", "create", "--isolation", "local", "--path", nested);
+    console.log("local import", {
+      isolation: imported.isolation,
+      nestedCwd: imported.cwd === nested,
+    });
+    const workspaceId = imported.workspaceId;
+    expect(typeof workspaceId).toBe("string");
+    const archived = await cli("workspace", "archive", workspaceId);
+    console.log("archive", {
+      status: archived.status,
+      parentSurvives: existsSync(worktree),
+      trackedFileSurvives: existsSync(path.join(worktree, "outside.txt")),
+      untrackedFileSurvives: existsSync(path.join(worktree, "untracked.txt")),
+      gitMetadataSurvives: existsSync(path.join(worktree, ".git")),
+    });
+    expect((await clients[0]!.fetchWorkspaces()).entries.map((entry) => entry.id)).toContain(
+      created.workspace.id,
+    );
+    expect(archived.status).toBe("archived");
+    expect(existsSync(worktree), "local import archive must preserve its parent worktree").toBe(
+      true,
+    );
+    expect(readFileSync(path.join(worktree, "outside.txt"), "utf8")).toBe("outside\n");
+    expect(readFileSync(path.join(worktree, "untracked.txt"), "utf8")).toBe("keep me\n");
+    expect(readFileSync(path.join(nested, "inside.txt"), "utf8")).toBe("inside\n");
+    expect((await clients[1]!.fetchWorkspaces()).entries.map((entry) => entry.id)).not.toContain(
+      workspaceId,
+    );
+  } finally {
+    for (const client of clients) await client.close();
+    for (const daemon of daemons.toReversed()) await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 180000);
