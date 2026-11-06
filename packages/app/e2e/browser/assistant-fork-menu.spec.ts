@@ -2,6 +2,7 @@ import {
   captureChatHistory,
   followChatHistorySource,
   expectInlineChatHistory,
+  expectSavedAnswerEnding,
   expectChatHistoryMessageStyles,
   sendChatHistoryFromAnotherClient,
   setChatHistoryViewport,
@@ -91,6 +92,36 @@ test.describe("Assistant fork menu", () => {
     await expectInlineChatHistory(page, [initialPrompt, "updates for the fork."]);
     await followChatHistorySource(page);
     await expectActiveForkAgent(page, forkAgentId);
+  });
+
+  test("reads the ending of a long saved answer before sending and after reload", async ({
+    page,
+    seedForkWorkspace,
+  }, testInfo) => {
+    const ending = "The complete saved answer ends here.";
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-long-answer-",
+      title: "Long original conversation",
+      initialPrompt: "Explain the full context.",
+      model: "ten-second-stream",
+      featureValues: {
+        mockAssistantResponse: "Retained context. ".repeat(2400) + "\n\n" + ending,
+      },
+    });
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await forkMostRecentAssistantTurnToNewTab(page);
+    await expectSavedAnswerEnding(page, ending);
+    await captureChatHistory(page, testInfo, "long-history-draft.png");
+    await submitMessage(page, "emit 1 coalesced agent stream updates for the fork.");
+    const forkAgentId = await getActiveForkAgentId(page);
+    await session.client.waitForFinish(forkAgentId, 45_000);
+    await page.reload();
+    await setChatHistoryViewport(page, "compact");
+    await expectSavedAnswerEnding(page, ending);
+    await captureChatHistory(page, testInfo, "long-history-reloaded.png");
   });
 
   test("shows history sent from another connected client without reloading", async ({

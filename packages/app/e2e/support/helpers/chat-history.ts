@@ -57,3 +57,14 @@ export async function sendChatHistoryFromAnotherClient(
     ],
   });
 }
+
+export async function expectSavedAnswerEnding(page: Page, ending: string) {
+  const history = page.getByTestId("chat-history-transcript").filter({ visible: true });
+  const finalParagraph = history
+    .getByTestId("assistant-message")
+    .getByText(ending, { exact: true });
+  await expect(finalParagraph).toBeAttached({ timeout: 15_000 });
+  await finalParagraph.scrollIntoViewIfNeeded();
+  await expect(finalParagraph).toBeInViewport();
+  await expect(history.getByTestId("assistant-message-capped-notice")).toHaveCount(0);
+}

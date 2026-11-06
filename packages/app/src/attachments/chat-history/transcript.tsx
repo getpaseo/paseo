@@ -52,6 +52,7 @@ export const ChatHistoryTranscript = memo(function ChatHistoryTranscript({
                 key={entry.id}
                 occurrenceKey={`${occurrenceKey}:${entry.id}`}
                 message={entry.text}
+                renderFullContent
                 phase="complete"
                 spacing="compactBoth"
               />
