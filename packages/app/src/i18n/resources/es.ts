@@ -1272,6 +1272,7 @@ export const es: TranslationResources = {
       hosts: "Hosts",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
+      moreActions: "Más acciones",
     },
     footer: {
       usage: "Uso",

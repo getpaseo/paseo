@@ -1262,6 +1262,7 @@ export const ptBR: TranslationResources = {
       hosts: "Hosts",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      moreActions: "Mais ações",
     },
     footer: {
       usage: "Uso",

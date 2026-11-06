@@ -1266,6 +1266,7 @@ export const fr: TranslationResources = {
       hosts: "Hôtes",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+      moreActions: "Plus d’actions",
     },
     footer: {
       usage: "Utilisation",

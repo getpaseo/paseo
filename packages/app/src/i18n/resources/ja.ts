@@ -1250,6 +1250,7 @@ export const ja: TranslationResources = {
       hosts: "ホスト",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
+      moreActions: "その他のアクション",
     },
     footer: {
       usage: "使用状況",
