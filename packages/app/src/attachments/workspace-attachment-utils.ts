@@ -62,7 +62,12 @@ export function workspaceAttachmentToSubmitAttachment(
     };
   }
   if (attachment.kind === "chat_history") {
-    return attachment.attachment;
+    if (!attachment.source) return attachment.attachment;
+    const { serverId, agentId, title } = attachment.source;
+    return {
+      ...attachment.attachment,
+      chatHistorySource: { serverId, agentId, ...(title ? { title } : {}) },
+    };
   }
   return attachment.kind === "review" ? attachment.attachment : null;
 }

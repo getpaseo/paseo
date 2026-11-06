@@ -81,6 +81,7 @@ export async function openMostRecentAssistantForkMenu(page: Page): Promise<void>
 export async function forkMostRecentAssistantTurnToNewTab(page: Page): Promise<void> {
   await openMostRecentAssistantForkMenu(page);
   await page.getByRole("menuitem", { name: "Fork in a new tab" }).click();
+  await expectChatHistoryAttachment(page);
 }
 
 export async function expectInFlightForkAvailable(page: Page): Promise<void> {
@@ -101,14 +102,37 @@ export async function forkMostRecentAssistantTurnToNewWorkspace(page: Page): Pro
 }
 
 export async function expectChatHistoryAttachment(page: Page): Promise<void> {
-  const attachment = page.getByRole("button", { name: "Open chat history attachment" }).first();
+  const attachment = page
+    .getByRole("button", { name: "Open chat history attachment" })
+    .filter({ visible: true })
+    .first();
   await expect(attachment).toBeVisible({ timeout: 30_000 });
   await expect(attachment).toContainText("Chat history");
 }
 
 export async function expectLiveAssistantText(page: Page, text: string): Promise<void> {
   await expect(inFlightTurn(page)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("assistant-message").last()).toContainText(text, {
+  await expect(
+    page.getByTestId("assistant-message").filter({ visible: true }).last(),
+  ).toContainText(text, {
     timeout: 60_000,
   });
+}
+
+export async function getActiveForkAgentId(page: Page): Promise<string> {
+  const selectedTab = page
+    .getByTestId("workspace-tabs-row")
+    .getByRole("button")
+    .and(page.locator('[aria-selected="true"]'));
+  await expect(selectedTab).toHaveAttribute("data-testid", /^workspace-tab-agent_/);
+  const tabId = await selectedTab.getAttribute("data-testid");
+  if (!tabId) throw new Error("Expected a selected agent tab");
+  return tabId.replace("workspace-tab-agent_", "");
+}
+
+export async function expectActiveForkAgent(page: Page, agentId: string) {
+  await expect(page.getByTestId(`workspace-tab-agent_${agentId}`)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 }

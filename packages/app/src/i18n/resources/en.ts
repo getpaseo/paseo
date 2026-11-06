@@ -339,6 +339,15 @@ export const en = {
       openFile: "Open file",
       copied: "Copied",
     },
+    chatHistory: {
+      forkBoundary: "Conversation continues here",
+      title: "Chat history",
+      previousConversation: "Previous conversation",
+      open: "Open chat history attachment",
+      remove: "Remove chat history attachment",
+      openSource: "Open source chat",
+      description: "Context copied when this chat was forked.",
+    },
     attachments: {
       dismissImage: "Dismiss image",
       closeImage: "Close image",

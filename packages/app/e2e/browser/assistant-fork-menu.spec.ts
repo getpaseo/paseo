@@ -1,6 +1,24 @@
+import {
+  captureChatHistory,
+  expectRewoundHistoryIsPrivate,
+  rewindForkPrompt,
+  openChatHistory,
+  closeChatHistory,
+  followChatHistorySource,
+  expectInlineChatHistory,
+  expectResentChatHistory,
+  expectNoDraftChatHistory,
+  removeDraftChatHistory,
+  expectSavedAnswerEnding,
+  expectChatHistoryMessageStyles,
+  sendChatHistoryFromAnotherClient,
+  setChatHistoryViewport,
+} from "../support/helpers/chat-history";
 import { expect, test as base } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
+  getActiveForkAgentId,
+  expectActiveForkAgent,
   expectChatHistoryAttachment,
   expectInFlightForkAvailable,
   expectLiveAssistantText,
@@ -9,7 +27,11 @@ import {
   forkMostRecentAssistantTurnToNewWorkspace,
   observeForkAttachment,
 } from "../support/helpers/assistant-fork";
-import { expectComposerVisible, submitMessage } from "../support/helpers/composer";
+import {
+  expectComposerDraft,
+  expectComposerVisible,
+  submitMessage,
+} from "../support/helpers/composer";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   openAgentRoute,
@@ -37,6 +59,146 @@ const test = base.extend<{
 
 test.describe("Assistant fork menu", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("reads fork history before and after sending and opens its source after reload", async ({
+    page,
+    seedForkWorkspace,
+  }, testInfo) => {
+    const initialPrompt = "Show me a small TypeScript example.";
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-readable-",
+      title: "Original conversation",
+      initialPrompt,
+      featureValues: {
+        mockAssistantResponse:
+          "## The answer\nHere is a **small example**:\n\n```ts\nconst answer = 42;\n```\n\n[User] in prose is not a new message.",
+      },
+      model: "ten-second-stream",
+    });
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await forkMostRecentAssistantTurnToNewTab(page);
+    await expectInlineChatHistory(page, [initialPrompt]);
+    await expectChatHistoryMessageStyles(page, initialPrompt);
+    await captureChatHistory(page, testInfo, "history-wide.png");
+    await submitMessage(page, "emit 1 coalesced agent stream updates for the fork.");
+    const forkAgentId = await getActiveForkAgentId(page);
+    await session.client.waitForFinish(forkAgentId, 45_000);
+
+    await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
+    await page.reload();
+    await setChatHistoryViewport(page, "compact");
+    await expectInlineChatHistory(page, [initialPrompt]);
+    await expectChatHistoryMessageStyles(page, initialPrompt);
+    await captureChatHistory(page, testInfo, "history-compact.png");
+    await followChatHistorySource(page);
+    await setChatHistoryViewport(page, "wide");
+    await expectActiveForkAgent(page, session.agentId);
+
+    await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
+    await expectActiveForkAgent(page, forkAgentId);
+    await forkMostRecentAssistantTurnToNewTab(page);
+    await expectInlineChatHistory(page, [initialPrompt, "updates for the fork."]);
+    await followChatHistorySource(page);
+    await expectActiveForkAgent(page, forkAgentId);
+  });
+
+  test("reads the ending of a long saved answer before sending and after reload", async ({
+    page,
+    seedForkWorkspace,
+  }, testInfo) => {
+    const ending = "The complete saved answer ends here.";
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-long-answer-",
+      title: "Long original conversation",
+      initialPrompt: "Explain the full context.",
+      model: "ten-second-stream",
+      featureValues: {
+        mockAssistantResponse: "Retained context. ".repeat(2400) + "\n\n" + ending,
+      },
+    });
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await forkMostRecentAssistantTurnToNewTab(page);
+    await expectSavedAnswerEnding(page, ending);
+    await captureChatHistory(page, testInfo, "long-history-draft.png");
+    await submitMessage(page, "emit 1 coalesced agent stream updates for the fork.");
+    const forkAgentId = await getActiveForkAgentId(page);
+    await session.client.waitForFinish(forkAgentId, 45_000);
+    await page.reload();
+    await setChatHistoryViewport(page, "compact");
+    await expectSavedAnswerEnding(page, ending);
+    await captureChatHistory(page, testInfo, "long-history-reloaded.png");
+  });
+
+  for (const prompt of ["", "Continue the fork"]) {
+    test(`retains inherited context when rewinding the first fork prompt (${prompt || "history only"})`, async ({
+      page,
+      seedForkWorkspace,
+    }, testInfo) => {
+      const initialPrompt = "emit 1 coalesced agent stream updates for rewindable fork history.";
+      const session = await seedForkWorkspace({
+        repoPrefix: "fork-rewind-",
+        title: "Rewind source",
+        initialPrompt,
+        model: "ten-second-stream",
+      });
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await awaitAssistantMessage(page);
+      await session.client.waitForFinish(session.agentId, 45_000);
+      await forkMostRecentAssistantTurnToNewTab(page);
+      await submitMessage(page, prompt);
+      const forkId = await getActiveForkAgentId(page);
+      await session.client.waitForFinish(forkId, 45_000);
+      await page.reload();
+      await expectInlineChatHistory(page, [initialPrompt]);
+      await rewindForkPrompt(page);
+      await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
+      await page.reload();
+      await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
+      await expectComposerDraft(page, prompt);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
+      await submitMessage(page, prompt);
+      await session.client.waitForFinish(forkId, 45_000);
+      await page.reload();
+      await expectResentChatHistory(page, [initialPrompt]);
+      await expectNoDraftChatHistory(page);
+      await captureChatHistory(page, testInfo, "history-after-rewind.png");
+      await rewindForkPrompt(page);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
+      await removeDraftChatHistory(page);
+      await page.reload();
+      await expectComposerVisible(page);
+      await expectComposerDraft(page, prompt);
+      await expectNoDraftChatHistory(page);
+    });
+  }
+
+  test("shows history sent from another connected client without reloading", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-live-history-",
+      title: "Live history recipient",
+      model: "ten-second-stream",
+    });
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    const history = "[User] Context inherited on another device.";
+    await sendChatHistoryFromAnotherClient(session, history);
+    await expectInlineChatHistory(page, [history]);
+    await session.client.waitForFinish(session.agentId, 45_000);
+  });
 
   test("forks a failed assistant turn that has no provider message id", async ({
     page,
@@ -147,9 +309,7 @@ test.describe("Assistant fork menu", () => {
 
     await submitMessage(page, "");
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
-    await expect(userMessage).toBeVisible({ timeout: 30_000 });
-    await expect(userMessage).not.toContainText("Source agent:");
+    await expectInlineChatHistory(page, ["updates for assistant fork tab submit."]);
   });
 
   test("forks an assistant turn into New Workspace and keeps the attachment across host changes", async ({
@@ -216,8 +376,6 @@ test.describe("Assistant fork menu", () => {
 
     await submitNewWorkspaceEmpty(page);
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
-    await expect(userMessage).toBeVisible({ timeout: 30_000 });
-    await expect(userMessage).not.toContainText("Source agent:");
+    await expectInlineChatHistory(page, ["updates for assistant fork submit."]);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentTimelineItemPayloadSchema,
   AgentForkContextRequestMessageSchema,
   AgentForkContextResponseMessageSchema,
   CreateAgentRequestMessageSchema,
@@ -9,6 +10,25 @@ import {
 } from "./messages.js";
 
 describe("shared messages attachments", () => {
+  it("round-trips fork history on a timeline row and accepts rows without it", () => {
+    const row = {
+      type: "user_message",
+      text: "",
+      messageId: "fork-prompt",
+      chatHistory: {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        text: "Earlier context",
+        chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
+        chatHistorySource: { serverId: "source-host", agentId: "source-agent", title: "Original" },
+      },
+    };
+    expect(AgentTimelineItemPayloadSchema.parse(row)).toEqual(row);
+    const legacy = { type: "user_message", text: "Earlier message" };
+    expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  });
+
   it("preserves an optional timeline cursor on fork-context messages", () => {
     const boundaryCursor = { epoch: "timeline-1", seq: 42 };
     const request = AgentForkContextRequestMessageSchema.parse({
@@ -267,6 +287,30 @@ describe("shared messages attachments", () => {
         body: "Body",
       },
     ]);
+  });
+
+  it("preserves the source of a fork across message submission", () => {
+    const attachment = {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      title: "Chat history",
+      text: "Earlier context",
+      chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
+      chatHistorySource: {
+        serverId: "source-host",
+        agentId: "source-agent",
+        title: "Original conversation",
+      },
+    };
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-fork-source",
+      agentId: "fork-agent",
+      text: "Continue",
+      attachments: [attachment],
+    });
+    expect(parsed.attachments).toEqual([attachment]);
   });
 
   it("keeps known text attachment context kinds and ignores future ones", () => {

@@ -347,6 +347,15 @@ export const es: TranslationResources = {
       openFile: "Abrir archivo",
       copied: "Copiado",
     },
+    chatHistory: {
+      forkBoundary: "La conversación continúa aquí",
+      title: "Historial del chat",
+      previousConversation: "Conversación anterior",
+      open: "Abrir el historial adjunto",
+      remove: "Quitar el historial adjunto",
+      openSource: "Abrir el chat de origen",
+      description: "Contexto copiado al bifurcar este chat.",
+    },
     attachments: {
       dismissImage: "Descartar imagen",
       closeImage: "Cerrar imagen",

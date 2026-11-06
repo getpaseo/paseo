@@ -1,11 +1,15 @@
+import type { ChatHistoryAttachment } from "@getpaseo/protocol/messages";
+import { generateMessageId } from "@/types/stream";
+import type { AgentInputDraft } from "@/composer/draft/input-draft";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
 interface RewindComposerRestoreContextValue {
-  completeRewind: (text: string) => void;
+  completeRewind: (prompt: { text: string; chatHistory?: ChatHistoryAttachment }) => void;
 }
 
 interface RewindComposerRestoreProviderProps {
+  setAttachments: AgentInputDraft["setAttachments"];
   textSource: ComposerTextSource;
   setText: (text: string) => void;
   onRewindComplete: () => void;
@@ -14,35 +18,38 @@ interface RewindComposerRestoreProviderProps {
 
 const RewindComposerRestoreContext = createContext<RewindComposerRestoreContextValue | null>(null);
 
-export function restoreComposerTextIfEmpty(input: {
+export function restoreComposerPromptIfEmpty(input: {
   currentText: string;
-  rewoundText: string;
-}): string {
-  if (input.currentText.length > 0) {
-    return input.currentText;
-  }
-  return input.rewoundText;
+  rewoundPrompt: { text: string; chatHistory?: ChatHistoryAttachment };
+}): { text: string; chatHistory?: ChatHistoryAttachment } {
+  if (input.currentText.length > 0) return { text: input.currentText };
+  return input.rewoundPrompt;
 }
 
 export function RewindComposerRestoreProvider({
+  setAttachments,
   textSource,
   setText,
   onRewindComplete,
   children,
 }: RewindComposerRestoreProviderProps) {
   const completeRewind = useCallback(
-    (rewoundText: string) => {
+    (prompt: { text: string; chatHistory?: ChatHistoryAttachment }) => {
       const currentText = textSource.getSnapshot();
-      const nextText = restoreComposerTextIfEmpty({
-        currentText: currentText,
-        rewoundText,
-      });
-      if (nextText !== currentText) {
-        setText(nextText);
+      const restored = restoreComposerPromptIfEmpty({ currentText, rewoundPrompt: prompt });
+      if (restored.chatHistory) {
+        const history = restored.chatHistory;
+        setAttachments((attachments) => [
+          ...attachments.filter((attachment) => attachment.kind !== "restored_chat_history"),
+          { kind: "restored_chat_history", id: generateMessageId(), attachment: history },
+        ]);
+      }
+      if (restored.text !== currentText) {
+        setText(restored.text);
       }
       onRewindComplete();
     },
-    [onRewindComplete, setText, textSource],
+    [setAttachments, onRewindComplete, setText, textSource],
   );
 
   const value = useMemo(() => ({ completeRewind }), [completeRewind]);

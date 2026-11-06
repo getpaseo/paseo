@@ -342,6 +342,15 @@ export const ar: TranslationResources = {
       openFile: "افتح الملف",
       copied: "منقول",
     },
+    chatHistory: {
+      forkBoundary: "تستمر المحادثة من هنا",
+      title: "سجل المحادثة",
+      previousConversation: "المحادثة السابقة",
+      open: "فتح مرفق سجل المحادثة",
+      remove: "إزالة مرفق سجل المحادثة",
+      openSource: "فتح المحادثة الأصلية",
+      description: "السياق المنسوخ عند تفريع هذه المحادثة.",
+    },
     attachments: {
       dismissImage: "تجاهل الصورة",
       closeImage: "إغلاق الصورة",

@@ -1,25 +1,43 @@
 import { describe, expect, test } from "vitest";
-import { restoreComposerTextIfEmpty } from "./composer-restore";
+import { restoreComposerPromptIfEmpty } from "./composer-restore";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
 
-describe("restoreComposerTextIfEmpty", () => {
+describe("restoreComposerPromptIfEmpty", () => {
   test("restores the rewound message when the composer is empty", () => {
     expect(
-      restoreComposerTextIfEmpty({
+      restoreComposerPromptIfEmpty({
         currentText: "",
-        rewoundText: "message before rewind",
+        rewoundPrompt: { text: "message before rewind" },
       }),
-    ).toBe("message before rewind");
+    ).toEqual({ text: "message before rewind" });
   });
 
   test("preserves an existing composer draft", () => {
     expect(
-      restoreComposerTextIfEmpty({
+      restoreComposerPromptIfEmpty({
         currentText: "keep this draft",
-        rewoundText: "message before rewind",
+        rewoundPrompt: { text: "message before rewind" },
       }),
-    ).toBe("keep this draft");
+    ).toEqual({ text: "keep this draft" });
   });
+});
+
+test.each(["", "Continue here"])("restores inherited history with rewound prompt %s", (text) => {
+  const chatHistory = {
+    type: "text",
+    mimeType: "text/plain",
+    contextKind: "chat_history",
+    text: "Earlier context",
+  } as const;
+  expect(
+    restoreComposerPromptIfEmpty({ currentText: "", rewoundPrompt: { text, chatHistory } }),
+  ).toEqual({ text, chatHistory });
+  expect(
+    restoreComposerPromptIfEmpty({
+      currentText: "Existing draft",
+      rewoundPrompt: { text, chatHistory },
+    }),
+  ).toEqual({ text: "Existing draft" });
 });
 
 describe("shouldRestoreComposerForRewindMode", () => {

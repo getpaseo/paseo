@@ -1,3 +1,4 @@
+import { DraftChatHistoryAttachment } from "@/attachments/chat-history";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -433,6 +434,18 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         onRemove={onRemove}
         openLabel={labels.openImage}
         removeLabel={labels.removeImage}
+      />
+    );
+  }
+  if (attachment.kind === "restored_chat_history") {
+    return (
+      <DraftChatHistoryAttachment
+        key={attachment.id}
+        attachment={attachment.attachment}
+        disabled={disabled}
+        index={index}
+        onRemove={onRemove}
+        testID="composer-chat-history-attachment-pill"
       />
     );
   }

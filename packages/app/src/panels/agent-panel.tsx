@@ -79,6 +79,7 @@ import {
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
+import { DraftChatHistory } from "@/composer/draft/history";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
@@ -1245,6 +1246,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   const content = (
     <RewindComposerRestoreProvider
+      setAttachments={agentInputDraft.setAttachments}
       textSource={agentInputDraft.textSource}
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
@@ -1445,6 +1447,9 @@ const AgentStreamSection = memo(function AgentStreamSection({
         onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     );
+  }
+  if (draft) {
+    return <DraftChatHistory serverId={serverId} draft={draft} />;
   }
   if (!agent) {
     return null;

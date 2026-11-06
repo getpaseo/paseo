@@ -1,3 +1,6 @@
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { ensureAgentLoaded } from "../agent-loading.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -126,3 +129,80 @@ CHILD_SENTINEL in your own response.
     }
   }, 300_000);
 });
+
+test.runIf(process.env.PASEO_FORK_HISTORY_QA === "1")(
+  "restores multiple fork snapshots through real Codex reload, restart and rewind",
+  async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-fork-history-"));
+    const logger = createTestLogger();
+    const client = new CodexAppServerAgentClient(logger);
+    const storagePath = path.join(cwd, "agents");
+    let storage = new AgentStorage(storagePath, logger);
+    let manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    let agentId: string | undefined;
+    try {
+      const catalog = await client.fetchCatalog({ scope: "workspace", cwd, force: false });
+      const model = catalog.models.find((entry) => entry.isDefault) ?? catalog.models[0];
+      expect(model).toBeDefined();
+      const agent = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd,
+          model: model!.id,
+          modeId: "auto",
+          thinkingOptionId: "low",
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      agentId = agent.id;
+      const snapshots = ["FIRST", "SECOND"].map((name) => ({
+        type: "text" as const,
+        mimeType: "text/plain" as const,
+        contextKind: "chat_history" as const,
+        text: `[User] The ${name} source conversation.`,
+        chatHistorySource: { serverId: `${name}-host`, agentId: `${name}-source`, title: name },
+        chatHistoryEntries: [
+          { id: name, role: "user" as const, text: `The ${name} source conversation.` },
+        ],
+      }));
+      const prompt = "Reply with exactly HISTORY_OK. Do not use tools or change any files.";
+      for (const [index, snapshot] of snapshots.entries()) {
+        for await (const _event of manager.streamAgent(
+          agent.id,
+          [{ type: "text", text: prompt }, snapshot],
+          { clientMessageId: `history-${index}` },
+        )) {
+          // Drain the real turn before testing persisted replay.
+        }
+        expect(await manager.getLastAssistantMessage(agent.id)).toContain("HISTORY_OK");
+      }
+      const userRows = async () =>
+        (await manager.getTimelineRows(agent.id))
+          .map((row) => row.item)
+          .filter((item) => item.type === "user_message");
+      const expected = snapshots.map((snapshot) =>
+        expect.objectContaining({ text: prompt, chatHistory: snapshot }),
+      );
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id);
+      expect(await userRows()).toEqual(expected);
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      storage = new AgentStorage(storagePath, logger);
+      manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+      await manager.hydrateTimelineFromProvider(agent.id);
+      expect(await userRows()).toEqual(expected);
+      const rows = await userRows();
+      expect(rows[1]?.messageId).toBeTruthy();
+      await manager.rewind(agent.id, rows[1]!.messageId!, "conversation");
+      expect(await userRows()).toEqual(expected.slice(0, 1));
+    } finally {
+      if (agentId) await manager.closeAgent(agentId);
+      await manager.flush();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+  120_000,
+);

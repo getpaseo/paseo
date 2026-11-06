@@ -1,5 +1,7 @@
 import type {
   AgentAttachment,
+  ChatHistorySource,
+  ChatHistoryAttachment,
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
@@ -82,9 +84,7 @@ export interface ChatHistoryContextAttachment {
   kind: "chat_history";
   id: string;
   attachment: Extract<AgentAttachment, { type: "text" }>;
-  source: {
-    serverId: string;
-    agentId: string;
+  source?: ChatHistorySource & {
     boundaryMessageId?: string | null;
     boundaryCursor?: { epoch: string; seq: number } | null;
     itemCount?: number;
@@ -104,6 +104,7 @@ export interface WorkspaceFileComposerAttachment {
 }
 
 export type UserComposerAttachment =
+  | { kind: "restored_chat_history"; id: string; attachment: ChatHistoryAttachment }
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | WorkspaceFileComposerAttachment

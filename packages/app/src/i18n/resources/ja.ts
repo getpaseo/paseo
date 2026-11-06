@@ -347,6 +347,15 @@ export const ja: TranslationResources = {
       openFile: "ファイルを開く",
       copied: "コピーしました",
     },
+    chatHistory: {
+      forkBoundary: "ここから会話を続けます",
+      title: "チャット履歴",
+      previousConversation: "以前の会話",
+      open: "チャット履歴の添付を開く",
+      remove: "チャット履歴の添付を削除",
+      openSource: "元のチャットを開く",
+      description: "このチャットを分岐した時点でコピーされたコンテキストです。",
+    },
     attachments: {
       dismissImage: "画像を閉じる",
       closeImage: "画像を閉じる",

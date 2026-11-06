@@ -1,6 +1,7 @@
+import { extractChatHistoryBody } from "@getpaseo/protocol/chat-history";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ChatHistoryEntry } from "@getpaseo/protocol/messages";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
@@ -21,6 +22,7 @@ const FORK_CONTEXT_KINDS: readonly AgentTimelineItem["type"][] = [
 ];
 
 interface ActivityCuratorOptions {
+  includeChatHistory?: boolean;
   maxItems?: number;
   labelAssistantMessages?: boolean;
   includeKinds?: readonly AgentTimelineItem["type"][];
@@ -28,13 +30,42 @@ interface ActivityCuratorOptions {
 }
 
 interface ActivityEntry {
+  role: ChatHistoryEntry["role"];
   text: string;
 }
 
 type TextAgentAttachment = Extract<AgentAttachment, { type: "text" }>;
 
-function activityEntry(text: string): ActivityEntry {
-  return { text };
+function activityEntry(text: string, role: ChatHistoryEntry["role"] = "activity"): ActivityEntry {
+  return { text, role };
+}
+
+function historyEntryPrefix(role: ChatHistoryEntry["role"]): string {
+  if (role === "user") return "[User] ";
+  if (role === "assistant") return "[Assistant] ";
+  return "";
+}
+
+function appendUserEntry(
+  entries: ActivityEntry[],
+  item: Extract<AgentTimelineItem, { type: "user_message" }>,
+  options?: ActivityCuratorOptions,
+) {
+  if (options?.includeChatHistory && item.chatHistory) {
+    const inherited = item.chatHistory.chatHistoryEntries;
+    if (inherited) {
+      entries.push(
+        ...inherited.map((entry) =>
+          activityEntry(historyEntryPrefix(entry.role) + entry.text, entry.role),
+        ),
+      );
+    } else {
+      entries.push(activityEntry(extractChatHistoryBody(item.chatHistory.text), "notice"));
+    }
+  }
+  if (!options?.includeChatHistory || item.text.trim()) {
+    entries.push(activityEntry(`[User] ${item.text.trim()}`, "user"));
+  }
 }
 
 function appendTextEntry(
@@ -46,7 +77,7 @@ function appendTextEntry(
   if (!text) return;
   let prefix = options?.labelAssistantMessages ? "[Assistant] " : "";
   if (item.type === "reasoning") prefix = "[Thought] ";
-  entries.push(activityEntry(`${prefix}${text}`));
+  entries.push(activityEntry(`${prefix}${text}`, "assistant"));
 }
 
 function formatToolInputJson(input: unknown): string | null {
@@ -158,7 +189,7 @@ function curateProjectedActivityEntries(
 
     switch (item.type) {
       case "user_message":
-        entries.push(activityEntry(`[User] ${item.text.trim()}`));
+        appendUserEntry(entries, item, options);
         break;
       case "assistant_message":
       case "reasoning":
@@ -318,28 +349,32 @@ function buildForkContextText(input: {
   return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
 }
 
-function fitForkContextEntries(entries: ActivityEntry[], budget: number): string {
+function fitForkContextEntries(entries: ActivityEntry[], budget: number): ActivityEntry[] {
   const length = entries.reduce((total, entry) => total + entry.text.length + 1, -1);
-  if (length <= budget) return entries.map((entry) => entry.text).join("\n");
+  if (length <= budget) return entries;
 
-  const selected: string[] = [];
+  const selected: ActivityEntry[] = [];
   let remaining = budget - FORK_HISTORY_OMITTED.length;
   for (let index = entries.length - 1; index >= 0; index--) {
-    const text = entries[index]!.text;
+    const entry = entries[index]!;
+    const text = entry.text;
     const size = text.length + (selected.length > 0 ? 1 : 0);
     if (size > remaining) {
       if (selected.length === 0) {
         const marker = "\n[Message truncated]\n";
         const available = remaining - marker.length;
         const head = Math.ceil(available / 2);
-        selected.push(text.slice(0, head) + marker + text.slice(-(available - head)));
+        selected.push({
+          ...entry,
+          text: text.slice(0, head) + marker + text.slice(-(available - head)),
+        });
       }
       break;
     }
-    selected.push(text);
+    selected.push(entry);
     remaining -= size;
   }
-  return FORK_HISTORY_OMITTED + selected.toReversed().join("\n");
+  return [activityEntry(FORK_HISTORY_OMITTED.trimEnd(), "notice"), ...selected.toReversed()];
 }
 
 export function buildAgentForkContextAttachment(input: {
@@ -361,20 +396,29 @@ export function buildAgentForkContextAttachment(input: {
   });
   const entries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
+    includeChatHistory: true,
     labelAssistantMessages: true,
     includeKinds: FORK_CONTEXT_KINDS,
     includeExternalToolInput: false,
   });
   const metadata = { agentTitle: input.agentTitle, cwd: input.cwd };
   const budget = MAX_FORK_CONTEXT_CHARS - buildForkContextText({ body: "", ...metadata }).length;
-  const body =
-    entries.length > 0 ? fitForkContextEntries(entries, budget) : "No chat history to display.";
+  const fitted =
+    entries.length > 0
+      ? fitForkContextEntries(entries, budget)
+      : [activityEntry("No chat history to display.", "notice")];
+  const body = fitted.map((entry) => entry.text).join("\n");
   return {
     attachment: {
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
       title: "Chat history",
+      chatHistoryEntries: fitted.map((entry, index) => ({
+        id: `history-${index.toString(36)}`,
+        role: entry.role,
+        text: entry.text.slice(historyEntryPrefix(entry.role).length),
+      })),
       text: buildForkContextText({
         body,
         agentTitle: input.agentTitle,

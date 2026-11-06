@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import { AgentFeatureSchema, AgentStatusSchema, ChatHistoryAttachmentSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -42,6 +42,13 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const FORK_CONTEXT_SCHEMA = z.object({
+  clientMessageId: z.string(),
+  providerMessageId: z.string().optional(),
+  text: z.string(),
+  attachment: ChatHistoryAttachmentSchema,
+});
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -53,6 +60,10 @@ const STORED_AGENT_SCHEMA = z.object({
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
+  // Provider transcripts retain the rendered prompt, not attachment metadata.
+  forkContexts: z.record(z.string(), FORK_CONTEXT_SCHEMA).optional(),
+  // COMPAT(singleForkContext): added in v0.15.2, remove after 2027-02-06.
+  forkContext: FORK_CONTEXT_SCHEMA.optional(),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),

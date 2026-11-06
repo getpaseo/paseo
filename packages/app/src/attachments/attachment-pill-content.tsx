@@ -49,7 +49,7 @@ function getTextAttachmentSubtitle(
   t: TFunction,
 ): string {
   if (attachment.contextKind === "chat_history") {
-    return "Previous conversation";
+    return attachment.chatHistorySource?.title ?? t("message.chatHistory.previousConversation");
   }
   return t("message.attachments.text");
 }
@@ -87,6 +87,13 @@ export function getAgentAttachmentPillContent(
         subtitle: `Issue #${attachment.number}`,
       };
     case "text":
+      if (attachment.contextKind === "chat_history") {
+        return {
+          icon: attachmentFileIcon,
+          title: t("message.chatHistory.title"),
+          subtitle: getTextAttachmentSubtitle(attachment, t),
+        };
+      }
       if (attachment.externalResource) {
         return {
           icon: attachmentGithubIssueIcon,

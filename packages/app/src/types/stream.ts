@@ -263,6 +263,7 @@ function produceUserMessage(
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
+    attachments: presentation.attachments ?? incoming.attachments,
   });
   if (
     existing.id === merged.id &&
@@ -891,6 +892,18 @@ export function handoffCreatedAgentUserMessageToStream(params: {
   });
 }
 
+function normalizeUserMessageContent(
+  text: string,
+  chatHistory?: Extract<AgentTimelineItem, { type: "user_message" }>["chatHistory"],
+) {
+  const normalized = normalizeChunk(text);
+  return {
+    ...normalized,
+    hasContent: normalized.hasContent || chatHistory !== undefined,
+    attachments: chatHistory ? [chatHistory] : undefined,
+  };
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
@@ -900,8 +913,9 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  chatHistory?: Extract<AgentTimelineItem, { type: "user_message" }>["chatHistory"],
 ): StreamItem[] {
-  const { chunk, hasContent } = normalizeChunk(text);
+  const { chunk, hasContent, attachments } = normalizeUserMessageContent(text, chatHistory);
   if (!hasContent) {
     return state;
   }
@@ -914,6 +928,7 @@ function appendUserMessage(
     timelineCursor,
     turnId,
     text: chunk,
+    attachments,
     timestamp,
   });
   return upsertUserMessage(state, nextItem);
@@ -1523,6 +1538,7 @@ function reduceTimelineEvent(
         item.clientMessageId,
         timelineCursor,
         event.turnId,
+        item.chatHistory,
       );
     case "assistant_message":
       return appendAssistantMessage(
@@ -1874,7 +1890,7 @@ function applyCanonicalUserMessageEvent(params: {
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
-  const normalized = normalizeChunk(event.item.text);
+  const normalized = normalizeUserMessageContent(event.item.text, event.item.chatHistory);
 
   const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
   const flushedHead = head.length > 0 ? [] : head;
@@ -1887,6 +1903,7 @@ function applyCanonicalUserMessageEvent(params: {
     turnId: event.turnId,
     timelineCursor,
     text: normalized.chunk,
+    attachments: normalized.attachments,
     timestamp,
   });
   if (unmatchedInsert === "head") {
