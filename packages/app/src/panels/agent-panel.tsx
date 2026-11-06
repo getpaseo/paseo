@@ -1112,6 +1112,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
+  const rewindAttachmentScopeKey = useWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd });
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1245,6 +1246,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   const content = (
     <RewindComposerRestoreProvider
+      attachmentScopeKey={rewindAttachmentScopeKey}
       textSource={agentInputDraft.textSource}
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}

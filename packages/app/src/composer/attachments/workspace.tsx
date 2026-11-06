@@ -258,6 +258,7 @@ function WorkspaceAttachmentPill({
   const content = getWorkspaceAttachmentPillContent(attachment, t);
   const chatHistory = useMemo(() => {
     if (attachment.kind !== "chat_history") return null;
+    if (!attachment.source) return attachment.attachment;
     const { serverId, agentId, title } = attachment.source;
     return { ...attachment.attachment, chatHistorySource: { serverId, agentId, title } };
   }, [attachment]);

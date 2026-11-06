@@ -13,7 +13,9 @@ export async function openChatHistory(page: Page, location: "draft" | "sent", co
     location === "draft"
       ? "composer-chat-history-attachment-pill"
       : "message-chat-history-attachment";
-  await page.getByTestId(testId).click();
+  const attachment = page.getByTestId(testId).filter({ visible: true }).last();
+  await expect(attachment).toBeVisible({ timeout: 10_000 });
+  await attachment.click();
   for (const text of contents) {
     await expect(page.getByTestId("chat-history-content")).toContainText(text);
   }
@@ -55,4 +57,16 @@ export async function sendChatHistoryFromAnotherClient(
       },
     ],
   });
+}
+
+export async function rewindForkPrompt(page: Page) {
+  const prompt = page.getByTestId("user-message").filter({ visible: true }).last();
+  await prompt.hover();
+  const trigger = prompt.getByRole("button", { name: "Rewind to this message", exact: true });
+  await expect(trigger).toBeVisible({ timeout: 10_000 });
+  await trigger.click();
+  const option = page.getByRole("menuitem", { name: "Rewind conversation", exact: true });
+  await expect(option).toBeInViewport({ ratio: 1 });
+  await option.click();
+  await expect(option).not.toBeVisible();
 }

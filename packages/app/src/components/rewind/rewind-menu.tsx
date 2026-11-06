@@ -1,3 +1,4 @@
+import type { ChatHistoryAttachment } from "@getpaseo/protocol/messages";
 import { memo, useCallback, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -19,7 +20,12 @@ export type { RewindMode };
 interface RewindMenuProps {
   capabilities: AgentCapabilityFlags;
   rewoundText: string;
-  onRewind: (input: { mode: RewindMode; rewoundText: string }) => Promise<void> | void;
+  chatHistory?: ChatHistoryAttachment;
+  onRewind: (input: {
+    mode: RewindMode;
+    rewoundText: string;
+    chatHistory?: ChatHistoryAttachment;
+  }) => Promise<void> | void;
   isPending?: boolean;
   testID?: string;
 }
@@ -38,6 +44,7 @@ function getIcon(mode: RewindMode, color: string): ReactElement {
 export const RewindMenu = memo(function RewindMenu({
   capabilities,
   rewoundText,
+  chatHistory,
   onRewind,
   isPending: isPendingProp = false,
   testID = "rewind-menu",
@@ -70,7 +77,7 @@ export const RewindMenu = memo(function RewindMenu({
       if (isLocked) return;
       setPendingMode(mode);
       try {
-        await onRewind({ mode, rewoundText });
+        await onRewind({ mode, rewoundText, chatHistory });
       } catch {
         // useRewindAgentMutation owns the toast; the menu only owns flow state.
       } finally {
@@ -78,7 +85,7 @@ export const RewindMenu = memo(function RewindMenu({
         setIsOpen(false);
       }
     },
-    [isLocked, onRewind, rewoundText],
+    [isLocked, onRewind, rewoundText, chatHistory],
   );
 
   const triggerStyle = useCallback(

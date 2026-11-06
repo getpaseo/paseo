@@ -820,6 +820,68 @@ test.each([true, false])(
   },
 );
 
+test.each([undefined, "native-replay-id"])(
+  "restores fork history after a local submission echo and replay ID %s",
+  async (replayId) => {
+    const workdir = mkdtempSync(join(tmpdir(), "fork-local-echo-"));
+    const clientMessageId = "local-fork-prompt";
+    const attachment = {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      text: "[User] Original question",
+    } as const;
+    class LocalEchoSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: attachment.text,
+            messageId: clientMessageId,
+            clientMessageId,
+          },
+        });
+        return super.startTurn();
+      }
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: attachment.text,
+            ...(replayId ? { messageId: replayId } : {}),
+          },
+        };
+      }
+    }
+    class LocalEchoClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new LocalEchoSession(config);
+      }
+    }
+    const manager = new AgentManager({ clients: { codex: new LocalEchoClient() }, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await drainAsyncGenerator(manager.streamAgent(agent.id, [attachment], { clientMessageId }));
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      expect((await manager.getTimelineRows(agent.id))[0]?.item).toMatchObject({
+        type: "user_message",
+        text: "",
+        chatHistory: attachment,
+      });
+    } finally {
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
   const store = new RecordingTimelineStore();
