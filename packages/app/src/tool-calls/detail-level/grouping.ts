@@ -23,6 +23,8 @@ export interface GroupedHistory<TGroup> {
   tail: StreamItem[];
   groupsByHostId: Map<string, TGroup>;
   pendingCalls: readonly GroupableItem[];
+  /** Runs this pass prepared, reused by the next pass while their calls are unchanged. */
+  runs: ReadonlyMap<GroupableItem, PreparedRun<TGroup>>;
 }
 
 export interface GroupedToolCalls<TGroup> {
@@ -99,29 +101,55 @@ function isRunning(call: GroupableItem): boolean {
   return status === "running" || status === "executing";
 }
 
+interface PreparedRun<TGroup> {
+  calls: readonly GroupableItem[];
+  host: GroupableItem;
+  group: TGroup | undefined;
+}
+
+function hasSameCalls(a: readonly GroupableItem[], b: readonly GroupableItem[]): boolean {
+  return a.length === b.length && a.every((call, index) => call === b[index]);
+}
+
+// Each tail change regroups the whole history. Reusing the previous pass's unchanged runs keeps
+// host and group identities stable, so their rows do not re-render and their summaries are not
+// rebuilt. Only runs used by the latest pass are kept, so paging back does not pile up stale runs.
 function appendRun<TGroup>(input: {
   calls: readonly GroupableItem[];
-  isSealed: boolean;
   output: StreamItem[];
   groups: Map<string, TGroup>;
   buildGroup: (run: ToolCallRun) => TGroup;
+  previousRuns: ReadonlyMap<GroupableItem, PreparedRun<TGroup>> | undefined;
+  runs: Map<GroupableItem, PreparedRun<TGroup>>;
 }): void {
-  if (input.calls.length === 0) {
+  const first = input.calls[0];
+  if (!first) {
     return;
   }
-  const run = createRun(input.calls, input.isSealed);
-  const host = createHost(run);
-  input.output.push(host);
-  if (run.calls.length > 1) input.groups.set(host.id, input.buildGroup(run));
+  let prepared = input.previousRuns?.get(first);
+  if (!prepared || !hasSameCalls(prepared.calls, input.calls)) {
+    const run = createRun(input.calls, true);
+    prepared = {
+      calls: run.calls,
+      host: createHost(run),
+      group: run.calls.length > 1 ? input.buildGroup(run) : undefined,
+    };
+  }
+  input.runs.set(first, prepared);
+  input.output.push(prepared.host);
+  if (prepared.group !== undefined) input.groups.set(prepared.host.id, prepared.group);
 }
 
 export function prepareGroupedHistory<TGroup>(input: {
   tail: StreamItem[];
   buildGroup: (run: ToolCallRun) => TGroup;
   autoExpandReasoning?: boolean;
+  previous?: GroupedHistory<TGroup> | null;
 }): GroupedHistory<TGroup> {
   const output: StreamItem[] = [];
   const groups = new Map<string, TGroup>();
+  const runs = new Map<GroupableItem, PreparedRun<TGroup>>();
+  const previousRuns = input.previous?.runs;
   let pending: GroupableItem[] = [];
 
   for (const item of input.tail) {
@@ -134,10 +162,11 @@ export function prepareGroupedHistory<TGroup>(input: {
     }
     appendRun({
       calls: pending,
-      isSealed: true,
       output,
       groups,
       buildGroup: input.buildGroup,
+      previousRuns,
+      runs,
     });
     pending = [];
     if (isGroupableToolCall(item, input.autoExpandReasoning)) pending.push(item);
@@ -146,16 +175,18 @@ export function prepareGroupedHistory<TGroup>(input: {
 
   appendRun({
     calls: pending,
-    isSealed: true,
     output,
     groups,
     buildGroup: input.buildGroup,
+    previousRuns,
+    runs,
   });
 
   return {
     tail: groups.size > 0 ? output : input.tail,
     groupsByHostId: groups,
     pendingCalls: pending,
+    runs,
   };
 }
 

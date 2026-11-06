@@ -178,7 +178,12 @@ export function createStreamPresentation() {
       preparedLevel !== level ||
       preparedAutoExpandReasoning !== input.autoExpandReasoning
     ) {
-      preparedHistory = prepareToolCallHistory(level, historyRows, input.autoExpandReasoning);
+      preparedHistory = prepareToolCallHistory(
+        level,
+        historyRows,
+        input.autoExpandReasoning,
+        preparedHistory,
+      );
       historyGroupHosts = preparedHistory
         ? groupedRowHosts(preparedHistory.grouped.tail, preparedHistory.grouped.groupsByHostId)
         : new Map();
