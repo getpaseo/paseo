@@ -63,7 +63,8 @@ export function filterAndRankCommandAutocompleteEntries<TEntry extends CommandAu
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) {
     if (entries.every((entry) => entry.source === "client")) return [];
-    return entries.toSorted(
+    // Hermes has no `toSorted`.
+    return [...entries].sort(
       (a, b) => EMPTY_QUERY_SOURCE_ORDER[a.source] - EMPTY_QUERY_SOURCE_ORDER[b.source],
     );
   }
