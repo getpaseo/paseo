@@ -136,6 +136,12 @@ the marker. Closing a tab sets that client's label to `false`. Any `true` client
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
 
+Agent-scoped workspace creation records the caller's workspace as `parentWorkspaceId`.
+This is informational ancestry for future workspace grouping. It does not change placement,
+visibility, status, or archive behavior. Archiving a parent workspace preserves its children's
+records and parentage. Unscoped creation and existing workspaces have no parent; ancestry is
+never inferred from directories, projects, or Git branches.
+
 Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation reuses that workspace unless a new workspace is explicitly requested.
 
 Setup belongs to the workspace, including combined workspace-plus-agent creation and the supported agent `worktree` request. Run setup through the workspace workflow before launching configured terminals or scripts. Setup output is read in the Setup panel from per-command snapshots; never produce setup chat timeline rows or concatenate command logs. Legacy agent `git`/`worktreeName` inputs and hidden MCP worktree placement are rejected with workspace-creation guidance. Existing wire schemas retain an empty combined-log string for parsing compatibility.
@@ -305,9 +311,9 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
-A finished workspace can be marked unread after it has been reviewed. The daemon restores
-`finished` attention on its newest eligible workspace-root agent without sending a new completion
-notification. Opening the workspace clears that attention through the normal focus flow.
+A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
+attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
+`error` and `finished` otherwise, without sending a new notification. Opening the workspace clears that attention through the normal focus flow.
 
 Attention is set by the agent finishing or failing and cleared by the client's
 `workspace.clear_attention`, which fires when the user reads the chat. Loading an agent's runtime is
@@ -315,6 +321,13 @@ neither, so resuming carries the stored attention and the stored last-activity t
 untouched. Forging either makes a background resume look like the user read a workspace and like the
 agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted
 `updatedAt` is what workspace `statusEnteredAt` is re-derived from on the next daemon start.
+
+The `failed` bucket follows unread `error` attention, not lifecycle status. An agent stays `error`
+until its next turn starts, so reading the chat dismisses the red dot the same way it dismisses the
+green one. For the same reason every new failure raises `error` attention, including a failed reload
+that leaves the lifecycle at `error`, and replaces unread `finished` attention; otherwise the failed
+agent would show the green dot or none. Subagents track marks are the exception: they follow the
+child's lifecycle, because the track is where a failed child stays visible.
 
 ## The subagents track
 

@@ -109,6 +109,7 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  parentWorkspaceId?: string;
   createdAt: Date | null;
   lastUserMessageAt: Date | null;
   id: string;
@@ -166,6 +167,7 @@ export function normalizeWorkspaceDescriptor(
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     background: payload.background ?? false,
+    parentWorkspaceId: payload.parentWorkspaceId,
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,

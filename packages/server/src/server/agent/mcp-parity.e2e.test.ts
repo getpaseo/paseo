@@ -1171,7 +1171,7 @@ describe("Suite E: Workspace Tools", () => {
         .callTool({ name: "archive_workspace", args: { workspaceId } })
         .catch(() => undefined);
     }
-  });
+  }, 30_000);
 
   test("agent-scoped workspace creation inherits visibility and permits an explicit false override", async () => {
     const parentWorkspace = await callToolStructured(topLevelClient, "create_workspace", {
@@ -1197,12 +1197,43 @@ describe("Suite E: Workspace Tools", () => {
       });
       ownedWorkspaces.push(str(inherited.workspaceId));
       expect(inherited.background).toBe(true);
+      expect(inherited.parentWorkspaceId).toBe(parentWorkspaceId);
       const visible = await callToolStructured(scoped, "create_workspace", {
         isolation: "local",
         background: false,
       });
       ownedWorkspaces.push(str(visible.workspaceId));
       expect(visible.background).toBe(false);
+      expect(visible.parentWorkspaceId).toBe(parentWorkspaceId);
+      const worktree = await callToolStructured(scoped, "create_workspace", {
+        isolation: "worktree",
+        branchName: "parentage-child",
+        baseBranch: "main",
+        background: false,
+      });
+      ownedWorkspaces.push(str(worktree.workspaceId));
+      expect(worktree.parentWorkspaceId).toBe(parentWorkspaceId);
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemonHandle.port}/ws` });
+      try {
+        await client.connect();
+        const created = await client.createWorkspace({
+          source: { kind: "directory", path: worktreeRepoCwd },
+          callerAgentId: str(parent.agentId),
+          background: false,
+        });
+        const workspaceId = str(created.workspace?.id);
+        ownedWorkspaces.push(workspaceId);
+        expect(created.workspace?.parentWorkspaceId).toBe(parentWorkspaceId);
+        const listed = await client.fetchWorkspaces();
+        expect(listed.entries).toContainEqual(
+          expect.objectContaining({
+            id: workspaceId,
+            parentWorkspaceId: parentWorkspaceId,
+          }),
+        );
+      } finally {
+        await client.close();
+      }
     } finally {
       await scoped?.close();
       for (const workspaceId of ownedWorkspaces.toReversed())
@@ -1210,7 +1241,7 @@ describe("Suite E: Workspace Tools", () => {
           .callTool({ name: "archive_workspace", args: { workspaceId } })
           .catch(() => undefined);
     }
-  });
+  }, 30_000);
 
   test("a background agent's children and workspaces are background unless it overrides", async () => {
     const visibleAgentId = await createTopLevelAgent();

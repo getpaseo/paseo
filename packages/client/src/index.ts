@@ -195,6 +195,10 @@ export interface PaseoWorkspaceHandle {
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
   /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
   setMetadata(patch: Record<string, JsonValue>): Promise<void>;
+  setBaseBranch(options: {
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }>;
   archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
@@ -923,6 +927,8 @@ function createWorkspaceHandleFactory(
         const metadata = await daemonClient.setWorkspaceMetadata(id, patch);
         if (current) current = { ...current, metadata };
       },
+      setBaseBranch: (options) =>
+        daemonClient.setWorkspaceBaseBranch({ ...options, workspaceId: id }),
       archive: async (requestId) => {
         const result = await daemonClient.archiveWorkspace(id, requestId);
         if (current) {

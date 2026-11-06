@@ -47,6 +47,7 @@ import {
   resolveProviderSnapshotEntry,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { controlSizingForLayout, TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -56,11 +57,10 @@ import {
   type AgentControlCommandCenterSource,
 } from "@/command-center/agent-control-registration";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { isNative } from "@/constants/platform";
 import {
+  composerToolbarGeometry,
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
-  resolveComposerToolbarGlyphSize,
   type ComposerControlDensity,
   type ComposerControlPresentation,
 } from "@/composer/agent-controls/layout";
@@ -405,6 +405,10 @@ function buildAgentProviderModels(
   return map;
 }
 
+function densityFolds(density: ComposerControlDensity): boolean {
+  return resolveComposerControlPresentation(density).foldControls;
+}
+
 function ControlledAgentControls({
   provider,
   modelOptions,
@@ -434,10 +438,17 @@ function ControlledAgentControls({
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
+  // Control sizes follow the window layout, as the toolbar's stylesheet does. A narrow pane in a
+  // wide window (`isCompactLayout`) changes which labels show, never how large a control is.
+  const toolbarSizing = controlSizingForLayout(isCompactFormFactor);
+  const toolbarGeometry = useMemo(() => composerToolbarGeometry(toolbarSizing), [toolbarSizing]);
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<string | null>(null);
-  const initialDensity: ComposerControlDensity = isCompact ? "tight" : "full";
+  // A compact composer always folds its controls into the model sheet; the width budget only
+  // decides whether the model keeps its label.
+  const minimumDensity: ComposerControlDensity = isCompact ? "compact" : "full";
+  const initialDensity = minimumDensity;
   const [density, setDensity] = useState<ComposerControlDensity>(initialDensity);
   const densityRef = useRef<ComposerControlDensity>(initialDensity);
   const availableWidthRef = useRef(0);
@@ -492,10 +503,10 @@ function ControlledAgentControls({
   const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
   const layoutContextValue = useMemo(
     () => ({
-      glyphSize: resolveComposerToolbarGlyphSize(isNative ? "native" : "web"),
+      glyphSize: toolbarGeometry.glyphSize,
       presentation,
     }),
-    [presentation],
+    [presentation, toolbarGeometry],
   );
 
   const updateDensityForWidth = useCallback(
@@ -504,12 +515,20 @@ function ControlledAgentControls({
         availableWidth,
         currentDensity: densityRef.current,
         controls: controlPresence,
+        geometry: toolbarGeometry,
+        minimumDensity,
       });
       if (nextDensity === densityRef.current) return;
+      // Folding swaps the toolbar controls for the model sheet and back, so whatever menu or
+      // sheet was open belonged to controls that are gone.
+      if (densityFolds(nextDensity) !== densityFolds(densityRef.current)) {
+        setOpenSelector(null);
+        setActiveSheet(null);
+      }
       densityRef.current = nextDensity;
       setDensity(nextDensity);
     },
-    [controlPresence],
+    [controlPresence, minimumDensity, toolbarGeometry],
   );
 
   const handleLayout = useCallback(
@@ -553,7 +572,7 @@ function ControlledAgentControls({
     ],
   );
   const items = useAgentControlItems({
-    surface: isCompact ? "sheet" : "toolbar",
+    surface: presentation.foldControls ? "sheet" : "toolbar",
     presentation,
     thinking,
     optionControls,
@@ -587,8 +606,8 @@ function ControlledAgentControls({
 
   const handleCloseSheet = useCallback(() => {
     setActiveSheet(null);
-    if (!isCompact) onDropdownClose?.();
-  }, [isCompact, onDropdownClose]);
+    if (!presentation.foldControls) onDropdownClose?.();
+  }, [onDropdownClose, presentation.foldControls]);
 
   const handleSheetModelSelect = useCallback(
     (nextProviderId: string, modelId: string) => {
@@ -609,7 +628,7 @@ function ControlledAgentControls({
   return (
     <ComposerControlLayoutProvider value={layoutContextValue}>
       <View style={styles.container} onLayout={handleLayout}>
-        {!isCompact ? (
+        {!presentation.foldControls ? (
           <DesktopAgentControlsContent
             provider={provider}
             selectedModelId={selectedModelId}
@@ -666,6 +685,7 @@ function ControlledAgentControls({
             handleSheetOpenChange={setOpenSelector}
             modeControl={modeControl}
             glyphSize={layoutContextValue.glyphSize}
+            showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
@@ -849,6 +869,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 }
 
 interface SheetAgentControlsContentProps extends AgentControlsContentProps {
+  showLabels: boolean;
   displayThinking: string | null;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   canSwitchProvider: boolean;
@@ -880,6 +901,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleSheetOpenChange,
     modeControl,
     glyphSize,
+    showLabels,
     modelSelectorServerId,
     canSwitchProvider,
   } = props;
@@ -928,6 +950,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       isRetryingProvider={isRetryingModelProvider}
       serverId={modelSelectorServerId}
       glyphSize={glyphSize}
+      showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
     >
       {sheetControls}
@@ -1424,8 +1447,8 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   modeIconBadge: {
-    width: 28,
-    height: 28,
+    width: TOOLBAR_CONTROL_HEIGHT,
+    height: TOOLBAR_CONTROL_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,
