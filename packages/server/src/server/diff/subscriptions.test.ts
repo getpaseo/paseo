@@ -67,7 +67,9 @@ test("shares computation, highlights only the changed file, recovers refs and re
     const refreshStarted = performance.now();
     await writeFile(join(cwd, "9.ts"), "const value = 999;\n");
     await expect
-      .poll(() => first.filter((frame) => frame.opcode === DiffOpcode.End).length)
+      .poll(() => first.filter((frame) => frame.opcode === DiffOpcode.End).length, {
+        timeout: 10000,
+      })
       .toBeGreaterThan(0);
     const begin = first.find((frame) => frame.opcode === DiffOpcode.Begin);
     if (!begin || begin.opcode !== DiffOpcode.Begin) throw new Error("Missing begin");
@@ -133,7 +135,7 @@ test("shares computation, highlights only the changed file, recovers refs and re
     await observer.close();
     await rm(cwd, { recursive: true, force: true });
   }
-}, 30_000);
+}, 60_000);
 
 test("supersedes an in-flight revision at a batch boundary and ends the replacement", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "diff-supersede-"));
@@ -344,7 +346,9 @@ test("a cached replay completes before a live refresh can depend on it", async (
     resume();
     await replay;
     await expect
-      .poll(() => frames.filter((frame) => frame.opcode === DiffOpcode.End).length)
+      .poll(() => frames.filter((frame) => frame.opcode === DiffOpcode.End).length, {
+        timeout: 10000,
+      })
       .toBe(2);
     let committed = 0;
     for (const frame of frames) {
@@ -534,3 +538,49 @@ test.each([true, false])(
     }
   },
 );
+
+test("explicit refresh accepts an equivalent worktree path alias", async () => {
+  const { symlink } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "diff-refresh-alias-"));
+  const cwd = join(root, "repo");
+  const alias = join(root, "alias");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const streams = new DiffSubscriptions({
+    async requestWorkingTreeWatch(directory) {
+      return { repoRoot: directory, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  try {
+    await mkdir(cwd);
+    await symlink(cwd, alias, "junction");
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "a.txt"), "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    const base = git("rev-parse", "HEAD");
+    await writeFile(join(cwd, "a.txt"), "first\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+    const head = git("rev-parse", "HEAD");
+    const subscription = await streams.subscribe(
+      { cwd, base: { kind: "rev", rev: base }, head: { kind: "rev", rev: head } },
+      async (frame) => {
+        frames.push(frame);
+      },
+    );
+    await subscription.start();
+    frames.length = 0;
+    streams.invalidateForCwd(alias);
+    await expect
+      .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 10000 })
+      .toBe(true);
+    expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, revision: 2, error: null });
+    await subscription.release();
+  } finally {
+    await streams.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

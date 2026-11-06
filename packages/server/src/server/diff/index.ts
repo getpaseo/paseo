@@ -1,6 +1,6 @@
 import { TOTAL_DIFF_MAX_BYTES } from "../../utils/checkout-git.js";
 import { DEFAULT_MAX_OUTPUT_BYTES, runGitCommand } from "../../utils/run-git-command.js";
-import { expandTilde } from "../../utils/path.js";
+import { expandTilde, createRealpathAwarePathMatcher } from "../../utils/path.js";
 import { packBodies } from "./batches.js";
 import { setImmediate } from "node:timers/promises";
 import {
@@ -216,8 +216,9 @@ export class DiffSubscriptions {
     };
   }
   invalidateForCwd(cwd: string): void {
+    const matches = createRealpathAwarePathMatcher(cwd);
     for (const target of this.targets.values())
-      if (target.compare.cwd === cwd) this.invalidate(target);
+      if (matches(target.compare.cwd)) this.invalidate(target);
   }
   private invalidate(target: Target): void {
     if (target.closed) return;
