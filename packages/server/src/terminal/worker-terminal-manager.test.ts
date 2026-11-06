@@ -63,6 +63,7 @@ import {
   terminalWorkerDirectory,
   terminalWorkerRecordPath,
   writeTerminalWorkerRecord,
+  writeTerminalCleanupRecord,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 import {
@@ -446,26 +447,24 @@ it("creates a terminal through the worker and streams output", async () => {
     }),
   );
   const messages: string[] = [];
-  let readinessEvents = 0;
+  let snapshotReady = false;
   const unsubscribe = session.subscribe((message) => {
     if (message.type === "output") {
       messages.push(message.data);
     }
     if (message.type === "snapshotReady") {
-      readinessEvents += 1;
+      snapshotReady = true;
     }
   });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(readinessEvents).toBe(1);
+  // Subscription and initial PTY output each announce readiness; their order depends on startup.
+  await waitForCondition(() => snapshotReady, 10000);
 
   session.send({ type: "input", data: "hello\r" });
 
   await waitForCondition(() => messages.join("").includes("worker-output:hello"), 10000);
-  await new Promise((resolve) => setTimeout(resolve, 100));
   unsubscribe();
 
   expect(messages.join("")).toContain("worker-output:hello");
-  expect(readinessEvents).toBe(1);
 });
 
 it("delivers rapid small writes complete and in order through worker coalescing", async () => {
@@ -818,7 +817,7 @@ async function recordedTerminalPids(paseoHome: string): Promise<Map<string, numb
 }
 
 it.each([false, true])(
-  "never adopts a live worker's terminals after a kill cleanup it could not finish, even once the worker rewrites its record (held reader: %s)",
+  "never adopts a closing worker's terminals even once it rewrites its record (held reader: %s)",
   async (holdReader) => {
     const paseoHome = createTemporaryHome();
     const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-unfinished-kill-"));
@@ -850,17 +849,22 @@ it.each([false, true])(
     const remainingPid = pids.get(remaining.id)!;
     const [record] = await workerRecords(paseoHome);
 
-    // A kill cleanup whose process table read fails signals nothing and leaves the worker live.
+    // Seed a retained cleanup through the same record interface the reaper writes. Windows
+    // does not read program birth times, so a process-table failure cannot create this state.
     const inspector = createTerminalWorkerProcessInspector();
-    await expect(
-      reapTerminalWorkers({
-        paseoHome,
-        inspector: {
-          ...inspector,
-          listProcesses: () => Promise.reject(new Error("ps timed out")),
-        },
-      }),
-    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+    await writeTerminalCleanupRecord(paseoHome, {
+      ...record!,
+      closing: {
+        unresolved: [
+          {
+            pid: record!.pid,
+            role: "worker",
+            reason: "still alive",
+            detail: "shutdown was not confirmed",
+          },
+        ],
+      },
+    });
     expect((await readUnconfirmedTerminalCleanup(paseoHome)).length).toBeGreaterThan(0);
 
     // Keep an ordinary reader open until the worker delivers the terminal exit.
