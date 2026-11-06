@@ -206,6 +206,94 @@ describe("AgentDirectoryReplica", () => {
     store.clearSession(serverId);
   });
 
+  it("notifies the queue owner when a running status clears after the turn is already idle", () => {
+    const serverId = "agent-replica-status-stop";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const stopped: string[] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      (agentId) => stopped.push(agentId),
+      () => undefined,
+    );
+    replica.commitSnapshot([entry(payload("idle"))], []);
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("running"), status: "running" },
+      project: entry(payload("project")).project,
+    });
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("idle again"), status: "idle" },
+      project: entry(payload("project")).project,
+    });
+
+    expect(stopped).toEqual(["agent"]);
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("running again"), status: "running" },
+      project: entry(payload("project")).project,
+    });
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("idle again"), status: "idle" },
+      project: entry(payload("project")).project,
+    });
+
+    expect(stopped).toEqual(["agent", "agent"]);
+    store.clearSession(serverId);
+  });
+
+  it("drains after a status-only stop arrives in a refreshed snapshot", () => {
+    const serverId = "agent-replica-status-snapshot-stop";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const stopped: string[] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      (agentId) => stopped.push(agentId),
+      () => undefined,
+    );
+    replica.commitSnapshot([entry(payload("idle"))], []);
+
+    replica.commitSnapshot([entry({ ...payload("running"), status: "running" })], []);
+    replica.commitSnapshot([entry({ ...payload("idle again"), status: "idle" })], []);
+
+    expect(stopped).toEqual(["agent"]);
+    store.clearSession(serverId);
+  });
+
+  it("does not drain when a refreshed snapshot opens a new turn", () => {
+    const serverId = "agent-replica-status-snapshot-open";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const stopped: string[] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      (agentId) => stopped.push(agentId),
+      () => undefined,
+    );
+    replica.commitSnapshot(
+      [entry({ ...payload("running"), status: "running", activeTurn: null })],
+      [],
+    );
+    replica.commitSnapshot(
+      [
+        entry({
+          ...payload("turn started"),
+          status: "idle",
+          activeTurn: { turnId: "turn-1", startedAt: null },
+        }),
+      ],
+      [],
+    );
+
+    expect(stopped).toEqual([]);
+    store.clearSession(serverId);
+  });
+
   it("preserves cancellation state when the same active turn is snapshotted", () => {
     const serverId = "agent-replica-cancellation-snapshot";
     const store = useSessionStore.getState();
