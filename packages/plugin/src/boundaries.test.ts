@@ -393,7 +393,7 @@ describe("sidebar data SDK boundary", () => {
   it("accepts references and preserves string-id panel consumers", () => {
     expect(
       typeErrors(`
-      import { useWorkspace, useAgent, type WorkspaceRef, type AgentRef, useProject, useTerminal, useWorkspaces, useAgents, useProjects, useTerminals, type ProjectRef, type TerminalRef, type Query, type Group } from "@getpaseo/plugin/client";
+      import { useWorkspace, useAgent, type PluginClientContext, type PluginSidebarViewProps, type WorkspaceRef, type AgentRef, useProject, useTerminal, useWorkspaces, useAgents, useProjects, useTerminals, type ProjectRef, type TerminalRef, type Query, type Group } from "@getpaseo/plugin/client";
       import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
       function Panel({ workspace, agent }: { workspace: WorkspaceRef; agent: AgentRef }) {
         const snapshot: PluginWorkspaceSnapshot | null = useWorkspace(workspace);
@@ -407,6 +407,15 @@ describe("sidebar data SDK boundary", () => {
         const terminals: readonly TerminalRef[] = useTerminals();
         if (projects[0]) useProject(projects[0], item => item.displayName);
         if (terminals[0]) useTerminal(terminals[0]);
+        function View(props: PluginSidebarViewProps) {
+          props.navigation.openWorkspace(workspace);
+          props.navigation.openAgent(agent);
+          props.dismiss();
+          return null;
+        }
+        function contribute(client: PluginClientContext) {
+          client.addSidebarView({ id: "workspaces", title: "Workspaces", Component: View });
+        }
         const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
         return null;
       }

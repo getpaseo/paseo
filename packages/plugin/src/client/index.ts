@@ -15,6 +15,8 @@ export type {
   PluginOpenScreenInput,
   PluginScreenLocation,
   PluginSidebarItemProps,
+  PluginSidebarViewProps,
+  PluginSidebarViewContribution,
   PluginSidebarItemContribution,
   PluginIcon,
   PluginPanelLocation,

@@ -36,6 +36,7 @@ function installation(invoked: string[]): InstalledPlugin {
     cleanup: () => undefined,
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],

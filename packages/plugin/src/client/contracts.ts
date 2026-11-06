@@ -1,3 +1,4 @@
+import type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js";
 import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
@@ -96,6 +97,24 @@ export interface PluginSidebarItemContribution<Text extends PluginText = string>
   Component: ComponentType<PluginSidebarItemProps>;
 }
 
+export interface PluginSidebarViewProps extends Pick<PluginHostProps, "theme" | "layout"> {
+  active: { workspace: WorkspaceRef | null; agent: AgentRef | null };
+  navigation: {
+    openWorkspace(ref: WorkspaceRef): void;
+    openAgent(ref: AgentRef): void;
+    openTerminal(ref: TerminalRef): void;
+    openProject(ref: ProjectRef): void;
+  };
+  dismiss(): void;
+}
+
+export interface PluginSidebarViewContribution<Text extends PluginText = string> {
+  id: string;
+  title: Text;
+  description?: Text;
+  Component: ComponentType<PluginSidebarViewProps>;
+}
+
 /**
  * A Lucide icon name, inline SVG markup, or a component. Components receive the surface's size
  * and color; buttons widen the props with their host and target context.
@@ -185,6 +204,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   playAudio(source: { base64: string; mimeType: string }): Promise<void>;
   addSettingsScreen(contribution: PluginSettingsScreenContribution<PluginText>): PluginCleanup;
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
+  addSidebarView(contribution: PluginSidebarViewContribution<PluginText>): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
