@@ -119,6 +119,7 @@ function withSessionMember(input: {
 }): TerminalWorkerProcessInspector {
   return {
     reportsSessions: true,
+    reportsBirthTimes: true,
     inspect: (pid) => inspector.inspect(pid),
     listProcesses: async () => {
       // A fresh snapshot each call, so it is rewritten in place.
@@ -308,6 +309,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     const killable = spawnIdle();
     const failing: TerminalWorkerProcessInspector = {
       reportsSessions: inspector.reportsSessions,
+      reportsBirthTimes: inspector.reportsBirthTimes,
       inspect: (pid) =>
         pid === uninspectable.pid
           ? Promise.resolve({ status: "error", error: new Error("ps unavailable") })
@@ -504,6 +506,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     });
     const tableUnavailable: TerminalWorkerProcessInspector = {
       reportsSessions: inspector.reportsSessions,
+      reportsBirthTimes: inspector.reportsBirthTimes,
       inspect: (pid) => inspector.inspect(pid),
       listProcesses: () => Promise.reject(new Error("ps timed out")),
       readEnvironment: (pid) => inspector.readEnvironment(pid),
@@ -577,12 +580,19 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       const home = makeHome();
       const worker = spawn(
         process.execPath,
-        ["-e", "setInterval(() => {}, 1e9)", "--", "--paseo-terminal-worker", "record-under-test"],
+        [
+          "-e",
+          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live.sock"))});setInterval(() => {}, 1e9)`,
+          "--",
+          "--paseo-terminal-worker",
+          "record-under-test",
+        ],
         { detached: true, stdio: "ignore" },
       );
       children.push(worker);
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
+        socketPath: path.join(home, "live.sock"),
         identity: {
           startedAt: await birthOf(worker.pid!),
           commandLine: "node -e --paseo-terminal-worker record-under-test",
@@ -623,12 +633,19 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       const home = makeHome();
       const worker = spawn(
         process.execPath,
-        ["-e", "setInterval(() => {}, 1e9)", "--", "--paseo-terminal-worker", "record-under-test"],
+        [
+          "-e",
+          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live.sock"))});setInterval(() => {}, 1e9)`,
+          "--",
+          "--paseo-terminal-worker",
+          "record-under-test",
+        ],
         { detached: true, stdio: "ignore" },
       );
       children.push(worker);
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
+        socketPath: path.join(home, "live.sock"),
         identity: {
           startedAt: await birthOf(worker.pid!),
           commandLine: "node -e --paseo-terminal-worker record-under-test",
@@ -654,14 +671,9 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
   });
 });
 
-// #8766 and #8784: on these Windows machines every Windows PowerShell query fails. The
-// inspector runs the Windows queries (no session walk) against real local processes. Cleanup
-// signals nothing it cannot identify, and still retires what is gone.
-describe.skipIf(isPlatform("win32"))("terminal worker reaper without process identity", () => {
-  const noIdentity = createTerminalWorkerProcessInspector({
-    platform: "win32",
-    commandRunner: { exec: () => Promise.reject(new Error("spawn UNKNOWN")) },
-  });
+// Real sockets identify workers on every platform, independently of program birth times.
+describe("terminal worker reaper without process identity", () => {
+  const noIdentity = createTerminalWorkerProcessInspector();
 
   // A live process standing in for a worker that cannot answer: it listens on the record's
   // socket and never replies to the hello.
@@ -689,9 +701,12 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper without process ide
     expect(existsSync(recordPath)).toBe(false);
   });
 
-  it("never signals a live worker it cannot identify that does not answer, and keeps the cleanup unconfirmed", async () => {
+  it("force kills a worker whose socket accepts but never answers", async () => {
     const home = makeHome();
-    const socketPath = path.join(home, "w.sock");
+    const socketPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\paseo-test-${Date.now()}`
+        : path.join(home, "w.sock");
     const listener = await spawnSilentListener(socketPath);
     writeRecord(home, {
       pid: listener.pid!,
@@ -699,24 +714,14 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper without process ide
       socketPath,
     });
 
-    await expect(
-      reapTerminalWorkers({ paseoHome: home, inspector: noIdentity, gracefulMs: 300 }),
-    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
-
-    expect(isAlive(listener.pid!)).toBe(true);
-    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
-      expect.objectContaining({
-        pid: listener.pid!,
-        role: "worker",
-        reason: "inspection failed",
-        detail: expect.stringContaining("could not read its own identity: spawn UNKNOWN"),
-      }),
-    ]);
-    // The next stop or start retries it the same way.
-    await expect(retryUnconfirmedTerminalCleanup(home)).rejects.toBeInstanceOf(
-      TerminalCleanupNotConfirmedError,
-    );
-    expect(isAlive(listener.pid!)).toBe(true);
+    const result = await reapTerminalWorkers({
+      paseoHome: home,
+      inspector: noIdentity,
+      gracefulMs: 300,
+    });
+    expect(result.signaled).toContain(listener.pid);
+    expect(isAlive(listener.pid!)).toBe(false);
+    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([]);
   });
 
   it("treats a live pid with nothing on the worker's socket as another process, signals it never, and retires the record", async () => {
@@ -734,41 +739,24 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper without process ide
     expect(existsSync(recordPath)).toBe(false);
   });
 
-  it("does not look up the children of a gone program recorded without a birth time", async () => {
-    const home = makeHome();
-    const recordPath = writeRecord(home, {
-      pid: await goneProcessPid(),
-      identity: { unavailable: "ps unavailable" },
-      terminals: [{ id: "t1", pid: await goneProcessPid(), startedAt: null }],
-    });
-    // Linux reports sessions, so a gone program with a birth time would be walked through the
-    // process table, which this machine cannot read.
-    const linuxWithoutPs = createTerminalWorkerProcessInspector({
-      platform: "linux",
-      commandRunner: { exec: () => Promise.reject(new Error("spawn ps ENOENT")) },
-    });
+  it.skipIf(isPlatform("win32"))(
+    "never signals a live terminal program recorded without a birth time",
+    async () => {
+      const home = makeHome();
+      const program = spawnIdle();
+      writeRecord(home, {
+        pid: await goneProcessPid(),
+        terminals: [{ id: "t1", pid: program.pid!, startedAt: null }],
+      });
 
-    const result = await reapTerminalWorkers({ paseoHome: home, inspector: linuxWithoutPs });
+      await expect(
+        reapTerminalWorkers({ paseoHome: home, inspector, confirmMs: 200 }),
+      ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
 
-    expect(result).toEqual({ records: 1, retired: 1, signaled: [] });
-    expect(existsSync(recordPath)).toBe(false);
-  });
-
-  it("never signals a live terminal program recorded without a birth time", async () => {
-    const home = makeHome();
-    const program = spawnIdle();
-    writeRecord(home, {
-      pid: await goneProcessPid(),
-      terminals: [{ id: "t1", pid: program.pid!, startedAt: null }],
-    });
-
-    await expect(
-      reapTerminalWorkers({ paseoHome: home, inspector, confirmMs: 200 }),
-    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
-
-    expect(isAlive(program.pid!)).toBe(true);
-    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
-      expect.objectContaining({ pid: program.pid!, role: "terminal program" }),
-    ]);
-  });
+      expect(isAlive(program.pid!)).toBe(true);
+      expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
+        expect.objectContaining({ pid: program.pid!, role: "terminal program" }),
+      ]);
+    },
+  );
 });

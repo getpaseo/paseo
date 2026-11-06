@@ -254,7 +254,7 @@ async function reapRecord(
     return { signaled: [], unresolved: [] };
   }
 
-  const worker = await identifyTerminalWorker(record, inspector);
+  const worker = await identifyTerminalWorker(record);
   const discovery = await collectCandidates(record, inspector, log);
   const tracked: TrackedProcesses = {
     record,
@@ -282,14 +282,10 @@ async function reapRecord(
   return await keepUnresolved(input, tracked, signaled, null);
 }
 
-// How long the worker gets to answer an authenticated `shutdown` and exit. An owned worker gets
-// the grace period before SIGKILL, and none when the caller skips it. The request authenticates
-// with the record's secret, so a worker its process cannot identify is asked too: only the worker
-// that wrote the record can answer. It is never signaled, so it is asked on every cleanup,
-// retries without a grace period included.
+// Only an accepting socket authorizes shutdown and eventual forced termination.
 function shutdownWindow(worker: ProcessOwnership, gracefulMs: number): number {
   if (worker.status === "owned") return gracefulMs;
-  if (worker.status === "unknown") return Math.max(gracefulMs, DEFAULT_GRACEFUL_MS);
+
   return 0;
 }
 
@@ -348,7 +344,7 @@ function isSettled(tracked: TrackedProcesses): boolean {
 
 async function refreshTracked(tracked: TrackedProcesses): Promise<void> {
   if (isOpen(tracked.worker)) {
-    tracked.worker = await identifyTerminalWorker(tracked.record, tracked.inspector);
+    tracked.worker = await identifyTerminalWorker(tracked.record);
   }
   for (const candidate of tracked.candidates) {
     if (isOpen(candidate.state)) {
@@ -377,7 +373,7 @@ async function forceKillOwned(
   const { record, inspector } = tracked;
   const signaled: number[] = [];
   if (tracked.worker.status === "owned") {
-    tracked.worker = await identifyTerminalWorker(record, inspector);
+    tracked.worker = await identifyTerminalWorker(record);
     if (tracked.worker.status === "owned") {
       await forceKillWorker(record.pid);
       signaled.push(record.pid);
@@ -455,6 +451,7 @@ async function collectCandidates(
   log: NonNullable<ReapTerminalWorkersOptions["log"]>,
 ): Promise<CandidateDiscovery> {
   const candidates = new Map<number, Candidate>();
+  if (inspector.reportsBirthTimes === false) return { candidates: [], tableError: null };
   for (const entry of record.terminals) {
     candidates.set(entry.pid, {
       pid: entry.pid,
@@ -576,7 +573,7 @@ async function requestWorkerShutdown(
       timeoutMs: Math.min(gracefulMs, 2_000),
     });
   } catch (error) {
-    // A worker that cannot be reached is escalated by birth time below; a failed connection
+    // A worker that cannot be reached is probed again below; a failed authentication
     // alone never authorizes a signal.
     log("Terminal worker did not accept a shutdown request", {
       pid: record.pid,

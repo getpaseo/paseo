@@ -37,6 +37,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
     const home = makeDir("tw-h-", "/tmp");
     const socketPath = resolveTerminalWorkerSocketPath({
       paseoHome: home,
+      recordId: "test",
       workerPid: 4242,
       platform: "darwin",
     });
@@ -51,6 +52,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
     const uid = process.getuid!();
     const socketPath = resolveTerminalWorkerSocketPath({
       paseoHome: home,
+      recordId: "test",
       workerPid: 99999,
       platform: "darwin",
       tmpDir,
@@ -71,6 +73,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
     // also be refused, and /tmp/paseo-<uid> takes over.
     const socketPath = resolveTerminalWorkerSocketPath({
       paseoHome: home,
+      recordId: "test",
       workerPid: 7,
       platform: "darwin",
       tmpDir,
@@ -84,6 +87,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
       path.dirname(
         resolveTerminalWorkerSocketPath({
           paseoHome: home,
+          recordId: "test",
           workerPid: 7,
           platform: "darwin",
           tmpDir: wideTmp,
@@ -101,6 +105,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
     try {
       resolveTerminalWorkerSocketPath({
         paseoHome: home,
+        recordId: "test",
         workerPid: 7,
         platform: "darwin",
         tmpDir,
@@ -123,7 +128,11 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
 
   it("accepts a real listen on the chosen path", async () => {
     const home = makeDir("tw-l-", "/tmp");
-    const socketPath = resolveTerminalWorkerSocketPath({ paseoHome: home, workerPid: 5 });
+    const socketPath = resolveTerminalWorkerSocketPath({
+      paseoHome: home,
+      recordId: "test",
+      workerPid: 5,
+    });
     const server = createServer();
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -131,4 +140,11 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
     });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+});
+
+it("uses a separate socket for each record even when its pid is reused", () => {
+  const paseoHome = makeDir("tw-id-");
+  const first = resolveTerminalWorkerSocketPath({ paseoHome, workerPid: 42, recordId: "old" });
+  const second = resolveTerminalWorkerSocketPath({ paseoHome, workerPid: 42, recordId: "new" });
+  expect(first).not.toBe(second);
 });

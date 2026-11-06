@@ -22,10 +22,7 @@ import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
 import { identifyTerminalWorker } from "./terminal-worker-ownership.js";
-import {
-  createTerminalWorkerProcessInspector,
-  type TerminalWorkerProcessInspector,
-} from "./terminal-worker-processes.js";
+import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
 import {
   listTerminalWorkerRecords,
@@ -1038,14 +1035,14 @@ export async function startWorkerTerminalManager(
       toReap.push(file.path);
       continue;
     }
-    const worker = await identifyTerminalWorker(record, inspector);
+    const worker = await identifyTerminalWorker(record);
     if (worker.status === "owned" || worker.status === "unknown") {
       if (worker.status === "unknown") {
         // Its secret still proves it: only the worker that wrote the record can answer the
-        // hello below. Cleanup will not signal it, only ask it to shut down.
+        // hello below. An inconclusive probe does not authorize a signal.
         logger.warn(
           { recordPath: file.path, pid: record.pid, reason: worker.reason },
-          "Cannot identify terminal worker by its process; reaching it over its socket",
+          "Terminal worker socket probe inconclusive; attempting authentication",
         );
       }
       live.push({
@@ -1145,7 +1142,7 @@ export async function startWorkerTerminalManager(
     const reconnect = () => {
       recovery ??= (async () => {
         while (!recoveryState.stopped) {
-          const ownership = await identifyTerminalWorker(record, inspector);
+          const ownership = await identifyTerminalWorker(record);
           if (ownership.status === "gone" || ownership.status === "unrelated") {
             await reapTerminalWorkers({
               paseoHome: options.paseoHome,
@@ -1243,7 +1240,7 @@ export async function startWorkerTerminalManager(
   // Counted from the records rather than from what startup drove: a worker a cleanup could not
   // confirm gone keeps running, and a draining one exits on its own.
   const startCurrent = async (): Promise<TerminalWorkerPoolMember> => {
-    const running = await countRunningTerminalWorkers(options.paseoHome, inspector);
+    const running = await countRunningTerminalWorkers(options.paseoHome);
     if (running >= MAX_TERMINAL_WORKERS) {
       throw new NoTerminalWorkerAvailableError(
         `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them exits`,
@@ -1300,10 +1297,7 @@ export async function startWorkerTerminalManager(
 // are listed as one. Unreadable records and workers that cannot be identified count; a worker
 // confirmed gone, or a pid now running something else (another birth time, or nothing listening
 // on the worker's socket), does not.
-async function countRunningTerminalWorkers(
-  paseoHome: string,
-  inspector: TerminalWorkerProcessInspector,
-): Promise<number> {
+async function countRunningTerminalWorkers(paseoHome: string): Promise<number> {
   let running = 0;
   for (const file of await listTerminalWorkerRecords(paseoHome)) {
     if ("error" in file) {
@@ -1312,7 +1306,7 @@ async function countRunningTerminalWorkers(
     }
     const { record } = file;
     if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) continue;
-    const worker = await identifyTerminalWorker(record, inspector);
+    const worker = await identifyTerminalWorker(record);
     if (worker.status === "owned" || worker.status === "unknown") running += 1;
   }
   return running;

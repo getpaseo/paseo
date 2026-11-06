@@ -1649,17 +1649,16 @@ it.each([1, 4])(
     expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
     // Startup launches a replacement worker after cleanup. Either old PID may already
     // belong to another process, so verify that the recorded birth identities are gone.
-    for (const original of [{ pid: record!.pid, ...record!.identity }, program]) {
-      await expect
-        .poll(
-          async () =>
-            !isProcessAlive(original.pid) ||
-            classifyTerminalProgramProcess(original, await inspector.inspect(original.pid))
-              .status === "unrelated",
-          { timeout: 10000 },
-        )
-        .toBe(true);
-    }
+    await waitForCondition(() => !isProcessAlive(record!.pid), 10000);
+    await expect
+      .poll(
+        async () =>
+          !isProcessAlive(program.pid) ||
+          classifyTerminalProgramProcess(program, await inspector.inspect(program.pid)).status ===
+            "unrelated",
+        { timeout: 10000 },
+      )
+      .toBe(true);
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
@@ -2710,23 +2709,6 @@ it("starts without a worker when the worker cannot start, and launches one once 
   expect(await workerRecords(paseoHome)).toHaveLength(1);
 }, 30000);
 
-// Both Windows reports (#8766, #8784): the process identity query (Windows PowerShell there,
-// `ps` here) cannot run at all. Terminals work anyway; only what cleanup may signal degrades.
-// The fake `ps` dies by a signal, so the query fails the way a process that cannot be created
-// does, not the way `ps` reports a missing pid.
-function withoutProcessIdentity(): () => void {
-  const binDir = mkdtempSync(join(tmpdir(), "worker-terminal-manager-no-ps-"));
-  temporaryDirs.push(binDir);
-  writeFileSync(join(binDir, "ps"), "#!/bin/sh\necho 'ps: unavailable' >&2\nkill -KILL $$\n", {
-    mode: 0o755,
-  });
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
-  return () => {
-    process.env.PATH = originalPath;
-  };
-}
-
 function echoTerminalCommand(prefix: string) {
   return nodeTerminalCommand(`
     process.stdin.on("data", (chunk) => {
@@ -2749,168 +2731,174 @@ async function expectEcho(session: TerminalSession, prefix: string, input: strin
   }
 }
 
-it.skipIf(isPlatform("win32"))(
-  "runs terminals when no process identity can be read, recording the identity as unavailable",
-  async () => {
-    const paseoHome = createTemporaryHome();
-    const restorePath = withoutProcessIdentity();
-    try {
-      manager = await startRealWorkerManager({ paseoHome });
-      const session = trackTerminal(
-        await manager.createTerminal({
-          workspaceId: "ws-no-identity",
-          cwd: paseoHome,
-          ...echoTerminalCommand("no-identity:"),
-        }),
-      );
-      await expectEcho(session, "no-identity:", "hello");
+it("runs terminals without recording a worker process identity", async () => {
+  const paseoHome = createTemporaryHome();
+  manager = await startRealWorkerManager({ paseoHome });
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-no-identity",
+      cwd: paseoHome,
+      ...echoTerminalCommand("no-identity:"),
+    }),
+  );
+  await expectEcho(session, "no-identity:", "hello");
 
-      const [record, ...others] = await workerRecords(paseoHome);
-      expect(others).toEqual([]);
-      expect(record!.identity).toEqual({
-        unavailable: expect.stringContaining("ps: unavailable"),
+  const [record, ...others] = await workerRecords(paseoHome);
+  expect(others).toEqual([]);
+  expect(record!.identity).toBeUndefined();
+  expect(record!.terminals).toEqual([
+    {
+      id: session.id,
+      pid: expect.any(Number),
+      startedAt: process.platform === "win32" ? null : expect.any(String),
+    },
+  ]);
+}, 30000);
+
+it("adopts terminals over the authenticated socket after a daemon restart", async () => {
+  const paseoHome = createTemporaryHome();
+  const first = await startRealWorkerManager({ paseoHome });
+  const created = await first.createTerminal({
+    workspaceId: "ws-no-identity",
+    cwd: paseoHome,
+    ...echoTerminalCommand("adopted:"),
+  });
+  await first.detach();
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const adopted = manager.getTerminal(created.id);
+  expect(adopted).toBeDefined();
+  await expectEcho(adopted!, "adopted:", "after-restart");
+  expect(await workerRecords(paseoHome)).toHaveLength(1);
+}, 30000);
+
+it("closes terminals and their worker through authenticated shutdown", async () => {
+  const paseoHome = createTemporaryHome();
+  const stopping = await startRealWorkerManager({ paseoHome });
+  manager = stopping;
+  await stopping.createTerminal({
+    workspaceId: "ws-no-identity",
+    cwd: paseoHome,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  const [record] = await workerRecords(paseoHome);
+  const programPid = record!.terminals[0]!.pid;
+
+  await stopping.closeTerminals();
+
+  // The worker closed its terminals before it answered; it stops listening as it exits.
+  expect(isProcessAlive(programPid)).toBe(false);
+  expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
+  await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
+}, 30000);
+
+// Startup cleanup and retries can request immediate forced termination.
+it("force closes a worker from cleanup without a grace period", async () => {
+  const paseoHome = createTemporaryHome();
+  const previous = await startRealWorkerManager({ paseoHome });
+  await previous.createTerminal({
+    workspaceId: "ws-no-identity",
+    cwd: paseoHome,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  const [record] = await workerRecords(paseoHome);
+  const programPid = record!.terminals[0]!.pid;
+  await previous.detach();
+
+  const result = await reapTerminalWorkers({ paseoHome, gracefulMs: 0 });
+
+  expect(result.signaled).toContain(record!.pid);
+  expect(isProcessAlive(programPid)).toBe(false);
+  expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
+  await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
+}, 30000);
+
+it("launches past stale records without signaling an unrelated live pid", async () => {
+  const paseoHome = createTemporaryHome();
+  // One worker died; another died and its pid now runs an unrelated process, so nothing
+  // listens on its socket. Neither may count against the two-worker limit or be signaled.
+  const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve) => exited.once("exit", resolve));
+  const reused = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], {
+    stdio: "ignore",
+  });
+  try {
+    for (const pid of [exited.pid!, reused.pid!]) {
+      writeTerminalWorkerRecord(paseoHome, {
+        recordId: `dead-worker-${pid}`,
+        pid,
+        bootId: currentBootId(),
+        createdAt: new Date().toISOString(),
+        identity: { unavailable: "spawn UNKNOWN" },
+        protocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION,
+        paseoVersion: "0.0.0-test",
+        socketPath: join(paseoHome, `gone-${pid}.sock`),
+        secret: "secret-of-a-gone-worker",
+        terminals: [],
       });
-      expect(record!.terminals).toEqual([
-        { id: session.id, pid: expect.any(Number), startedAt: null },
-      ]);
-    } finally {
-      restorePath();
     }
-  },
-  30000,
-);
+    manager = await startRealWorkerManager({ paseoHome });
+    trackTerminal(await manager.createTerminal({ workspaceId: "ws-no-identity", cwd: paseoHome }));
 
-it.skipIf(isPlatform("win32"))(
-  "adopts the terminals of a worker whose identity is unavailable after a daemon restart",
+    const records = await workerRecords(paseoHome);
+    expect(records.map((record) => record.pid)).not.toContain(exited.pid);
+    expect(records.map((record) => record.pid)).not.toContain(reused.pid);
+    expect(records).toHaveLength(1);
+    expect(isProcessAlive(reused.pid!)).toBe(true);
+  } finally {
+    reused.kill("SIGKILL");
+  }
+}, 30000);
+
+it("does not reach a newer worker through a stale record with its reused pid", async () => {
+  const paseoHome = createTemporaryHome();
+  manager = await startRealWorkerManager({ paseoHome });
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "stale-worker-record",
+      cwd: paseoHome,
+      ...echoTerminalCommand("alive:"),
+    }),
+  );
+  const [record] = await workerRecords(paseoHome);
+  const staleHome = createTemporaryHome();
+  writeTerminalWorkerRecord(staleHome, {
+    ...record!,
+    recordId: "stale-record",
+    socketPath:
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\paseo-stale-${Date.now()}`
+        : join(staleHome, "gone.sock"),
+    terminals: [],
+  });
+  expect(await reapTerminalWorkers({ paseoHome: staleHome, gracefulMs: 0 })).toMatchObject({
+    retired: 1,
+    signaled: [],
+  });
+  await expectEcho(session, "alive:", "untouched");
+}, 30000);
+
+it.skipIf(!isPlatform("win32"))(
+  "observes terminal program survival after a worker hard crash",
   async () => {
     const paseoHome = createTemporaryHome();
-    const restorePath = withoutProcessIdentity();
-    try {
-      const first = await startRealWorkerManager({ paseoHome });
-      const created = await first.createTerminal({
-        workspaceId: "ws-no-identity",
-        cwd: paseoHome,
-        ...echoTerminalCommand("adopted:"),
-      });
-      await first.detach();
-
-      manager = await startRealWorkerManager({ paseoHome });
-
-      const adopted = manager.getTerminal(created.id);
-      expect(adopted).toBeDefined();
-      await expectEcho(adopted!, "adopted:", "after-restart");
-      expect(await workerRecords(paseoHome)).toHaveLength(1);
-    } finally {
-      restorePath();
-    }
-  },
-  30000,
-);
-
-it.skipIf(isPlatform("win32"))(
-  "closes the terminals and the worker on a stop without signaling, when no identity can be read",
-  async () => {
-    const paseoHome = createTemporaryHome();
-    const restorePath = withoutProcessIdentity();
-    try {
-      const stopping = await startRealWorkerManager({ paseoHome });
-      manager = stopping;
-      await stopping.createTerminal({
-        workspaceId: "ws-no-identity",
-        cwd: paseoHome,
-        ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
-      });
-      const [record] = await workerRecords(paseoHome);
-      const programPid = record!.terminals[0]!.pid;
-
-      await stopping.closeTerminals();
-
-      // The worker closed its terminals before it answered; it stops listening as it exits.
-      expect(isProcessAlive(programPid)).toBe(false);
-      expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
-      await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
-    } finally {
-      restorePath();
-    }
-  },
-  30000,
-);
-
-// A retry of an unconfirmed cleanup, and startup cleanup, run without a grace period. For a
-// worker that cannot be identified the shutdown request is the only way it can be stopped.
-it.skipIf(isPlatform("win32"))(
-  "closes a worker whose identity is unavailable from a cleanup without a grace period",
-  async () => {
-    const paseoHome = createTemporaryHome();
-    const restorePath = withoutProcessIdentity();
-    try {
-      const previous = await startRealWorkerManager({ paseoHome });
-      await previous.createTerminal({
-        workspaceId: "ws-no-identity",
-        cwd: paseoHome,
-        ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
-      });
-      const [record] = await workerRecords(paseoHome);
-      const programPid = record!.terminals[0]!.pid;
-      await previous.detach();
-
-      const result = await reapTerminalWorkers({ paseoHome, gracefulMs: 0 });
-
-      expect(result.signaled).toEqual([]);
-      expect(isProcessAlive(programPid)).toBe(false);
-      expect(await listTerminalWorkerRecords(paseoHome)).toEqual([]);
-      await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
-    } finally {
-      restorePath();
-    }
-  },
-  30000,
-);
-
-it.skipIf(isPlatform("win32"))(
-  "launches a worker past records of workers that are gone, when no identity can be read",
-  async () => {
-    const paseoHome = createTemporaryHome();
-    // One worker died; another died and its pid now runs an unrelated process, so nothing
-    // listens on its socket. Neither may count against the two-worker limit or be signaled.
-    const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-    await new Promise((resolve) => exited.once("exit", resolve));
-    const reused = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], {
-      stdio: "ignore",
+    const previous = await startRealWorkerManager({ paseoHome });
+    await previous.createTerminal({
+      workspaceId: "worker-crash",
+      cwd: paseoHome,
+      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
     });
+    const [record] = await workerRecords(paseoHome);
+    await previous.detach();
+    process.kill(record!.pid, "SIGKILL");
+    await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
+    const program = record!.terminals[0]!.pid;
     try {
-      for (const pid of [exited.pid!, reused.pid!]) {
-        writeTerminalWorkerRecord(paseoHome, {
-          recordId: `dead-worker-${pid}`,
-          pid,
-          bootId: currentBootId(),
-          createdAt: new Date().toISOString(),
-          identity: { unavailable: "spawn UNKNOWN" },
-          protocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION,
-          paseoVersion: "0.0.0-test",
-          socketPath: join(paseoHome, `gone-${pid}.sock`),
-          secret: "secret-of-a-gone-worker",
-          terminals: [],
-        });
-      }
-      const restorePath = withoutProcessIdentity();
-      try {
-        manager = await startRealWorkerManager({ paseoHome });
-        trackTerminal(
-          await manager.createTerminal({ workspaceId: "ws-no-identity", cwd: paseoHome }),
-        );
-      } finally {
-        restorePath();
-      }
-
-      const records = await workerRecords(paseoHome);
-      expect(records.map((record) => record.pid)).not.toContain(exited.pid);
-      expect(records.map((record) => record.pid)).not.toContain(reused.pid);
-      expect(records).toHaveLength(1);
-      expect(isProcessAlive(reused.pid!)).toBe(true);
-    } finally {
-      reused.kill("SIGKILL");
-    }
+      await waitForCondition(() => !isProcessAlive(program), 5000);
+    } catch {}
+    console.log(`Windows orphaned-program check: ${isProcessAlive(program) ? "survived" : "died"}`);
+    if (isProcessAlive(program)) process.kill(program, "SIGKILL");
   },
   30000,
 );

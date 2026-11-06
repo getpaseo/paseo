@@ -4,11 +4,8 @@ import path from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomicSync, writePrivateFileAtomic } from "../server/private-files.js";
 
-// Owner-only metadata a detached terminal worker leaves in $PASEO_HOME so the next daemon can
-// find, authenticate and adopt it, and so cleanup can identify every process it is allowed to
-// signal. Process identity is the birth time `ps`/Win32_Process report, never the pid alone.
-// Identity is best effort: where the query cannot run, the worker still records itself and
-// its terminals, and cleanup never signals what it cannot identify.
+// Owner-only metadata used to find and authenticate workers in the locked home.
+// Legacy identity fields are accepted but worker ownership comes from the recorded socket.
 
 const TerminalWorkerTerminalEntrySchema = z.object({
   id: z.string().min(1),
@@ -41,7 +38,7 @@ const TerminalWorkerRecordSchema = z.object({
   pid: z.number().int().positive(),
   bootId: z.string().nullable(),
   createdAt: z.string().min(1),
-  identity: TerminalWorkerIdentitySchema,
+  identity: TerminalWorkerIdentitySchema.optional(),
   // Read loosely: a version this daemon cannot interpret marks a worker from a newer Paseo
   // (classifyTerminalWorkerProtocol), not an unreadable record.
   protocolVersion: z.union([z.number(), z.string()]),

@@ -16,7 +16,6 @@ import {
   terminalWorkerLogPath,
   terminalWorkerRecordPath,
   writeTerminalWorkerRecord,
-  type TerminalWorkerIdentity,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 import { createTerminalWorkerRecordPublisher } from "./terminal-worker-record-publisher.js";
@@ -415,14 +414,14 @@ function runWorker(argv: string[]): void {
     if (pid === null) {
       throw new Error(`Terminal ${session.id} has no program pid`);
     }
-    const inspection = await inspector.inspect(pid);
-    if (inspection.status === "not-found" || session.getExitInfo()) {
+    const inspection = inspector.reportsBirthTimes ? await inspector.inspect(pid) : null;
+    if (inspection?.status === "not-found" || session.getExitInfo()) {
       return;
     }
-    const startedAt = inspection.status === "alive" ? inspection.snapshot.startedAt : null;
-    if (!startedAt) {
+    const startedAt = inspection?.status === "alive" ? inspection.snapshot.startedAt : null;
+    if (inspector.reportsBirthTimes && !startedAt) {
       const reason =
-        inspection.status === "error" ? errorMessage(inspection.error) : "no birth time reported";
+        inspection?.status === "error" ? errorMessage(inspection.error) : "no birth time reported";
       console.error(
         `Terminal worker cannot read the birth time of terminal program ${pid}; cleanup will never signal it: ${reason}`,
       );
@@ -438,24 +437,6 @@ function runWorker(argv: string[]): void {
       ],
     };
     await persistRecord();
-  }
-
-  // The birth time and command line cleanup matches before it signals this worker. Where they
-  // cannot be read the worker runs anyway, reachable only over its authenticated socket.
-  async function readOwnIdentity(): Promise<TerminalWorkerIdentity> {
-    const self = await inspector.inspect(process.pid);
-    if (
-      self.status === "alive" &&
-      self.snapshot.startedAt &&
-      self.snapshot.commandLine?.includes(args.recordId)
-    ) {
-      return { startedAt: self.snapshot.startedAt, commandLine: self.snapshot.commandLine };
-    }
-    const reason = self.status === "error" ? errorMessage(self.error) : "no usable snapshot";
-    console.error(
-      `Terminal worker cannot read its own process identity; cleanup will never signal it: ${reason}`,
-    );
-    return { unavailable: reason };
   }
 
   function enqueueCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
@@ -717,6 +698,7 @@ function runWorker(argv: string[]): void {
     const socketPath = resolveTerminalWorkerSocketPath({
       paseoHome: args.paseoHome,
       workerPid: process.pid,
+      recordId: args.recordId,
     });
     if (process.platform !== "win32") {
       rmSync(socketPath, { force: true });
@@ -739,7 +721,6 @@ function runWorker(argv: string[]): void {
       pid: process.pid,
       bootId: currentBootId(),
       createdAt: new Date().toISOString(),
-      identity: await readOwnIdentity(),
       protocolVersion,
       paseoVersion: args.paseoVersion,
       socketPath,
