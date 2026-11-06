@@ -1869,3 +1869,89 @@ test("keeps a shell available when its stop request times out", async () => {
     vi.useRealTimers();
   }
 });
+
+test("keeps a live background shell visible and stoppable after its launch is rewound", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: {},
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "live" },
+        },
+      },
+    ],
+  });
+  let live = true;
+  harness.api.shell.list = async () => ({
+    location: harness.info.location,
+    data: live
+      ? [
+          {
+            id: "live",
+            status: "running",
+            command: "sleep 180",
+            cwd: "/tmp/project",
+            shell: "sh",
+            file: "sh",
+            metadata: { sessionID: harness.info.id },
+            time: { started: 1 },
+          },
+        ]
+      : [],
+  });
+  harness.api.shell.remove = async () => {
+    live = false;
+    return { data: true };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "live", canStop: true }] });
+    harness.history.length = 0;
+    harness.push({
+      id: "revert",
+      created: 2,
+      type: "session.revert.committed",
+      durable: { aggregateID: harness.info.id, seq: 1, version: 1 },
+      data: { sessionID: harness.info.id, to: "earlier" },
+    });
+    await expect
+      .poll(() => events.filter((event) => event.type === "background_work").length)
+      .toBeGreaterThanOrEqual(3);
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "live", canStop: true }],
+    });
+    harness.push({ id: "reconnect-after-rewind", created: 3, type: "server.connected", data: {} });
+    await expect
+      .poll(() => events.filter((event) => event.type === "background_work").length)
+      .toBeGreaterThanOrEqual(5);
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "live", canStop: true }],
+    });
+    await session.stopBackgroundWork!("live");
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [],
+    });
+  } finally {
+    await session.close();
+  }
+});

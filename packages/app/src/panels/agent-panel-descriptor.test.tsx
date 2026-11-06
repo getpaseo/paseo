@@ -111,8 +111,15 @@ describe("shared agent descriptor", () => {
       subtitle: "Background work running",
     });
     expect(
-      describeAgent({ backgroundWork: { count: 1 }, attentionReason: "error" }).statusBucket,
+      describeAgent({
+        backgroundWork: { count: 1 },
+        attentionReason: "error",
+        requiresAttention: true,
+      }).statusBucket,
     ).toBe("failed");
+    expect(describeAgent({ backgroundWork: { count: 1 }, status: "error" }).statusBucket).toBe(
+      "running",
+    );
   });
 
   it("localizes the background work detail", async () => {

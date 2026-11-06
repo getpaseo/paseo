@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Locator } from "@playwright/test";
@@ -401,6 +401,7 @@ for (const scenario of [
 ]) {
   test(`${scenario.provider} stops selected background work after the turn`, async ({ page }) => {
     test.setTimeout(300_000);
+    mkdirSync(path.resolve("../../.artifacts"), { recursive: true });
     const cwd = realpathSync(mkdtempSync(path.resolve("../../.artifacts/phase3-qa-workspace-")));
     let handle: AgentHandle | undefined;
     try {
@@ -436,6 +437,7 @@ for (const scenario of [
 test("Claude stops a selected monitor in the compact sheet", async ({ page }) => {
   test.setTimeout(300_000);
   await page.setViewportSize({ width: 390, height: 844 });
+  mkdirSync(path.resolve("../../.artifacts"), { recursive: true });
   const cwd = realpathSync(mkdtempSync(path.resolve("../../.artifacts/phase3-monitor-workspace-")));
   let handle: AgentHandle | undefined;
   try {

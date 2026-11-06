@@ -114,6 +114,7 @@ export class OpenCodeBackgroundInventory {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (lost) {
+      this.promoted.clear();
       this.current = null;
       this.emit({ type: "background_work", provider: "opencode", items: null });
     } else if (this.current?.items?.some((item) => item.canStop)) {
@@ -133,7 +134,8 @@ export class OpenCodeBackgroundInventory {
       const history = await messages(client, this.id);
       if (generation !== this.generation) return;
       this.names = new Map();
-      this.promoted = new Set();
+      // Rewinds can remove launch messages without stopping the shell. Keep known
+      // promotions until the current provider roster confirms they are gone.
       this.readHistory(history);
       for (const event of this.events) this.apply(event);
       this.events = [];
