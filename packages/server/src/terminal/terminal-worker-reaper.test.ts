@@ -270,6 +270,16 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
 
     expect(isAlive(unrelated.pid!)).toBe(true);
+    // Completion means the recorded process is gone, even if its PID is occupied.
+    await expect
+      .poll(
+        async () =>
+          !isAlive(original.pid) ||
+          classifyTerminalProgramProcess(original, await inspector.inspect(original.pid)).status ===
+            "unrelated",
+        { timeout: 10000 },
+      )
+      .toBe(true);
     expect(existsSync(recordPath)).toBe(false);
     expect(
       classifyTerminalProgramProcess(original, await inspector.inspect(original.pid)),
