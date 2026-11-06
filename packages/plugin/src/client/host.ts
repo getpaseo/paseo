@@ -38,3 +38,5 @@ export {
 export type { PluginLocaleSource } from "./translations.js";
 
 export { createEntityRefs } from "./refs.js";
+
+export { createPluginReferenceApi } from "./reference-api.js";

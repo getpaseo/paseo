@@ -1,3 +1,6 @@
+import { Nested } from "../../../../../plugin-examples/sidebar-views/client/nested";
+import { lightTheme } from "@/styles/theme";
+import { toPluginTheme } from "../theme";
 import { createConnectedPluginHosts } from "./connected-hosts";
 import { i18n } from "@/i18n/i18next";
 import { fr } from "@/i18n/resources/fr";
@@ -252,6 +255,62 @@ afterEach(() => {
   useSessionStore.getState().clearSession("host-1");
   useSessionStore.getState().clearSession("host-2");
   renders.clear();
+});
+
+it("shows a restored child in the nested example while its cached parent remains archived", () => {
+  seedHost("host-1");
+  const parent = {
+    ...agent,
+    id: "archived-parent",
+    title: "Archived parent",
+    archivedAt: new Date("2026-11-01T00:00:00Z"),
+  };
+  const child = {
+    ...agent,
+    id: "restored-child",
+    title: "Restored child",
+    parentAgentId: parent.id,
+    labels: { "paseo.parent-agent-id": parent.id },
+    archivedAt: parent.archivedAt,
+  };
+  const store = useSessionStore.getState();
+  store.setProjects("host-1", [
+    {
+      projectId: workspace.projectId,
+      projectDisplayName: "Project",
+      projectCustomName: null,
+      projectRootPath: workspace.projectRootPath,
+      projectKind: "git",
+    },
+  ]);
+  store.setAgents(
+    "host-1",
+    new Map<string, Agent>([
+      [parent.id, parent],
+      [child.id, child],
+    ]),
+  );
+  const view = {
+    theme: toPluginTheme(lightTheme),
+    layout: { compact: false, platform: "web" as const },
+    active: { workspace: null, agent: null },
+    navigation: { openWorkspace() {}, openAgent() {}, openProject() {}, openTerminal() {} },
+    dismiss() {},
+  };
+  const source = mount(<Nested {...view} />);
+  expect(source.getAgent(parent.id)?.title).toBe(parent.title);
+  expect(container?.textContent).not.toContain(child.title);
+  act(() =>
+    store.setAgents(
+      "host-1",
+      new Map<string, Agent>([
+        [parent.id, parent],
+        [child.id, { ...child, archivedAt: null }],
+      ]),
+    ),
+  );
+  expect(container?.querySelector('[aria-label="Open agent Restored child"]')).not.toBeNull();
+  expect(container?.querySelector('[aria-label="Open agent Archived parent"]')).toBeNull();
 });
 
 describe("sidebar data hooks through the app store and plugin provider", () => {

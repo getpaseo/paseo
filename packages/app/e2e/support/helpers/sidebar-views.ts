@@ -19,8 +19,8 @@ export async function withSidebarViews(
   await writeFile(
     entry,
     original.replace(
-      "return client.addSidebarView",
-      'client.addSidebarView({ id: "broken", title: "Broken example", Component() { throw new Error("View failed"); } });\n  return client.addSidebarView',
+      "const cleanups = [",
+      'client.addSidebarView({ id: "broken", title: "Broken example", Component() { throw new Error("View failed"); } });\n  const cleanups = [',
     ),
   );
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
@@ -73,6 +73,66 @@ function sidebarViews(
     async chooseWorkspaces() {
       await choose("Example workspaces");
       await expectPlugin();
+    },
+    async exerciseExamples() {
+      await choose("Example agents");
+      await expect(
+        visibleTestId(page, "plugin-sidebar-view").getByText("Respond", { exact: true }),
+      ).toBeVisible();
+      await choose("Example nested agents");
+      await expectPlugin();
+      await choose("Example label folders");
+      const slot = visibleTestId(page, "plugin-sidebar-view");
+      await slot
+        .getByRole("button", { name: `Move workspace ${workspaceId}`, exact: true })
+        .click();
+      await slot.getByRole("button", { name: "Move to Inbox", exact: true }).click();
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find((item) => item.id === workspaceId)
+              ?.labels,
+        )
+        .toContain("Inbox");
+      await slot
+        .getByRole("button", { name: `Move workspace ${workspaceId}`, exact: true })
+        .click();
+      await slot.getByRole("button", { name: "Move to Later", exact: true }).click();
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find((item) => item.id === workspaceId)
+              ?.labels,
+        )
+        .toEqual(["Later"]);
+      await client.setWorkspaceLabel({
+        workspaceId,
+        label: { name: "Unlabelled", color: "red" },
+        assigned: true,
+      });
+      await client.setWorkspaceLabel({
+        workspaceId,
+        label: { name: "Later", color: "red" },
+        assigned: false,
+      });
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find((item) => item.id === workspaceId)
+              ?.labels,
+        )
+        .toEqual(["Unlabelled"]);
+      await slot
+        .getByRole("button", { name: `Move workspace ${workspaceId}`, exact: true })
+        .click();
+      await slot.getByRole("button", { name: "Move to Inbox", exact: true }).click();
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find((item) => item.id === workspaceId)
+              ?.labels,
+        )
+        .toEqual(["Inbox"]);
     },
     async restoreDefault() {
       await choose("Default view");

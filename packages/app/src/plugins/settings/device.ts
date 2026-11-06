@@ -27,9 +27,10 @@ export function createDeviceSettings(storage: DeviceStorage) {
     const key = `@paseo:plugin-device-settings:${installationId}/${definition.id}`;
     async function read(): Promise<ReadResult> {
       const raw = await storage.getItem(key);
-      const revision = raw ?? "missing";
+      let revision = raw ?? "missing";
       try {
         let values: unknown = {};
+        let migrated = false;
         if (raw !== null) {
           const stored = envelope.parse(JSON.parse(raw));
           if (stored.version > definition.version)
@@ -39,10 +40,16 @@ export function createDeviceSettings(storage: DeviceStorage) {
             if (!definition.migrate)
               throw new Error("This plugin has no migration for its saved settings");
             values = await definition.migrate(values, stored.version);
+            migrated = true;
           }
         }
-        const parsed = await definition.schema.parseAsync(values);
-        return { status: "ready", revision, values: z.json().parse(parsed) };
+        const parsed = z.json().parse(await definition.schema.parseAsync(values));
+        if (migrated) {
+          const serialized = JSON.stringify({ version: definition.version, values: parsed });
+          await storage.setItem(key, serialized);
+          revision = serialized;
+        }
+        return { status: "ready", revision, values: parsed };
       } catch (error) {
         return {
           status: "invalid",

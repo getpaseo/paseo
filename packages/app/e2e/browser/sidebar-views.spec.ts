@@ -8,6 +8,7 @@ test("sidebar views replace the content, preserve chrome, and recover to the def
   await withSidebarViews(page, async (views) => {
     await views.expectDefault();
     await views.chooseWorkspaces();
+    await views.exerciseExamples();
     await views.restoreDefault();
     await views.recoverFromFailure();
     await views.chooseWorkspaces();

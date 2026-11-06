@@ -1,10 +1,16 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Workspaces } from "./client/workspaces";
-
+import { Agents } from "./client/agents";
+import { Nested } from "./client/nested";
+import { Labels } from "./client/labels";
 export default function contribute(client: PluginClientContext) {
-  return client.addSidebarView({
-    id: "workspaces",
-    title: "Example workspaces",
-    Component: Workspaces,
-  });
+  const cleanups = [
+    client.addSidebarView({ id: "workspaces", title: "Example workspaces", Component: Workspaces }),
+    client.addSidebarView({ id: "agents", title: "Example agents", Component: Agents }),
+    client.addSidebarView({ id: "nested", title: "Example nested agents", Component: Nested }),
+    client.addSidebarView({ id: "labels", title: "Example label folders", Component: Labels }),
+  ];
+  return () => {
+    for (const cleanup of cleanups) void cleanup();
+  };
 }

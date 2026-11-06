@@ -3,8 +3,7 @@ import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 import { createDeviceSettings } from "./device";
 
-function device() {
-  const records = new Map<string, string>();
+function device(records = new Map<string, string>()) {
   return createDeviceSettings({
     getItem: async (key) => records.get(key) ?? null,
     setItem: async (key, value) => {
@@ -62,4 +61,37 @@ describe("device plugin settings", () => {
     );
     expect(await upgraded.read()).toMatchObject({ status: "ready", values: { collapsed: ["v1"] } });
   });
+});
+
+it("persists a validated migration once and returns the persisted revision across restarts", async () => {
+  const records = new Map<string, string>();
+  const settings = device(records);
+  await settings("plugin", definition).write({ revision: "missing", values: { collapsed: ["a"] } });
+  let migrations = 0;
+  const upgraded = defineSettings({
+    ...definition,
+    version: 2,
+    migrate: () => {
+      migrations++;
+      return { collapsed: ["migrated"] };
+    },
+  });
+  const first = await settings("plugin", upgraded).read();
+  const restarted = device(records)("plugin", upgraded);
+  expect(await restarted.read()).toEqual(first);
+  expect(migrations).toBe(1);
+  expect(first).toEqual({
+    status: "ready",
+    revision: JSON.stringify({ version: 2, values: { collapsed: ["migrated"] } }),
+    values: { collapsed: ["migrated"] },
+  });
+  expect(
+    await restarted.write({
+      revision: JSON.stringify({ version: 1, values: { collapsed: ["a"] } }),
+      values: { collapsed: [] },
+    }),
+  ).toMatchObject({ status: "conflict" });
+  expect(
+    await restarted.write({ revision: first.revision, values: { collapsed: [] } }),
+  ).toMatchObject({ status: "saved" });
 });

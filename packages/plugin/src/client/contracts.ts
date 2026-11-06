@@ -1,7 +1,7 @@
 import type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js";
 import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PluginPaseoApi } from "./reference-api.js";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
@@ -328,7 +328,7 @@ export interface PluginTimelineRendererContribution<Schema extends ZodType = Zod
 }
 
 export interface PluginCommandCapabilities {
-  paseo: PaseoApi;
+  paseo: PluginPaseoApi;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: PluginWireInput<ZodInput<InputSchema>>,
