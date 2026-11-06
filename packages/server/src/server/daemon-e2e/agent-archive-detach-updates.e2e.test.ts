@@ -16,7 +16,11 @@ test("parent archive publishes the detached stored survivor to subscribed client
   let observer: DaemonClient | null = null;
   let actor: DaemonClient | null = null;
   try {
-    daemon = await createTestPaseoDaemon({ paseoHomeRoot: fixture.paseoHomeRoot, cleanup: false });
+    daemon = await createTestPaseoDaemon({
+      paseoHomeRoot: fixture.paseoHomeRoot,
+      staticDir: fixture.staticDir,
+      cleanup: false,
+    });
     const url = `ws://127.0.0.1:${daemon.port}/ws`;
     observer = new DaemonClient({ url });
     actor = new DaemonClient({ url });
@@ -59,6 +63,8 @@ function seedFixture() {
   const parentCwd = path.join(root, "parent");
   const childCwd = path.join(root, "child");
   const paseoHomeRoot = path.join(root, "home");
+  const staticDir = path.join(root, "static");
+  mkdirSync(staticDir);
   mkdirSync(parentCwd);
   mkdirSync(childCwd);
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
@@ -123,7 +129,7 @@ function seedFixture() {
     path.join(agentsDir, "child-manual.json"),
     agent("child-manual", childCwd, "ws-child", { [PARENT_AGENT_ID_LABEL]: "parent" }),
   );
-  return { paseoHomeRoot, cleanupPaths: [root] };
+  return { paseoHomeRoot, staticDir, cleanupPaths: [root] };
 }
 
 function writeJson(filePath: string, value: unknown): void {
