@@ -35,11 +35,19 @@ import {
   type FormInitialValues,
   type FormState,
   type ProviderModelsByProvider,
+  type UserModifiedFields,
 } from "@/provider-selection/resolve-agent-form";
+import {
+  resolveDraftSelectionSource,
+  type DraftSelectionSourceFlags,
+} from "@/composer/draft/selection-source";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
-export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
+export type {
+  FormInitialValues,
+  UserModifiedFields,
+} from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
   serverId: string | null;
@@ -58,6 +66,14 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
+  /** Tracks which fields the user (or an applied profile) explicitly set. */
+  userModified: UserModifiedFields;
+  /**
+   * Whether each composer selection was explicitly chosen or remembered from
+   * saved preferences. Implicit fields are omitted from create requests so the
+   * provider's own configured default applies (issue #623).
+   */
+  selectionSource: DraftSelectionSourceFlags;
   workingDir: string;
   providerDefinitions: AgentProviderDefinition[];
   providerDefinitionMap: Map<AgentProvider, AgentProviderDefinition>;
@@ -475,6 +491,22 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const workingDirIsEmpty = !workingDir.trim();
 
+  const selectionSource = useMemo<DraftSelectionSourceFlags>(() => {
+    const providerPrefs = formState.provider
+      ? preferences?.providerPreferences?.[formState.provider]
+      : undefined;
+    const savedThinkingOptionId = providerPrefs?.thinkingByModel?.[formState.model]?.trim();
+    return resolveDraftSelectionSource({
+      userModified,
+      initialValues,
+      savedSelection: {
+        model: providerPrefs?.model ?? null,
+        modeId: providerPrefs?.mode ?? null,
+        thinkingOptionId: savedThinkingOptionId ?? null,
+      },
+    });
+  }, [formState.provider, formState.model, preferences, userModified, initialValues]);
+
   return useMemo(
     () => ({
       selectedServerId: serverId,
@@ -485,6 +517,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
+      userModified,
+      selectionSource,
       workingDir,
       providerDefinitions,
       providerDefinitionMap,
@@ -513,6 +547,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       formState.modeId,
       formState.model,
       formState.thinkingOptionId,
+      userModified,
+      selectionSource,
       workingDir,
       setModeFromUser,
       setModelFromUser,

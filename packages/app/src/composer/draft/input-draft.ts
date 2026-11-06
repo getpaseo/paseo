@@ -23,6 +23,10 @@ import {
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
+import {
+  resolveDraftSelectionSource as __privateSelectionSource,
+  type DraftSelectionSourceFlags,
+} from "@/composer/draft/selection-source";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
@@ -50,6 +54,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModeId: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
+  selectionSource: DraftSelectionSourceFlags;
   featureValues: Record<string, unknown> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
@@ -325,6 +330,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModeId,
       effectiveModelId,
       effectiveThinkingOptionId,
+      selectionSource: formState.selectionSource,
       featureValues: draftFeatureValues,
       agentControls: buildDraftAgentControls({
         formState,
@@ -367,6 +373,7 @@ export const __private__ = {
   resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
+  resolveDraftSelectionSource: __privateSelectionSource,
   buildDraftCommandTarget,
   buildDraftAgentControls,
 };

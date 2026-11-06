@@ -489,6 +489,7 @@ const AgentSessionConfigSchema = z.object({
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
+  selectionSource: z.enum(["explicit", "implicit"]).optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
