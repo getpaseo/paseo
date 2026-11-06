@@ -891,6 +891,23 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 }
 ```
 
+### Project icon images
+
+Use `ProjectIconImage` to draw a project icon data URI with the same renderer as
+Paseo's project sidebar. Set the image dimensions through `style` and provide a
+fallback element for native SVG parse errors or unsupported ICO images:
+
+```tsx
+import { ProjectIconImage } from "@getpaseo/plugin/client/ui";
+
+<ProjectIconImage dataUri={iconDataUri} style={{ width: 16, height: 16 }} fallback={initial} />;
+```
+
+The native renderer supports SVG including embedded CSS, as well as the image
+formats supported by React Native. On web, the browser renders the image URI.
+This component renders an image; the plugin still owns fetching the project icon
+and drawing an initial when there is no image.
+
 ### Markdown
 
 Import `Markdown` from `@getpaseo/plugin/client/ui` to render a string with Paseo's
