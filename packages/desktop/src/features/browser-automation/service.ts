@@ -1575,14 +1575,14 @@ function functionSyntaxError(functionSource: string): string | null {
  *
  * The function goes into the script as code, not as a string for the page to eval(): a page whose
  * Content Security Policy omits 'unsafe-eval' refuses eval() but still runs what the host injects.
- * It is read through a thunk defined where only the script's own parameter is in scope, so its
- * names resolve against the page's globals and never against this wrapper's locals.
+ * The function-producing thunk is an argument defined outside the wrapper, so its names resolve
+ * against the page's globals without capturing any wrapper parameters or locals.
  */
 function buildEvaluateScript(
   functionSource: string,
   elementExpression: string | undefined,
 ): string {
-  return String.raw`((__paseoEvaluate) => __paseoEvaluate(() => (${functionSource})))(async (readFunction) => {
+  return String.raw`(async (readFunction) => {
     const __PASEO_BROWSER_EVALUATE__ = true;
     try {
       const userFunction = readFunction();
@@ -1610,7 +1610,7 @@ function buildEvaluateScript(
 	    } catch (error) {
 	      return { error: error instanceof Error ? error.message : String(error) };
 	    }
-	  })`;
+	  })(() => (${functionSource}))`;
 }
 
 async function focusKeypressTarget(

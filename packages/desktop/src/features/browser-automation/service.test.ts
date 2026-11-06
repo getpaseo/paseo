@@ -1716,12 +1716,14 @@ describe("executeAutomationCommand", () => {
         value: "page value",
         resultJson: "page json",
         userFunction: "page function",
+        __paseoEvaluate: "page wrapper",
+        readFunction: "page reader",
       };
       const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval, globals }));
 
       const result = await evaluate(
         browser,
-        "() => [element, args, value, resultJson, userFunction]",
+        "() => [element, args, value, resultJson, userFunction, __paseoEvaluate, readFunction]",
       );
 
       expect(result).toMatchObject({
