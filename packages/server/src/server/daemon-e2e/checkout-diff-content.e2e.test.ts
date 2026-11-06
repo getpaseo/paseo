@@ -416,3 +416,73 @@ test("streams whole-file batches and answers a same-socket ping before the revis
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("SDK diff journey publishes a tag tree, commits a one-file refresh and shares two sockets", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "sdk-stream-diff-"));
+  const { DaemonClient } = await import("../test-utils/daemon-client.js");
+  const { startGitCommandMetrics, stopGitCommandMetrics } =
+    await import("../../utils/run-git-command.js");
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${ctx.daemon.port}/ws` });
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(cwd, "b.ts"), "export const b = 1;\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    git(cwd, "tag", "v1");
+    writeFileSync(join(cwd, "a.ts"), "export const a = 2;\n");
+    writeFileSync(join(cwd, "b.ts"), "export const b = 2;\n");
+    const compare = {
+      cwd,
+      base: { kind: "rev", rev: "refs/tags/v1" },
+      head: { kind: "worktree" },
+      mergeBase: true,
+    } as const;
+    const states: import("@getpaseo/client").DiffState[] = [];
+    const observation = ctx.client.observeDiff(compare);
+    observation.subscribe({ snapshot: (state) => states.push(state), update: () => {} });
+    await expect.poll(() => states.at(-1)?.phase, { timeout: 15000 }).toBe("ready");
+    expect(states[0]).toMatchObject({
+      phase: "loading",
+      entries: [{ path: "a.ts" }, { path: "b.ts" }],
+    });
+    const initial = states.at(-1);
+    if (initial?.phase !== "ready") throw new Error("Expected ready");
+    await second.connect();
+    startGitCommandMetrics();
+    const duplicateStates: import("@getpaseo/client").DiffState[] = [];
+    const duplicate = second.observeDiff(compare);
+    duplicate.subscribe({ snapshot: (state) => duplicateStates.push(state), update: () => {} });
+    await expect.poll(() => duplicateStates.at(-1)?.phase).toBe("ready");
+    const metrics = stopGitCommandMetrics();
+    expect(duplicateStates.at(-1)).toMatchObject({
+      phase: "ready",
+      files: [{ path: "a.ts" }, { path: "b.ts" }],
+    });
+    expect(metrics.commands.filter((command) => command.args.includes("--raw"))).toHaveLength(0);
+    startGitCommandMetrics();
+    writeFileSync(join(cwd, "a.ts"), "export const a = 3;\n");
+    await expect
+      .poll(() => states.at(-1)?.revision, { timeout: 15000 })
+      .toBeGreaterThan(initial.revision);
+    await expect.poll(() => duplicateStates.at(-1)?.revision).toBeGreaterThan(initial.revision);
+    const refreshMetrics = stopGitCommandMetrics();
+    expect(
+      refreshMetrics.commands.filter((command) => command.args.includes("--raw")),
+    ).toHaveLength(1);
+    const refreshed = states.at(-1);
+    if (refreshed?.phase !== "ready") throw new Error("Expected ready");
+    expect(refreshed.files[0]).not.toBe(initial.files[0]);
+    expect(refreshed.files[1]).toBe(initial.files[1]);
+    expect(states.filter((state) => state.phase === "loading")).toHaveLength(1);
+    await duplicate.release();
+    await observation.release();
+  } finally {
+    await second.close();
+    await ctx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 45000);

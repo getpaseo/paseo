@@ -1212,3 +1212,5 @@ function createGeneratedClientId(): string {
       : Math.random().toString(36).slice(2);
   return `paseo-sdk-${randomId}`;
 }
+
+export type { DiffCompare, DiffState, DiffEntry, ResolvedShas } from "./diff/index.js";
