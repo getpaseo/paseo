@@ -6,7 +6,6 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { CreationSnapshot } from "@getpaseo/protocol";
 
 import {
   createDaemonTestContext,
@@ -19,6 +18,7 @@ import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-config
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
   AgentClient,
+  AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRunResult,
   AgentSession,
@@ -325,6 +325,7 @@ class RecordingMcpResumeClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities;
   readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  readonly resumeLaunchContexts: Array<AgentLaunchContext | undefined> = [];
   private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
 
   constructor() {
@@ -342,8 +343,10 @@ class RecordingMcpResumeClient implements AgentClient {
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.resumeOverrides.push(overrides);
+    this.resumeLaunchContexts.push(launchContext);
     return this.inner.resumeSession(handle, overrides);
   }
 
@@ -403,7 +406,7 @@ class RejectingMcpResumeClient implements AgentClient {
   }
 }
 
-test("createAgent preserves the agent when the initial turn cannot start", async () => {
+test("createAgent preserves the error snapshot when the initial turn cannot start", async () => {
   const testAgent = new StubAgentClient({
     sessionId: "start-turn-failure-session",
     supportsStreaming: false,
@@ -422,7 +425,7 @@ test("createAgent preserves the agent when the initial turn cannot start", async
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
 
-    const agent = await client.createAgent({
+    const created = await client.createAgent({
       provider: "codex",
       cwd: tmpCwd(),
       title: "Start failure agent",
@@ -430,10 +433,10 @@ test("createAgent preserves the agent when the initial turn cannot start", async
       model: "gpt-5.4-mini",
       initialPrompt: "Run exactly: sleep 30",
     });
-    expect(agent).toMatchObject({
-      status: "error",
-      lastError: "Initial turn failed to start",
-    });
+    expect(created.status).toBe("error");
+    expect(created.lastError).toBe("Initial turn failed to start");
+    const fetched = await client.fetchAgent({ agentId: created.id });
+    expect(fetched?.agent.lastError).toBe("Initial turn failed to start");
   } finally {
     await client.close();
     await daemon.close();
@@ -1037,6 +1040,38 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
   }
 });
 
+test("resume_agent keeps the workspace of the agent it matches", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+
+  try {
+    const opened = await localCtx.client.openProject(cwd);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? "Workspace did not open");
+    }
+    const workspaceId = opened.workspace.id;
+    const created = await localCtx.client.createAgent({
+      config: { provider: "codex", cwd },
+      workspaceId,
+    });
+    if (!created.persistence) {
+      throw new Error("Expected a persistence handle");
+    }
+
+    await localCtx.client.archiveAgent(created.id);
+    const resumed = await localCtx.client.resumeAgent(created.persistence);
+
+    expect(provider.resumeLaunchContexts[0]?.env?.PASEO_WORKSPACE_ID).toBe(workspaceId);
+    expect(resumed.workspaceId).toBe(workspaceId);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("resume_agent restores archive state when an MCP-capable provider returns an unsupported session", async () => {
   const cwd = tmpCwd();
   const provider = new RejectingMcpResumeClient();
@@ -1371,13 +1406,12 @@ test("creates agent and exercises lifecycle", async () => {
     return unsubscribe;
   });
 
-  const createdSnapshots: CreationSnapshot[] = [];
-
+  const createRequestId = `create-${Date.now()}`;
   const agent = await ctx.client.createAgent({
     ...getFullAccessConfig("codex"),
     cwd,
     title: "Daemon Client V2",
-    onEvent: (snapshot) => createdSnapshots.push(snapshot),
+    requestId: createRequestId,
   });
 
   expect(agent.id).toBeTruthy();
@@ -1387,26 +1421,16 @@ test("creates agent and exercises lifecycle", async () => {
 
   const agentUpdate = await agentUpdatePromise;
   expect(agentUpdate.payload.agent.id).toBe(agent.id);
-  expect(createdSnapshots.at(-1)).toMatchObject({
-    phase: "completed",
-    agentId: agent.id,
-    error: null,
-  });
 
-  const failedSnapshots: CreationSnapshot[] = [];
-
+  const failRequestId = `fail-${Date.now()}`;
   await expect(
     ctx.client.createAgent({
       ...getFullAccessConfig("codex"),
       cwd: "/this/path/does/not/exist/12345",
       title: "Should Fail",
-      onEvent: (snapshot) => failedSnapshots.push(snapshot),
+      requestId: failRequestId,
     }),
   ).rejects.toThrow("Working directory does not exist");
-  expect(failedSnapshots.at(-1)).toMatchObject({
-    phase: "failed",
-    error: expect.stringContaining("Working directory does not exist"),
-  });
 
   let sawRefresh = false;
   const unsubscribe = ctx.client.subscribe((event) => {
@@ -1585,6 +1609,11 @@ test("creates agent and exercises lifecycle", async () => {
 }, 300000);
 
 test("handles permission flow", async () => {
+  const permissionEvents = ctx.client.observeEvents([
+    "agent_permission_request",
+    "agent_permission_resolved",
+  ]);
+  await permissionEvents.ready;
   const cwd = tmpCwd();
   const filePath = path.join(cwd, "permission.txt");
 
@@ -1594,40 +1623,28 @@ test("handles permission flow", async () => {
     title: "Permission Test",
   });
 
-  const permissionEvents = ctx.client.observeEvents([
-    "agent_permission_request",
-    "agent_permission_resolved",
-  ]);
-  await permissionEvents.ready;
-
   const permissionRequestPromise = waitForSignal(60000, (resolve) => {
-    const unsubscribe = permissionEvents.subscribe({
-      snapshot: () => {},
-      update: (message) => {
-        if (message.type !== "agent_permission_request") {
-          return;
-        }
-        if (message.payload.agentId !== agent.id) {
-          return;
-        }
-        resolve(message);
-      },
+    const unsubscribe = ctx.client.on("agent_permission_request", (message) => {
+      if (message.type !== "agent_permission_request") {
+        return;
+      }
+      if (message.payload.agentId !== agent.id) {
+        return;
+      }
+      resolve(message);
     });
     return unsubscribe;
   });
 
   const permissionResolvedPromise = waitForSignal(60000, (resolve) => {
-    const unsubscribe = permissionEvents.subscribe({
-      snapshot: () => {},
-      update: (message) => {
-        if (message.type !== "agent_permission_resolved") {
-          return;
-        }
-        if (message.payload.agentId !== agent.id) {
-          return;
-        }
-        resolve(message);
-      },
+    const unsubscribe = ctx.client.on("agent_permission_resolved", (message) => {
+      if (message.type !== "agent_permission_resolved") {
+        return;
+      }
+      if (message.payload.agentId !== agent.id) {
+        return;
+      }
+      resolve(message);
     });
     return unsubscribe;
   });

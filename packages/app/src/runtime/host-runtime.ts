@@ -2858,6 +2858,8 @@ export class HostRuntimeStore {
       replica,
       replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
+      applyTurnLiveness: (agentId, transitions) =>
+        directory.applyAgentTurnLiveness(agentId, transitions),
       ports,
     });
   }

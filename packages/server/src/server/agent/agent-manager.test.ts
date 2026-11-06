@@ -3286,6 +3286,78 @@ test.each([
   },
 );
 
+test("createAgent and resume give the agent its workspace id", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-env-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    createLaunchContext: AgentLaunchContext | undefined;
+    resumeLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.createLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.resumeLaunchContext = launchContext;
+      const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+      return new TestAgentSession({ ...metadata, ...overrides, provider: "codex", cwd: workdir });
+    }
+  }
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000140",
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: "ws-agent-home",
+  });
+  expect(client.createLaunchContext?.env).toEqual({
+    PASEO_AGENT_ID: snapshot.id,
+    PASEO_AGENT_CWD: workdir,
+    PASEO_WORKSPACE_ID: "ws-agent-home",
+  });
+
+  // The stored record supplies the workspace when the caller doesn't.
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "workspace-env-session",
+    metadata: { provider: "codex", cwd: workdir },
+  };
+  const expectedEnv = {
+    PASEO_AGENT_ID: snapshot.id,
+    PASEO_AGENT_CWD: workdir,
+    PASEO_WORKSPACE_ID: "ws-agent-home",
+  };
+
+  await manager.closeAgent(snapshot.id);
+  const resumed = await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, snapshot.id);
+  expect(client.resumeLaunchContext?.env).toEqual(expectedEnv);
+  expect(resumed.workspaceId).toBe("ws-agent-home");
+  expect((await storage.get(snapshot.id))?.workspaceId).toBe("ws-agent-home");
+
+  // Each restart reads what the previous resume stored.
+  client.resumeLaunchContext = undefined;
+  await manager.closeAgent(snapshot.id);
+  await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, snapshot.id);
+  expect(client.resumeLaunchContext?.env).toEqual(expectedEnv);
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -4731,6 +4803,7 @@ test("importProviderSession imports the selected session without listing and pub
     env: {
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "ws-imported",
     },
   });
   expect(imported.lifecycle).toBe("idle");
