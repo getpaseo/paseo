@@ -13075,3 +13075,172 @@ test("an out-of-band command racing idle cleanup waits for the resumed runtime",
   expect(h.commands).toEqual(["/maintenance"]);
   expect(h.prompts).toEqual([]);
 });
+
+test("folds provider background work and clears it when the agent closes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let activeSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000201",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: snapshot.id, replayState: false });
+
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "bash-1", kind: "shell", description: "sleep 20" }],
+  });
+
+  await vi.waitFor(() =>
+    expect(manager.listAgentBackgroundWork(snapshot.id)).toEqual([
+      { id: "bash-1", kind: "shell", description: "sleep 20", startedAt: expect.any(String) },
+    ]),
+  );
+  expect(events).toContainEqual({
+    type: "background_work",
+    agentId: snapshot.id,
+    items: [expect.objectContaining({ id: "bash-1" })],
+  });
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toEqual({ count: 1 });
+  expect(
+    events.some((event) => event.type === "agent_stream" && event.event.type === "background_work"),
+  ).toBe(false);
+
+  await manager.closeAgent(snapshot.id);
+
+  expect(events).toContainEqual({ type: "background_work", agentId: snapshot.id, items: [] });
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toBeUndefined();
+});
+
+test("does not deliver an internal agent's background work to global subscribers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-internal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let activeSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000202",
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const agentEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => agentEvents.push(event), {
+    agentId: agent.id,
+    replayState: false,
+  });
+
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "bash-1", kind: "shell", description: null }],
+  });
+  // The per-agent subscriber proves the event was emitted before the global one is checked.
+  await vi.waitFor(() =>
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({ type: "background_work", agentId: agent.id }),
+    ),
+  );
+
+  expect(events.some((event) => event.type === "background_work")).toBe(false);
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "bash-1", stopToken: "token" }),
+  ).rejects.toThrow("Unknown agent");
+});
+
+test("stops only a currently owned public background item with its current token", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-background-stop-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const stopped: string[] = [];
+  let activeSession: TestAgentSession | null = null;
+  class StoppableSession extends TestAgentSession {
+    async stopBackgroundWork(id: string) {
+      stopped.push(id);
+    }
+  }
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new StoppableSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000204",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [
+      { id: "one", kind: "shell", description: null, canStop: true },
+      { id: "two", kind: "other", description: null },
+    ],
+  });
+  await vi.waitFor(() => expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(2));
+  const [one] = manager.listAgentBackgroundWork(agent.id);
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "one", stopToken: "stale-token" }),
+  ).rejects.toThrow();
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "two",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
+  await manager.stopAgentBackgroundWork({
+    agentId: agent.id,
+    itemId: "one",
+    stopToken: one.stopToken!,
+  });
+  expect(stopped).toEqual(["one"]);
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "one", kind: "shell", description: null }],
+  });
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "one", kind: "shell", description: null, canStop: true }],
+  });
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "one",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
+  expect(stopped).toEqual(["one"]);
+  await manager.closeAgent(agent.id);
+});

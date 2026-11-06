@@ -702,6 +702,20 @@ function markdownImageSource(markdown: string): string {
   return source.startsWith("file://") ? fileURLToPath(source) : source;
 }
 
+function latestBackgroundWork(events: AgentStreamEvent[]) {
+  return events.findLast((event) => event.type === "background_work");
+}
+
+function hasBackgroundListRequest(appServer: FakeCodexAppServer, threadId: string) {
+  return appServer
+    .requests()
+    .some(
+      (request) =>
+        request.method === "thread/backgroundTerminals/list" &&
+        (request.params as { threadId: string }).threadId === threadId,
+    );
+}
+
 function emitCodexUserMessage(
   appServer: FakeCodexAppServer,
   input: { id: string; text: string; threadId?: string; turnId?: string },
@@ -2172,13 +2186,16 @@ describe("Codex app-server provider", () => {
         expect.objectContaining({ type: "user_message", messageId: "user-1", text: "Hello" }),
         expect.objectContaining({ type: "assistant_message", text: "Hi there." }),
       ]);
-      expect(codex.threadMethods(0)).toEqual([
+      // Background terminal observation is independent of conversation history loading.
+      const historyMethods = (index: number) =>
+        codex.threadMethods(index).filter((method) => method !== "thread/backgroundTerminals/list");
+      expect(historyMethods(0)).toEqual([
         "thread/loaded/list",
         "thread/resume",
         "thread/read",
         "thread/read",
       ]);
-      expect(codex.threadMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
+      expect(historyMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
       expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
     } finally {
       await codex.close();
@@ -2546,6 +2563,77 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("keeps a background terminal controllable on its original thread after rewind", async () => {
+    let live = true;
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
+      "thread/read": () => ({ thread: { id: "thread-1", historyMode: "legacy", turns: [] } }),
+      "thread/backgroundTerminals/list": (params) => {
+        const threadId = (params as { threadId: string }).threadId;
+        if (threadId === "thread-1" && live)
+          return { data: [{ processId: "12", command: "sleep 180" }], nextCursor: null };
+        if (threadId === "forked-thread")
+          return { data: [{ processId: "12", command: "sleep 99" }], nextCursor: null };
+        return { data: [], nextCursor: null };
+      },
+      "thread/backgroundTerminals/terminate": (params) => {
+        expect(params).toMatchObject({ threadId: "thread-1", processId: "12" });
+        live = false;
+        return { terminated: true };
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("first");
+      emitCodexUserMessage(appServer, { id: "first", text: "first", turnId: "turn-first" });
+      appServer.completeTurn();
+      await vi.waitFor(() =>
+        expect(latestBackgroundWork(events)).toMatchObject({
+          items: [{ command: "sleep 180" }],
+        }),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.startTurn("second");
+      emitCodexUserMessage(appServer, { id: "second", text: "second", turnId: "turn-second" });
+      appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.revertConversation({ messageId: "second" });
+      await session.startTurn("continue");
+      appServer.startsTerminalCommand({
+        threadId: "forked-thread",
+        turnId: "turn-next",
+        itemId: "new",
+        processId: "12",
+        command: "echo hello",
+      });
+      await vi.waitFor(() =>
+        expect(hasBackgroundListRequest(appServer, "forked-thread")).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(latestBackgroundWork(events)).toMatchObject({
+          items: [{ command: "sleep 180" }, { command: "sleep 99" }],
+        }),
+      );
+      const items = latestBackgroundWork(events)?.items;
+      expect(items).toHaveLength(2);
+      expect(items![0].id).not.toBe(items![1].id);
+      await session.stopBackgroundWork(items![0].id);
+      expect(latestBackgroundWork(events)).toMatchObject({
+        items: [{ command: "sleep 99" }],
+      });
+    } finally {
+      await session.close();
+    }
   });
 
   test("rewinds a paginated conversation through the public session capability", async () => {
@@ -7816,7 +7904,7 @@ describe("Codex interactive resume startup", () => {
       unsubscribe();
       const laterEvents: AgentStreamEvent[] = [];
       session.subscribe((event) => laterEvents.push(event));
-      expect(laterEvents).toEqual([]);
+      expect(laterEvents.filter((event) => event.type !== "background_work")).toEqual([]);
     } finally {
       await session.close();
       appServer.assertNoErrors();
