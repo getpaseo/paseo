@@ -101,9 +101,15 @@ nav: API 参考
 | `commands(options?)`           | `PaseoAgentCommandsResult`        | 向正在运行的会话查询它的斜杠命令和技能，包括内置的。选项：`requestId`。 |
 | `subscribe(handler)`           | 取消订阅函数                      | 把 Agent 目录更新过滤到此 ID，并刷新句柄的属性。                        |
 | `archive()`                    | `{ archivedAt }`                  | 软删除 Agent 并关闭它的运行时。                                         |
+| `delete()`                     | `Promise<void>`                   | 移除 Agent 的持久记录和状态，关闭运行时，并清空此句柄的快照。           |
 | `detach()`                     | `Promise<void>`                   | 解除父子关系，但不停止 Agent。                                          |
 
 从 `workspaceId` 到 `archivedAt` 的属性反映句柄最近观察到的快照。由 `ref()` 得到的句柄在 `refresh()`、`run()`、`waitForFinish()`、时间线重新获取或 `subscribe()` 投递快照之前，这些属性都读作 `null`。已观察到的快照中的可选值也读作 `null`。当你需要整个快照，或需要区分这些状态时，请调用 `current()`。
+
+调用 `await client.agents.ref(agentId).delete()` 可移除 Agent，包括已归档的 Agent。
+插件通过 `usePaseo()` 或处理函数的 `paseo` context 使用同一个方法。
+删除会保留工作区文件和 worktree。删除前请请求确认；需要保留恢复能力时使用 `archive()`。
+daemon 确认删除后，`current()` 和快照属性返回 `null`。请求被拒绝时保留已观察到的快照。
 
 `PaseoAgentRunResult` 包含 `status`、`final`、`error` 和 `lastMessage`。存在 `final` 时会刷新句柄。
 
