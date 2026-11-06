@@ -6,7 +6,8 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { StatusRing } from "@/components/status-ring";
-import { getStatusRingOffset } from "@/components/status-ring/geometry";
+import { STATUS_RING_FRAME_SIZE, getStatusRingOffset } from "@/components/status-ring/geometry";
+import { SyncedLoader } from "@/components/synced-loader";
 import {
   STATUS_INDICATOR_ALERT_SIZE,
   STATUS_INDICATOR_DOT_SIZE,
@@ -19,10 +20,23 @@ interface StatusIconProps {
   size?: number;
   statusDotBorderColor?: string;
   backdrop: SurfaceBackdrop;
+  /**
+   * The running mark. An agent shows the synced loader, the same mark as its in-flight turn
+   * footer. A workspace shows the ring, the same mark as its sidebar row.
+   */
+  runningIndicator?: "loader" | "ring";
 }
 const DEFAULT_STATUS_DOT_OFFSET = -2;
 const STATUS_ALERT_OFFSET = -3;
+// The loader sits inside the ring's knockout frame, inset by the same halo, so both running marks
+// cover the same corner of the icon.
+const RUNNING_LOADER_HALO_INSET = 1;
+const RUNNING_LOADER_SIZE = STATUS_RING_FRAME_SIZE - RUNNING_LOADER_HALO_INSET * 2;
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedSyncedLoader = withUnistyles(SyncedLoader);
+const runningLoaderColorMapping = (theme: Theme) => ({
+  color: getStatusDotColor({ theme, bucket: "running" }) ?? theme.colors.foreground,
+});
 const needsInputAlertMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
@@ -34,6 +48,7 @@ export function StatusIcon({
   size = 14,
   statusDotBorderColor,
   backdrop,
+  runningIndicator = "loader",
 }: StatusIconProps): ReactElement {
   const bucket = statusBucket;
   const isRunning = bucket === "running";
@@ -61,11 +76,19 @@ export function StatusIcon({
       {children}
       {isRunning ? (
         <View
-          style={styles.statusRing}
+          style={
+            runningIndicator === "loader"
+              ? [styles.runningIndicator, styles.runningLoaderFrame, styles[backdrop]]
+              : styles.runningIndicator
+          }
           accessibilityRole="progressbar"
           accessibilityLabel="Agent running"
         >
-          <StatusRing backdrop={backdrop} />
+          {runningIndicator === "loader" ? (
+            <ThemedSyncedLoader size={RUNNING_LOADER_SIZE} uniProps={runningLoaderColorMapping} />
+          ) : (
+            <StatusRing backdrop={backdrop} />
+          )}
         </View>
       ) : null}
       {statusDotColor ? <View style={statusDotStyle} /> : null}
@@ -94,17 +117,36 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
   },
-  statusRing: {
+  runningIndicator: {
     position: "absolute",
     right: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
     bottom: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
   },
-  surface0: { borderColor: theme.colors.surface0 },
-  surface1: { borderColor: theme.colors.surface1 },
-  surface2: { borderColor: theme.colors.surface2 },
-  surfaceSidebar: { borderColor: theme.colors.surfaceSidebar },
-  surfaceSidebarHover: { borderColor: theme.colors.surfaceSidebarHover },
-  surfaceSidebarSelected: { borderColor: theme.colors.surfaceSidebarSelected },
+  // A rounded square rather than a disc: the loader is a square grid, and a disc this size would
+  // leave its corner dots outside the knockout, on top of the icon.
+  runningLoaderFrame: {
+    width: STATUS_RING_FRAME_SIZE,
+    height: STATUS_RING_FRAME_SIZE,
+    borderRadius: theme.borderRadius.base,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Each backdrop fills the loader knockout and borders the status dot.
+  surface0: { backgroundColor: theme.colors.surface0, borderColor: theme.colors.surface0 },
+  surface1: { backgroundColor: theme.colors.surface1, borderColor: theme.colors.surface1 },
+  surface2: { backgroundColor: theme.colors.surface2, borderColor: theme.colors.surface2 },
+  surfaceSidebar: {
+    backgroundColor: theme.colors.surfaceSidebar,
+    borderColor: theme.colors.surfaceSidebar,
+  },
+  surfaceSidebarHover: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+    borderColor: theme.colors.surfaceSidebarHover,
+  },
+  surfaceSidebarSelected: {
+    backgroundColor: theme.colors.surfaceSidebarSelected,
+    borderColor: theme.colors.surfaceSidebarSelected,
+  },
   statusAlertOverlay: {
     position: "absolute",
     right: STATUS_ALERT_OFFSET,
