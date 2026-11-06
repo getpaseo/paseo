@@ -98,7 +98,10 @@ test.describe("Assistant fork menu", () => {
 
     // Fork the fork, then follow its immediate source rather than guessing by title.
     await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
-    await awaitAssistantMessage(page);
+    await expect(page.getByTestId(`workspace-tab-agent_${forkAgentId}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await forkMostRecentAssistantTurnToNewTab(page);
     await page.getByTestId("composer-chat-history-attachment-pill").click();
     await expect(page.getByTestId("chat-history-content")).toContainText("updates for the fork.");
