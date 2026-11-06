@@ -332,7 +332,11 @@ interface SessionForTestOptions {
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
     getProjectSlug?: ReturnType<typeof vi.fn>;
   };
-  workspaceRegistry?: { get: ReturnType<typeof vi.fn>; list?: ReturnType<typeof vi.fn> };
+  workspaceRegistry?: {
+    get: ReturnType<typeof vi.fn>;
+    list?: ReturnType<typeof vi.fn>;
+    listAll?: ReturnType<typeof vi.fn>;
+  };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
   workspaceLaunchManager?: SessionOptions["workspaceLaunchManager"];
@@ -439,6 +443,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     workspaceRegistry: options.workspaceRegistry ?? {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
+      listAll: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
     workspaceLaunchManager: options.workspaceLaunchManager,
@@ -1968,7 +1973,7 @@ describe("project config RPC authorization", () => {
       projectRegistry: { list: vi.fn().mockResolvedValue([project]) },
       workspaceRegistry: {
         get: vi.fn(),
-        list: vi.fn().mockResolvedValue([
+        listAll: vi.fn().mockResolvedValue([
           {
             workspaceId: "workspace-active",
             projectId: project.projectId,
