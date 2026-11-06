@@ -70,7 +70,16 @@ export {
   useFileUrl,
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
-export { useAgent, useWorkspace } from "./client-state.js";
+export {
+  useAgent,
+  useWorkspace,
+  useProject,
+  useTerminal,
+  useWorkspaces,
+  useAgents,
+  useProjects,
+  useTerminals,
+} from "./client-state.js";
 export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
 export type {
   PluginSubscribeOptions,
@@ -102,3 +111,6 @@ export type { PluginI18n } from "./translations.js";
 export type { PluginText, PluginMessage, PluginTranslations } from "../text.js";
 
 export { useTabState } from "./tab.js";
+
+export type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js";
+export type { Query, Group, GroupKey } from "./query.js";
