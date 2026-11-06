@@ -10,6 +10,7 @@ import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { useWorkspaceLastAgentInitialValues } from "@/composer/draft/workspace-draft-defaults";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -296,9 +297,14 @@ export function WorkspaceDraftComposer({
     workspaceDirectory,
     initialSetup: draftSetup,
   });
-  const draftInitialValues = buildDraftInitialValues({
-    initialSetup: draftSetup,
-  });
+  // Tabs created with an explicit setup (CLI `paseo run`, profiles) keep it; a
+  // plain "+" tab instead inherits this workspace's most recent top-level
+  // agent config instead of the device-global last-selected-model preference.
+  const lastAgentInitialValues = useWorkspaceLastAgentInitialValues(serverId, workspaceId);
+  const draftInitialValues =
+    buildDraftInitialValues({
+      initialSetup: draftSetup,
+    }) ?? lastAgentInitialValues;
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
