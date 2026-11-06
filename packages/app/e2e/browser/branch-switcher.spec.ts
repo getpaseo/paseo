@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "../support/fixtures";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { gotoAppShell } from "../support/helpers/app";
 import {
   expectNoBranchSwitcherInWorkspaceHeader,
@@ -13,6 +14,37 @@ import {
   switchWorkspaceViaSidebar,
   waitForSidebarHydration,
 } from "../support/helpers/workspace-ui";
+
+// Hold the real daemon response until the test has observed the pending UI.
+async function holdBranchSuggestions(page: Page): Promise<() => void> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => server.send(message));
+    server.onMessage(async (message) => {
+      const envelope = JSON.parse(message.toString());
+      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_response") {
+        await gate;
+      }
+      browser.send(message);
+    });
+  });
+  return release;
+}
+
+async function expectInitialBranchLoading(page: Page, release: () => void): Promise<void> {
+  await page.getByRole("button", { name: "Current branch: main. Press to switch branch." }).click();
+  const picker = page.getByTestId("combobox-desktop-container");
+  await expect(picker.getByText("Loading...", { exact: true })).toBeVisible();
+  await expect(picker.getByText("No branches found.", { exact: true })).toHaveCount(0);
+  release();
+  await expect(picker.getByText("dev", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(picker).not.toBeVisible();
+}
 
 async function renameWorkspaceViaSidebar(
   page: Page,
@@ -59,6 +91,7 @@ test.describe("Branch switcher", () => {
     try {
       expect(workspace.workspaceName).toBe("main");
 
+      const releaseBranches = await holdBranchSuggestions(page);
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: workspace.workspaceId });
@@ -82,6 +115,7 @@ test.describe("Branch switcher", () => {
       // and switching it checks out the real branch on disk.
       await openChangesPanel(page);
       await expectWorkspaceBranch(page, "main");
+      await expectInitialBranchLoading(page, releaseBranches);
       await switchBranchFromChangesPanel(page, { from: "main", to: "dev" });
       await expectWorkspaceBranch(page, "dev");
 
