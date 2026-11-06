@@ -25,6 +25,17 @@ Run the Paseo mobile suite:
 npm run test:e2e:mobile
 ```
 
+For the Android background-connection setting, install the release build on an emulator or device,
+connect an online host, allow notifications, and leave **Keep connection in background** off. Run
+with the app in English (or set `PASEO_BACKGROUND_CONNECTION_LABEL` to the localized switch label):
+
+```bash
+ANDROID_SERIAL=emulator-5554 node packages/app/e2e/mobile/background-connection/android.mjs
+```
+
+The test toggles the real setting and checks Android's foreground service and ongoing notification,
+then restores the setting to off. Set `PASEO_MOBILE_APP_ID` for a different package ID.
+
 The runner uses an isolated Agent Device state directory, verifies or starts Metro for this checkout, prewarms the iOS runner, discovers each script's platform from its `context` header, and cleans its sessions, runner lease, daemon, and any Metro process it started. Attempt results, timings, logs, and failure artifacts go under `.dev/agent-device-artifacts`.
 
 Set `PASEO_MOBILE_E2E_METRO_PORT` when this worktree already has Metro on a non-default port:
