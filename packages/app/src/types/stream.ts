@@ -812,6 +812,8 @@ export interface PluginTimelineStreamItem {
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */
   sourceId?: string;
+  /** Completed assistant identity retained by host projection, never plugin-authored data. */
+  sourceAssistant?: Pick<AssistantMessageItem, "messageId">;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;

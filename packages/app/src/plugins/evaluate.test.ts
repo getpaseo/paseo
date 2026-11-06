@@ -706,6 +706,20 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
+  it("provides the host fork menu through @getpaseo/plugin/client/ui", () => {
+    const plugin = evaluatePluginClientBundle(
+      "fork-menu",
+      bundle(`
+        const { ForkMenu } = require("@getpaseo/plugin/client/ui");
+        if (typeof ForkMenu !== "function") throw new Error("ForkMenu is missing");
+        if (require("@getpaseo/plugin/client/react-native").ForkMenu !== ForkMenu) throw new Error("ForkMenu differs on the legacy UI entry");
+        if ("ForkMenu" in require("@getpaseo/plugin")) throw new Error("ForkMenu leaked into shared exports");
+        if ("ForkMenu" in require("@getpaseo/plugin/client")) throw new Error("ForkMenu leaked into client exports");
+      `),
+    );
+    expect(plugin.id).toBe("fork-menu");
+  });
+
   it("keeps the host reveal hook on the deprecated client/react-native entry", () => {
     const plugin = evaluatePluginClientBundle(
       "legacy-reveal",
