@@ -82,6 +82,17 @@ describe("server config", () => {
     expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(false);
   });
 
+  test("idle runtime cleanup waits one hour unless the host configures minutes", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-idle-period-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanupMinutes).toBe(60);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { idleRuntimeCleanupMinutes: 15 } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanupMinutes).toBe(15);
+  });
+
   test("loads the provider catalog refresh timeout", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-provider-timeout-"));
     roots.push(paseoHome);

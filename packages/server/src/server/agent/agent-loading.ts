@@ -34,7 +34,7 @@ export type AgentLoaderManager = Pick<
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
 > &
-  Partial<Pick<AgentManager, "waitForAgentClose">>;
+  Partial<Pick<AgentManager, "waitForAgentClose" | "noteHistoryRead">>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -82,6 +82,7 @@ export async function ensureAgentLoaded(
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    if (deps.purpose === "history") deps.agentManager.noteHistoryRead?.(agentId);
     return existing;
   }
 
