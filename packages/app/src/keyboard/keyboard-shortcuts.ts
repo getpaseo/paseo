@@ -169,6 +169,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-next",
     "pin-workspace",
     "archive-workspace",
+    "undo-archive-workspace",
   ],
   "tabs-panes": [
     "workspace-tab-new",
@@ -358,6 +359,31 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "archive-workspace",
       section: "workspaces",
       label: "Archive workspace",
+    },
+  },
+
+  // --- Undo archive workspace ---
+  // Only claims the key while an archive can be undone; otherwise text undo runs as usual.
+  {
+    id: "workspace-archive-undo-cmd-z-mac",
+    action: "workspace.archive.undo",
+    combo: "Cmd+Z",
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "undo-archive-workspace",
+      section: "workspaces",
+      label: "Undo archive workspace",
+    },
+  },
+  {
+    id: "workspace-archive-undo-ctrl-z-non-mac",
+    action: "workspace.archive.undo",
+    combo: "Ctrl+Z",
+    when: { mac: false, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "undo-archive-workspace",
+      section: "workspaces",
+      label: "Undo archive workspace",
     },
   },
 

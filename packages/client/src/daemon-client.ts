@@ -3628,6 +3628,23 @@ export class DaemonClient {
     }
   }
 
+  /** Rejects when the host could not put the workspace back; an old host has no such RPC. */
+  async undoWorkspaceArchive(workspaceId: string, requestId?: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.archive.undo.response">({
+        requestId,
+        message: {
+          type: "workspace.archive.undo.request",
+          workspaceId,
+        },
+        // Undoing a finished worktree archive recreates the worktree, like recovery does.
+        timeout: 150_000,
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "The host could not undo the workspace archive");
+    }
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,

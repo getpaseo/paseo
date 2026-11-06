@@ -259,6 +259,27 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
+Workspace archive is undoable from the archived toast, or with Cmd/Ctrl+Z, while the toast is up.
+The daemon runs one archive lane per workspace, shared by every connection
+(`packages/server/src/server/workspace-archive-operations.ts`):
+
+| A request arrives while  | Result                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| an archive runs: archive | joins the running archive                                 |
+| an archive runs: undo    | aborts the archive, waits for it to settle, then restores |
+| an undo runs: archive    | waits for the undo, then archives                         |
+| an undo runs: undo       | joins the running undo                                    |
+
+A request takes its place in the lane before its first `await`. Arrival order decides, so an undo
+sent right behind its archive still cancels it.
+
+An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
+the agents that archive itself archived. Deleting the worktree directory is the point of no
+return: an undo after it recreates the worktree through workspace recovery. The client shows or
+hides the row by the latest local intent, so a late remove or upsert from a superseded request
+does not flip it back. Tabs and layout are purged only once the undo window closes with the
+archive committed.
+
 History navigation opens the selected agent without changing either archive state. Workspace
 **Restore** recovers only the workspace; the selected archived agent stays open with its callout.
 The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and

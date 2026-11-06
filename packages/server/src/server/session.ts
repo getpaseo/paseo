@@ -278,6 +278,10 @@ import {
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
+import {
+  WorkspaceArchiveOperations,
+  type WorkspaceArchiveUndoInput,
+} from "./workspace-archive-operations.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
 
@@ -285,6 +289,12 @@ function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
 ): WorkspaceSetupRuntime {
   return runtime ?? new WorkspaceSetupRuntime();
+}
+
+function resolveWorkspaceArchiveOperations(
+  operations: WorkspaceArchiveOperations | undefined,
+): WorkspaceArchiveOperations {
+  return operations ?? new WorkspaceArchiveOperations();
 }
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -566,6 +576,8 @@ export interface SessionOptions {
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupObservation?: WorkspaceSetupObservation;
   workspaceSetupRuntime?: WorkspaceSetupRuntime;
+  /** Shared by every session so an undo from any connection reaches the archive it cancels. */
+  workspaceArchiveOperations?: WorkspaceArchiveOperations;
   onBranchChanged?: (
     workspaceId: string,
     oldBranch: string | null,
@@ -837,6 +849,7 @@ export class Session {
   private readonly workspaceSetupObservation: WorkspaceSetupObservation;
   private readonly unsubscribeSetupObservation: () => void;
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
+  private readonly workspaceArchiveOperations: WorkspaceArchiveOperations;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSessions: VoiceSessions;
@@ -902,6 +915,7 @@ export class Session {
       scriptRuntimeStore,
       workspaceSetupObservation,
       workspaceSetupRuntime,
+      workspaceArchiveOperations,
       onBranchChanged,
       getDaemonTcpPort,
       getDaemonTcpHost,
@@ -1249,6 +1263,7 @@ export class Session {
       },
     );
     this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
+    this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
@@ -3306,6 +3321,8 @@ export class Session {
         return this.handleWorkspaceRecoveryInspectRequest(msg);
       case "workspace.recovery.restore.request":
         return this.handleWorkspaceRecoveryRestoreRequest(msg);
+      case "workspace.archive.undo.request":
+        return this.handleWorkspaceArchiveUndoRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
@@ -6180,6 +6197,10 @@ export class Session {
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
     await this.workspaceRecovery.restore(workspaceId);
+    await this.publishRecoveredWorkspace(workspaceId);
+  }
+
+  private async publishRecoveredWorkspace(workspaceId: string): Promise<void> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
@@ -7786,40 +7807,61 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "archive_workspace_request" }>,
   ): Promise<void> {
     try {
-      const existing = await this.workspaceRegistry.get(request.workspaceId);
-      if (!existing) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
-
-      await archiveByScope(
-        {
-          paseoHome: this.paseoHome,
-          paseoWorktreesBaseRoot: this.worktreesRoot,
-          github: this.github,
-          workspaceGitService: this.workspaceGitService,
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
-          getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
-          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-          emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-            this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
-          markWorkspaceArchiving: (workspaceIds, archivingAt) =>
-            this.markWorkspaceArchiving(workspaceIds, archivingAt),
-          clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-          assertWorkspaceAutomationAllowed: (workspaceId) =>
-            assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
-          killTerminalsForWorkspace: (workspaceId) =>
-            this.terminalController.killTerminalsForWorkspace(workspaceId),
-          stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
-          sessionLogger: this.sessionLogger,
-        },
-        {
-          scope: { kind: "workspace", workspaceId: existing.workspaceId },
-          requestId: request.requestId,
+      // Claim the archive queue before any await, so an undo sent right behind this request
+      // queues after it and cancels it instead of running first.
+      const outcome = await this.workspaceArchiveOperations.archive(
+        request.workspaceId,
+        async (signal) => {
+          const existing = await this.workspaceRegistry.get(request.workspaceId);
+          if (!existing) {
+            throw new Error(`Workspace not found: ${request.workspaceId}`);
+          }
+          return archiveByScope(
+            {
+              paseoHome: this.paseoHome,
+              paseoWorktreesBaseRoot: this.worktreesRoot,
+              github: this.github,
+              workspaceGitService: this.workspaceGitService,
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+              getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+              listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+                this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+              markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+                this.markWorkspaceArchiving(workspaceIds, archivingAt),
+              clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+              assertWorkspaceAutomationAllowed: (workspaceId) =>
+                assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
+              killTerminalsForWorkspace: (workspaceId) =>
+                this.terminalController.killTerminalsForWorkspace(workspaceId),
+              stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+              sessionLogger: this.sessionLogger,
+            },
+            {
+              scope: { kind: "workspace", workspaceId: existing.workspaceId },
+              requestId: request.requestId,
+              signal,
+            },
+          );
         },
       );
+
+      if (outcome.kind === "canceled") {
+        this.emit({
+          type: "archive_workspace_response",
+          payload: {
+            requestId: request.requestId,
+            workspaceId: request.workspaceId,
+            archivedAt: null,
+            error: "Workspace archive was undone",
+            canceled: true,
+          },
+        });
+        return;
+      }
 
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
       const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
@@ -7848,6 +7890,69 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleWorkspaceArchiveUndoRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.archive.undo.request" }>,
+  ): Promise<void> {
+    try {
+      await this.workspaceArchiveOperations.undo(request.workspaceId, (input) =>
+        this.restoreArchivedWorkspaceAndAgents(request.workspaceId, input),
+      );
+      this.emit({
+        type: "workspace.archive.undo.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: request.workspaceId, requestId: request.requestId },
+        "session: workspace.archive.undo.request rejected",
+      );
+      this.emit({
+        type: "workspace.archive.undo.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to undo the workspace archive"),
+        },
+      });
+    }
+  }
+
+  // Runs on the archive lane after any in-flight archive has stopped, so the record reflects how
+  // far it got: still active when it was canceled early, archived (directory kept or removed)
+  // otherwise.
+  private async restoreArchivedWorkspaceAndAgents(
+    workspaceId: string,
+    input: WorkspaceArchiveUndoInput,
+  ): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
+    }
+    if (workspace.archivedAt) {
+      await this.workspaceRecovery.restore(workspaceId);
+    }
+    const results = await Promise.allSettled(
+      input.agentIds.map((agentId) =>
+        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
+      ),
+    );
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        this.sessionLogger.warn(
+          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
+          "Failed to unarchive agent while undoing workspace archive",
+        );
+      }
+    }
+    await this.publishRecoveredWorkspace(workspaceId);
   }
 
   private async handleWorkspaceClearAttentionRequest(
