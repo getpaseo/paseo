@@ -12,16 +12,12 @@ export function createAgentAttentionController(deps: {
 }) {
   let state: AttentionState | null = null;
   let inFlight = false;
+  let pendingFocus = false;
 
-  function focus() {
-    if (
-      !state?.focused ||
-      !state.ready ||
-      !state.requiresAttention ||
-      state.attentionReason === "permission" ||
-      inFlight
-    )
-      return;
+  function acknowledgeFocus() {
+    if (!pendingFocus || !state?.focused || !state.ready) return;
+    pendingFocus = false;
+    if (!state.requiresAttention || state.attentionReason === "permission" || inFlight) return;
     inFlight = true;
     void deps.clear().then(
       () => {
@@ -36,12 +32,18 @@ export function createAgentAttentionController(deps: {
   }
 
   return {
-    focus,
+    focus() {
+      if (!state?.focused) return;
+      pendingFocus = true;
+      acknowledgeFocus();
+    },
     update(next: AttentionState) {
-      const entered = next.focused && next.ready && !(state?.focused && state.ready);
+      const entered = next.focused && !state?.focused;
       const requested = next.focusRequest !== null && next.focusRequest !== state?.focusRequest;
       state = { ...next };
-      if (entered || requested) focus();
+      if (!next.focused) pendingFocus = false;
+      else if (entered || requested) pendingFocus = true;
+      acknowledgeFocus();
     },
   };
 }

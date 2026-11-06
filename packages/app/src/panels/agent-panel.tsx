@@ -122,7 +122,7 @@ interface ChatAgentStateShape {
 
 interface ChatAgentSelectedState extends ChatAgentStateShape {
   archivedAt: Date | null;
-  requiresAttention: boolean | undefined;
+  requiresAttention: boolean;
   attentionReason: Agent["attentionReason"] | null;
 }
 
@@ -152,7 +152,7 @@ const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
   cwd: null,
   lastError: null,
   archivedAt: null,
-  requiresAttention: undefined,
+  requiresAttention: false,
   attentionReason: null,
 };
 
@@ -767,6 +767,7 @@ function ChatAgentContent({
     agentId,
     client,
     isConnected,
+    isAgentDataReady: agentHistorySyncGeneration === historySyncGeneration,
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,

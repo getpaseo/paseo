@@ -6,6 +6,8 @@ import {
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
 import { expectOpenTabCount } from "../support/helpers/sheet";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { expectReconnectingToastGone } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
 import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
 
@@ -237,7 +239,7 @@ test("manual unread survives leaving the current workspace on compact layout", a
   await completeTurnAndLeaveOnCompact(page, workspaces);
 });
 
-async function reopenMarkedWorkspaceAfterBackgroundTurn(page: Page, workspace: MockAgentWorkspace) {
+async function reopenWorkspaceAfterBackgroundTurn(page: Page, workspace: MockAgentWorkspace) {
   const route = page.url();
   // End this app session before the turn, so its cached transcript cannot contain the new prompt.
   await page.goto("about:blank");
@@ -272,7 +274,7 @@ test("reopening a marked unread workspace restores only its agent tab and curren
   await test.step("mark the current workspace unread, then close and reopen the app", async () => {
     await openMobileAgentSidebar(page);
     await markAsUnread(page, workspaces.subject.workspaceId);
-    await reopenMarkedWorkspaceAfterBackgroundTurn(page, workspaces.subject);
+    await reopenWorkspaceAfterBackgroundTurn(page, workspaces.subject);
   });
   await test.step("restore the main tab without Explorer entries and load its latest history", async () => {
     await expectRestoredCompactChat(page);
@@ -292,5 +294,52 @@ test("clicking the already focused timeline acknowledges a new completion", asyn
   await workspaces.subject.client.waitForFinish(workspaces.subject.agentId, 20_000);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
   await page.getByText("Finish another turn.", { exact: true }).click();
+  await expectStatus(page, workspaces.subject.workspaceId, "done");
+});
+
+async function reconnectWithoutInteracting(
+  page: Page,
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+  agentId: string,
+) {
+  await gate.drop();
+  await gate.waitForBlockedConnection();
+  gate.holdTimelineResponses(agentId);
+  gate.restore();
+  await gate.waitForHeldTimelineResponse();
+  await expectReconnectingToastGone(page);
+  gate.releaseHeldTimelineResponses();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
+}
+
+test("reconnecting a focused chat preserves its unread completion until another click", async ({
+  page,
+  workspaces,
+}) => {
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, workspaces.subject);
+  await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
+  await workspaces.subject.client.sendAgentMessage(
+    workspaces.subject.agentId,
+    "Unread across reconnect.",
+  );
+  await workspaces.subject.client.waitForFinish(workspaces.subject.agentId, 20_000);
+  await expectStatus(page, workspaces.subject.workspaceId, "attention");
+  await reconnectWithoutInteracting(page, gate, workspaces.subject.agentId);
+  await expectStatus(page, workspaces.subject.workspaceId, "attention");
+  await page.getByText("Unread across reconnect.", { exact: true }).click();
+  await expectStatus(page, workspaces.subject.workspaceId, "done");
+});
+
+test("a cached read chat acknowledges a completion that arrived while the app was closed", async ({
+  page,
+  workspaces,
+}) => {
+  await openCompactWorkspace(page, workspaces.subject);
+  await expectStatus(page, workspaces.subject.workspaceId, "done");
+  await closeMobileAgentSidebar(page);
+  await reopenWorkspaceAfterBackgroundTurn(page, workspaces.subject);
+  await expectRestoredCompactChat(page);
+  await openMobileAgentSidebar(page);
   await expectStatus(page, workspaces.subject.workspaceId, "done");
 });

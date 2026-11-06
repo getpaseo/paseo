@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createAgentAttentionController } from "@/utils/agent-attention";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { isWeb } from "@/constants/platform";
+import { useStableEvent } from "@/hooks/use-stable-event";
 
 type AttentionReason = "finished" | "error" | "permission" | null | undefined;
 
@@ -11,7 +12,8 @@ interface UseAgentAttentionClearParams {
   agentId: string | null | undefined;
   client: DaemonClient | null;
   isConnected: boolean;
-  requiresAttention: boolean | null | undefined;
+  isAgentDataReady: boolean;
+  requiresAttention: boolean;
   attentionReason: AttentionReason;
   isScreenFocused: boolean;
   focusRequest: object | null;
@@ -27,6 +29,7 @@ export function useAgentAttentionClear({
   agentId,
   client,
   isConnected,
+  isAgentDataReady,
   requiresAttention,
   attentionReason,
   isScreenFocused,
@@ -34,15 +37,19 @@ export function useAgentAttentionClear({
   onError,
 }: UseAgentAttentionClearParams): AgentAttentionClearController {
   const [isAppVisible, setIsAppVisible] = useState<boolean>(() => getIsAppActivelyVisible());
+  const clearAttention = useStableEvent(async (id: string) => {
+    if (client) await client.clearAgentAttention(id);
+  });
+  const reportError = useStableEvent(onError);
   const controller = useMemo(
     () =>
       createAgentAttentionController({
         clear: async () => {
-          if (client && agentId) await client.clearAgentAttention(agentId);
+          if (agentId) await clearAttention(agentId);
         },
-        onError,
+        onError: reportError,
       }),
-    [agentId, client, onError],
+    [agentId, clearAttention, reportError],
   );
 
   useEffect(() => {
@@ -73,8 +80,8 @@ export function useAgentAttentionClear({
   useEffect(() => {
     controller.update({
       focused: isScreenFocused && isAppVisible,
-      ready: Boolean(client && agentId && isConnected && requiresAttention != null),
-      requiresAttention: Boolean(requiresAttention),
+      ready: Boolean(client && agentId && isConnected && isAgentDataReady),
+      requiresAttention,
       attentionReason,
       focusRequest,
     });
@@ -83,6 +90,7 @@ export function useAgentAttentionClear({
     client,
     agentId,
     isConnected,
+    isAgentDataReady,
     isScreenFocused,
     isAppVisible,
     requiresAttention,

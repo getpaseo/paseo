@@ -52,6 +52,35 @@ describe("agent attention acknowledgement", () => {
     expect(calls).toEqual(["clear"]);
   });
 
+  it("does not treat reconnecting as another focus action", () => {
+    const { controller, state, calls } = setup();
+    controller.update(state);
+    controller.update({ ...state, requiresAttention: true });
+    controller.update({ ...state, requiresAttention: true, ready: false });
+    controller.update({ ...state, requiresAttention: true });
+    expect(calls).toEqual([]);
+    controller.focus();
+    expect(calls).toEqual(["clear"]);
+  });
+
+  it("holds a repeat focus while cached data is waiting for synchronization", () => {
+    const { controller, state, calls } = setup();
+    controller.update(state);
+    controller.update({ ...state, ready: false });
+    controller.focus();
+    controller.update({ ...state, ready: false, requiresAttention: true });
+    expect(calls).toEqual([]);
+    controller.update({ ...state, requiresAttention: true });
+    expect(calls).toEqual(["clear"]);
+  });
+
+  it("drops a pending focus when the user leaves before fresh data arrives", () => {
+    const { controller, state, calls } = setup();
+    controller.update({ ...state, ready: false });
+    controller.update({ ...state, focused: false, requiresAttention: true });
+    expect(calls).toEqual([]);
+  });
+
   it("keeps permission attention and deduplicates an in-flight acknowledgement", () => {
     const { controller, state, calls } = setup();
     controller.update({ ...state, requiresAttention: true, attentionReason: "permission" });
