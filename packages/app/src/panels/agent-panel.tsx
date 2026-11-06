@@ -43,7 +43,10 @@ import { RewindComposerRestoreProvider } from "@/components/rewind/composer-rest
 import { useAgentDescriptor } from "@/agent-presentation";
 import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
+import {
+  useWorkspaceAttachmentScopeKey,
+  useAgentAttachmentScopeKey,
+} from "@/attachments/workspace-attachments-store";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
@@ -1112,7 +1115,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
-  const rewindAttachmentScopeKey = useWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd });
+  const rewindAttachmentScopeKey = useAgentAttachmentScopeKey({ serverId, agentId });
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1543,9 +1546,10 @@ function ActiveAgentComposer({
     cwd,
     workspaceId,
   });
+  const agentAttachmentScopeKey = useAgentAttachmentScopeKey({ serverId, agentId });
   const attachmentScopeKeys = useMemo(
-    () => [workspaceAttachmentScopeKey],
-    [workspaceAttachmentScopeKey],
+    () => [workspaceAttachmentScopeKey, agentAttachmentScopeKey],
+    [workspaceAttachmentScopeKey, agentAttachmentScopeKey],
   );
   const handleOpenWorkspaceAttachment = useCallback(
     (attachment: WorkspaceComposerAttachment) => {

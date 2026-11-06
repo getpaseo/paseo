@@ -1,5 +1,6 @@
 import {
   captureChatHistory,
+  expectRewoundHistoryIsPrivate,
   rewindForkPrompt,
   closeChatHistory,
   followChatHistorySource,
@@ -113,6 +114,7 @@ test.describe("Assistant fork menu", () => {
       await openChatHistory(page, "sent", [initialPrompt]);
       await closeChatHistory(page);
       await rewindForkPrompt(page);
+      await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
       await openChatHistory(page, "draft", [initialPrompt]);
       await closeChatHistory(page);
       await submitMessage(page, prompt);

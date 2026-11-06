@@ -70,3 +70,13 @@ export async function rewindForkPrompt(page: Page) {
   await option.click();
   await expect(option).not.toBeVisible();
 }
+
+export async function expectRewoundHistoryIsPrivate(page: Page, sourceId: string, forkId: string) {
+  await page.getByTestId(`workspace-tab-agent_${sourceId}`).click();
+  const history = page
+    .getByTestId("composer-chat-history-attachment-pill")
+    .filter({ visible: true });
+  await expect(history).toHaveCount(0);
+  await page.getByTestId(`workspace-tab-agent_${forkId}`).click();
+  await expect(history).toBeVisible();
+}
