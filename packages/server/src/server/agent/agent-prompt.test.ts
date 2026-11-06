@@ -357,3 +357,21 @@ test("a human pasting an agent envelope stays a human message through provider r
     clientMessageId: "human-submission",
   });
 });
+
+test("schedule prompts remain visible as completed tool calls on replay", () => {
+  const text = formatSystemNotificationPrompt("Heartbeat: check progress");
+  expect(projectAgentMessages({ type: "user_message", messageId: "fire-1", text })).toEqual([
+    expect.objectContaining({
+      type: "tool_call",
+      status: "completed",
+      detail: { type: "plain_text", text: "Heartbeat: check progress", icon: "sparkles" },
+    }),
+  ]);
+});
+
+test("schedule trigger identity survives the provider assigning a message ID", () => {
+  const text = formatSystemNotificationPrompt("Schedule fired (id=heartbeat, run=run-1).");
+  expect(projectAgentMessages({ type: "user_message", text })).toEqual(
+    projectAgentMessages({ type: "user_message", text, messageId: "provider-message" }),
+  );
+});

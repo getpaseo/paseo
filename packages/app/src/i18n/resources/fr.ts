@@ -68,6 +68,7 @@ export const fr: TranslationResources = {
       daemonClientUnavailable: "Client du daemon indisponible",
       daemonClientDisconnected: "Le client du daemon est déconnecté",
       noFileFound: "Aucun fichier trouvé pour {{token}}",
+      folderOutsideWorkspace: "{{path}} se trouve en dehors de cet espace de travail",
       unexpectedDictationError: "Une erreur inattendue s’est produite pendant la dictée.",
     },
     connectionStatus: {
@@ -383,6 +384,24 @@ export const fr: TranslationResources = {
       answerPlaceholder: "Saisissez votre réponse…",
       otherPlaceholder: "Autre…",
     },
+    backgroundWork: {
+      pillOne: "1 tâche en arrière-plan",
+      pillMany: "{{count}} tâches en arrière-plan",
+      notRunning: "N’est plus en cours",
+      dismiss: "Fermer",
+      stop: "Arrêter",
+      stopping: "Arrêt…",
+      stopError: "Impossible de confirmer l’arrêt.",
+      label: "Arrière-plan",
+      title: "Travail en arrière-plan",
+      waiting: "En attente des détails",
+      error: "Impossible de charger le travail en arrière-plan",
+      retry: "Réessayer",
+      running: "Travail en arrière-plan en cours",
+      shell: "Shell",
+      monitor: "Surveillance",
+      other: "Autre travail",
+    },
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l’instant.",
@@ -622,6 +641,7 @@ export const fr: TranslationResources = {
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
       updateHost: "Mettez à jour l’hôte pour utiliser le rendu natif du terminal.",
+      restoreRequiresUpdate: "Mettez à jour l’hôte pour afficher les terminaux.",
       unableToSubscribe: "Impossible de s’abonner au terminal",
       fileUploaded: "Fichier envoyé",
       pasteFileFailed: "Impossible de coller le fichier : {{reason}}",
@@ -954,6 +974,9 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branche de base",
+        },
         openChangesTab: "Ouvrir l’onglet Modifications",
         openDiffTab: "Ouvrir l’onglet Diff",
         closeChangesTab: "Fermer l’onglet Modifications",
@@ -1261,6 +1284,7 @@ export const fr: TranslationResources = {
       hosts: "Hôtes",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+      moreActions: "Plus d’actions",
     },
     footer: {
       usage: "Utilisation",
@@ -1365,6 +1389,9 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        archived: "Espace de travail archivé",
+        undoArchive: "Annuler",
+        undoArchiveFailed: "Impossible d’annuler l’archivage",
       },
     },
   },
@@ -1580,6 +1607,9 @@ export const fr: TranslationResources = {
       cli: {
         statusFailed: "Impossible de vérifier l’installation de la CLI.",
         installFailed: "Impossible d’installer la CLI Paseo.",
+        uninstallFailed: "Impossible de désinstaller la CLI Paseo.",
+        keptForeign:
+          "Une commande paseo qui n’a pas été installée par Paseo a été conservée. Supprimez-la vous-même pour la désinstaller.",
       },
     },
   },
@@ -1631,6 +1661,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
+    failedToLoad: "Impossible de charger les branches. Rouvrez le sélecteur pour réessayer.",
     triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",
@@ -1655,7 +1686,11 @@ export const fr: TranslationResources = {
     loadingCommands: "Chargement des commandes…",
     noFiles: "Aucun fichier ou répertoire trouvé",
     noCommands: "Aucune commande trouvée",
-    failedToLoad: "Échec du chargement",
+    loadingProviderCommands: "Chargement des commandes {{provider}}…",
+    commandsFailed: "Impossible de charger les commandes",
+    providerCommandsFailed: "Impossible de charger les commandes {{provider}}",
+    filesFailed: "Impossible de rechercher les fichiers",
+    skillTag: "Skill",
     chooseProjectForCommands: "Choisissez un projet pour afficher les commandes",
     chooseModelForCommands: "Sélectionnez un modèle pour afficher les commandes",
   },
@@ -1683,6 +1718,61 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "Étape {{current}} sur {{total}}",
+      skip: "Passer la configuration",
+      continue: "Continuer",
+      finish: "Terminer",
+      steps: {
+        appearance: {
+          label: "Apparence",
+          title: "Bienvenue dans Paseo",
+          description: "Commençons par choisir une apparence",
+        },
+        providers: {
+          label: "Fournisseurs",
+          title: "Vos agents",
+          description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
+        },
+        projects: {
+          label: "Projets",
+          title: "Ajoutez vos projets",
+          description: "Où voulez-vous que vos agents travaillent",
+          addProject: "Ajouter un projet",
+          added: "Ajouté",
+          suggestions: {
+            loading: "Recherche des dossiers dans lesquels vous avez travaillé",
+            empty: "Aucun projet récent trouvé",
+            lastUsed: "Dernière utilisation {{time}}",
+            addSelected_one: "Ajouter {{count}} projet",
+            addSelected_other: "Ajouter {{count}} projets",
+            adding: "Ajout…",
+            addFailed: "Impossible d'ajouter ce dossier",
+          },
+        },
+        orchestration: {
+          label: "Orchestration",
+          title: "Laissez les agents utiliser Paseo",
+          description:
+            "Laissez vos agents créer des espaces de travail et parler à d'autres agents",
+        },
+        phone: {
+          label: "Mobile",
+          title: "Emportez vos agents partout",
+          description:
+            "L'application mobile native complète vous permet de contrôler n'importe quel ordinateur Paseo depuis votre téléphone",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "Choisissez comment vous connecter",
+          connectDocs: "Docs",
+          openConnectDocs: "Ouvrir la documentation sur la connectivité",
+          recommended: "Recommandé",
+          relay: { title: "Relais", hint: "Chiffré de bout en bout, scannez un QR code" },
+          tailscale: { title: "Tailscale", hint: "Demande un peu de configuration" },
+        },
+      },
+    },
     title: "Bienvenue dans Paseo",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
@@ -1903,6 +1993,8 @@ export const fr: TranslationResources = {
       notNow: "Pas maintenant",
       directConnectionHint:
         "Sans relais, connectez-vous directement via TCP, Tailscale ou un autre VPN. Aucun code QR n’est créé.",
+      tailscaleDocs: "Configurer Tailscale",
+      tailscaleDocsAccessibility: "Lire comment se connecter via Tailscale",
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre d’association indisponible.",
       hint: "Scannez ce code QR avec Paseo sur votre téléphone, ou copiez le lien ci-dessous.",
@@ -1959,7 +2051,6 @@ export const fr: TranslationResources = {
     parent: {
       backToParent: "Retour au parent",
       backTo: "Retour à {{label}}",
-      parent: "Parent",
       parentAgent: "Agent parent",
       openParent: "Ouvrir le parent",
     },
@@ -2060,17 +2151,17 @@ export const fr: TranslationResources = {
   toolCallDetails: {
     error: "Erreur",
     empty: "Aucun détail supplémentaire disponible",
-    subAgentActivity: "Activité du sous-agent",
     input: "Entrée",
     output: "Sortie",
   },
   turnSummary: {
-    messages: {
-      one: "{{count}} message écrit",
-      other: "{{count}} messages écrits",
-    },
+    details: "Voir les détails du tour",
+    sentBy: "Envoyé par {{name}}",
+    showMore: "Afficher plus",
+    showLess: "Afficher moins",
   },
   toolCallGroup: {
+    thought: "Réfléchi",
     editedFiles: {
       one: "{{count}} fichier modifié",
       other: "{{count}} fichiers modifiés",
@@ -2139,6 +2230,11 @@ export const fr: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Vérifier l’utilisation",
+    checkUsageHint: "S’applique à {{host}} sur tous les appareils",
+    off: "L’utilisation est désactivée sur {{host}}.",
+    turnOn: "Activer",
+
     options: "Paramètres",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
@@ -2186,6 +2282,7 @@ export const fr: TranslationResources = {
       days: "{{value}} j",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Dernière mise à jour {{relativeTime}}",
@@ -2193,6 +2290,8 @@ export const fr: TranslationResources = {
       resetTimePassed: "Heure de réinitialisation dépassée",
       resettingNow: "réinitialisation en cours",
       resetsIn: "se réinitialise dans {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "s’épuise maintenant",
       runsOutIn: "s’épuise dans {{duration}}",
       justNow: "à l’instant",
@@ -2361,6 +2460,12 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      setup: {
+        label: "Configuration initiale",
+        description:
+          "Reprendre l'apparence, les fournisseurs, les projets et l'appairage du téléphone",
+        action: "Afficher la configuration",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
@@ -2383,10 +2488,25 @@ export const fr: TranslationResources = {
           queue:
             "Quand l’agent est en cours d’exécution, Entrée met en file d’attente. Cmd/Ctrl+Entrée envoie.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée interrompt. Entrée insère une nouvelle ligne.",
+          steer:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée oriente le tour actif. Entrée insère une nouvelle ligne.",
+          queue:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée met en file d'attente. Entrée insère une nouvelle ligne.",
+        },
         options: {
           interrupt: "Interrompre",
           steer: "Réorienter",
           queue: "File d’attente",
+        },
+      },
+      sendShortcut: {
+        label: "Raccourci d’envoi",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2643,11 +2763,7 @@ export const fr: TranslationResources = {
       commandLine: {
         title: "Ligne de commande",
         description: "Pilotez et scriptez vos agents depuis votre terminal",
-      },
-      actions: {
-        install: "Installer",
-        installing: "Installation…",
-        installed: "Installé",
+        accessibilityLabel: "Installer la CLI Paseo",
       },
     },
     permissions: {
@@ -2726,10 +2842,9 @@ export const fr: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "Skills d’orchestration",
         title: "Skills d’orchestration",
-        description: "Apprenez à vos agents à orchestrer via la CLI",
+        description: "Apprenez à vos agents à utiliser les outils Paseo",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les skills Paseo ?",
-        updateFallback: "Synchronisez les skills fournis sur cet hôte.",
         uninstallTitle: "Désinstaller les skills Paseo ?",
         uninstallMessage:
           "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex sur cet hôte.",
@@ -2748,9 +2863,6 @@ export const fr: TranslationResources = {
         uninstallFailed: "Impossible de désinstaller les skills d’orchestration.",
         saveSelectionFailed: "Impossible d’enregistrer la sélection des skills d’orchestration.",
         actions: {
-          install: "Installer",
-          installing: "Installation…",
-          installed: "Installé",
           update: "Mettre à jour",
           working: "En cours…",
           remove: "Supprimer",
@@ -2772,6 +2884,7 @@ export const fr: TranslationResources = {
           title: "Activer les outils Paseo",
           hint: "Les agents pourront gérer les worktrees, les agents et les planifications",
           accessibilityLabel: "Injecter les outils Paseo",
+          updateFailed: "Impossible de mettre à jour les outils Paseo.",
         },
         systemPrompt: {
           title: "Prompt système",
@@ -2787,6 +2900,14 @@ export const fr: TranslationResources = {
       },
       agents: {
         unavailable: "Connectez-vous à cet hôte pour gérer les agents",
+        resumeOnStartup: {
+          title: "Reprendre les agents après un redémarrage",
+          info: "Rouvre les agents qui travaillaient lorsque l’hôte s’est arrêté et envoie le message de reprise. S’applique après un redémarrage normal ou un plantage.",
+          hint: "Continuer automatiquement le travail interrompu.",
+          prompt: "Message de reprise",
+          edit: "Modifier",
+          editAccessibilityLabel: "Modifier le message",
+        },
         idleRuntimeCleanup: {
           title: "Libérer les agents inactifs",
           hint: "Libère de la mémoire après une heure d’inactivité.",
@@ -2886,6 +3007,10 @@ export const fr: TranslationResources = {
           requestFailedTitle: "Erreur",
           requestFailedMessage:
             "Impossible d’envoyer la demande de redémarrage. Paseo se reconnecte automatiquement : réessayez quand l’hôte apparaît en ligne.",
+          closeTerminals: "Redémarrer et fermer les terminaux",
+          closeTerminalsHint: "Redémarre et ferme aussi tous les terminaux ouverts sur cet hôte.",
+          closeTerminalsConfirmMessage:
+            "Le daemon va redémarrer et fermer tous ses terminaux, ce qui arrêtera les programmes qui y tournent. L'app se reconnectera automatiquement.",
           dialogFailedMessage:
             "Impossible d’ouvrir la boîte de dialogue de confirmation du redémarrage.",
         },

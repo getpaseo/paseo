@@ -37,7 +37,7 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
-  swipeOpenMobileAgentSidebar,
+  openMobileAgentSidebarWithKeyboard,
 } from "../support/helpers/sidebar";
 
 async function composerHeight(page: Page): Promise<number> {
@@ -541,8 +541,8 @@ test("the compact sidebar over a fullscreen editor leaves the exit action alone"
     await writeCompactDraft(page, draft);
     await enterComposerFullscreen(page);
     await expectWorkspaceHeaderHidden(page);
-    // Fullscreen hides the header's menu button; the edge swipe still opens the list over it.
-    await swipeOpenMobileAgentSidebar(page);
+    // Fullscreen hides the header's menu button; the keyboard shortcut opens the list over it.
+    await openMobileAgentSidebarWithKeyboard(page);
     await expectMobileAgentSidebarVisible(page);
     // The list covers the pane, so the editor's exit action is not armed.
     await page.keyboard.press("Escape");

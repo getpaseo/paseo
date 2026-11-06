@@ -70,6 +70,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
     status: agent.status,
+    backgroundWork: agent.backgroundWork,
     ...projectActiveTurn(agent),
     capabilities: agent.capabilities,
     currentModeId: agent.currentModeId,
@@ -85,6 +86,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
+    ...(agent.background ? { background: true } : {}),
   };
 }
 
@@ -110,6 +112,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     id: snapshot.id,
     provider: snapshot.provider,
     status: snapshot.status,
+    backgroundWork: snapshot.backgroundWork,
     turn,
     createdAt,
     updatedAt,
@@ -133,6 +136,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,
+    background: snapshot.background === true,
     parentAgentId,
     labels: snapshot.labels,
   };

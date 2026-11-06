@@ -157,8 +157,7 @@ and the stream keeps its existing flick-to-dismiss gesture.
 The dock's private viewport and capacity model are extracted from chat. The
 app-wide `@/keyboard/shift` module owns shared motion for the dock, portals, streams,
 terminal, explorer, and dialogs. Import only its public entry point: the provider,
-shift hooks, shift style, translate view, keyboard anchor, settled stream inset, and explorer padding
-policy. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
+shift hooks, shift style, translate view, and keyboard anchor. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
 at its root mount point outside the portal host when changing dock hosts.
 
 `KeyboardTranslateView` owns visual keyboard motion inside `@/keyboard/shift`. Android uses the
@@ -171,15 +170,19 @@ animation. Keep this platform choice inside the keyboard module's private platfo
 `KeyboardTranslateView`. The panel root clips it at the header edge, so rows
 slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
-band or a paused transition when the inverted list updates its viewport.
+band or a paused transition when the stream list updates its viewport.
+
+The docked composer rests at the larger of the safe-area bottom and 16pt. With
+the keyboard open it keeps 16pt above the keyboard through the translate view's
+`keyboardGap`, which rises further than the keyboard's safe-area overlap. Do not
+grow the composer's bottom padding with the keyboard instead.
 
 Do not animate a layout prop through the keyboard transition. On Android
 Fabric, each animated layout update clones the shadow tree and runs Yoga over
 the dock subtree. This measured about 10 ms per frame on the emulator and the
 mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
-layout. Preserve the translated dock's history scroll range with a far-end
-content inset on the inverted stream list. Update that inset only when keyboard
-motion settles; never drive it per frame.
+layout. The stream list gets no keyboard inset either; see
+[who owns the offset](agent-stream-disclosure.md#who-owns-the-offset).
 
 The translated dock's height is not the composer's available height. Bound the
 composer against the stationary space below the header inside
@@ -409,6 +412,19 @@ never on web, where the desktop path uses a real portal. `menu-surface.tsx`
 bridges the menu's two contexts; the rest pass `null`.
 
 Wrapping providers _around_ the modal does nothing. They land on the wrong side.
+
+## Gotcha 8 — Read safe-area insets where the overlay draws
+
+A compact sheet tab's body (`SheetBottomInset` in `adaptive-modal-sheet.tsx`) pads the bottom
+inset and gives its content a bottom inset of 0, so the composer dock sits the same in a sheet as
+in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` at its call site
+gets that 0 and draws over the navigation bar.
+
+- A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
+  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+- An RN `Modal` passes the call site's context straight through, so put a `SafeAreaProvider`
+  inside it and read the inset below that. The modal is its own window, and the provider measures
+  it. See `attachment-lightbox.tsx`.
 
 ## Recipe for a new anchored panel
 

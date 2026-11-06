@@ -16,9 +16,11 @@ import { describe, expect, test } from "vitest";
 
 import {
   loadPersistedConfig,
+  loadPersistedConfigAsync,
   PersistedConfigSchema,
   readPersistedConfig,
   savePersistedConfig,
+  savePersistedConfigAsync,
 } from "./persisted-config.js";
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from "./private-files.js";
 
@@ -827,11 +829,14 @@ describe("readPersistedConfig with an unreadable config.json", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
-  test("initializes config.json with private permissions", () => {
+describe.skipIf(process.platform === "win32").each([
+  { name: "startup", load: loadPersistedConfig, save: savePersistedConfig },
+  { name: "runtime", load: loadPersistedConfigAsync, save: savePersistedConfigAsync },
+])("persisted config file permissions ($name)", ({ load, save }) => {
+  test("initializes config.json with private permissions", async () => {
     const home = createTempHome();
     try {
-      loadPersistedConfig(home);
+      await load(home);
 
       expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
     } finally {
@@ -839,14 +844,14 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     }
   });
 
-  test("repairs permissive config.json permissions when loading", () => {
+  test("repairs permissive config.json permissions when loading", async () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");
     try {
       writeFileSync(configPath, "{}\n", { mode: PERMISSIVE_FILE_MODE });
       chmodSync(configPath, PERMISSIVE_FILE_MODE);
 
-      loadPersistedConfig(home);
+      await load(home);
 
       expect(modeOf(configPath)).toBe(PRIVATE_FILE_MODE);
     } finally {
@@ -854,11 +859,24 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     }
   });
 
-  test("saves config.json with private permissions", () => {
+  test("repairs unreadable owner permissions before reading config.json", async () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, "{}\n");
+      chmodSync(configPath, 0);
+      expect(await load(home)).toEqual({});
+      expect(modeOf(configPath)).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("saves config.json with private permissions", async () => {
     const parent = createTempHome();
     const home = path.join(parent, "home");
     try {
-      savePersistedConfig(home, {
+      await save(home, {
         features: { dictation: { stt: { provider: "openai", apiKey: "secret" } } },
       });
 
@@ -870,37 +888,37 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
   });
 });
 
-describe.skipIf(process.platform === "win32")(
-  "config.json symlinked from another directory",
-  () => {
-    test("saving writes through the symlink and leaves it in place", () => {
-      const parent = createTempHome();
-      const home = path.join(parent, "home");
-      const dotfiles = path.join(parent, "dotfiles");
-      const linkedConfigPath = path.join(dotfiles, "config.json");
-      const configPath = path.join(home, "config.json");
-      try {
-        mkdirSync(home);
-        mkdirSync(dotfiles, { mode: 0o755 });
-        chmodSync(dotfiles, 0o755);
-        writeFileSync(linkedConfigPath, '{ "version": 1 }\n');
-        symlinkSync(linkedConfigPath, configPath);
+describe.skipIf(process.platform === "win32").each([
+  { name: "startup", save: savePersistedConfig },
+  { name: "runtime", save: savePersistedConfigAsync },
+])("config.json symlinked from another directory ($name)", ({ save }) => {
+  test("saving writes through the symlink and leaves it in place", async () => {
+    const parent = createTempHome();
+    const home = path.join(parent, "home");
+    const dotfiles = path.join(parent, "dotfiles");
+    const linkedConfigPath = path.join(dotfiles, "config.json");
+    const configPath = path.join(home, "config.json");
+    try {
+      mkdirSync(home);
+      mkdirSync(dotfiles, { mode: 0o755 });
+      chmodSync(dotfiles, 0o755);
+      writeFileSync(linkedConfigPath, '{ "version": 1 }\n');
+      symlinkSync(linkedConfigPath, configPath);
 
-        savePersistedConfig(home, { version: 1, daemon: { relay: { enabled: false } } });
+      await save(home, { version: 1, daemon: { relay: { enabled: false } } });
 
-        expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
-        expect(JSON.parse(readFileSync(linkedConfigPath, "utf8"))).toEqual({
-          version: 1,
-          daemon: { relay: { enabled: false } },
-        });
-        expect(modeOf(dotfiles)).toBe(0o755);
-        expect(modeOf(linkedConfigPath)).toBe(PRIVATE_FILE_MODE);
-      } finally {
-        rmSync(parent, { recursive: true, force: true });
-      }
-    });
-  },
-);
+      expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
+      expect(JSON.parse(readFileSync(linkedConfigPath, "utf8"))).toEqual({
+        version: 1,
+        daemon: { relay: { enabled: false } },
+      });
+      expect(modeOf(dotfiles)).toBe(0o755);
+      expect(modeOf(linkedConfigPath)).toBe(PRIVATE_FILE_MODE);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("speech provider config normalization", () => {
   test.each([undefined, "local"])(

@@ -1,3 +1,4 @@
+import { createHostPluginClientBundleStore } from "@/plugins/client-bundles";
 import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
@@ -589,6 +590,7 @@ function createDefaultDeps(
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
         providerSnapshots: "wire",
+        createPluginClientBundleStore: createHostPluginClientBundleStore,
         ...(host.password ? { password: host.password } : {}),
         localCredential: () => readDesktopManagedLocalCredential(connection),
       } satisfies Omit<DaemonClientConfig, "url">;
@@ -668,6 +670,7 @@ function createDefaultDeps(
           ),
           reconnect: { enabled: false },
           appVersion: resolveAppVersion() ?? undefined,
+          createPluginClientBundleStore: createHostPluginClientBundleStore,
         });
         try {
           await client.connect();
@@ -684,6 +687,7 @@ function createDefaultDeps(
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
+        createPluginClientBundleStore: createHostPluginClientBundleStore,
       });
     },
     getClientId: () => getOrCreateClientId(),
@@ -1017,6 +1021,9 @@ export class HostRuntimeController {
       }
 
       const currentActiveConnectionId = this.snapshot.activeConnectionId;
+      if (currentActiveConnectionId) {
+        this.reconcileActiveProbeWithClient(currentActiveConnectionId, probeByConnectionId);
+      }
       const activeProbe = currentActiveConnectionId
         ? probeByConnectionId.get(currentActiveConnectionId)
         : null;
@@ -1205,6 +1212,27 @@ export class HostRuntimeController {
         })();
       }
     });
+  }
+
+  // The active connection is probed through its own client, which may still be
+  // reconnecting when the probe starts. A verdict taken then is stale if the client
+  // has since connected, so the decision uses the client's current state.
+  private reconcileActiveProbeWithClient(
+    connectionId: string,
+    probeByConnectionId: Map<string, ConnectionProbeState>,
+  ): void {
+    if (probeByConnectionId.get(connectionId)?.status !== "unavailable") return;
+    if (this.authRejectedConnectionIds.has(connectionId)) return;
+    const client = this.snapshot.client;
+    if (!client || client.getConnectionState().status !== "connected") return;
+    const rttMs = client.getLastLivenessRttMs();
+    probeByConnectionId.set(
+      connectionId,
+      rttMs === null
+        ? { status: "pending", latencyMs: null }
+        : { status: "available", latencyMs: rttMs },
+    );
+    this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
   }
 
   private isConnectionUnavailable(
@@ -2824,6 +2852,8 @@ export class HostRuntimeStore {
       replica,
       replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
+      applyTurnLiveness: (agentId, transitions) =>
+        directory.applyAgentTurnLiveness(agentId, transitions),
       ports,
     });
   }

@@ -1,7 +1,11 @@
+import { navigateMenuKeyboard } from "./keyboard-navigation";
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
+import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactElement,
@@ -11,7 +15,6 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Dimensions,
-  Modal,
   Platform,
   Pressable,
   View,
@@ -23,14 +26,10 @@ import { StyleSheet } from "react-native-unistyles";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import {
   computePosition,
+  fitSurfaceWidth,
   getTransformOrigin,
   measureElement,
   type Alignment,
@@ -47,56 +46,41 @@ const contentEntering = new Keyframe({
   100: { opacity: 1, transform: [{ scale: 1 }] },
 }).duration(CONTENT_ENTERING_DURATION_MS);
 
+/** `contentEntering` for the browser's own animation engine. Both default to linear easing. */
+const WEB_CONTENT_ENTERING_KEYFRAMES: PropertyIndexedKeyframes = {
+  opacity: [0, 1],
+  transform: ["scale(0.97)", "scale(1)"],
+};
+
+/** Web plays the same keyframes itself; see `useWebContentEntering`. */
+const nativeContentEntering = isWeb ? undefined : contentEntering;
+
 const contentExiting = new Keyframe({
   0: { opacity: 1, transform: [{ scale: 1 }] },
   100: { opacity: 0, transform: [{ scale: 0.97 }] },
 }).duration(100);
 
-function releaseFixedMenuHeight(surfaceNativeID: string): void {
-  if (!isWeb) return;
-  document.getElementById(surfaceNativeID)?.style.removeProperty("height");
-}
-
 /**
- * Reanimated's web entering animation leaves an inline height snapshot on the measured surface.
- * Once the menu is open, height must return to content-sized so rows can grow in place — and so
- * a submenu page taller than the page it replaced is not clipped to the old height.
- *
- * `revision` is what makes that second case work: bump it whenever the rendered content changes
- * identity (a page push, for instance) and the snapshot is released again.
+ * On web the surface enters through the Web Animations API rather than Reanimated. Reanimated's
+ * web path snapshots an element's rect when a custom keyframe ends and, when it cleans the keyframe
+ * up 750ms after the start, writes that rect back as inline top/left/width/height. A surface that
+ * moved or resized in between — content that grew once its data arrived — snapped back to the old
+ * rect and stayed there, clipped or hanging past its anchor. A Web Animation leaves no inline style.
  */
-function useReleaseFixedMenuHeight({
-  contentSize,
-  enabled,
+function useWebContentEntering({
+  placed,
   surfaceNativeID,
-  revision,
 }: {
-  contentSize: Size | null;
-  enabled: boolean;
+  placed: boolean;
   surfaceNativeID: string;
-  revision?: string | number;
 }): void {
-  useEffect(() => {
-    if (!enabled) return undefined;
-
-    const release = () => {
-      releaseFixedMenuHeight(surfaceNativeID);
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(() => releaseFixedMenuHeight(surfaceNativeID));
-      }
-    };
-    const timers: ReturnType<typeof setTimeout>[] = [
-      setTimeout(release, CONTENT_ENTERING_DURATION_MS),
-    ];
-
-    if (contentSize) {
-      timers.push(setTimeout(release, 0));
-    }
-
-    return () => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-  }, [contentSize, enabled, surfaceNativeID, revision]);
+  useLayoutEffect(() => {
+    if (!isWeb || !placed || typeof document === "undefined") return undefined;
+    const animation = document
+      .getElementById(surfaceNativeID)
+      ?.animate(WEB_CONTENT_ENTERING_KEYFRAMES, CONTENT_ENTERING_DURATION_MS);
+    return () => animation?.cancel();
+  }, [placed, surfaceNativeID]);
 }
 
 /**
@@ -224,8 +208,6 @@ export interface AnchoredSurfaceProps {
   fullWidth?: boolean;
   horizontalPadding?: number;
   scrollable?: boolean;
-  /** Bump when the rendered content changes identity, so the height snapshot is released. */
-  revision?: string | number;
   /** A submenu sits inside its parent's overlay and must not paint a second backdrop. */
   backdrop?: boolean;
   /**
@@ -259,7 +241,6 @@ export function AnchoredSurface({
   fullWidth = false,
   horizontalPadding = 16,
   scrollable = false,
-  revision,
   backdrop = true,
   onPointerEnter,
   onPointerLeave,
@@ -269,32 +250,24 @@ export function AnchoredSurface({
 }: AnchoredSurfaceProps): ReactElement | null {
   const { t } = useTranslation();
   const surfaceNativeID = useId();
-  const { position, actualPlacement, contentSize, visibleContentSize, onContentLayout } =
-    useAnchoredPosition({
-      open,
-      anchorRect,
-      anchorRef,
-      side,
-      align,
-      offset,
-      scrollable,
-      maxHeight,
-    });
-
-  useReleaseFixedMenuHeight({
-    contentSize,
-    enabled: open,
-    surfaceNativeID,
-    revision,
+  const { position, actualPlacement, visibleContentSize, onContentLayout } = useAnchoredPosition({
+    open,
+    anchorRect,
+    anchorRef,
+    side,
+    align,
+    offset,
+    scrollable,
+    maxHeight,
   });
 
   // The surface is placed once both measurements land. Until then it sits off-screen so it can
-  // be measured, and it must not animate: Reanimated's web entering path snapshots the element's
-  // rect when the animation ends and writes that rect back as inline top/left when it cleans the
-  // keyframe up 750ms later. If the animation ends before placement, the snapshot is the
-  // off-screen rect and the menu jumps back off-screen. Remounting on placement starts the
-  // animation from the final position.
+  // be measured, and it must not animate: an entering animation that ran there would be over
+  // before anyone saw the menu. Remounting on placement starts the native animation from the
+  // final position; web starts its own animation on placement.
   const placed = position !== null;
+
+  useWebContentEntering({ placed, surfaceNativeID });
 
   useEffect(() => {
     if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;
@@ -311,11 +284,7 @@ export function AnchoredSurface({
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
-      : {
-          ...(typeof width === "number" ? { width } : null),
-          ...(typeof minWidth === "number" ? { minWidth } : null),
-          ...(typeof maxWidth === "number" ? { maxWidth } : null),
-        };
+      : fitSurfaceWidth({ width, minWidth, maxWidth }, screenWidth);
     return [
       resolvedWidthStyle,
       {
@@ -383,7 +352,7 @@ export function AnchoredSurface({
         dataSet={surfaceDataSet}
         style={styles.content}
         frameStyle={frameStyle}
-        entering={placed ? contentEntering : undefined}
+        entering={placed ? nativeContentEntering : undefined}
         exiting={
           !placed || isWeb || !onExited
             ? undefined
@@ -430,8 +399,8 @@ export function MenuOverlay({
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -439,44 +408,15 @@ export function MenuOverlay({
         return true;
       }
 
-      const target = event.target instanceof Element ? event.target : null;
-      const surface = target?.closest<HTMLElement>('[data-menu-surface="true"]');
-      if (!surface) return false;
-      const items = Array.from(
-        surface.querySelectorAll<HTMLElement>(
-          '[data-menu-item="true"]:not([data-menu-disabled="true"])',
-        ),
-      );
-      if (items.length === 0) return false;
-      const currentIndex = items.findIndex((item) => item === document.activeElement);
-      let nextIndex: number | null = null;
-      if (event.key === "ArrowDown")
-        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-      if (event.key === "ArrowUp")
-        nextIndex =
-          currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
-      if (event.key === "Home") nextIndex = 0;
-      if (event.key === "End") nextIndex = items.length - 1;
-      if (nextIndex !== null) {
-        event.preventDefault();
-        event.stopPropagation();
-        items[nextIndex]?.focus();
-        return true;
-      }
-      if ((event.key === "Enter" || event.key === " ") && currentIndex >= 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        items[currentIndex]?.click();
-        return true;
-      }
-      return false;
+      return navigateMenuKeyboard(event);
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && visible,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: visible,
     layer: floatingLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
     restoreFocusRef,
   });
 
@@ -488,7 +428,7 @@ export function MenuOverlay({
         {...{
           onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
         }}
-        ref={setWebOverlayScope}
+        ref={setOverlayScope}
         collapsable={false}
         style={[
           styles.overlay,

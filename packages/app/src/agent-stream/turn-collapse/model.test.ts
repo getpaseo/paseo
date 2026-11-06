@@ -12,6 +12,21 @@ function reply(id: string): StreamItem {
   return { kind: "assistant_message", id, text: id, timestamp: at };
 }
 
+function pluginReply(sourceId: string, part = "0"): StreamItem {
+  return {
+    kind: "plugin",
+    id: `math/${sourceId}/${part}`,
+    sourceId,
+    sourceKind: "assistant_message",
+    timestamp: at,
+    pluginId: "math",
+    pluginItemId: `${sourceId}/${part}`,
+    itemKind: "formula",
+    version: 1,
+    data: { text: "$$x^2$$" },
+  };
+}
+
 function thought(id: string): StreamItem {
   return { kind: "thought", id, text: id, timestamp: at, status: "ready" };
 }
@@ -41,6 +56,7 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
     isLatestTurnOpen: false,
     expandedHostIds: new Set(),
     getGroupedCalls: () => undefined,
+    previousTurnsByHostId: new Map(),
     ...options,
   });
 }
@@ -48,6 +64,118 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("keeps every card of the final reply outside the folded turn", () => {
+    const items = [
+      user("prompt"),
+      reply("acknowledgment"),
+      shell("call"),
+      pluginReply("final", "left"),
+      pluginReply("final", "right"),
+    ];
+    const result = collapse(items);
+    expect(ids(result.tail)).toEqual(["prompt", "math/final/left", "math/final/right"]);
+    expect(result.hostIdByFoldedMessageId.get("acknowledgment")).toBe("prompt");
+    expect(result.hostIdByFoldedMessageId.has("final")).toBe(false);
+    const expanded = collapse(items, { expandedHostIds: new Set(["prompt"]) });
+    expect(expanded.tail).toEqual(items);
+    expect([...expanded.nestedItemIds]).toEqual(["acknowledgment", "call"]);
+  });
+
+  it("folds intermediate plugin replies even without tool calls", () => {
+    const result = collapse([user("prompt"), pluginReply("intermediate"), pluginReply("final")]);
+    expect(ids(result.tail)).toEqual(["prompt", "math/final/0"]);
+    expect(result.hostIdByFoldedMessageId.get("intermediate")).toBe("prompt");
+  });
+
+  it.each([undefined, "thought", "tool_call"] as const)(
+    "does not treat a plugin row with source kind %s as a reply",
+    (sourceKind) => {
+      const card = { ...pluginReply("card"), sourceKind };
+      const items = [user("prompt"), shell("call"), card];
+      expect(collapse(items).tail).toEqual(items);
+      expect(collapse(items).turnsByHostId.size).toBe(0);
+    },
+  );
+
+  it("keeps a plugin-rendered reply and its work unfolded while the turn is open", () => {
+    const items = [user("prompt"), shell("call"), pluginReply("final")];
+    expect(collapse(items, { isLatestTurnOpen: true }).tail).toEqual(items);
+  });
+
+  // A history row renders again only when its item changes, so a prompt that is already retained
+  // when its turn closes needs its row revised to show the summary line.
+  it("reports the hosts whose summary line appeared, changed or went away", () => {
+    const open = collapse([user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2")], {
+      isLatestTurnOpen: true,
+    });
+    expect([...open.updatedHostIds]).toEqual(["u1"]);
+    const closed = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), reply("r2")],
+      {
+        previousTurnsByHostId: open.turnsByHostId,
+      },
+    );
+    expect([...closed.updatedHostIds]).toEqual(["u2"]);
+    const unchanged = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), reply("r2")],
+      {
+        previousTurnsByHostId: closed.turnsByHostId,
+      },
+    );
+    expect(unchanged.updatedHostIds.size).toBe(0);
+    const moreWork = collapse(
+      [user("u1"), shell("c1"), reply("r1"), user("u2"), shell("c2"), shell("c3"), reply("r2")],
+      { previousTurnsByHostId: unchanged.turnsByHostId },
+    );
+    expect([...moreWork.updatedHostIds]).toEqual(["u2"]);
+    const rewound = collapse([user("u1"), shell("c1"), reply("r1")], {
+      previousTurnsByHostId: moreWork.turnsByHostId,
+    });
+    expect([...rewound.updatedHostIds]).toEqual(["u2"]);
+  });
+  it("maps hidden rows only while their turn is closed", () => {
+    const result = collapse([user("u1"), shell("c1"), reply("final")]);
+    expect(result.hostIdByHiddenRowId.get("c1")).toBe("u1");
+    const expanded = collapse([user("u1"), shell("c1"), reply("final")], {
+      expandedHostIds: new Set(["u1"]),
+    });
+    expect(expanded.hostIdByHiddenRowId.size).toBe(0);
+  });
+  it("keeps lifecycle events and compaction recognizable beside a semantic action summary", () => {
+    const create = shell("create");
+    if (create.payload.source !== "agent") throw new Error("Expected agent tool");
+    create.payload.data.name = "mcp__paseo__create_agent";
+    create.payload.data.detail = { type: "unknown", input: { title: "Side fix" }, output: null };
+    const finished = shell("finished");
+    if (finished.payload.source !== "agent") throw new Error("Expected agent tool");
+    finished.payload.data.name = "agent_notification";
+    finished.payload.data.agentMessage = {
+      event: "finished",
+      sender: { id: "worker", title: "PR helper" },
+      text: "Finished",
+    };
+    const items: StreamItem[] = [
+      user("u1"),
+      create,
+      finished,
+      {
+        kind: "compaction",
+        id: "compaction",
+        timestamp: at,
+        status: "completed",
+      } satisfies StreamItem,
+      shell("bash"),
+      reply("done"),
+    ].map((item) => Object.assign(item, { turnId: "same-run" }));
+    const result = collapse(items);
+    expect(ids(result.tail)).toEqual(["u1", "finished", "compaction", "done"]);
+    expect(result.turnsByHostId.get("u1")?.summary.tools).toMatchObject({
+      commandCount: 1,
+      otherToolCount: 0,
+      paseoActions: { "Created agent": 1 },
+    });
+  });
+
   it("folds a finished turn's work into its user message and keeps the reply", () => {
     const result = collapse([
       user("u1"),
@@ -63,7 +191,6 @@ describe("collapseTurns", () => {
       hostId: "u1",
       expanded: false,
       summary: {
-        messageCount: 1,
         tools: expect.objectContaining({ commandCount: 2 }),
       },
     });
@@ -119,6 +246,34 @@ describe("collapseTurns", () => {
 
     expect(result.tail).toBe(tail);
     expect(result.turnsByHostId.size).toBe(0);
+  });
+
+  it("keeps a completed response folded when a promptless canonical turn starts", () => {
+    const first = [user("u1"), shell("c1"), reply("r1")].map((item) =>
+      Object.assign(item, { turnId: "first" }),
+    );
+    const next = { ...shell("heartbeat"), turnId: "second" };
+    const result = collapse([...first, next], { isLatestTurnOpen: true });
+    expect(ids(result.tail)).toEqual(["u1", "r1", "heartbeat"]);
+    expect(result.turnsByHostId.has("u1")).toBe(true);
+  });
+
+  it("keeps mid-turn messages visible when work is folded", () => {
+    const tail = [user("prompt"), shell("work"), user("steer"), shell("more"), reply("done")];
+    for (const item of tail) item.turnId = "same-turn";
+    const result = collapse(tail);
+    expect(ids(result.tail)).toEqual(["prompt", "steer", "done"]);
+    expect(result.hostIdByFoldedMessageId.has("steer")).toBe(false);
+  });
+
+  it("reveals every raw call inside an expanded turn", () => {
+    const calls = [shell("one"), shell("two")];
+    const result = collapse([user("prompt"), calls[0]!, reply("done")], {
+      expandedHostIds: new Set(["prompt"]),
+      getGroupedCalls: (id) => (id === "one" ? calls : undefined),
+    });
+    expect(ids(result.tail)).toEqual(["prompt", "one", "two", "done"]);
+    expect([...result.nestedItemIds]).toEqual(["one", "two"]);
   });
 
   it("counts every call a tool-call group row stands for", () => {

@@ -9,6 +9,10 @@ Compact layouts have three mutually exclusive destinations:
 They are one interaction, not two independent drawers. The implementation lives in
 `packages/app/src/mobile-panels/`.
 
+Wide layouts reuse `agent-list` for the navigation overlay. When the left dock is collapsed or
+yields its width, a touch swipe reveals the same sidebar over the workspace at the resolved sidebar
+width. The workspace does not move, and the saved dock preference does not change.
+
 ## Ownership
 
 React/Zustand owns the durable intent:
@@ -23,6 +27,12 @@ interface MobilePanelSelection {
 Every semantic target change increments `revision`. Repeating the current target is idempotent.
 Compact panel selection is not persisted; a cold start begins at `agent`.
 
+Only an overlay sidebar holds `agent-list`, and only a compact layout holds `file-explorer`. App
+chrome publishes the layout (compact or wide, and the left sidebar presentation `overlay`, `dock`, or
+`hidden`) to `panel-store`, which drops any target the layout does not present. A stale
+`agent-list` would reopen the overlay on the next collapse; a stale `file-explorer` after widening
+would block the navigation swipe, which begins only from `agent`.
+
 The UI worklet owns transient motion:
 
 - one normalized position (`-1` left, `0` center, `1` right)
@@ -32,8 +42,10 @@ The UI worklet owns transient motion:
 
 React publishes the active panel only when the canonical target and the UI-thread position agree at
 the final anchor. Retained content never observes gesture previews, progress, or an unsettled target.
-The gesture hosts stay mounted. The Gesture Handler web patch keeps initially disabled hosts
-from capturing paragraph pointers; that capture confines browser selection to its starting paragraph.
+The gesture hosts stay mounted. A pointer capture on a paragraph confines browser selection to that
+paragraph, so the Gesture Handler web patch keeps it off: initially disabled hosts register no
+pointer listeners, and an enabled host captures only a pointer its handler still tracks after
+pointer-down. The touch-only navigation pans fail a mouse at pointer-down and never capture it.
 Native worklets own overlay opacity and pointer events while
 React owns settled panel activity and accessibility. Keep hidden native overlays laid out: collapsing
 their scroll ranges makes Android spring retained offsets back to zero during touch cancellation or
@@ -43,8 +55,11 @@ appearance keys; see [Unistyles appearance boundaries](unistyles.md#runtime-them
 
 ## Why one position
 
-Both transforms and both backdrop opacities are derived from the same normalized position. Window
-width is only a projection input. Rotation changes the projection, not the panel state.
+Both transforms and both backdrop opacities are derived from the same normalized position. Panel
+width is only a projection input: the window width on the right, and on the left the width
+`MobilePanelsProvider` resolves (the full window on compact layouts, the saved sidebar width
+clamped to the viewport on wide ones). The dock, the overlay, and their gestures read that one
+value. Rotation changes the projection, not the panel state.
 
 This makes these invalid states unrepresentable:
 
@@ -62,7 +77,9 @@ A gesture captures the current revision when it becomes active. Per-frame update
 while that revision still owns the gesture.
 
 When a React command arrives during a drag, its newer revision clears gesture ownership and starts
-motion toward the new target. The older gesture's remaining updates and finish callback are ignored.
+motion toward its target, even an unchanged one: docking mid-swipe keeps `agent` and still returns
+the dragged position to its anchor. The older gesture's remaining updates and finish callback are
+ignored.
 Canceled gestures return to the latest canonical target. A successful gesture starts its finishing
 motion immediately; the matching React command adopts that motion instead of restarting it. Position
 settlement and command acceptance may arrive in either order. Activity changes after both agree on
@@ -80,6 +97,12 @@ definition, no longer eligible to begin.
 
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
+- Navigation gestures accept touch pointers only. Mouse and pen fail at touch-down, so dragging a
+  mouse to select text on a hybrid laptop never moves a panel. Browsers without a touch screen
+  (`hooks/pointer-capabilities`) never enable them.
+- Phone web opens a drawer only from the 32px edge it slides in from, so interior swipes stay with
+  terminals, code blocks, and diff scrollers. Native drawers and the wide overlay open from anywhere.
+  Horizontal-scroll ownership and the open-gesture blocker still take precedence.
 - A focused interactive surface may block panel-opening gestures through
   `useBlockMobilePanelOpenGestures`. Register only while the conflicting interaction is active and
   unregister when the surface is hidden or unfocused. The blocker never disables gestures that close
@@ -87,11 +110,17 @@ definition, no longer eligible to begin.
 - Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
   across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
   so its injected `collapsable={false}` reaches Android/Fabric.
-- Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
-  styles in sidebar components.
-- The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
-  closing it or yielding its width marks it inactive and applies `display: none` without conditionally
-  removing the sidebar tree.
+- Sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion styles
+  in sidebar components. The wide left sidebar keeps the same content and gesture hosts when switching
+  between dock and overlay. App chrome owns mounting and presentation; settled panel activity owns
+  overlay work. A hidden dock is inactive with `display: none`; the sidebar tree stays mounted. Keep
+  the native overlay laid out while hidden, as on compact layouts. Give the switching host no
+  Reanimated layout props: a width keyed on the presentation reaches Android after React commits the
+  switch, and a lost update left the workspace at the dock width. The dock sizes to its content and
+  the overlay host fills the window.
+- The overlay's backdrop covers the whole window; safe-area padding applies to the sidebar and
+  workspace content only. It closes by swiping back, tapping the backdrop, or picking a destination:
+  every sidebar destination closes the overlay before it navigates.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.

@@ -89,3 +89,18 @@ describe("host route binary framing", () => {
     ).toThrow("Invalid host route ID");
   });
 });
+
+it.each([
+  TerminalStreamOpcode.ReplayBegin,
+  TerminalStreamOpcode.ReplayData,
+  TerminalStreamOpcode.ReplayEnd,
+])("decodes replay opcode %s directly and inside a host route", (opcode) => {
+  const payload = new TextEncoder().encode("界 replay");
+  const bytes = encodeTerminalStreamFrame({ opcode, slot: 12, payload });
+  const expected = { kind: "terminal", frame: { opcode, slot: 12, payload } };
+  expect(decodeBinaryFrame(bytes)).toEqual(expected);
+  const routed = decodeBinaryFrame(encodeHostRouteFrame("host", bytes));
+  expect(routed?.kind).toBe("host_route");
+  if (routed?.kind !== "host_route") throw new Error("Missing host route");
+  expect(decodeBinaryFrame(routed.frame.payload)).toEqual(expected);
+});

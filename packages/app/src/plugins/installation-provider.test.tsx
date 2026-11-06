@@ -29,6 +29,9 @@ function installation(invoked: string[]): InstalledPlugin {
       invoked.push(method);
       return { state: "green" };
     },
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
     queryClient: new QueryClient(),
     cleanup: () => undefined,
     settingsScreens: [],

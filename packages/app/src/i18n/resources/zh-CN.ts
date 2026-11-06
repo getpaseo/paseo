@@ -67,6 +67,7 @@ export const zhCN: TranslationResources = {
       daemonClientUnavailable: "Daemon client 不可用",
       daemonClientDisconnected: "Daemon client 已断开连接",
       noFileFound: "未找到 {{token}} 对应的文件",
+      folderOutsideWorkspace: "{{path}} 不在此工作区内",
       unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
@@ -378,6 +379,24 @@ export const zhCN: TranslationResources = {
       answerPlaceholder: "输入你的回答...",
       otherPlaceholder: "其他...",
     },
+    backgroundWork: {
+      pillOne: "1 个后台任务",
+      pillMany: "{{count}} 个后台任务",
+      notRunning: "已不再运行",
+      dismiss: "关闭",
+      stop: "停止",
+      stopping: "正在停止…",
+      stopError: "无法确认已停止。",
+      label: "后台",
+      title: "后台任务",
+      waiting: "正在等待后台任务详情",
+      error: "无法加载后台任务",
+      retry: "重试",
+      running: "后台任务运行中",
+      shell: "Shell",
+      monitor: "监控",
+      other: "其他任务",
+    },
     todo: {
       title: "任务",
       empty: "还没有任务。",
@@ -616,6 +635,7 @@ export const zhCN: TranslationResources = {
     terminal: {
       hostDisconnected: "Host 未连接",
       updateHost: "请更新主机以使用原生终端渲染器。",
+      restoreRequiresUpdate: "更新主机以查看终端。",
       unableToSubscribe: "无法订阅 Terminal",
       fileUploaded: "文件已上传",
       pasteFileFailed: "无法粘贴文件：{{reason}}",
@@ -920,6 +940,9 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
@@ -1223,6 +1246,7 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      moreActions: "更多操作",
     },
     footer: {
       usage: "使用情况",
@@ -1324,6 +1348,9 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        archived: "工作区已归档",
+        undoArchive: "撤销",
+        undoArchiveFailed: "无法撤销归档",
       },
     },
   },
@@ -1523,6 +1550,8 @@ export const zhCN: TranslationResources = {
       cli: {
         statusFailed: "无法检查 CLI 安装状态。",
         installFailed: "无法安装 Paseo CLI。",
+        uninstallFailed: "无法卸载 Paseo CLI。",
+        keptForeign: "已保留一个不是由 Paseo 安装的 paseo 命令。如需卸载，请手动删除。",
       },
     },
   },
@@ -1573,6 +1602,7 @@ export const zhCN: TranslationResources = {
     openPath: "打开路径",
   },
   branchSwitcher: {
+    failedToLoad: "无法加载分支，请重新打开选择器以重试。",
     triggerTooltip: "切换工作区分支",
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
     placeholder: "切换分支...",
@@ -1595,7 +1625,11 @@ export const zhCN: TranslationResources = {
     loadingCommands: "正在加载 commands...",
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
-    failedToLoad: "加载失败",
+    loadingProviderCommands: "正在加载 {{provider}} commands...",
+    commandsFailed: "无法加载 commands",
+    providerCommandsFailed: "无法加载 {{provider}} commands",
+    filesFailed: "无法搜索文件",
+    skillTag: "Skill",
     chooseProjectForCommands: "选择项目以查看命令",
     chooseModelForCommands: "选择模型以查看命令",
   },
@@ -1622,6 +1656,59 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "第 {{current}} 步，共 {{total}} 步",
+      skip: "跳过设置",
+      continue: "继续",
+      finish: "完成",
+      steps: {
+        appearance: {
+          label: "外观",
+          title: "欢迎使用 Paseo",
+          description: "先选择一个外观",
+        },
+        providers: {
+          label: "提供方",
+          title: "你的代理",
+          description: "Paseo 使用这台电脑上已安装的代理 CLI",
+        },
+        projects: {
+          label: "项目",
+          title: "添加项目",
+          description: "你希望代理在哪里工作",
+          addProject: "添加项目",
+          added: "已添加",
+          suggestions: {
+            loading: "正在查找你工作过的文件夹",
+            empty: "未找到最近的项目",
+            lastUsed: "上次使用 {{time}}",
+            addSelected_one: "添加 {{count}} 个项目",
+            addSelected_other: "添加 {{count}} 个项目",
+            adding: "正在添加…",
+            addFailed: "无法添加此文件夹",
+          },
+        },
+        orchestration: {
+          label: "编排",
+          title: "让代理使用 Paseo",
+          description: "让你的代理创建工作区并与其他代理对话",
+        },
+        phone: {
+          label: "移动端",
+          title: "随身带上你的代理",
+          description: "功能完整的原生移动应用让你可以在手机上控制任意一台 Paseo 电脑",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "选择连接方式",
+          connectDocs: "文档",
+          openConnectDocs: "打开连接文档",
+          recommended: "推荐",
+          relay: { title: "中继", hint: "端到端加密，扫描二维码" },
+          tailscale: { title: "Tailscale", hint: "需要一些设置" },
+        },
+      },
+    },
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
     actions: {
@@ -1836,6 +1923,8 @@ export const zhCN: TranslationResources = {
       notNow: "暂不",
       directConnectionHint:
         "不使用中继时，请通过 TCP、Tailscale 或其他 VPN 直接连接。不会生成二维码。",
+      tailscaleDocs: "设置 Tailscale",
+      tailscaleDocsAccessibility: "了解如何通过 Tailscale 连接",
       updateRequired: "请更新主机，以便从 Paseo Desktop 启用中继。",
       unavailable: "配对 offer 不可用。",
       hint: "用手机上的 Paseo 扫描此二维码，或复制下方链接。",
@@ -1891,7 +1980,6 @@ export const zhCN: TranslationResources = {
     parent: {
       backToParent: "返回父代理",
       backTo: "返回 {{label}}",
-      parent: "父代理",
       parentAgent: "父代理",
       openParent: "打开父代理",
     },
@@ -1991,17 +2079,17 @@ export const zhCN: TranslationResources = {
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
-    subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
   },
   turnSummary: {
-    messages: {
-      one: "写了 {{count}} 条消息",
-      other: "写了 {{count}} 条消息",
-    },
+    details: "查看轮次详情",
+    sentBy: "由 {{name}} 发送",
+    showMore: "展开",
+    showLess: "收起",
   },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",
@@ -2069,6 +2157,11 @@ export const zhCN: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "检查用量",
+    checkUsageHint: "在所有设备上应用于 {{host}}",
+    off: "{{host}} 的用量检查已关闭。",
+    turnOn: "开启",
+
     options: "设置",
     refreshFailed: "无法刷新用量",
     noHosts: "没有已连接的主机",
@@ -2116,6 +2209,7 @@ export const zhCN: TranslationResources = {
       days: "{{value}}天",
       hours: "{{value}}小时",
       minutes: "{{value}}分钟",
+      pair: "{{first}}{{second}}",
     },
     timing: {
       lastUpdated: "上次更新于 {{relativeTime}}",
@@ -2123,6 +2217,8 @@ export const zhCN: TranslationResources = {
       resetTimePassed: "重置时间已过",
       resettingNow: "正在重置",
       resetsIn: "将在 {{duration}}后重置",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "即将用尽",
       runsOutIn: "将在 {{duration}}后用尽",
       justNow: "刚刚",
@@ -2290,6 +2386,11 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      setup: {
+        label: "首次设置",
+        description: "重新设置外观、提供方、项目和手机配对",
+        action: "再次显示设置",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -2308,10 +2409,22 @@ export const zhCN: TranslationResources = {
           steer: "Agent 运行时，Enter 会引导当前回合。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
         },
+        commandEnterDescriptions: {
+          interrupt: "Agent 运行时，{{modifier}}+Enter 会中断。Enter 会插入换行。",
+          steer: "Agent 运行时，{{modifier}}+Enter 会引导当前回合。Enter 会插入换行。",
+          queue: "Agent 运行时，{{modifier}}+Enter 会排队。Enter 会插入换行。",
+        },
         options: {
           interrupt: "中断",
           steer: "引导",
           queue: "排队",
+        },
+      },
+      sendShortcut: {
+        label: "发送快捷键",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2559,11 +2672,7 @@ export const zhCN: TranslationResources = {
       commandLine: {
         title: "命令行",
         description: "从终端控制 Agent 并运行脚本",
-      },
-      actions: {
-        install: "安装",
-        installing: "正在安装...",
-        installed: "已安装",
+        accessibilityLabel: "安装 Paseo CLI",
       },
     },
     permissions: {
@@ -2641,10 +2750,9 @@ export const zhCN: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "编排 skills",
         title: "编排 skills",
-        description: "教会 Agent 通过 CLI 编排任务",
+        description: "教你的代理如何使用 Paseo 工具",
         updateAvailable: "有更新可用",
         updateTitle: "更新 Paseo skills？",
-        updateFallback: "将内置 skills 同步到你的机器。",
         uninstallTitle: "卸载 Paseo skills？",
         uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
         choose: "选择 skills",
@@ -2661,9 +2769,6 @@ export const zhCN: TranslationResources = {
         uninstallFailed: "无法卸载编排 skills。",
         saveSelectionFailed: "无法保存编排 skills 的选择。",
         actions: {
-          install: "安装",
-          installing: "正在安装...",
-          installed: "已安装",
           update: "更新",
           working: "处理中...",
           remove: "移除",
@@ -2685,6 +2790,7 @@ export const zhCN: TranslationResources = {
           title: "启用 Paseo tools",
           hint: "Agent 将能够管理 worktree、Agent 和计划",
           accessibilityLabel: "注入 Paseo tools",
+          updateFailed: "无法更新 Paseo 工具。",
         },
         systemPrompt: {
           title: "System prompt",
@@ -2700,6 +2806,14 @@ export const zhCN: TranslationResources = {
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
+        resumeOnStartup: {
+          title: "重启后恢复智能体",
+          info: "重新打开主机停止时正在工作的智能体，并发送恢复提示。适用于正常重启和崩溃后的恢复。",
+          hint: "自动继续被中断的工作。",
+          prompt: "恢复提示",
+          edit: "编辑",
+          editAccessibilityLabel: "编辑提示",
+        },
         idleRuntimeCleanup: {
           title: "释放空闲 Agent",
           hint: "空闲一小时后释放内存。",
@@ -2791,6 +2905,10 @@ export const zhCN: TranslationResources = {
           offlineMessage: "这个 Host 已离线。Paseo 会自动重连，请等它恢复在线后再重启。",
           requestFailedTitle: "错误",
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
+          closeTerminals: "重启并关闭终端",
+          closeTerminalsHint: "重启的同时关闭此主机上的所有终端。",
+          closeTerminalsConfirmMessage:
+            "这将重启守护进程并关闭其所有终端，终端中运行的程序会被结束。应用会自动重新连接。",
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {

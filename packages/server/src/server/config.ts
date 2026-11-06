@@ -523,6 +523,10 @@ function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedCon
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
 
+function resolveUsageEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
+  return persisted.daemon?.usage?.enabled !== false;
+}
+
 function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
@@ -548,6 +552,7 @@ function resolveStaticLoadConfigSettings(
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    usageEnabled: resolveUsageEnabled(persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
@@ -568,31 +573,46 @@ interface ResolveConfigFromPersistedOptions {
   relayEnabledFallback?: boolean;
 }
 
+// Startup values, including authentication, never enter runtime settings resolution.
+export type ResolvedDaemonSettings = Pick<
+  PaseoDaemonConfig,
+  | "corsAllowedOrigins"
+  | "hostnames"
+  | "trustedProxies"
+  | "mcpEnabled"
+  | "mcpInjectIntoAgents"
+  | "usageEnabled"
+  | "browserToolsEnabled"
+  | "git"
+  | "autoArchiveAfterMerge"
+  | "enableTerminalAgentHooks"
+  | "appendSystemPrompt"
+  | "terminalProfiles"
+  | "agentProfiles"
+  | "skillSelection"
+  | "pluginsEnabled"
+  | "plugins"
+  | "relayEnabled"
+  | "relayRequireProtectedSecurity"
+  | "appBaseUrl"
+  | "idleRuntimeCleanup"
+  | "resumeOnStartup"
+  | "resumePrompt"
+  | "providerCatalogRefreshTimeoutMs"
+  | "metadataGeneration"
+  | "providerOverrides"
+>;
+
 export function resolveConfigFromPersisted(
   paseoHome: string,
   persisted: PersistedConfig,
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
-  const resolvedOptions = options ?? {};
-  const env = configurationEnvironment(resolvedOptions.env ?? process.env);
-  const cli = resolvedOptions.cli;
+  const env = configurationEnvironment(options?.env ?? process.env);
+  const cli = options?.cli;
   const relayEnabledFallback =
-    resolvedOptions.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;
-
-  const listen = resolveListenAddress(env, cli, persisted);
-  const {
-    mcpEnabled,
-    mcpInjectIntoAgents,
-    browserToolsEnabled,
-    autoArchiveAfterMerge,
-    appendSystemPrompt,
-    terminalProfiles,
-    agentProfiles,
-    hostnames,
-    trustedProxies,
-    appBaseUrl,
-  } = resolveStaticLoadConfigSettings(env, cli, persisted);
-
+    options?.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;
+  const { overrideControlledPaths, ...settings } = resolveReloadableConfig(persisted, options);
   const relay = resolveRelayConfig({
     env,
     persisted,
@@ -600,42 +620,14 @@ export function resolveConfigFromPersisted(
     cliRelayUseTls: cli?.relayUseTls,
     enabledFallback: relayEnabledFallback,
   });
-  const serviceProxy = resolveServiceProxyConfig(env, persisted);
-  const webUi = resolveWebUiConfig(paseoHome, env, cli, persisted);
-
-  const { openai, speech } = resolveSpeechConfig({
-    paseoHome,
-    env,
-    persisted,
-  });
-
+  const { openai, speech } = resolveSpeechConfig({ paseoHome, env, persisted });
   const voiceLlm = resolveVoiceLlmConfig(env, persisted);
-  const providerOverrides = extractProviderOverrides(
-    persisted.agents?.providers as Record<string, unknown> | undefined,
-  );
-
-  const overrideControlledPaths = resolveOverrideControlledPaths(env, cli, persisted);
-
   return {
-    listen,
+    ...settings,
+    listen: resolveListenAddress(env, cli, persisted),
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
-    corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
-    hostnames,
-    trustedProxies,
-    mcpEnabled,
-    mcpInjectIntoAgents,
-    browserToolsEnabled,
-    git: resolveGitProcessConfig(env, persisted),
-    autoArchiveAfterMerge,
-    enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
-    appendSystemPrompt,
-    terminalProfiles,
-    agentProfiles,
-    skillSelection: persisted.agents?.skills?.selection,
-    pluginsEnabled: persisted.pluginsEnabled ?? false,
-    plugins: persisted.plugins,
     pluginRegistries: persisted.pluginRegistries,
     pluginRegistryUrl: env.PASEO_PLUGIN_REGISTRY,
     mcpDebug: env.MCP_DEBUG === "1",
@@ -643,27 +635,20 @@ export function resolveConfigFromPersisted(
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},
-    relayEnabled: relay.enabled,
     relayEnabledMutable: relay.enabledMutable,
-    relayRequireProtectedSecurity: relay.requireProtectedSecurity,
     relayEndpoint: relay.endpoint,
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
     relayPublicUseTls: relay.publicUseTls,
-    serviceProxy,
-    webUi,
-    appBaseUrl,
+    serviceProxy: resolveServiceProxyConfig(env, persisted),
+    webUi: resolveWebUiConfig(paseoHome, env, cli, persisted),
     auth: resolveAuthConfig(env, persisted),
     openai,
     speech,
     voiceLlmProvider: voiceLlm.provider,
     voiceLlmProviderExplicit: voiceLlm.providerExplicit,
     voiceLlmModel: voiceLlm.model,
-    agentProviderSettings: extractAgentProviderSettings(providerOverrides),
-    idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
-    providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
-    metadataGeneration: persisted.agents?.metadataGeneration,
-    providerOverrides,
+    agentProviderSettings: extractAgentProviderSettings(settings.providerOverrides),
     log: resolveLogConfigFromEnv(env, persisted),
     configReload: {
       env: { ...env },
@@ -672,6 +657,41 @@ export function resolveConfigFromPersisted(
       relayEnabledFallback,
       startupPersisted: persisted,
     },
+  };
+}
+
+export function resolveReloadableConfig(
+  persisted: PersistedConfig,
+  options?: ResolveConfigFromPersistedOptions,
+): ResolvedDaemonSettings & { overrideControlledPaths: string[] } {
+  const env = configurationEnvironment(options?.env ?? process.env);
+  const cli = options?.cli;
+  const relay = resolveRelayConfig({
+    env,
+    persisted,
+    cliRelayEnabled: cli?.relayEnabled,
+    cliRelayUseTls: cli?.relayUseTls,
+    enabledFallback:
+      options?.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined,
+  });
+  return {
+    ...resolveStaticLoadConfigSettings(env, cli, persisted),
+    corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
+    git: resolveGitProcessConfig(env, persisted),
+    enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
+    skillSelection: persisted.agents?.skills?.selection,
+    pluginsEnabled: persisted.pluginsEnabled ?? false,
+    plugins: persisted.plugins,
+    relayEnabled: relay.enabled,
+    relayRequireProtectedSecurity: relay.requireProtectedSecurity,
+    idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+    ...resolveRestartRecoveryConfig(persisted.agents),
+    providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
+    metadataGeneration: persisted.agents?.metadataGeneration,
+    providerOverrides: extractProviderOverrides(
+      persisted.agents?.providers as Record<string, unknown> | undefined,
+    ),
+    overrideControlledPaths: resolveOverrideControlledPaths(env, cli, persisted),
   };
 }
 
@@ -815,4 +835,11 @@ function resolveSpeechOverrideControlledPaths(
   if (env.PASEO_VOICE_LLM_PROVIDER !== undefined) paths.push("features.voiceMode.llm.provider");
   if (env.PASEO_LOCAL_MODELS_DIR !== undefined) paths.push("providers.local.modelsDir");
   return paths;
+}
+
+function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
+  return {
+    resumeOnStartup: agents?.resumeOnStartup ?? false,
+    resumePrompt: agents?.resumePrompt ?? "Resume working.",
+  };
 }
