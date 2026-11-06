@@ -165,6 +165,7 @@ export class FakePiSession implements PiRuntimeSession {
   models: PiModel[] = [];
   messages: PiAgentMessage[] = [];
   getHistoryError: Error | null = null;
+  treeNavigationError: Error | null = null;
   stats: PiSessionStats = {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
@@ -485,6 +486,9 @@ export class FakePiSession implements PiRuntimeSession {
       return;
     }
     this.treeNavigationRequests.push(payload.targetId);
+    if (this.treeNavigationError) {
+      throw this.treeNavigationError;
+    }
     this.emitEntryCapture(undefined, "tree_navigation");
     this.emitExtensionCommandResult(payload.requestId, { ok: true, result: {} });
   }

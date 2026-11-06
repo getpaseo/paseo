@@ -228,6 +228,11 @@ function capabilitiesForSession(hasMcpConfig: boolean): AgentCapabilityFlags {
   return withPiCapabilities(hasMcpConfig);
 }
 
+interface PiExtensionCommandInput {
+  command: string;
+  args: Record<string, string>;
+}
+
 interface StartTurnResult {
   turnId: string;
 }
@@ -1637,11 +1642,10 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {
-    const requestId = randomUUID();
-    const resultPromise = this.waitForExtensionResult(requestId);
-    const payload = Buffer.from(JSON.stringify({ targetId, requestId })).toString("base64url");
-    await this.runtimeSession.prompt(`/${PASEO_PI_TREE_EXTENSION_COMMAND} ${payload}`);
-    return await resultPromise;
+    return await this.runPiExtensionCommand({
+      command: PASEO_PI_TREE_EXTENSION_COMMAND,
+      args: { targetId },
+    });
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -1987,11 +1991,30 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async requestEntryCapture(reason: string): Promise<void> {
+    await this.runPiExtensionCommand({
+      command: PASEO_PI_CAPTURE_EXTENSION_COMMAND,
+      args: { reason },
+    });
+  }
+
+  private async runPiExtensionCommand(input: PiExtensionCommandInput): Promise<unknown> {
     const requestId = randomUUID();
     const resultPromise = this.waitForExtensionResult(requestId);
-    const payload = Buffer.from(JSON.stringify({ requestId, reason })).toString("base64url");
-    await this.runtimeSession.prompt(`/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`);
-    await resultPromise;
+    const payload = Buffer.from(JSON.stringify({ ...input.args, requestId })).toString("base64url");
+    try {
+      // Either channel can fail before the other acknowledges the command.
+      const [result] = await Promise.all([
+        resultPromise,
+        this.runtimeSession.prompt(`/${input.command} ${payload}`),
+      ]);
+      return result;
+    } catch (error) {
+      this.rejectExtensionResult(
+        requestId,
+        error instanceof Error ? error : new Error(toDiagnosticErrorMessage(error)),
+      );
+      throw error;
+    }
   }
 
   private waitForExtensionResult(requestId: string): Promise<unknown> {

@@ -1716,6 +1716,89 @@ describe("PiRpcAgentSession", () => {
     expect(pi.latestSession().closeCalls).toBe(1);
   });
 
+  test("releases a failed history capture so the interactive runtime can stop", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    const captureFailure = new Error("Capture prompt rejected");
+    const rejectedHistory = expect(session.streamHistory().next()).rejects.toBe(captureFailure);
+
+    await runtime.failHeldPrompt(captureFailure);
+    await rejectedHistory;
+
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+    expect(runtime.closeCalls).toBe(0);
+    await expect(session.streamHistory().next()).resolves.toMatchObject({ done: true });
+  });
+
+  test("closes a history-only runtime without orphaning a failed capture", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    const captureFailure = new Error("Capture prompt rejected");
+    const rejectedHistory = expect(session.streamHistory().next()).rejects.toBe(captureFailure);
+
+    await runtime.failHeldPrompt(captureFailure);
+    await rejectedHistory;
+
+    expect(runtime.closeCalls).toBe(1);
+  });
+
+  test("rejects history when closed before its capture prompt settles", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    let historyError: unknown;
+    const history = session
+      .streamHistory()
+      .next()
+      .catch((error: unknown) => {
+        historyError = error;
+      });
+
+    await session.close();
+    await waitForImmediate();
+    try {
+      expect(historyError).toEqual(new Error("Pi session closed"));
+    } finally {
+      await runtime.failHeldPrompt(new Error("Late prompt rejection"));
+      await history;
+    }
+    expect(historyError).toEqual(new Error("Pi session closed"));
+    expect(runtime.closeCalls).toBe(1);
+  });
+
+  test("releases a failed rewind command so the interactive runtime can stop", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.treeUserEntries = [{ id: "user-entry", parentId: null, text: "Question" }];
+    const rewindFailure = new Error("Tree navigation rejected");
+    runtime.treeNavigationError = rewindFailure;
+
+    await expect(session.revertConversation({ messageId: "user-entry" })).rejects.toBe(
+      rewindFailure,
+    );
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+    expect(runtime.closeCalls).toBe(0);
+    runtime.treeNavigationError = null;
+    await expect(session.revertConversation({ messageId: "user-entry" })).resolves.toBeUndefined();
+  });
+
   test("keeps an interactive Pi runtime open after replaying history", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).resumeSession({
