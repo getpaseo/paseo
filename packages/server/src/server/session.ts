@@ -5900,6 +5900,7 @@ export class Session {
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       background: workspace.background,
+      parentWorkspaceId: workspace.parentWorkspaceId,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -5988,6 +5989,7 @@ export class Session {
       projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
       background: result.workspace.background,
+      parentWorkspaceId: result.workspace.parentWorkspaceId,
       name: resolveWorkspaceName({
         title: result.workspace.title,
         derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
