@@ -367,6 +367,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  now?: () => number;
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
@@ -855,6 +856,7 @@ export class AgentManager {
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
+  private readonly now: () => number;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
@@ -894,11 +896,12 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.now = options.now ?? Date.now;
     this.pluginLifecycle = options.pluginLifecycle;
     this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
+    this.registry = options.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1747,7 +1750,7 @@ export class AgentManager {
       restoring: true,
     });
     // A read asks for history even when the directory exists and the runtime is interactive.
-    if (resumeOptions?.purpose === "history") this.readOnlyRuntimes.set(session, Date.now());
+    if (resumeOptions?.purpose === "history") this.readOnlyRuntimes.set(session, this.now());
     return registered;
   }
 
@@ -1755,7 +1758,7 @@ export class AgentManager {
   noteHistoryRead(agentId: string): void {
     const session = this.agents.get(agentId)?.session;
     if (session && this.readOnlyRuntimes.has(session))
-      this.readOnlyRuntimes.set(session, Date.now());
+      this.readOnlyRuntimes.set(session, this.now());
   }
 
   private noteForegroundUse(agentId: string): void {
