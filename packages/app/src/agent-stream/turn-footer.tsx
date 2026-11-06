@@ -218,8 +218,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignSelf: "center",
     paddingHorizontal: theme.spacing[2],
   },
+  // The message above drops its bottom padding for the footer (compactBottom), so this margin
+  // alone sets the gap. 20 puts the footer as far below the text as the text sits below a
+  // tool row: 12 message padding + 4 stream gap + 5 badge padding/border, less the footer's
+  // 1px taller row.
   turnFooterRow: {
-    marginTop: theme.spacing[2] + 5,
+    marginTop: theme.spacing[4] + theme.spacing[1],
   },
   turnFooterSlot: {
     flexDirection: "row",

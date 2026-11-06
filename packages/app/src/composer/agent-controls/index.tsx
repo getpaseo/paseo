@@ -61,7 +61,16 @@ import {
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { controlSizingForLayout, TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import {
+  controlSizingForLayout,
+  TOOLBAR_CONTROL_GAP,
+  bySizing,
+  toolbarGlyphColor,
+  type ToolbarGlyphs,
+  TOUCH_ICON_SIZE,
+  toolbarContentSlot,
+  toolbarSlot,
+} from "@/components/ui/control-geometry";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
@@ -79,7 +88,10 @@ import {
   type ComposerControlDensity,
   type ComposerControlPresentation,
 } from "@/composer/agent-controls/layout";
-import { ComposerControlLayoutProvider } from "@/composer/agent-controls/layout-context";
+import {
+  ComposerControlLayoutProvider,
+  useComposerControlLayout,
+} from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
@@ -219,10 +231,10 @@ function getFeatureIconColor(
     green: { 400: string };
     yellow: { 400: string };
   },
-  foregroundMuted: string,
+  restColor: string,
 ): string {
   if (!isFeatureActive(feature)) {
-    return foregroundMuted;
+    return restColor;
   }
 
   switch (getFeatureHighlightColor(feature.id)) {
@@ -233,7 +245,7 @@ function getFeatureIconColor(
     case "yellow":
       return palette.yellow[400];
     default:
-      return foregroundMuted;
+      return restColor;
   }
 }
 
@@ -585,7 +597,7 @@ function ControlledAgentControls({
   const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
   const layoutContextValue = useMemo(
     () => ({
-      glyphSize: toolbarGeometry.glyphSize,
+      glyphs: toolbarGeometry.glyphs,
       presentation,
     }),
     [presentation, toolbarGeometry],
@@ -799,7 +811,7 @@ function ControlledAgentControls({
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
             presentation={presentation}
-            glyphSize={layoutContextValue.glyphSize}
+            glyphs={layoutContextValue.glyphs}
             activeSheet={activeSheet}
             handleOpenSheet={handleOpenSheet}
             handleCloseSheet={handleCloseSheet}
@@ -838,7 +850,7 @@ function ControlledAgentControls({
             handleOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
-            glyphSize={layoutContextValue.glyphSize}
+            glyphs={layoutContextValue.glyphs}
             showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
@@ -900,7 +912,7 @@ interface DesktopAgentControlsContentProps {
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
   presentation: ComposerControlPresentation;
-  glyphSize: number;
+  glyphs: ToolbarGlyphs;
   activeSheet: ActiveSheet;
   handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
   handleCloseSheet: () => void;
@@ -957,15 +969,15 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     renderThinkingOption,
     modeControl,
     presentation,
-    glyphSize,
+    glyphs,
     activeSheet,
     handleOpenSheet,
     handleCloseSheet,
     modelSelectorServerId,
   } = props;
   const modelToolbar = useMemo(
-    () => ({ glyphSize, showCaret: presentation.showCarets }),
-    [glyphSize, presentation.showCarets],
+    () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
+    [glyphs, presentation.showCarets],
   );
   const featuresSheetHeader = useMemo<SheetHeader>(
     () => ({ title: t("agentControls.features.title") }),
@@ -1086,8 +1098,12 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             accessibilityLabel={t("agentControls.features.open")}
             testID="agent-controls-features"
           >
-            <ComposerToolbarGlyph size={glyphSize}>
-              <Settings2 size={glyphSize} color={theme.colors.foregroundMuted} />
+            <ComposerToolbarGlyph role="icon">
+              <Settings2
+                size={glyphs.icon.size}
+                strokeWidth={glyphs.icon.strokeWidth}
+                color={toolbarGlyphColor(theme, glyphs.icon.tone)}
+              />
             </ComposerToolbarGlyph>
           </Pressable>
           <AdaptiveModalSheet
@@ -1162,7 +1178,7 @@ interface SheetAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
-  glyphSize: number;
+  glyphs: ToolbarGlyphs;
   showLabels: boolean;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
@@ -1202,7 +1218,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleOpenChange,
     renderThinkingOption,
     modeControl,
-    glyphSize,
+    glyphs,
     showLabels,
     modelSelectorServerId,
     canSwitchProvider,
@@ -1291,7 +1307,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       onRetryProvider={onRetryModelProvider}
       isRetryingProvider={isRetryingModelProvider}
       serverId={modelSelectorServerId}
-      glyphSize={glyphSize}
+      glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
     >
@@ -1316,6 +1332,8 @@ function DesktopFeatureItem({
   onActionComplete?: () => void;
 }) {
   const { theme } = useUnistyles();
+  const { glyphs } = useComposerControlLayout();
+  const restColor = toolbarGlyphColor(theme, glyphs.icon.tone);
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
 
@@ -1356,11 +1374,7 @@ function DesktopFeatureItem({
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
             icon={FeatureIcon}
-            iconColor={getFeatureIconColor(
-              feature,
-              theme.colors.palette,
-              theme.colors.foregroundMuted,
-            )}
+            iconColor={getFeatureIconColor(feature, theme.colors.palette, restColor)}
             surface="toolbar"
             label={feature.label}
             showToolbarLabel={false}
@@ -1391,11 +1405,7 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
-              iconColor={getFeatureIconColor(
-                feature,
-                theme.colors.palette,
-                theme.colors.foregroundMuted,
-              )}
+              iconColor={getFeatureIconColor(feature, theme.colors.palette, restColor)}
               surface="toolbar"
               label={feature.label}
               value={selectedOption?.label ?? feature.label}
@@ -1972,17 +1982,20 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: TOOLBAR_CONTROL_GAP,
+    // Clips pickers that run out of room. Touch-sized the pickers' pills and circles reach 8 past
+    // what the row spaces, so the clip reaches as far.
     overflow: "hidden",
+    paddingHorizontal: bySizing({ touch: theme.spacing[2], pointer: 0 }),
+    marginHorizontal: bySizing({ touch: -theme.spacing[2], pointer: 0 }),
   },
   modeBadge: {
-    height: TOOLBAR_CONTROL_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(theme.spacing[2]),
+    borderRadius: theme.borderRadius.full,
   },
   modelControl: {
     minWidth: 0,
@@ -1994,8 +2007,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   modeIconBadge: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(TOUCH_ICON_SIZE.md),
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,
@@ -2007,7 +2019,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   modeBadgePressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   disabledBadge: {
     opacity: 0.5,

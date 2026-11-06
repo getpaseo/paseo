@@ -6,7 +6,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -9466,6 +9466,68 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
   expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
 });
 
+test.each([
+  { workspaceId: "workspace-b", open: "false" },
+  { workspaceId: "workspace-a", open: "true" },
+])(
+  "archiveAgent publishes stored survivor detach updates ($workspaceId, open=$open)",
+  async ({ workspaceId, open }) => {
+    const artifacts = join(process.cwd(), ".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const workdir = mkdtempSync(join(artifacts, "stored-child-detach-"));
+    onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const parent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Parent" },
+      undefined,
+      { workspaceId: "workspace-a" },
+    );
+    const child = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Closed cross-workspace child" },
+      undefined,
+      {
+        workspaceId,
+        labels: {
+          [PARENT_AGENT_ID_LABEL]: parent.id,
+          [DESKTOP_OPEN_AGENT_TAB_LABEL]: open,
+          team: "ios",
+        },
+      },
+    );
+    await manager.closeAgent(child.id);
+    // Unfiltered, as a session subscribes: a closed survivor's update must reach every client.
+    const emittedLabels: Array<Record<string, string>> = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === child.id) {
+          emittedLabels.push(event.agent.labels);
+        }
+      },
+      { replayState: false },
+    );
+
+    await manager.archiveAgent(parent.id);
+    await manager.flush();
+    unsubscribe();
+
+    const expectedLabels = { team: "ios" };
+    const storedChild = await storage.get(child.id);
+    expect(storedChild?.archivedAt).toBeUndefined();
+    expect(storedChild?.labels).toEqual(expectedLabels);
+    expect(emittedLabels).toEqual([expectedLabels]);
+
+    // The child is already detached; repeating detach has nothing to sever.
+    const detached = await manager.detachAgent(child.id);
+    expect(detached.previousParentAgentId).toBeNull();
+    expect(detached.record.labels).toEqual(expectedLabels);
+  },
+);
+
 test("archiveAgent re-reads a child before deciding whether to cascade", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-fresh-child-"));
 
@@ -13012,4 +13074,173 @@ test("an out-of-band command racing idle cleanup waits for the resumed runtime",
   expect(await command).toEqual({ disposition: "out_of_band" });
   expect(h.commands).toEqual(["/maintenance"]);
   expect(h.prompts).toEqual([]);
+});
+
+test("folds provider background work and clears it when the agent closes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let activeSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000201",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: snapshot.id, replayState: false });
+
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "bash-1", kind: "shell", description: "sleep 20" }],
+  });
+
+  await vi.waitFor(() =>
+    expect(manager.listAgentBackgroundWork(snapshot.id)).toEqual([
+      { id: "bash-1", kind: "shell", description: "sleep 20", startedAt: expect.any(String) },
+    ]),
+  );
+  expect(events).toContainEqual({
+    type: "background_work",
+    agentId: snapshot.id,
+    items: [expect.objectContaining({ id: "bash-1" })],
+  });
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toEqual({ count: 1 });
+  expect(
+    events.some((event) => event.type === "agent_stream" && event.event.type === "background_work"),
+  ).toBe(false);
+
+  await manager.closeAgent(snapshot.id);
+
+  expect(events).toContainEqual({ type: "background_work", agentId: snapshot.id, items: [] });
+  expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toBeUndefined();
+});
+
+test("does not deliver an internal agent's background work to global subscribers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-internal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let activeSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000202",
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const agentEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => agentEvents.push(event), {
+    agentId: agent.id,
+    replayState: false,
+  });
+
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "bash-1", kind: "shell", description: null }],
+  });
+  // The per-agent subscriber proves the event was emitted before the global one is checked.
+  await vi.waitFor(() =>
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({ type: "background_work", agentId: agent.id }),
+    ),
+  );
+
+  expect(events.some((event) => event.type === "background_work")).toBe(false);
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "bash-1", stopToken: "token" }),
+  ).rejects.toThrow("Unknown agent");
+});
+
+test("stops only a currently owned public background item with its current token", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-background-stop-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const stopped: string[] = [];
+  let activeSession: TestAgentSession | null = null;
+  class StoppableSession extends TestAgentSession {
+    async stopBackgroundWork(id: string) {
+      stopped.push(id);
+    }
+  }
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new StoppableSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundWorkClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000204",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [
+      { id: "one", kind: "shell", description: null, canStop: true },
+      { id: "two", kind: "other", description: null },
+    ],
+  });
+  await vi.waitFor(() => expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(2));
+  const [one] = manager.listAgentBackgroundWork(agent.id);
+  await expect(
+    manager.stopAgentBackgroundWork({ agentId: agent.id, itemId: "one", stopToken: "stale-token" }),
+  ).rejects.toThrow();
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "two",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
+  await manager.stopAgentBackgroundWork({
+    agentId: agent.id,
+    itemId: "one",
+    stopToken: one.stopToken!,
+  });
+  expect(stopped).toEqual(["one"]);
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "one", kind: "shell", description: null }],
+  });
+  activeSession?.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "one", kind: "shell", description: null, canStop: true }],
+  });
+  await expect(
+    manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: "one",
+      stopToken: one.stopToken!,
+    }),
+  ).rejects.toThrow();
+  expect(stopped).toEqual(["one"]);
+  await manager.closeAgent(agent.id);
 });

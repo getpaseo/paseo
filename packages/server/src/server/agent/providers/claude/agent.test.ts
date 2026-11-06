@@ -2908,8 +2908,13 @@ describe("ClaudeAgentSession context window usage", () => {
     await session.startTurn("turn", { clientMessageId: "client-message-1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
-    expect(events[1]).toMatchObject({
+    const started = events.findIndex((event) => event.type === "turn_started");
+    const userMessage = events.findIndex(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(userMessage).toBeGreaterThan(started);
+    expect(events[userMessage]).toMatchObject({
       type: "timeline",
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });

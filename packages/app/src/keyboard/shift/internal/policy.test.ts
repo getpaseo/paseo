@@ -83,16 +83,46 @@ describe("resolveKeyboardShift", () => {
 
 describe("resolveKeyboardLift", () => {
   it("lifts a docked view by the whole shift", () => {
-    expect(resolveKeyboardLift({ shift: 302, enabled: true, bottomClearance: 0 })).toBe(302);
+    expect(
+      resolveKeyboardLift({ shift: 302, enabled: true, bottomClearance: 0, keyboardGap: 0 }),
+    ).toBe(302);
   });
 
   it("lets the keyboard fill a centered form's clearance before lifting it", () => {
-    expect(resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 267 })).toBe(136);
-    expect(resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 455 })).toBe(0);
+    expect(
+      resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 267, keyboardGap: 0 }),
+    ).toBe(136);
+    expect(
+      resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 455, keyboardGap: 0 }),
+    ).toBe(0);
+  });
+
+  it("rises a docked composer's gap beyond the keyboard overlap, never at rest", () => {
+    const docked = { enabled: true, bottomClearance: 0, keyboardGap: 16 };
+    expect(resolveKeyboardLift({ ...docked, shift: 0 })).toBe(0);
+    expect(resolveKeyboardLift({ ...docked, shift: 8 })).toBe(16);
+    expect(resolveKeyboardLift({ ...docked, shift: 276 })).toBe(292);
+  });
+
+  it("measures the shift from the window's bottom clearance, not the rectangular inset", () => {
+    // iPhone Duo outer screen: the bar guide rests 24pt up where safeAreaInsets reports 34.
+    const shift = resolveKeyboardShift({
+      rawKeyboardHeight: 300,
+      keyboardProgress: 1,
+      bottomInset: 24,
+      isIos: true,
+      iosMinHeight: 120,
+    });
+    expect(shift).toBe(276);
+    const lift = resolveKeyboardLift({ shift, enabled: true, bottomClearance: 0, keyboardGap: 16 });
+    const restingComposerBottom = 24;
+    expect(restingComposerBottom + lift - 300).toBe(16);
   });
 
   it("keeps a disabled view in place", () => {
-    expect(resolveKeyboardLift({ shift: 302, enabled: false, bottomClearance: 0 })).toBe(0);
+    expect(
+      resolveKeyboardLift({ shift: 302, enabled: false, bottomClearance: 0, keyboardGap: 0 }),
+    ).toBe(0);
   });
 });
 

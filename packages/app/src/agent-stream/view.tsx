@@ -430,10 +430,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           loadOlder: historyPagination.onLoadOlder,
         }
       : agentHistoryPagination;
-    useEffect(() => {
-      setExpandedInlineToolCallIds(new Set());
-      setExpandedTurnHostIds(new Set());
-    }, [agentId]);
 
     const isActive = useRetainedPanelActive();
     const openInlineFile = useStableEvent(
@@ -476,7 +472,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(() => {
       if (!isActive) inlinePathOpener.cancel();
       return () => inlinePathOpener.cancel();
-    }, [inlinePathOpener, isActive, agentId]);
+    }, [inlinePathOpener, isActive]);
     const handleInlinePathPress = useStableEvent(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
         if (isActive) void inlinePathOpener.open(target, disposition);
@@ -551,7 +547,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       revealLoadedHistory,
       loadOlder,
     } = useStreamHistoryWindow({
-      agentId,
       items: presentation.tail,
       loadRemoteOlder,
     });

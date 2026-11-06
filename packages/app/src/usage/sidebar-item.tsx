@@ -16,6 +16,8 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useAppVisible } from "@/hooks/use-app-visible";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
 import { useUsageDisplay } from "./display";
 import { useUsageInSidebar } from "./in-sidebar";
@@ -36,9 +38,14 @@ import { UsageModal } from "./usage-modal";
 /** Each summary window with data on the usage host, under its source; empty while none has. */
 export function useUsageSummary(): readonly PinnedUsageSource[] {
   const { t } = useTranslation();
+  const active = useRetainedPanelActive();
+  const isAppVisible = useAppVisible();
   const { inSidebar } = useUsageInSidebar();
   const serverId = useUsageHostId();
-  const reports = useUsageHostReports(inSidebar ? serverId : null);
+  const reports = useUsageHostReports({
+    serverId: inSidebar ? serverId : null,
+    shouldPoll: active && inSidebar && isAppVisible,
+  });
   const { preferences } = useUsageDisplay(reports);
   return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
