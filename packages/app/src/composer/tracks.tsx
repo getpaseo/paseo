@@ -305,8 +305,8 @@ export function ComposerTrackRow({
 }
 
 /**
- * A segment's state mark. Running is the ring every other running indicator in the app uses; the
- * rest are the dot it grows from.
+ * A segment's state mark. Running is the ring the sidebar uses; the rest are the dot it grows
+ * from.
  *
  * Each one is sized to the glyph you can see rather than to a slot wide enough for the largest of
  * them. The mark leads the pill, so a box wider than its glyph is padding on both sides at once:

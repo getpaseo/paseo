@@ -594,7 +594,7 @@ function WorkspaceResultIcon({
 }) {
   const statusBucket = useWorkspaceStatus(result.serverId, result.workspaceId);
   return (
-    <StatusIcon statusBucket={statusBucket} size={16} backdrop={backdrop}>
+    <StatusIcon statusBucket={statusBucket} size={16} backdrop={backdrop} runningIndicator="ring">
       <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
         <WorkspaceProjectIcon project={result.project} />
       </View>

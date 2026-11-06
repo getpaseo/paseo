@@ -109,7 +109,7 @@ interface WorkspaceTabIconProps {
   strokeWidth?: number;
   statusDotBorderColor?: string;
   /**
-   * The surface this icon is sitting on, so the running ring can knock out of it. This icon is
+   * The surface this icon is sitting on, so the running mark can knock out of it. This icon is
    * shared by the desktop tab strip, the tab switcher trigger, the split drag chip and the
    * subagents track, which are on different surfaces and some of which change surface on hover —
    * it cannot work the colour out for itself.
