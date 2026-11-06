@@ -37,13 +37,15 @@ export function PluginResourceAttachmentPill({
   openLabel,
   removeLabel,
 }: PluginResourceAttachmentPillProps) {
-  const plugin = useInstalledPlugin(serverId, attachment.pluginId);
+  const plugin = useInstalledPlugin(attachment.sourceServerId ?? serverId, attachment.pluginId);
   const source = plugin?.attachmentSources.find(
     (candidate) => candidate.id === attachment.sourceId,
   );
-  // Keep the saved label when the source is no longer installed.
+  // Remote labels retain their source host even if that plugin is also installed here.
   const sourceTitle =
-    plugin && source ? plugin.i18n.resolve(source.title, plugin.locale) : attachment.sourceTitle;
+    !attachment.sourceServerId && plugin && source
+      ? plugin.i18n.resolve(source.title, plugin.locale)
+      : attachment.sourceTitle;
   const handleOpen = useCallback(() => onOpen(attachment), [attachment, onOpen]);
   const handleRemove = useCallback(() => onRemove(index), [index, onRemove]);
   const icon = useMemo(

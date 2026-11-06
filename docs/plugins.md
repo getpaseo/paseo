@@ -379,6 +379,10 @@ frame (`0x22`) becomes a synthetic `plugin.rpc.invoke.request` and runs through 
 path, so it is authorized like any other invoke. The author contract, including the native upload
 limit, is in [stream events from the daemon](../public-docs/plugins/reference.md#subscriptions).
 
+`defineRpc()` names identify methods inside the existing `plugin.rpc.invoke.request` and
+`plugin.rpc.invoke.response` WebSocket pair. Do not add `.request` or `.response` to a plugin method
+name; those direction suffixes belong to the transport messages, not the method routed inside them.
+
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle.
 
@@ -749,10 +753,21 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Attachment sources stay scoped to the composer's host. Unlike sidebar contributions, equal sources
-on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
-external-resource presentation, so it remains readable if the plugin is removed or an older peer
-drops the optional presentation fields.
+Attachment sources stay scoped to the composer's host unless the source opts into `crossHost: true`.
+An opted-in source installed on another connected host appears in the attachment menu with its host
+name. Paseo asks before searching it: readable results cross from that host to the app, and the
+selected snapshot crosses to the composer's host when sent. Remote sources do not appear as New
+Agent shortcuts. Equal sources on several hosts are not coalesced. The selected snapshot submits as
+a text attachment with neutral external-resource presentation, so it remains readable if the plugin
+is removed or an older peer drops the optional presentation fields. No daemon export RPC or
+provider-native session state is involved.
+
+Set an item's optional `contextKind` to `"chat_history"` when its text is an earlier conversation.
+Paseo then places that snapshot before the new user instruction instead of appending it as an
+ordinary resource.
+
+Set the source's optional `newAgentShortcut` to `true` when New Agent drafts should show a direct
+action beside Import Session. The source remains available from the attachment menu everywhere.
 
 ## Contribute settings
 

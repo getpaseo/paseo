@@ -78,6 +78,10 @@ export interface PluginAttachmentSourceContribution<Text extends PluginText = st
   icon: PluginSerializableIcon;
   pickerTitle: Text;
   searchPlaceholder: Text;
+  /** Also show this source as a shortcut on New Agent drafts. */
+  newAgentShortcut?: boolean;
+  /** Allow selection from composers connected to another host. */
+  crossHost?: boolean;
   search: PluginRpcContract;
 }
 

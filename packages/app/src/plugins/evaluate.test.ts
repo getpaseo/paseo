@@ -316,6 +316,8 @@ describe("evaluatePluginClientBundle", () => {
           icon: "CircleDot",
           pickerTitle: "Attach Linear issue",
           searchPlaceholder: "Search by identifier or title",
+          newAgentShortcut: true,
+          crossHost: true,
           search: { name: "issues.search", input: {}, output: {} },
         });
       `),
@@ -328,6 +330,8 @@ describe("evaluatePluginClientBundle", () => {
         icon: "CircleDot",
         pickerTitle: "Attach Linear issue",
         searchPlaceholder: "Search by identifier or title",
+        newAgentShortcut: true,
+        crossHost: true,
         search: { name: "issues.search", input: {}, output: {} },
       },
     ]);
