@@ -416,3 +416,72 @@ test("submodule commits invalidate cached worktree gitlink bodies", async () => 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test.each([true, false])(
+  "tracked=%s timestamp-preserving replacements refresh cached bodies",
+  async (tracked) => {
+    const { lstat, utimes } = await import("node:fs/promises");
+    const cwd = await mkdtemp(join(tmpdir(), "diff-preserved-time-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root) {
+        return { repoRoot: root, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    const path = join(cwd, "file.txt");
+    const timestamp = new Date("2000-01-01T00:00:00Z");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, "README"), "base\n");
+      if (tracked) await writeFile(path, "base\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await writeFile(path, "first\n");
+      await utimes(path, timestamp, timestamp);
+      const compare = {
+        cwd,
+        base: { kind: "rev" as const, rev: "HEAD" },
+        head: { kind: "worktree" as const },
+      };
+      const subscription = await streams.subscribe(compare, async (frame) => {
+        frames.push(frame);
+      });
+      await subscription.start();
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      const before = await lstat(path, { bigint: true });
+      frames.length = 0;
+      await writeFile(path, "later\n");
+      await utimes(path, timestamp, timestamp);
+      const after = await lstat(path, { bigint: true });
+      expect(after.mtimeNs).toBe(before.mtimeNs);
+      expect(after.size).toBe(before.size);
+      expect(after.ctimeNs).not.toBe(before.ctimeNs);
+      streams.invalidateForCwd(cwd);
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toBe(true);
+      const files = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(files.flatMap((file) => file.hunks.flatMap((hunk) => hunk.lines))).toContainEqual(
+        expect.objectContaining({ type: "add", content: "later" }),
+      );
+      const { listComparison } = await import("./git.js");
+      const fresh = await listComparison(compare);
+      try {
+        const record = await fresh.read(fresh.files[0]);
+        if (record.kind !== "ready") throw new Error("Expected readable replacement");
+        expect(files).toEqual([record.body]);
+      } finally {
+        await fresh.close();
+      }
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

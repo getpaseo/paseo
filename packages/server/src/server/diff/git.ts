@@ -11,6 +11,7 @@ import {
   type CheckoutDiffCompare,
 } from "../../utils/checkout-git.js";
 import { lstat, readFile, readlink } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
 import { resolve } from "node:path";
 import type { DiffEndpoint, DiffSubscribeRequest } from "@getpaseo/protocol/messages";
 import type { DiffEntry, DiffBody } from "@getpaseo/protocol/binary-frames/index";
@@ -324,7 +325,7 @@ async function readWorktreeIdentity(
   options: GitCommandOptions,
 ): Promise<string> {
   const value = await lstat(resolve(options.cwd, path), { bigint: true });
-  let identity = `${value.size}:${value.mtimeNs}`;
+  let identity = fileStatIdentity(value);
   if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
     const submodule = await runGitCommand(
       ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
@@ -388,9 +389,14 @@ async function listUntrackedFiles(options: GitCommandOptions): Promise<ListedFil
         deletions: 0,
         body: !binary,
       },
-      identity: `${value.size}:${value.mtimeNs}`,
+      identity: fileStatIdentity(value),
       source: { kind: "untracked", size: Number(value.size) },
     });
   }
   return files;
+}
+
+function fileStatIdentity(value: BigIntStats): string {
+  // Timestamp-preserving copies still change file status or replace the inode.
+  return `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`;
 }
