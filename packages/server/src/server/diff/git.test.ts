@@ -628,3 +628,40 @@ test("a batched oversized tracked patch does not hide its small sibling", async 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("replacing a submodule with a regular file preserves its replacement body", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-gitlink-replacement-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  const { mkdir } = await import("node:fs/promises");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await mkdir(join(cwd, "sub"));
+    git("-C", "sub", "init", "-b", "main");
+    git("-C", "sub", "config", "user.name", "Test");
+    git("-C", "sub", "config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "sub", "a.txt"), "base\n");
+    git("-C", "sub", "add", ".");
+    git("-C", "sub", "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "record submodule");
+    await rm(join(cwd, "sub"), { recursive: true, force: true });
+    await writeFile(join(cwd, "sub"), "replacement contents\n");
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+    });
+    try {
+      const record = await readBody(comparison);
+      expect(record.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual(
+        expect.objectContaining({ type: "add", content: "replacement contents" }),
+      );
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

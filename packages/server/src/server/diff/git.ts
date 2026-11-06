@@ -325,7 +325,7 @@ async function readWorktreeIdentity(
 ): Promise<string> {
   const value = await lstat(resolve(options.cwd, path), { bigint: true });
   let identity = `${value.size}:${value.mtimeNs}`;
-  if (header[0] === ":160000" || header[1] === "160000") {
+  if (value.isDirectory() && (header[0] === ":160000" || header[1] === "160000")) {
     const submodule = await runGitCommand(
       ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
       { cwd: resolve(options.cwd, path), envOverlay: { GIT_OPTIONAL_LOCKS: "0" } },
