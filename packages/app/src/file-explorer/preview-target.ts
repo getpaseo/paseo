@@ -1,38 +1,28 @@
-import { isAbsolutePath } from "@/utils/path";
+import {
+  collapsePathSegments,
+  isAbsolutePath,
+  isHomeRelativePath,
+  isPathWithinRoot,
+} from "@/utils/path";
 
 export interface FilePreviewReadTarget {
   cwd: string;
   path: string;
 }
 
-function trimTrailingSeparators(value: string): string {
-  if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
-    return value.replace(/\\/g, "/");
+/**
+ * File reads are scoped to `cwd`. Home-relative paths that still contain `..` after collapse
+ * resolve outside `$HOME`, so the read root has to be the directory that contains the file.
+ */
+function homePreviewCwd(normalized: string): string {
+  const collapsed = collapsePathSegments(normalized);
+  const browsed = collapsed.replace(/\/+$/, "");
+  if (browsed !== "~/.." && !browsed.startsWith("~/../")) {
+    return "~";
   }
-  return value.replace(/[\\/]+$/, "");
-}
-
-function normalizeForPathComparison(value: string): string {
-  const normalized = trimTrailingSeparators(value.replace(/\\/g, "/"));
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`;
-  }
-  return normalized;
-}
-
-function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
-  const candidate = normalizeForPathComparison(candidatePath);
-  const root = normalizeForPathComparison(rootPath);
-  if (!candidate || !root) {
-    return false;
-  }
-  if (root === "/") {
-    return candidate.startsWith("/");
-  }
-  if (candidate === root) {
-    return true;
-  }
-  return candidate.startsWith(`${root}/`);
+  const separator = browsed.lastIndexOf("/");
+  const parent = separator > 0 ? browsed.slice(0, separator) : browsed;
+  return parent === "~" ? browsed : parent;
 }
 
 function deriveFilesystemRootFromAbsolutePath(value: string): string | null {
@@ -53,10 +43,6 @@ function deriveFilesystemRootFromAbsolutePath(value: string): string | null {
   return null;
 }
 
-function isHomeRelativePath(value: string): boolean {
-  return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
-}
-
 export function resolveFilePreviewReadTarget(input: {
   path: string;
   workspaceRoot?: string;
@@ -68,7 +54,7 @@ export function resolveFilePreviewReadTarget(input: {
 
   if (isHomeRelativePath(previewPath)) {
     return {
-      cwd: "~",
+      cwd: homePreviewCwd(previewPath.replace(/\\/g, "/")),
       path: previewPath,
     };
   }
