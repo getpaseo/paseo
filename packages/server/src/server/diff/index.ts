@@ -216,7 +216,14 @@ export class DiffSubscriptions {
     };
   }
   async invalidateForCwd(cwd: string): Promise<void> {
-    const matches = createRealpathAwarePathMatcher(await worktreeRoot(expandTilde(cwd)));
+    let root: string;
+    try {
+      root = await worktreeRoot(expandTilde(cwd));
+    } catch (error) {
+      if (error instanceof DiffReadError && error.code === "NOT_GIT_REPO") return;
+      throw error;
+    }
+    const matches = createRealpathAwarePathMatcher(root);
     for (const target of this.targets.values())
       if (matches(target.compare.cwd)) this.invalidate(target);
   }

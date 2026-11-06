@@ -194,3 +194,44 @@ test("checkout refresh from a subdirectory updates a pinned streamed comparison"
     rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
+
+test("refreshing a non-Git workspace succeeds while a Git comparison is open", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "stream-refresh-git-"));
+  const plain = mkdtempSync(join(tmpdir(), "stream-refresh-plain-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const daemon = await createTestPaseoDaemon({ agentClients: {} });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "file.txt"), "committed content\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await client.connect();
+    const states: import("@getpaseo/client").DiffState[] = [];
+    const observation = client.observeDiff({
+      cwd,
+      base: { kind: "empty" },
+      head: { kind: "rev", rev: git("rev-parse", "HEAD") },
+    });
+    const unsubscribe = observation.subscribe({
+      snapshot: (state) => states.push(state),
+      update: () => {},
+    });
+    try {
+      await expect.poll(() => states.at(-1)?.phase, { timeout: 15000 }).toBe("ready");
+      const revision = states.at(-1)?.revision;
+      expect(await client.checkoutRefresh(plain)).toMatchObject({ success: true, error: null });
+      expect(states.at(-1)).toMatchObject({ phase: "ready", revision });
+    } finally {
+      unsubscribe();
+      await observation.release();
+    }
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
