@@ -94,6 +94,14 @@ export const TOOLBAR_CONTROL_SIZES = { touch: TOUCH_TARGET, pointer: 28 } satisf
 export const TOOLBAR_CONTROL_HEIGHT = bySizing(TOOLBAR_CONTROL_SIZES);
 
 /**
+ * The painted disc of a filled toolbar control, such as the composer's send and stop. The
+ * control keeps the full toolbar hit frame and paints this smaller disc centered inside it, so
+ * touch-sized it does not outweigh its unpainted neighbours. Pointer-sized it fills the frame.
+ */
+export const TOOLBAR_DISC_SIZES = { touch: 36, pointer: 28 } satisfies SizingValue;
+export const TOOLBAR_DISC_SIZE = bySizing(TOOLBAR_DISC_SIZES);
+
+/**
  * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body
  * text, so each step is larger.
  */
