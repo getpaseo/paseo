@@ -864,13 +864,16 @@ it("retains an ordinary script's port-block ownership when adopting its detached
     cwd,
     workspaceId: "script-block-owner",
     workspacePortBlock,
+    workspaceScriptName: "dev",
     ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
   });
   expect(created.workspacePortBlock).toEqual(workspacePortBlock);
+  expect(created.workspaceScriptName).toBe("dev");
   await first.detach();
   manager = await startRealWorkerManager({ paseoHome });
   const adopted = manager.getTerminal(created.id);
   expect(adopted?.workspacePortBlock).toEqual(workspacePortBlock);
+  expect(adopted?.workspaceScriptName).toBe("dev");
   expect(adopted?.workspaceLaunch).toBeUndefined();
   expect(adopted?.workspaceId).toBe("script-block-owner");
 });

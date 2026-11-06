@@ -742,6 +742,135 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it.each([false, true])(
+    "stops a surviving same-named script after restart (port block: %s)",
+    async (hasPortBlock) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-script-launch-recovery-"));
+      tempDirs.push(directory);
+      const workspaceId = "workspace-script-launch-recovery";
+      const portBase = 43200;
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          worktree: { servicePorts: { range: `${portBase}-${portBase}`, blockSize: 1 } },
+          launches: { dev: { command: "./bin/dev" } },
+        }),
+      );
+      const closeStarted = createDeferred();
+      const finishClose = createDeferred();
+      const terminalManager = createTerminalManager({
+        beforeKill: async () => {
+          closeStarted.resolve();
+          await finishClose.promise;
+        },
+      });
+      const survivingScript = await terminalManager.manager.createTerminal({
+        cwd: join(directory, "previous-checkout"),
+        workspaceId,
+        name: "renamed-script-terminal",
+        workspaceScriptName: "dev",
+        workspacePortBlock: hasPortBlock ? { portBase, portCount: 1 } : undefined,
+      });
+      const manualTerminal = await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId,
+        name: "dev",
+      });
+      const otherWorkspaceScript = await terminalManager.manager.createTerminal({
+        cwd: directory,
+        workspaceId: "other-workspace",
+        workspaceScriptName: "dev",
+      });
+      const runtimeStore = new WorkspaceScriptRuntimeStore();
+      const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+        checkPortAvailable: async () => true,
+        random: () => 0,
+      });
+      const manager = new WorkspaceLaunchManager({
+        terminalManager: terminalManager.manager,
+        serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+        workspaceRuntimeEnvironment: runtimeEnvironment,
+        scriptRuntimeStore: runtimeStore,
+        assertAutomationAllowed: async () => {},
+        getDaemonTcpPort: null,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+        logger: pino({ level: "silent" }),
+      });
+      const context = {
+        workspaceId,
+        workspaceDirectory: directory,
+        projectSlug: "repo",
+        branchName: null,
+      };
+      try {
+        await manager.initialize([context]);
+        expect(runtimeStore.get({ workspaceId, scriptName: "dev" })).toBeNull();
+        const start = manager.start(context, "dev");
+        await closeStarted.promise;
+        expect(terminalManager.created).toHaveLength(3);
+        expect(terminalManager.killed).toEqual([survivingScript.id]);
+        finishClose.resolve();
+        const launch = await start;
+        expect(launch).toMatchObject({ lifecycle: "running", portBase, portCount: 1 });
+        expect(terminalManager.manager.getTerminal(survivingScript.id)).toBeUndefined();
+        expect(terminalManager.manager.getTerminal(manualTerminal.id)).toBe(manualTerminal);
+        expect(terminalManager.manager.getTerminal(otherWorkspaceScript.id)).toBe(
+          otherWorkspaceScript,
+        );
+      } finally {
+        finishClose.resolve();
+        await manager.disposeWorkspace(workspaceId);
+      }
+    },
+  );
+
+  it("does not start a replacement launch if its surviving script cannot close", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-script-launch-close-failed-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/dev" } } }),
+    );
+    const terminalManager = createTerminalManager({
+      beforeKill: async () => {
+        throw new Error("Script is still running");
+      },
+    });
+    const script = await terminalManager.manager.createTerminal({
+      cwd: directory,
+      workspaceId: "workspace-close-failed",
+      workspaceScriptName: "dev",
+    });
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: runtimeEnvironment,
+      scriptRuntimeStore: new WorkspaceScriptRuntimeStore(),
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    await expect(
+      manager.start(
+        {
+          workspaceId: "workspace-close-failed",
+          workspaceDirectory: directory,
+          projectSlug: "repo",
+          branchName: null,
+        },
+        "dev",
+      ),
+    ).rejects.toThrow("Script is still running");
+    expect(terminalManager.created).toHaveLength(1);
+    expect(terminalManager.manager.getTerminal(script.id)).toBe(script);
+    expect(runtimeEnvironment.get("workspace-close-failed")).toBeNull();
+  });
+
   it("discovers live TCP listeners and proxies only HTTP endpoints from a project launch", async () => {
     const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-project-launch-proxy-"));
     const workspaceDirectory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-proxy-"));
@@ -1938,6 +2067,7 @@ function createTerminalManager(
       retainOnExit?: boolean;
       workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
       workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+      workspaceScriptName?: string;
     }) => {
       if (failNextCreate) {
         failNextCreate = false;
@@ -1957,6 +2087,7 @@ function createTerminalManager(
         workspaceId: options.workspaceId,
         workspaceLaunch: options.workspaceLaunch,
         workspacePortBlock: options.workspacePortBlock,
+        workspaceScriptName: options.workspaceScriptName,
         getState: () => ({ scrollback: [], grid: [[{ char: "$" }]] }),
         subscribe: () => () => {},
         onExit: (listener: (info: { exitCode: number | null }) => void) => {

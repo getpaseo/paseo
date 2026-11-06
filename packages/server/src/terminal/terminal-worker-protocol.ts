@@ -13,6 +13,7 @@ export interface WorkerTerminalState {
   title?: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
 }
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -33,6 +34,7 @@ export interface WorkerCreateTerminalOptions {
   workspaceId?: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;

@@ -280,6 +280,7 @@ function runWorker(argv: string[]): void {
       title: session.getTitle(),
       workspaceLaunch: session.workspaceLaunch,
       workspacePortBlock: session.workspacePortBlock,
+      workspaceScriptName: session.workspaceScriptName,
     };
   }
 

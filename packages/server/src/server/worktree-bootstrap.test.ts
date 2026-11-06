@@ -246,6 +246,7 @@ describe("runWorktreeAutoTerminals", () => {
     title?: string;
     env?: Record<string, string>;
     workspacePortBlock?: TerminalSession["workspacePortBlock"];
+    workspaceScriptName?: string;
   }
 
   interface StubTerminalRecord {
@@ -291,6 +292,7 @@ describe("runWorktreeAutoTerminals", () => {
           name: options.name ?? "Terminal",
           cwd: options.cwd,
           workspacePortBlock: options.workspacePortBlock,
+          workspaceScriptName: options.workspaceScriptName,
           send: (message) => {
             if (message.type === "input") {
               sentInputs.push(message.data);
@@ -371,6 +373,7 @@ describe("runWorktreeAutoTerminals", () => {
     expect(createTerminalCalls).toHaveLength(1);
     expect(createTerminalCalls[0]?.cwd).toBe(testRepoDir);
     expect(createTerminalCalls[0]?.name).toBe("api");
+    expect(createTerminalCalls[0]?.workspaceScriptName).toBe("api");
     expect(terminalRecords[0]?.sentInputs).toEqual(["npm run api\r"]);
     expect(createTerminalCalls[0]?.env).not.toHaveProperty("PORT");
     expect(createTerminalCalls[0]?.env?.PASEO_PORT).toEqual(expect.any(String));
@@ -544,6 +547,7 @@ describe("runWorktreeAutoTerminals", () => {
       COMPOSE_PROJECT_NAME: "paseo_workspace",
     });
     expect(createTerminalCalls[0]?.workspacePortBlock).toEqual({ portBase: 21000, portCount: 100 });
+    expect(createTerminalCalls[0]?.workspaceScriptName).toBe("compose");
   });
 
   it("keeps legacy service port allocation when no workspace block is configured", async () => {
@@ -862,6 +866,7 @@ describe("runWorktreeAutoTerminals", () => {
       PASEO_COMPOSE_PROJECT_NAME: workspaceRuntimeEnvironment.get(repoDir)!.composeProjectName,
     });
     expect(createTerminalCalls[1]?.workspacePortBlock).toEqual({ portBase: 42000, portCount: 4 });
+    expect(createTerminalCalls[1]?.workspaceScriptName).toBe("check");
     terminalRecords[1]!.triggerCommandFinished(0);
     const third = await spawnWorkspaceScript(input);
     expect(third.terminalId).toBe(second.terminalId);

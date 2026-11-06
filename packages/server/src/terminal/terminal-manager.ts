@@ -62,6 +62,7 @@ export interface TerminalManagerCreateOptions {
   workspaceId: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -378,6 +379,7 @@ export function createTerminalManager(
             workspaceId: options.workspaceId,
             workspaceLaunch: options.workspaceLaunch,
             workspacePortBlock: options.workspacePortBlock,
+            workspaceScriptName: options.workspaceScriptName,
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),

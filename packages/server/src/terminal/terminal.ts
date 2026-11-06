@@ -104,6 +104,7 @@ export interface TerminalSession {
   workspaceId: string;
   readonly workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   readonly workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  readonly workspaceScriptName?: string;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
@@ -156,6 +157,7 @@ export interface CreateTerminalOptions {
   workspaceId: string;
   workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
   workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -1398,6 +1400,7 @@ export async function createTerminal(
     workspaceId,
     workspaceLaunch: options.workspaceLaunch,
     workspacePortBlock: options.workspacePortBlock,
+    workspaceScriptName: options.workspaceScriptName,
     send,
     subscribe,
     onExit,

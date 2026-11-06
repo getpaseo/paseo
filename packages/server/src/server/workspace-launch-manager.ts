@@ -769,12 +769,39 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   ): Promise<void> {
     const runtimeStore = this.deps.scriptRuntimeStore;
     const runtime = runtimeStore?.get({ workspaceId: context.workspaceId, scriptName: launchName });
-    if (runtime?.lifecycle === "running") {
-      const terminal = this.deps.terminalManager?.getTerminal(runtime.terminalId) ?? null;
-      if (terminal && this.deps.terminalManager) {
-        await this.deps.terminalManager.killTerminalAndWait(runtime.terminalId);
+    const terminalManager = this.deps.terminalManager;
+    const terminalIds = new Set<string>();
+    if (terminalManager) {
+      if (runtime?.lifecycle === "running" && terminalManager.getTerminal(runtime.terminalId)) {
+        terminalIds.add(runtime.terminalId);
       }
+      // The daemon's runtime store is empty after restart. Recover script ownership
+      // from the worker, never from a user terminal's name or its current directory.
+      for (const directory of terminalManager.listDirectories()) {
+        const terminals = await terminalManager.getTerminals(directory, {
+          workspaceId: context.workspaceId,
+        });
+        for (const terminal of terminals) {
+          if (
+            terminal.workspaceId === context.workspaceId &&
+            terminal.workspaceScriptName === launchName
+          ) {
+            terminalIds.add(terminal.id);
+          }
+        }
+      }
+      await Promise.all(
+        Array.from(terminalIds, (terminalId) => terminalManager.killTerminalAndWait(terminalId)),
+      );
+    }
+    if (runtime?.lifecycle === "running") {
       this.markSupersededScriptStopped(context, runtime);
+    }
+    if (terminalIds.size > 0) {
+      this.deps.serviceProxy?.removeWorkspaceService({
+        workspaceId: context.workspaceId,
+        scriptName: launchName,
+      });
     }
     // Service plans also reserve configured peers that have never been started.
     await releaseWorkspaceServicePort(context.workspaceId, launchName);
