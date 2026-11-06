@@ -2641,6 +2641,11 @@ export const fr: TranslationResources = {
         moveUp: "Monter",
         moveDown: "Descendre",
       },
+      focusColor: {
+        title: "Focus clavier",
+        label: "Couleur du focus",
+        hint: "Couleur hexadécimale, ex. #8aabe0. Vide pour suivre le thème",
+      },
       fonts: {
         title: "Polices",
         systemDefault: "Police par défaut du système",

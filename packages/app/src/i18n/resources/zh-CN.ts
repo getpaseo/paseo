@@ -2555,6 +2555,11 @@ export const zhCN: TranslationResources = {
         moveUp: "上移",
         moveDown: "下移",
       },
+      focusColor: {
+        title: "键盘焦点",
+        label: "焦点颜色",
+        hint: "十六进制颜色，例如 #8aabe0。留空则跟随主题",
+      },
       fonts: {
         title: "字体",
         systemDefault: "系统默认",
