@@ -1,4 +1,4 @@
-import { app, Menu, BrowserWindow, ipcMain } from "electron";
+import { app, Menu, BrowserWindow, ipcMain, webContents } from "electron";
 import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
@@ -64,6 +64,54 @@ export function reloadActiveBrowserOrWindow({
   win.webContents.reload();
 }
 
+export interface EditCommandTarget {
+  isDestroyed(): boolean;
+  undo(): void;
+  redo(): void;
+}
+
+// macOS role "undo" / "redo" installs a native undo: selector and never calls
+// webContents.undo() (Electron canExecuteRole). In this hidden-titlebar window
+// that selector does not reach the page, so Cmd+Z does nothing in the composer.
+interface RunEditCommandInput {
+  method: "undo" | "redo";
+  focused: EditCommandTarget | null | undefined;
+  windowContents: EditCommandTarget | null | undefined;
+}
+
+export function runEditCommand({ method, focused, windowContents }: RunEditCommandInput): void {
+  if (focused && !focused.isDestroyed()) {
+    focused[method]();
+    return;
+  }
+  if (windowContents && !windowContents.isDestroyed()) {
+    windowContents[method]();
+  }
+}
+
+export function editUndoRedoMenuItems(
+  platform: NodeJS.Platform,
+  bind: (method: "undo" | "redo") => Electron.MenuItemConstructorOptions["click"],
+): Electron.MenuItemConstructorOptions[] {
+  // Match Electron's role accelerators: Windows redo is Control+Y, everywhere
+  // else it is Shift+CommandOrControl+Z.
+  const redoAccelerator = platform === "win32" ? "Control+Y" : "Shift+CmdOrCtrl+Z";
+  return [
+    { label: "Undo", accelerator: "CmdOrCtrl+Z", click: bind("undo") },
+    { label: "Redo", accelerator: redoAccelerator, click: bind("redo") },
+  ];
+}
+
+function bindEditCommand(method: "undo" | "redo") {
+  return withBrowserWindow((win) => {
+    runEditCommand({
+      method,
+      focused: webContents.getFocusedWebContents(),
+      windowContents: win.webContents,
+    });
+  });
+}
+
 function buildApplicationMenuTemplate(
   options: ApplicationMenuOptions,
   capturing: boolean,
@@ -105,8 +153,7 @@ function buildApplicationMenuTemplate(
     {
       label: "Edit",
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        ...editUndoRedoMenuItems(process.platform, bindEditCommand),
         { type: "separator" },
         { role: "cut" },
         { role: "copy" },
