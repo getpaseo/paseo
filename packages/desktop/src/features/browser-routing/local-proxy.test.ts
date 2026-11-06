@@ -270,6 +270,19 @@ function earlyHintsConnection(counter: { connections: number }): (socket: Socket
   };
 }
 
+/** Sends a head and part of its body, then holds on: only the proxy can close the stream. */
+function unfinishedResponseConnection(
+  statusLine: string,
+  state: { closed: boolean },
+): (socket: Socket) => void {
+  return (socket) => {
+    socket.on("close", () => {
+      state.closed = true;
+    });
+    socket.once("data", () => socket.write(`${statusLine}\r\nContent-Length: 10\r\n\r\nok`));
+  };
+}
+
 async function startProxy(
   openStream: OpenTunnelStream,
   options: Pick<LocalBrowserProxyOptions, "log"> = {},
@@ -670,6 +683,28 @@ describe("local browser proxy: plain HTTP", () => {
     expect(response.informational).toEqual([103]);
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe("done");
+  });
+
+  // node:http parses these heads but refuses to write them back out.
+  test.each([
+    ["a status below 100", "HTTP/1.1 099 Odd"],
+    ["a control character in the reason", "HTTP/1.1 200 O\u0001K"],
+  ])("answers 502 and closes the stream when the host's server sends %s", async (_, statusLine) => {
+    const originState = { closed: false };
+    const origin = await startRawOrigin(unfinishedResponseConnection(statusLine, originState));
+    const events: string[] = [];
+    const proxy = await startProxy(tcpTunnel(), { log: (event) => events.push(event) });
+
+    const response = await requestThroughProxy({
+      proxyPort: proxy.port,
+      url: `http://127.0.0.1:${listenPort(origin)}/odd`,
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.body).toContain("sent a response the browser cannot receive");
+    expect(events).toContain("http.response-refused");
+    await waitFor(() => originState.closed);
+    expect(events).not.toContain("http.upstream-error");
   });
 
   test("answers the warm-up host locally without opening a stream", async () => {

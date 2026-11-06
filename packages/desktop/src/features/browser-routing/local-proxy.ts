@@ -293,7 +293,8 @@ function sendProxyError(res: ServerResponse, status: number, title: string, deta
     return;
   }
   const body = errorPage(status, title, detail);
-  res.writeHead(status, {
+  // The explicit reason replaces any reason a refused server head left on res.
+  res.writeHead(status, title, {
     "Content-Type": "text/html; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
     "Cache-Control": "no-store",
@@ -491,17 +492,27 @@ export function relayEarlyHints(
     response.writeEarlyHints(options.hints, options.completed);
   } catch (error) {
     options.completed();
-    if (
-      !(error instanceof TypeError) ||
-      !("code" in error) ||
-      (error.code !== "ERR_INVALID_ARG_VALUE" &&
-        error.code !== "ERR_INVALID_CHAR" &&
-        error.code !== "ERR_INVALID_HTTP_TOKEN")
-    ) {
-      throw error;
-    }
+    if (!isRefusedServerValue(error)) throw error;
     options.onInvalid();
   }
+}
+
+/**
+ * node:http parses some heads it then refuses to write: a status below 100, or a
+ * control character in the reason or a hint. Those come from the host's server,
+ * not from a proxy fault, and are answered instead of thrown.
+ */
+function isRefusedServerValue(error: unknown): boolean {
+  if (error instanceof RangeError) {
+    return "code" in error && error.code === "ERR_HTTP_INVALID_STATUS_CODE";
+  }
+  return (
+    error instanceof TypeError &&
+    "code" in error &&
+    (error.code === "ERR_INVALID_ARG_VALUE" ||
+      error.code === "ERR_INVALID_CHAR" ||
+      error.code === "ERR_INVALID_HTTP_TOKEN")
+  );
 }
 
 function handleHttpRequest(
@@ -567,7 +578,25 @@ function handleHttpRequest(
   upstream.on("response", (upstreamRes) => {
     const headers = stripHopByHopHeaders(upstreamRes);
     headers.push("Connection", "close");
-    res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.statusMessage || undefined, headers);
+    try {
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.statusMessage || undefined, headers);
+    } catch (error) {
+      if (!isRefusedServerValue(error)) throw error;
+      log("http.response-refused", {
+        host: target.host,
+        port: target.port,
+        status: upstreamRes.statusCode,
+      });
+      sendProxyError(
+        res,
+        502,
+        "Bad Gateway",
+        `${target.host}:${target.port} sent a response the browser cannot receive.`,
+      );
+      upstreamRes.on("error", () => {});
+      upstream.destroy();
+      return;
+    }
     // Manual pump instead of pipe: every local write is attributed to the tunnel
     // chunk being parsed, and that chunk's credit waits for all of them. The next
     // chunk is not parsed until then, which is also the backpressure.
