@@ -32,4 +32,25 @@ describe("useToastHost", () => {
     act(() => dismissUploading());
     expect(result.current.toast?.content).toBe("Image uploaded");
   });
+
+  it("tells a toast when it leaves the screen, once, however it leaves", () => {
+    const { result } = renderHook(() => useToastHost());
+    const left: string[] = [];
+
+    let dismissFirst = () => {};
+    act(() => {
+      dismissFirst = result.current.api.show("Archived", {
+        durationMs: null,
+        onDismiss: () => left.push("replaced"),
+      });
+    });
+    act(() => {
+      result.current.api.show("Copied", { onDismiss: () => left.push("dismissed") });
+    });
+    act(() => dismissFirst());
+    act(() => result.current.dismiss());
+    act(() => result.current.dismiss());
+
+    expect(left).toEqual(["replaced", "dismissed"]);
+  });
 });

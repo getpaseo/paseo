@@ -14,6 +14,7 @@ import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   clearWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -173,6 +174,12 @@ export class WorkspaceDirectoryReplica {
       kind: "remove";
     },
   ): DirectoryReplicaMutation[] {
+    // The archive this remove reports is being undone; the host publishes the restored row.
+    if (
+      shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId: delta.id })
+    ) {
+      return [];
+    }
     this.deleteWorkspace(delta.id);
     const mutations: DirectoryReplicaMutation[] = [
       { kind: "workspace", type: "delete", id: delta.id },

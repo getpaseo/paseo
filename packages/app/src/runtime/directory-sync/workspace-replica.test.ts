@@ -8,7 +8,9 @@ import {
 } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
+  clearWorkspaceArchiveUndoPending,
   markWorkspaceArchivePending,
+  markWorkspaceArchiveUndoPending,
 } from "@/contexts/session-workspace-upserts";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
@@ -375,6 +377,29 @@ it("restores a missing workspace after an archive failure without replacing a li
     );
   } finally {
     clearWorkspaceArchivePending({ serverId, workspaceId: initial.id });
+    store.clearSession(serverId);
+  }
+});
+
+it("keeps a workspace whose archive is being undone when the host reports its removal", () => {
+  const serverId = "workspace-archive-undo";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const restored = normalizeWorkspaceDescriptor(workspace("restored"));
+
+  try {
+    replica.acceptWorkspaces([restored]);
+    markWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
+
+    expect(replica.applyDelta({ kind: "remove", id: restored.id })).toEqual([]);
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(restored.id)).toBe(true);
+
+    clearWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
+    replica.applyDelta({ kind: "remove", id: restored.id });
+    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(restored.id)).toBe(false);
+  } finally {
+    clearWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
     store.clearSession(serverId);
   }
 });

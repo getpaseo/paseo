@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
+  clearWorkspaceArchiveUndoPending,
   isWorkspaceArchivePending,
   markWorkspaceArchivePending,
+  markWorkspaceArchiveUndoPending,
   shouldSuppressWorkspaceForLocalArchive,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 
 const baseWorkspace: WorkspaceDescriptor = {
@@ -114,5 +117,38 @@ describe("workspace archive pending suppression", () => {
     ).toBe(true);
 
     clearWorkspaceArchivePending({ serverId: "server-1", workspaceId: "/repo/worktree" });
+  });
+});
+
+describe("workspace archive undo intent", () => {
+  const target = { serverId: "server-1", workspaceId: "/repo/worktree" };
+
+  it("lets host upserts through and holds host removes while an undo is pending", () => {
+    markWorkspaceArchivePending(target);
+    markWorkspaceArchiveUndoPending(target);
+
+    expect({
+      upsertSuppressed: shouldSuppressWorkspaceForLocalArchive({
+        serverId: target.serverId,
+        workspace: workspace({ archivingAt: null }),
+      }),
+      removeSuppressed: shouldSuppressWorkspaceRemovalForLocalUndo(target),
+    }).toEqual({ upsertSuppressed: false, removeSuppressed: true });
+
+    clearWorkspaceArchiveUndoPending(target);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(false);
+  });
+
+  it("keeps a newer intent when the request behind an older one settles late", () => {
+    markWorkspaceArchivePending(target);
+    markWorkspaceArchiveUndoPending(target);
+    clearWorkspaceArchivePending(target);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
+
+    markWorkspaceArchivePending(target);
+    clearWorkspaceArchiveUndoPending(target);
+    expect(isWorkspaceArchivePending(target)).toBe(true);
+
+    clearWorkspaceArchivePending(target);
   });
 });

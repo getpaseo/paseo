@@ -1,7 +1,10 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
   clearWorkspaceArchivePending,
+  clearWorkspaceArchiveUndoPending,
+  isWorkspaceArchiveUndoPending,
   markWorkspaceArchivePending,
+  markWorkspaceArchiveUndoPending,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
@@ -13,7 +16,20 @@ export interface WorkspaceArchiveTarget {
 }
 
 interface WorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null }>;
+  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; canceled?: boolean }>;
+}
+
+interface WorkspaceArchiveUndoClient {
+  undoWorkspaceArchive: (workspaceId: string) => Promise<void>;
+}
+
+/** `canceled`: an undo stopped the archive on the host before it finished. */
+export type WorkspaceArchiveOutcome = "archived" | "canceled";
+
+export interface OptimisticWorkspaceArchive {
+  /** The row as it was before the archive hid it, for undo to put back. */
+  hidden: WorkspaceDescriptor | null;
+  done: Promise<WorkspaceArchiveOutcome>;
 }
 
 interface OptimisticWorkspaceArchiveSnapshot {
@@ -72,31 +88,72 @@ function restoreOptimisticallyHiddenWorkspace(input: {
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
-}): Promise<void> {
+}): Promise<WorkspaceArchiveOutcome> {
   const payload = await input.client.archiveWorkspace(input.workspaceId);
+  if (payload.canceled) {
+    return "canceled";
+  }
   if (payload.error) {
     throw new Error(payload.error);
   }
+  return "archived";
+}
+
+/** Hides the row now and archives it on the host. A failed archive puts the row back. */
+export function beginOptimisticWorkspaceArchive(input: {
+  client: WorkspaceArchiveClient;
+  workspace: WorkspaceArchiveTarget;
+}): OptimisticWorkspaceArchive {
+  const snapshot = hideWorkspaceOptimistically(input.workspace);
+  const done = (async () => {
+    try {
+      return await archiveWorkspaceOrThrow({
+        client: input.client,
+        workspaceId: input.workspace.workspaceId,
+      });
+    } catch (error) {
+      restoreOptimisticallyHiddenWorkspace({
+        serverId: input.workspace.serverId,
+        workspaceId: input.workspace.workspaceId,
+        snapshot,
+      });
+      throw error;
+    }
+  })();
+  return { hidden: snapshot.workspace, done };
 }
 
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
-}): Promise<void> {
-  const snapshot = hideWorkspaceOptimistically(input.workspace);
+}): Promise<WorkspaceArchiveOutcome> {
+  return beginOptimisticWorkspaceArchive(input).done;
+}
 
+/**
+ * Puts the archived row back now and asks the host to undo the archive, whether it is still
+ * running or already finished. A failed undo hides the row again, unless the user archived
+ * it again in the meantime.
+ */
+export async function undoWorkspaceArchiveOptimistically(input: {
+  client: WorkspaceArchiveUndoClient;
+  workspace: WorkspaceArchiveTarget;
+  hidden: WorkspaceDescriptor | null;
+}): Promise<void> {
+  const { serverId, workspaceId } = input.workspace;
+  markWorkspaceArchiveUndoPending({ serverId, workspaceId });
+  if (input.hidden) {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [input.hidden]);
+  }
   try {
-    await archiveWorkspaceOrThrow({
-      client: input.client,
-      workspaceId: input.workspace.workspaceId,
-    });
+    await input.client.undoWorkspaceArchive(workspaceId);
   } catch (error) {
-    restoreOptimisticallyHiddenWorkspace({
-      serverId: input.workspace.serverId,
-      workspaceId: input.workspace.workspaceId,
-      snapshot,
-    });
+    if (isWorkspaceArchiveUndoPending({ serverId, workspaceId })) {
+      getHostRuntimeStore().removeWorkspaceSnapshot(serverId, workspaceId);
+    }
     throw error;
+  } finally {
+    clearWorkspaceArchiveUndoPending({ serverId, workspaceId });
   }
 }
 
