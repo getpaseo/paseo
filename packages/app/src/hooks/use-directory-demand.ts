@@ -14,3 +14,17 @@ export function useDirectoryDemand(serverId: string | null | undefined): void {
     return getHostRuntimeStore().acquireDirectoryDemand(serverId);
   }, [serverId]);
 }
+
+/**
+ * Holds directory demand for several hosts at once, so a caller that needs the whole fleet
+ * (the favicon, the aggregated agent list) does not have to subscribe to every agent map to
+ * keep the directories loading.
+ */
+export function useAllDirectoryDemand(serverIds: readonly string[], enabled = true): void {
+  useEffect(() => {
+    if (!enabled) return;
+    const runtime = getHostRuntimeStore();
+    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
+    return () => releases.forEach((release) => release());
+  }, [enabled, serverIds]);
+}
