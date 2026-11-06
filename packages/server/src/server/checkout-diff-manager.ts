@@ -129,6 +129,10 @@ export class CheckoutDiffManager {
         {
           cwd,
           base: { kind: "rev", rev: baseRef },
+          checkoutBase:
+            params.compare.mode === "uncommitted"
+              ? undefined
+              : { compare: params.compare, paseoHome: this.paseoHome },
           head:
             params.compare.mode === "base" ? { kind: "rev", rev: "HEAD" } : { kind: "worktree" },
           mergeBase: params.compare.mode !== "uncommitted",

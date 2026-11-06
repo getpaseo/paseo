@@ -193,3 +193,61 @@ test("legacy diffs retain successful bodies when an oversized sibling is removed
     subscription.unsubscribe();
   });
 });
+
+test("legacy subscriptions reselect the preferred base when a remote ref appears", async () => {
+  await withCheckout(async ({ cwd, manager, git }) => {
+    git("checkout", "-b", "feature");
+    await writeFile(join(cwd, "b.ts"), "export const b = 1;\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "feature");
+    const updates: CheckoutDiffSnapshotPayload[] = [];
+    const params = { cwd, compare: { mode: "base" as const, baseRef: "main" } };
+    const subscription = await manager.subscribe(params, (snapshot) => updates.push(snapshot));
+    try {
+      expect(subscription.initial.files.map((file) => file.path)).toEqual(["b.ts"]);
+      git("update-ref", "refs/remotes/origin/main", "HEAD");
+      manager.scheduleRefreshForCwd(cwd);
+      await expect.poll(() => updates.at(-1)?.files.length, { timeout: 5000 }).toBe(0);
+      expect(updates.at(-1)).toEqual(await manager.read(params));
+    } finally {
+      await subscription.unsubscribe();
+    }
+  });
+});
+
+test("cold many-file reads batch Git patches while matching the legacy reader", async () => {
+  const { getCheckoutDiff } = await import("../utils/checkout-git.js");
+  const { startGitCommandMetrics, stopGitCommandMetrics } =
+    await import("../utils/run-git-command.js");
+  await withCheckout(async ({ cwd, manager, git }) => {
+    const count = 1000;
+    for (let index = 0; index < count; index++)
+      await writeFile(join(cwd, `file-${index}.ts`), "export const value = 0;\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "many files");
+    for (let index = 0; index < count; index++)
+      await writeFile(join(cwd, `file-${index}.ts`), "export const value = 1;\n");
+    const legacyStart = performance.now();
+    const legacy = await getCheckoutDiff(cwd, { mode: "uncommitted", includeStructured: true });
+    const legacyMs = performance.now() - legacyStart;
+    startGitCommandMetrics();
+    const streamedStart = performance.now();
+    const streamed = await manager.read({ cwd, compare: { mode: "uncommitted" } });
+    const streamedMs = performance.now() - streamedStart;
+    const metrics = stopGitCommandMetrics();
+    const patches = metrics.commands.filter((command) => command.args.includes("--patch"));
+    const artifactDirectory = join(import.meta.dirname, "../../../../.artifacts/diff-subscription");
+    await mkdir(artifactDirectory, { recursive: true });
+    await writeFile(
+      join(artifactDirectory, "cold-many-file-metrics.json"),
+      JSON.stringify({ count, legacyMs, streamedMs, patchCommands: patches.length }, null, 2),
+    );
+    expect(streamed.error).toBeNull();
+    expect(streamed.files).toHaveLength(count);
+    expect(legacy.structured).toHaveLength(count);
+    expect(streamed.files.map((file) => [file.path, file.hunks])).toEqual(
+      legacy.structured?.map((file) => [file.path, file.hunks]),
+    );
+    expect(patches.length).toBeLessThanOrEqual(Math.ceil(count / 64));
+  });
+}, 60000);

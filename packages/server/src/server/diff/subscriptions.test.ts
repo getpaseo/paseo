@@ -359,3 +359,60 @@ test("a cached replay completes before a live refresh can depend on it", async (
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("submodule commits invalidate cached worktree gitlink bodies", async () => {
+  const { lstat } = await import("node:fs/promises");
+  const cwd = await mkdtemp(join(tmpdir(), "diff-gitlink-cache-"));
+  const sub = join(cwd, "sub");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const streams = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root) {
+      return { repoRoot: root, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await mkdir(sub);
+    git("-C", "sub", "init", "-b", "main");
+    git("-C", "sub", "config", "user.name", "Test");
+    git("-C", "sub", "config", "user.email", "test@example.com");
+    await writeFile(join(sub, "a.txt"), "A\n");
+    git("-C", "sub", "add", ".");
+    git("-C", "sub", "-c", "commit.gpgsign=false", "commit", "-m", "A");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "record A");
+    await writeFile(join(sub, "a.txt"), "B\n");
+    git("-C", "sub", "-c", "commit.gpgsign=false", "commit", "-am", "B");
+    const before = await lstat(sub, { bigint: true });
+    const subscription = await streams.subscribe(
+      { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+      async (frame) => {
+        frames.push(frame);
+      },
+    );
+    await subscription.start();
+    expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+    frames.length = 0;
+    await writeFile(join(sub, "a.txt"), "C\n");
+    git("-C", "sub", "-c", "commit.gpgsign=false", "commit", "-am", "C");
+    const sha = git("-C", "sub", "rev-parse", "HEAD");
+    expect((await lstat(sub, { bigint: true })).mtimeNs).toBe(before.mtimeNs);
+    streams.invalidateForCwd(cwd);
+    await expect
+      .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+      .toBe(true);
+    const bodies = frames.flatMap((frame) =>
+      frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+    );
+    expect(bodies.flatMap((file) => file.hunks.flatMap((hunk) => hunk.lines))).toContainEqual(
+      expect.objectContaining({ type: "add", content: `Subproject commit ${sha}` }),
+    );
+    await subscription.release();
+  } finally {
+    await streams.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -1,4 +1,5 @@
 import { parseGitRevParsePath } from "../../utils/git-rev-parse-path.js";
+import { Patches } from "./patches.js";
 import { HighlightSources } from "./sources.js";
 import {
   prepareAllChangesIndex,
@@ -6,6 +7,8 @@ import {
   GIT_PATCH_FORMAT_ARGS,
   inspectUntrackedFile,
   snapshotComparisonIndex,
+  resolveCheckoutDiffBase,
+  type CheckoutDiffCompare,
 } from "../../utils/checkout-git.js";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -14,7 +17,9 @@ import type { DiffEntry, DiffBody } from "@getpaseo/protocol/binary-frames/index
 import { runGitCommand, type GitCommandOptions } from "../../utils/run-git-command.js";
 import { parseDiff, highlightDiffWithFileContent } from "../utils/diff-highlighter.js";
 
-export type Compare = Omit<DiffSubscribeRequest, "type" | "requestId">;
+export type Compare = Omit<DiffSubscribeRequest, "type" | "requestId"> & {
+  checkoutBase?: { compare: CheckoutDiffCompare; paseoHome: string };
+};
 export interface ListedFile {
   entry: DiffEntry;
   identity: string;
@@ -34,6 +39,7 @@ export interface Comparison extends Pick<
   files: ListedFile[];
   metrics: { highlightCalls: number };
   close(): Promise<void>;
+  selectBodies(paths: ReadonlySet<string>): void;
   read(
     file: ListedFile,
     budget?: { remainingBytes?: number; maxPatchBytes?: number },
@@ -125,6 +131,13 @@ function parseStats(
   return stats;
 }
 export async function listComparison(compare: Compare): Promise<Comparison> {
+  if (compare.checkoutBase) {
+    const selected = await resolveCheckoutDiffBase(compare.cwd, compare.checkoutBase.compare, {
+      paseoHome: compare.checkoutBase.paseoHome,
+    });
+    if (!selected) throw new DiffReadError("REF_NOT_FOUND", "Comparison base is unavailable");
+    compare = { ...compare, base: { kind: "rev", rev: selected } };
+  }
   validateCompare(compare);
   const cwd = compare.cwd;
   let privateIndex: Awaited<ReturnType<typeof prepareAllChangesIndex>> = null;
@@ -207,9 +220,9 @@ async function readComparisonList(
     else if (oldPath !== null) change = "renamed";
     let identity = header.join(" ");
     if (compare.head.kind === "worktree" && code !== "D") {
-      const value = await lstat(resolve(cwd, path), { bigint: true });
-      identity += `:${value.size}:${value.mtimeNs}`;
+      identity += `:${await readWorktreeIdentity(path, header, options)}`;
     }
+
     files.push({
       entry: {
         path,
@@ -227,6 +240,7 @@ async function readComparisonList(
   if (compare.head.kind === "worktree") files.push(...(await listUntrackedFiles(options)));
   files.sort((a, b) => a.entry.path.localeCompare(b.entry.path));
   const metrics = { highlightCalls: 0 };
+  const patches = new Patches(args, options, files);
   const sources = new HighlightSources({
     cwd,
     baseSha: comparisonBaseSha,
@@ -239,32 +253,27 @@ async function readComparisonList(
     mergeBaseSha,
     files,
     metrics,
+    selectBodies: (paths) => patches.select(paths),
     close: async () => {
       await privateIndex?.cleanup();
     },
     async read(file, budget = {}) {
       const maxPatchBytes = budget.maxPatchBytes ?? PER_FILE_DIFF_MAX_BYTES;
       const remainingBytes = budget.remainingBytes ?? maxPatchBytes;
-      const paths = [file.entry.path];
-      if (file.entry.oldPath !== null) paths.unshift(file.entry.oldPath);
       if (file.source.kind === "untracked" && file.source.size > maxPatchBytes) {
         return { kind: "too_large" };
       }
-      const command =
+      const result =
         file.source.kind === "untracked"
-          ? ["diff", "--no-index", ...GIT_PATCH_FORMAT_ARGS, "--", "/dev/null", file.entry.path]
-          : [
-              ...args,
-              ...(file.entry.oldPath !== null ? ["--diff-filter=RC"] : []),
-              "--patch",
-              "--",
-              ...paths.map((path) => `:(literal)${path}`),
-            ];
-      const result = await runGitCommand(command, {
-        ...options,
-        acceptExitCodes: [0, 1],
-        maxOutputBytes: maxPatchBytes + 1,
-      });
+          ? await runGitCommand(
+              ["diff", "--no-index", ...GIT_PATCH_FORMAT_ARGS, "--", "/dev/null", file.entry.path],
+              {
+                ...options,
+                acceptExitCodes: [0, 1],
+                maxOutputBytes: maxPatchBytes + 1,
+              },
+            )
+          : await patches.read(file, maxPatchBytes);
       const bytes = Buffer.byteLength(result.stdout);
       if (result.truncated || bytes > remainingBytes || bytes > maxPatchBytes)
         return { kind: "too_large" };
@@ -307,6 +316,23 @@ async function readComparisonList(
       return { kind: "ready", body: { path: file.entry.path, hunks }, bytes };
     },
   };
+}
+
+async function readWorktreeIdentity(
+  path: string,
+  header: string[],
+  options: GitCommandOptions,
+): Promise<string> {
+  const value = await lstat(resolve(options.cwd, path), { bigint: true });
+  let identity = `${value.size}:${value.mtimeNs}`;
+  if (header[0] === ":160000" || header[1] === "160000") {
+    const submodule = await runGitCommand(
+      ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
+      { cwd: resolve(options.cwd, path), envOverlay: { GIT_OPTIONAL_LOCKS: "0" } },
+    );
+    identity += `:${submodule.stdout}`;
+  }
+  return identity;
 }
 
 function diffArguments(compare: Compare, baseSha: string, headSha: string): string[] {

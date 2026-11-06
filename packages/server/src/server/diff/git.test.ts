@@ -593,3 +593,38 @@ test("files removed between listing and highlighting retain their deletion patch
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("a batched oversized tracked patch does not hide its small sibling", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-batch-budget-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "a.txt"), "before\n");
+    await writeFile(join(cwd, "b.txt"), "before\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "a.txt"), "oversized\n".repeat(1024 * 1024));
+    await writeFile(join(cwd, "b.txt"), "after\n");
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    try {
+      expect(await comparison.read(comparison.files[0])).toEqual({ kind: "too_large" });
+      const sibling = await comparison.read(comparison.files[1]);
+      if (sibling.kind !== "ready") throw new Error("Expected readable sibling");
+      expect(sibling.body.hunks.flatMap((hunk) => hunk.lines)).toContainEqual({
+        type: "add",
+        content: "after",
+      });
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

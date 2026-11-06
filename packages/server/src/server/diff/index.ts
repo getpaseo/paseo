@@ -100,6 +100,7 @@ export class DiffSubscriptions {
       input.signal?.throwIfAborted();
       const file = comparison.files.find((candidate) => candidate.entry.path === input.path);
       if (!file || file.entry.content === "binary") return null;
+      comparison.selectBodies(new Set([file.entry.path]));
       const record = await comparison.read(file, { maxPatchBytes: DEFAULT_MAX_OUTPUT_BYTES });
       input.signal?.throwIfAborted();
       return materializeDiffFile(
@@ -122,7 +123,9 @@ export class DiffSubscriptions {
     };
     const key = JSON.stringify([
       compare.cwd,
-      endpointKey(compare.base),
+      compare.checkoutBase
+        ? ["checkout", JSON.stringify(compare.checkoutBase)]
+        : endpointKey(compare.base),
       endpointKey(compare.head),
       compare.mergeBase,
       compare.ignoreWhitespace,
@@ -373,6 +376,9 @@ export class DiffSubscriptions {
       for (const entry of entries) if (entry.content === "text") state.omitted.push(entry.path);
       return;
     }
+    comparison.selectBodies(
+      new Set(entries.filter((entry) => entry.body).map((entry) => entry.path)),
+    );
     for (let index = 0; index < comparison.files.length; index++) {
       if (isInterrupted(target)) return;
       const file = comparison.files[index];
