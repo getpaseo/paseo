@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
-  ActivityIndicator,
   ScrollView,
   Text,
   View,
@@ -29,6 +28,7 @@ import type { Theme } from "@/styles/theme";
 import { Button } from "./button";
 import { HighlightedText } from "./highlighted-text";
 import { mutedIconColorMapping } from "./icon-color";
+import { LoadingSpinner } from "./loading-spinner";
 import { getScrollOffsetToRevealItem } from "./scroll-reveal";
 import { StatusBadge } from "./status-badge";
 
@@ -77,7 +77,7 @@ const ROW_ICONS = {
   directory: withUnistyles(Folder, mutedIconColorMapping),
 } satisfies Record<AutocompleteOptionIcon, unknown>;
 const ErrorIcon = withUnistyles(CircleAlert, mutedIconColorMapping);
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator, mutedIconColorMapping);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, mutedIconColorMapping);
 
 const ROW_ICON_SIZE = 14;
 
@@ -192,7 +192,7 @@ function AutocompleteStatusRow({ status }: { status: AutocompleteStatus }) {
     >
       {status.kind === "loading" ? (
         <View style={styles.itemIcon}>
-          <ThemedActivityIndicator size="small" />
+          <ThemedLoadingSpinner size={ROW_ICON_SIZE} />
         </View>
       ) : null}
       <Text style={styles.statusMessage} numberOfLines={2}>
