@@ -870,8 +870,12 @@ function WorkspaceDocumentTitleEffectSlot({
   );
 }
 
+/**
+ * The header floats over a conversation's timeline. A draft and the agent it creates share one
+ * timeline, so their surfaces match and the timeline does not move when the tab retargets.
+ */
 function floatsHeaderOverContent(activeTab: WorkspaceTabDescriptor | null): boolean {
-  return supportsStreamTopOverlay && activeTab?.kind === "agent";
+  return supportsStreamTopOverlay && (activeTab?.kind === "agent" || activeTab?.kind === "draft");
 }
 
 /** A fullscreen composer covers the compact header; the column lays out without it. */

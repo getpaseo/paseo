@@ -867,7 +867,18 @@ it.each([false, true])(
       writeFileSync(exitRequestPath, "");
       await waitForCondition(() => first.getTerminal(ending.id) === undefined, 10000);
       expect(existsSync(exitObservedPath)).toBe(true);
-      expect(isProcessAlive(endingPid)).toBe(false);
+      const originalEnding = record!.terminals.find((entry) => entry.id === ending.id)!;
+      // Exit delivery does not reserve the PID. Wait for the original process to
+      // disappear, allowing Windows to reuse its PID just as in the restart check below.
+      await expect
+        .poll(
+          async () =>
+            !isProcessAlive(endingPid) ||
+            classifyTerminalProgramProcess(originalEnding, await inspector.inspect(endingPid))
+              .status === "unrelated",
+          { timeout: 10000 },
+        )
+        .toBe(true);
     } finally {
       if (recordFd !== null) closeSync(recordFd);
     }

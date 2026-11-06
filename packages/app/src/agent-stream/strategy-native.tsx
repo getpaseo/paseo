@@ -137,9 +137,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const listRef = useRef<LegendListRef>(null);
-  // LegendList places the rows of each agent once, behind a hidden reveal (`dataKey`).
-  const [placedAgentId, setPlacedAgentId] = useState<string | null>(null);
-  const isListPlaced = placedAgentId === agentId;
+  // LegendList places the rows once, behind a hidden reveal, when the list mounts.
+  const [isListPlaced, setIsListPlaced] = useState(false);
   const isListPlacedRef = useRef(isListPlaced);
   isListPlacedRef.current = isListPlaced;
   const streamViewportMetricsRef = useRef({
@@ -384,23 +383,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   );
 
   useEffect(() => {
-    streamViewportMetricsRef.current = {
-      containerKey: "native-virtualized",
-      contentHeight: 0,
-      viewportWidth: 0,
-      viewportHeight: 0,
-      offsetY: 0,
-      viewportMeasuredForKey: null,
-      contentMeasuredForKey: null,
-    };
-    scrollOffsetYRef.current = 0;
-    isUserScrollActiveRef.current = false;
-    clearPendingUserScrollEnd();
-    disclosureHold.cancel();
-    historyStartReadyRef.current = false;
-    const initialHistoryStartState = createHistoryStartPaginationState();
-    historyStartPaginationStateRef.current = initialHistoryStartState;
-    setHistoryStartPaginationState(initialHistoryStartState);
     const frame = requestAnimationFrame(() => {
       historyStartReadyRef.current = true;
       evaluateHistoryStart();
@@ -411,7 +393,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       historyStartSettleSchedulerRef.current?.cancel();
       historyStartSettleSchedulerRef.current = null;
     };
-  }, [agentId, clearPendingUserScrollEnd, disclosureHold, evaluateHistoryStart]);
+  }, [clearPendingUserScrollEnd, evaluateHistoryStart]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
@@ -623,7 +605,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const handleListPlaced = useStableEvent(() => {
     isListPlacedRef.current = true;
-    setPlacedAgentId(agentId);
+    setIsListPlaced(true);
     streamViewportMetricsRef.current = {
       ...streamViewportMetricsRef.current,
       contentMeasuredForKey: "native-virtualized",
@@ -711,7 +693,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onContentSizeChange={handleContentSizeChange}
       onItemSizeChanged={handleItemSizeChanged}
       onReady={handleListPlaced}
-      dataKey={agentId}
       maintainVisibleContentPosition={maintainVisibleContentPosition}
       renderScrollComponent={renderScrollComponent}
       recycleItems={false}
