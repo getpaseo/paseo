@@ -5248,13 +5248,16 @@ class ClaudeAgentSession implements AgentSession {
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
-    this.pushEvent({
-      type: "permission_requested",
-      provider: "claude",
-      request,
-    });
+    const publishRequest = () => {
+      this.pushEvent({
+        type: "permission_requested",
+        provider: "claude",
+        request,
+      });
+    };
 
     if (this.permissionClearingSteerUuids.size > 0) {
+      publishRequest();
       return this.resolveDeniedPermission(request, {
         behavior: "deny",
         message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
@@ -5288,6 +5291,7 @@ class ClaudeAgentSession implements AgentSession {
 
       if (options?.signal) {
         if (options.signal.aborted) {
+          publishRequest();
           abortHandler();
           return;
         }
@@ -5301,6 +5305,9 @@ class ClaudeAgentSession implements AgentSession {
         reject,
         cleanup,
       });
+      // Subscribers can respond synchronously, so the request and its abort
+      // cleanup must be installed before it becomes visible.
+      publishRequest();
     });
   };
 
