@@ -348,6 +348,7 @@ export const fr: TranslationResources = {
       copied: "Copié",
     },
     chatHistory: {
+      forkBoundary: "La conversation continue ici",
       title: "Historique du chat",
       previousConversation: "Conversation précédente",
       open: "Ouvrir l’historique joint",

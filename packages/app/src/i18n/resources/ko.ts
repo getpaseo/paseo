@@ -344,6 +344,7 @@ export const ko: TranslationResources = {
       copied: "복사됨",
     },
     chatHistory: {
+      forkBoundary: "여기서 대화가 이어집니다",
       title: "채팅 기록",
       previousConversation: "이전 대화",
       open: "채팅 기록 첨부 열기",

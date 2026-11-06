@@ -1,8 +1,8 @@
 import {
   captureChatHistory,
-  closeChatHistory,
   followChatHistorySource,
-  openChatHistory,
+  expectInlineChatHistory,
+  expectChatHistoryMessageStyles,
   sendChatHistoryFromAnotherClient,
   setChatHistoryViewport,
 } from "../support/helpers/chat-history";
@@ -52,11 +52,15 @@ test.describe("Assistant fork menu", () => {
     page,
     seedForkWorkspace,
   }, testInfo) => {
-    const initialPrompt = "emit 1 coalesced agent stream updates for readable fork history.";
+    const initialPrompt = "Show me a small TypeScript example.";
     const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-readable-",
       title: "Original conversation",
       initialPrompt,
+      featureValues: {
+        mockAssistantResponse:
+          "## The answer\nHere is a **small example**:\n\n```ts\nconst answer = 42;\n```\n\n[User] in prose is not a new message.",
+      },
       model: "ten-second-stream",
     });
     await openAgentRoute(page, session);
@@ -64,9 +68,9 @@ test.describe("Assistant fork menu", () => {
     await awaitAssistantMessage(page);
     await session.client.waitForFinish(session.agentId, 45_000);
     await forkMostRecentAssistantTurnToNewTab(page);
-    await openChatHistory(page, "draft", [initialPrompt]);
+    await expectInlineChatHistory(page, [initialPrompt]);
+    await expectChatHistoryMessageStyles(page, initialPrompt);
     await captureChatHistory(page, testInfo, "history-wide.png");
-    await closeChatHistory(page);
     await submitMessage(page, "emit 1 coalesced agent stream updates for the fork.");
     const forkAgentId = await getActiveForkAgentId(page);
     await session.client.waitForFinish(forkAgentId, 45_000);
@@ -74,7 +78,8 @@ test.describe("Assistant fork menu", () => {
     await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
     await page.reload();
     await setChatHistoryViewport(page, "compact");
-    await openChatHistory(page, "sent", [initialPrompt]);
+    await expectInlineChatHistory(page, [initialPrompt]);
+    await expectChatHistoryMessageStyles(page, initialPrompt);
     await captureChatHistory(page, testInfo, "history-compact.png");
     await followChatHistorySource(page);
     await setChatHistoryViewport(page, "wide");
@@ -83,7 +88,7 @@ test.describe("Assistant fork menu", () => {
     await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: forkAgentId });
     await expectActiveForkAgent(page, forkAgentId);
     await forkMostRecentAssistantTurnToNewTab(page);
-    await openChatHistory(page, "draft", [initialPrompt, "updates for the fork."]);
+    await expectInlineChatHistory(page, [initialPrompt, "updates for the fork."]);
     await followChatHistorySource(page);
     await expectActiveForkAgent(page, forkAgentId);
   });
@@ -101,7 +106,7 @@ test.describe("Assistant fork menu", () => {
     await expectComposerVisible(page);
     const history = "[User] Context inherited on another device.";
     await sendChatHistoryFromAnotherClient(session, history);
-    await openChatHistory(page, "sent", [history]);
+    await expectInlineChatHistory(page, [history]);
     await session.client.waitForFinish(session.agentId, 45_000);
   });
 
@@ -214,9 +219,7 @@ test.describe("Assistant fork menu", () => {
 
     await submitMessage(page, "");
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
-    await expect(userMessage).toBeVisible({ timeout: 30_000 });
-    await expect(userMessage).not.toContainText("Source agent:");
+    await expectInlineChatHistory(page, ["updates for assistant fork tab submit."]);
   });
 
   test("forks an assistant turn into New Workspace and keeps the attachment across host changes", async ({
@@ -283,8 +286,6 @@ test.describe("Assistant fork menu", () => {
 
     await submitNewWorkspaceEmpty(page);
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
-    await expect(userMessage).toBeVisible({ timeout: 30_000 });
-    await expect(userMessage).not.toContainText("Source agent:");
+    await expectInlineChatHistory(page, ["updates for assistant fork submit."]);
   });
 });

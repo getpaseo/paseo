@@ -343,6 +343,7 @@ export const zhCN: TranslationResources = {
       copied: "已复制",
     },
     chatHistory: {
+      forkBoundary: "从这里继续对话",
       title: "聊天历史",
       previousConversation: "之前的对话",
       open: "打开聊天历史附件",

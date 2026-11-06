@@ -340,6 +340,7 @@ export const en = {
       copied: "Copied",
     },
     chatHistory: {
+      forkBoundary: "Conversation continues here",
       title: "Chat history",
       previousConversation: "Previous conversation",
       open: "Open chat history attachment",

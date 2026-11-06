@@ -108,7 +108,9 @@ export async function expectChatHistoryAttachment(page: Page): Promise<void> {
 
 export async function expectLiveAssistantText(page: Page, text: string): Promise<void> {
   await expect(inFlightTurn(page)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("assistant-message").last()).toContainText(text, {
+  await expect(
+    page.getByTestId("assistant-message").filter({ visible: true }).last(),
+  ).toContainText(text, {
     timeout: 60_000,
   });
 }

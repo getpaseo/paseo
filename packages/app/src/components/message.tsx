@@ -100,7 +100,7 @@ interface UserMessageProps {
   message: string;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
-  timestamp: number;
+  timestamp?: number;
   capabilities?: AgentCapabilityFlags;
   client?: DaemonClient | null;
   isFirstInGroup?: boolean;
@@ -422,7 +422,7 @@ export const UserMessage = memo(function UserMessage({
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
-    () => formatMessageTimestamp(new Date(timestamp)),
+    () => (timestamp === undefined ? null : formatMessageTimestamp(new Date(timestamp))),
     [timestamp],
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
@@ -533,9 +533,11 @@ export const UserMessage = memo(function UserMessage({
             pointerEvents={showTrailingRow ? "auto" : "none"}
             testID="user-message-trailing-row"
           >
-            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-              {formattedTimestamp}
-            </Text>
+            {formattedTimestamp ? (
+              <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
+                {formattedTimestamp}
+              </Text>
+            ) : null}
             {capabilities && messageId ? (
               <RewindMenu
                 capabilities={capabilities}
@@ -732,7 +734,7 @@ interface AssistantMessageProps {
   renderFullContent?: boolean;
   occurrenceKey: string;
   message: string;
-  timestamp: number;
+  timestamp?: number;
   workspaceRoot?: string;
   serverId?: string;
   client?: DaemonClient | null;

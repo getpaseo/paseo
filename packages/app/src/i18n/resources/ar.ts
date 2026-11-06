@@ -343,6 +343,7 @@ export const ar: TranslationResources = {
       copied: "منقول",
     },
     chatHistory: {
+      forkBoundary: "تستمر المحادثة من هنا",
       title: "سجل المحادثة",
       previousConversation: "المحادثة السابقة",
       open: "فتح مرفق سجل المحادثة",

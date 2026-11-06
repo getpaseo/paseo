@@ -720,6 +720,13 @@ export const ChatHistorySourceSchema = z.object({
 
 export type ChatHistorySource = z.infer<typeof ChatHistorySourceSchema>;
 
+export const ChatHistoryEntrySchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant", "activity", "notice"]),
+  text: z.string(),
+});
+export type ChatHistoryEntry = z.infer<typeof ChatHistoryEntrySchema>;
+
 export const ChatHistoryAttachmentSchema = z.object({
   type: z.literal("text"),
   mimeType: z.literal("text/plain"),
@@ -727,6 +734,7 @@ export const ChatHistoryAttachmentSchema = z.object({
   title: z.string().nullable().optional(),
   text: z.string(),
   chatHistorySource: ChatHistorySourceSchema.optional(),
+  chatHistoryEntries: z.array(ChatHistoryEntrySchema).optional(),
 });
 
 export type ChatHistoryAttachment = z.infer<typeof ChatHistoryAttachmentSchema>;
@@ -1201,6 +1209,7 @@ export const TextAttachmentSchema = z
     text: z.string(),
     externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
     chatHistorySource: ChatHistorySourceSchema.optional(),
+    chatHistoryEntries: z.array(ChatHistoryEntrySchema).optional(),
   })
   .transform(({ contextKind, ...attachment }) => ({
     ...attachment,

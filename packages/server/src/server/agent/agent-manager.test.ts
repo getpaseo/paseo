@@ -1,3 +1,4 @@
+import type { ChatHistoryEntry } from "@getpaseo/protocol/messages";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -734,11 +735,16 @@ test.each([true, false])(
   async (echo) => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fork-history-"));
     const storagePath = join(workdir, "agents");
+    const chatHistoryEntries: ChatHistoryEntry[] = [
+      { id: "history-0", role: "user", text: "Original question" },
+      { id: "history-1", role: "assistant", text: "Original answer" },
+    ];
     const attachment = {
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
       text: "<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[User] Original question\n[Assistant] Original answer\n</chat-history-summary>",
+      chatHistoryEntries,
       chatHistorySource: { serverId: "source-host", agentId: "source-agent", title: "Original" },
     } as const;
     const clientMessageId = "fork-prompt";

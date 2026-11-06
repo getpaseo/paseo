@@ -1,3 +1,5 @@
+import { ChatHistoryTranscript } from "@/attachments/chat-history/transcript";
+import { workspaceAttachmentToSubmitAttachment } from "@/attachments/workspace-attachment-utils";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -39,6 +41,7 @@ import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
+  useWorkspaceAttachmentsForScopes,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -404,6 +407,9 @@ export function WorkspaceDraftAgentTab({
     () => [draftAttachmentScopeKey, workspaceAttachmentScopeKey].filter(Boolean),
     [draftAttachmentScopeKey, workspaceAttachmentScopeKey],
   );
+  const historyAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys).filter(
+    (attachment) => attachment.kind === "chat_history",
+  );
   const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
     (state) => state.clearWorkspaceAttachments,
   );
@@ -618,6 +624,16 @@ export function WorkspaceDraftAgentTab({
       ) : (
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
           <View style={styles.configSection}>
+            {historyAttachments.map((history) => {
+              const attachment = workspaceAttachmentToSubmitAttachment(history);
+              return attachment?.type === "text" ? (
+                <ChatHistoryTranscript
+                  key={history.id}
+                  attachment={attachment}
+                  occurrenceKey={history.id}
+                />
+              ) : null;
+            })}
             {formErrorMessage ? (
               <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>{formErrorMessage}</Text>
@@ -702,6 +718,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[6],
   },
   configSection: {
+    width: "100%",
+    maxWidth: theme.contentMaxWidth,
+    alignSelf: "center",
     gap: theme.spacing[3],
   },
   importPillRow: {

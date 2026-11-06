@@ -347,6 +347,7 @@ export const ru: TranslationResources = {
       copied: "Скопировано",
     },
     chatHistory: {
+      forkBoundary: "Продолжение разговора",
       title: "История чата",
       previousConversation: "Предыдущий разговор",
       open: "Открыть вложенную историю чата",

@@ -32,6 +32,7 @@ describe("workspace attachment utilities", () => {
           mimeType: "text/plain",
           contextKind: "chat_history",
           text: "Earlier context",
+          chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
         },
         source,
       }),
@@ -40,6 +41,7 @@ describe("workspace attachment utilities", () => {
       mimeType: "text/plain",
       contextKind: "chat_history",
       text: "Earlier context",
+      chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
       chatHistorySource: source,
     });
   });

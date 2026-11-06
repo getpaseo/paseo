@@ -604,6 +604,16 @@ it.each(["", "Continue in B"])("carries inherited history through repeated forks
   expect(grandchild.attachment.text).toContain("[Assistant] Answer in B");
   expect(grandchild.attachment.text).toContain("[User] Continue in C\n[Assistant] Answer in C");
   expect(grandchild.attachment.text.match(/<chat-history-summary>/g)).toHaveLength(1);
+  expect(grandchild.attachment.chatHistoryEntries).not.toContainEqual(
+    expect.objectContaining({ role: "user", text: "" }),
+  );
+  expect(grandchild.attachment.chatHistoryEntries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ role: "user", text: "Question in A" }),
+      expect.objectContaining({ role: "assistant", text: "Answer in A" }),
+      expect.objectContaining({ role: "assistant", text: "Answer in B" }),
+    ]),
+  );
 });
 
 it("keeps the fork budget when inherited history exceeds the remaining space", () => {
@@ -625,4 +635,25 @@ it("keeps the fork budget when inherited history exceeds the remaining space", (
   expect(result.attachment.text.length).toBeLessThanOrEqual(100_000);
   expect(result.attachment.text).toContain("[Earlier chat history omitted]");
   expect(result.attachment.text).toContain("[User] Current question\n[Assistant] Latest answer");
+});
+
+it("preserves message roles for inline history without interpreting labels inside prose", () => {
+  const result = buildAgentForkContextAttachment({
+    rows: [
+      row(1, { type: "user_message", text: "Explain this code" }),
+      row(2, {
+        type: "assistant_message",
+        text: "## Explanation\n[User] is a literal label.\n```ts\nconst answer = 42;\n```",
+      }),
+    ],
+  });
+  expect(result.attachment).toMatchObject({
+    chatHistoryEntries: [
+      { role: "user", text: "Explain this code" },
+      {
+        role: "assistant",
+        text: "## Explanation\n[User] is a literal label.\n```ts\nconst answer = 42;\n```",
+      },
+    ],
+  });
 });

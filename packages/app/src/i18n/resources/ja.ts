@@ -348,6 +348,7 @@ export const ja: TranslationResources = {
       copied: "コピーしました",
     },
     chatHistory: {
+      forkBoundary: "ここから会話を続けます",
       title: "チャット履歴",
       previousConversation: "以前の会話",
       open: "チャット履歴の添付を開く",

@@ -8,28 +8,29 @@ export function setChatHistoryViewport(page: Page, layout: "wide" | "compact") {
   );
 }
 
-export async function openChatHistory(page: Page, location: "draft" | "sent", contents: string[]) {
-  const testId =
-    location === "draft"
-      ? "composer-chat-history-attachment-pill"
-      : "message-chat-history-attachment";
-  await page.getByTestId(testId).click();
+export async function expectInlineChatHistory(page: Page, contents: string[]) {
+  const history = page.getByTestId("chat-history-transcript").filter({ visible: true });
+  await expect(history).toBeVisible({ timeout: 30_000 });
   for (const text of contents) {
-    await expect(page.getByTestId("chat-history-content")).toContainText(text);
+    await expect(history).toContainText(text);
   }
-  await expect(page.getByRole("button", { name: "Open source chat" })).toBeVisible();
+  await expect(history.getByText("Conversation continues here", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("chat-history-preview")).toHaveCount(0);
 }
 
-export async function closeChatHistory(page: Page) {
-  await page
-    .getByTestId("chat-history-preview")
-    .getByRole("button", { name: "Close", exact: true })
-    .click();
+export async function expectChatHistoryMessageStyles(page: Page, userText: string) {
+  const history = page.getByTestId("chat-history-transcript").filter({ visible: true });
+  await expect(history.getByTestId("user-message")).toContainText(userText);
+  await expect(history.getByTestId("assistant-message")).toContainText("const answer = 42;");
+  await expect(history.getByRole("heading", { name: "The answer" })).toBeVisible();
+  await expect(history.getByTestId("user-message-timestamp")).toHaveCount(0);
 }
 
 export async function followChatHistorySource(page: Page) {
-  await page.getByRole("button", { name: "Open source chat" }).click();
-  await expect(page.getByTestId("chat-history-preview")).not.toBeVisible();
+  await page
+    .getByTestId("chat-history-transcript")
+    .getByRole("button", { name: "Open source chat" })
+    .click();
 }
 
 export async function captureChatHistory(page: Page, testInfo: TestInfo, name: string) {

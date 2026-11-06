@@ -347,6 +347,7 @@ export const ptBR: TranslationResources = {
       copied: "Copiado",
     },
     chatHistory: {
+      forkBoundary: "A conversa continua aqui",
       title: "Histórico do chat",
       previousConversation: "Conversa anterior",
       open: "Abrir histórico anexado",

@@ -20,6 +20,7 @@ describe("shared messages attachments", () => {
         mimeType: "text/plain",
         contextKind: "chat_history",
         text: "Earlier context",
+        chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
         chatHistorySource: { serverId: "source-host", agentId: "source-agent", title: "Original" },
       },
     };
@@ -295,6 +296,7 @@ describe("shared messages attachments", () => {
       contextKind: "chat_history",
       title: "Chat history",
       text: "Earlier context",
+      chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier context" }],
       chatHistorySource: {
         serverId: "source-host",
         agentId: "source-agent",

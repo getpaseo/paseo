@@ -1,3 +1,4 @@
+import { ChatHistoryTranscript } from "@/attachments/chat-history/transcript";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -713,25 +714,48 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         const collapsedTurn = getCollapsedTurn(item.id);
+        const history = item.attachments?.filter(
+          (attachment) => attachment.type === "text" && attachment.contextKind === "chat_history",
+        );
+        const attachments = item.attachments?.filter(
+          (attachment) => attachment.type !== "text" || attachment.contextKind !== "chat_history",
+        );
+        const hasMessage =
+          item.text.trim().length > 0 ||
+          Boolean(item.images?.length) ||
+          Boolean(attachments?.length);
         const message = (
-          <UserMessage
-            serverId={resolvedServerId}
-            agentId={agentId}
-            messageId={item.messageId}
-            message={item.text}
-            sender={item.sender}
-            images={item.images}
-            attachments={item.attachments}
-            timestamp={item.timestamp.getTime()}
-            capabilities={context.capabilities}
-            client={client}
-            isFirstInGroup={layoutItem.isFirstInUserGroup}
-            isLastInGroup={layoutItem.isLastInUserGroup}
-            isPending={
-              item.clientMessageId !== undefined &&
-              pendingClientMessageIds.has(item.clientMessageId)
-            }
-          />
+          <>
+            {history?.map((attachment) =>
+              attachment.type === "text" ? (
+                <ChatHistoryTranscript
+                  key={attachment.text}
+                  attachment={attachment}
+                  occurrenceKey={`${agentId}:${item.id}`}
+                />
+              ) : null,
+            )}
+            {hasMessage ? (
+              <UserMessage
+                serverId={resolvedServerId}
+                agentId={agentId}
+                messageId={item.messageId}
+                message={item.text}
+                sender={item.sender}
+                images={item.images}
+                attachments={attachments}
+                timestamp={item.timestamp.getTime()}
+                capabilities={context.capabilities}
+                client={client}
+                isFirstInGroup={layoutItem.isFirstInUserGroup}
+                isLastInGroup={layoutItem.isLastInUserGroup}
+                isPending={
+                  item.clientMessageId !== undefined &&
+                  pendingClientMessageIds.has(item.clientMessageId)
+                }
+              />
+            ) : null}
+          </>
         );
         if (!collapsedTurn) {
           return message;
