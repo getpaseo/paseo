@@ -1,3 +1,4 @@
+import { ChatHistoryAttachmentSchema } from "@getpaseo/protocol/messages";
 import {
   NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
   type AttachmentMetadata,
@@ -94,6 +95,11 @@ const ChangeRequestItemSchema = z.strictObject({
 export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z.discriminatedUnion(
   "kind",
   [
+    z.strictObject({
+      kind: z.literal("restored_chat_history"),
+      id: z.string(),
+      attachment: ChatHistoryAttachmentSchema,
+    }),
     z.strictObject({ kind: z.literal("image"), metadata: AttachmentMetadataSchema }),
     z.strictObject({ kind: z.literal("file"), attachment: UploadedFileSchema }),
     z.strictObject({

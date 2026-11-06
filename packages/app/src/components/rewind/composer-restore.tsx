@@ -1,5 +1,6 @@
 import type { ChatHistoryAttachment } from "@getpaseo/protocol/messages";
-import { restoreChatHistoryAttachment } from "@/attachments/chat-history";
+import { generateMessageId } from "@/types/stream";
+import type { AgentInputDraft } from "@/composer/draft/input-draft";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
@@ -8,7 +9,7 @@ interface RewindComposerRestoreContextValue {
 }
 
 interface RewindComposerRestoreProviderProps {
-  attachmentScopeKey: string;
+  setAttachments: AgentInputDraft["setAttachments"];
   textSource: ComposerTextSource;
   setText: (text: string) => void;
   onRewindComplete: () => void;
@@ -26,7 +27,7 @@ export function restoreComposerPromptIfEmpty(input: {
 }
 
 export function RewindComposerRestoreProvider({
-  attachmentScopeKey,
+  setAttachments,
   textSource,
   setText,
   onRewindComplete,
@@ -37,14 +38,18 @@ export function RewindComposerRestoreProvider({
       const currentText = textSource.getSnapshot();
       const restored = restoreComposerPromptIfEmpty({ currentText, rewoundPrompt: prompt });
       if (restored.chatHistory) {
-        restoreChatHistoryAttachment(attachmentScopeKey, restored.chatHistory);
+        const history = restored.chatHistory;
+        setAttachments((attachments) => [
+          ...attachments.filter((attachment) => attachment.kind !== "restored_chat_history"),
+          { kind: "restored_chat_history", id: generateMessageId(), attachment: history },
+        ]);
       }
       if (restored.text !== currentText) {
         setText(restored.text);
       }
       onRewindComplete();
     },
-    [attachmentScopeKey, onRewindComplete, setText, textSource],
+    [setAttachments, onRewindComplete, setText, textSource],
   );
 
   const value = useMemo(() => ({ completeRewind }), [completeRewind]);

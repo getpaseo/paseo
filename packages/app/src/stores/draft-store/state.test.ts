@@ -8,6 +8,37 @@ import {
 } from "./state";
 
 describe("draft-store lifecycle", () => {
+  it.each(["", "Continue here"])("retains restored history in a persisted draft (%s)", (text) => {
+    const record: DraftRecord = {
+      input: {
+        text,
+        attachments: [
+          {
+            kind: "restored_chat_history",
+            id: "restored-history",
+            attachment: {
+              type: "text",
+              mimeType: "text/plain",
+              contextKind: "chat_history",
+              text: "[User] Earlier question",
+              chatHistorySource: { serverId: "original-host", agentId: "original-agent" },
+              chatHistoryEntries: [{ id: "history-0", role: "user", text: "Earlier question" }],
+            },
+          },
+        ],
+      },
+      lifecycle: "active",
+      updatedAt: 1,
+      version: 1,
+    };
+    const reloaded: DraftRecord = JSON.parse(JSON.stringify(record));
+    expect(toDraftInputIfReady(reloaded)).toEqual(record.input);
+    expect(editDraftRecordText(reloaded, "", 2).lifecycle).toBe("active");
+    const sent = applyClearDraftRecord({ record: reloaded, lifecycle: "sent", nowMs: 3 });
+    expect(sent).toMatchObject({ lifecycle: "sent", input: { attachments: [] } });
+    expect(toDraftInputIfReady(sent)).toBeUndefined();
+  });
+
   it("edits text without invalidating attachment subscribers", () => {
     const draft: DraftRecord = {
       input: {

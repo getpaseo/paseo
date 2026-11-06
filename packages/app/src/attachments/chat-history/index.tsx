@@ -1,6 +1,3 @@
-import { generateMessageId } from "@/types/stream";
-import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
-import type { ChatHistoryAttachment as HistoryAttachment } from "@getpaseo/protocol/messages";
 import { extractChatHistoryBody } from "@getpaseo/protocol/chat-history";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -112,14 +109,14 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-export function restoreChatHistoryAttachment(scopeKey: string, attachment: HistoryAttachment) {
-  useWorkspaceAttachmentsStore.getState().addWorkspaceAttachment({
-    scopeKey,
-    attachment: {
-      kind: "chat_history",
-      id: generateMessageId(),
-      attachment,
-      source: attachment.chatHistorySource,
-    },
-  });
+export function DraftChatHistoryAttachment({
+  index,
+  onRemove,
+  ...props
+}: Omit<ChatHistoryAttachmentProps, "onRemove"> & {
+  index: number;
+  onRemove: (index: number) => void;
+}) {
+  const remove = useCallback(() => onRemove(index), [index, onRemove]);
+  return <ChatHistoryAttachment {...props} onRemove={remove} />;
 }

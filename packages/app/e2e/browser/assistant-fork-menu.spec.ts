@@ -7,6 +7,8 @@ import {
   followChatHistorySource,
   expectInlineChatHistory,
   expectResentChatHistory,
+  expectNoDraftChatHistory,
+  removeDraftChatHistory,
   expectSavedAnswerEnding,
   expectChatHistoryMessageStyles,
   sendChatHistoryFromAnotherClient,
@@ -25,7 +27,11 @@ import {
   forkMostRecentAssistantTurnToNewWorkspace,
   observeForkAttachment,
 } from "../support/helpers/assistant-fork";
-import { expectComposerVisible, submitMessage } from "../support/helpers/composer";
+import {
+  expectComposerDraft,
+  expectComposerVisible,
+  submitMessage,
+} from "../support/helpers/composer";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   openAgentRoute,
@@ -155,11 +161,25 @@ test.describe("Assistant fork menu", () => {
       await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
       await openChatHistory(page, "draft", [initialPrompt]);
       await closeChatHistory(page);
+      await page.reload();
+      await expectRewoundHistoryIsPrivate(page, session.agentId, forkId);
+      await expectComposerDraft(page, prompt);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
       await submitMessage(page, prompt);
       await session.client.waitForFinish(forkId, 45_000);
       await page.reload();
       await expectResentChatHistory(page, [initialPrompt]);
+      await expectNoDraftChatHistory(page);
       await captureChatHistory(page, testInfo, "history-after-rewind.png");
+      await rewindForkPrompt(page);
+      await openChatHistory(page, "draft", [initialPrompt]);
+      await closeChatHistory(page);
+      await removeDraftChatHistory(page);
+      await page.reload();
+      await expectComposerVisible(page);
+      await expectComposerDraft(page, prompt);
+      await expectNoDraftChatHistory(page);
     });
   }
 

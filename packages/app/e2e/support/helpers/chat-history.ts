@@ -126,3 +126,15 @@ export async function expectRewoundHistoryIsPrivate(page: Page, sourceId: string
   await page.getByTestId(`workspace-tab-agent_${forkId}`).click();
   await expect(history).toBeVisible();
 }
+
+export async function expectNoDraftChatHistory(page: Page) {
+  await expect(
+    page.getByTestId("composer-chat-history-attachment-pill").filter({ visible: true }),
+  ).toHaveCount(0);
+}
+
+export async function removeDraftChatHistory(page: Page) {
+  await page.getByTestId("composer-chat-history-attachment-pill").filter({ visible: true }).hover();
+  await page.getByRole("button", { name: "Remove chat history attachment", exact: true }).click();
+  await expectNoDraftChatHistory(page);
+}
