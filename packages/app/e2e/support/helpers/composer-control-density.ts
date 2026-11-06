@@ -118,6 +118,39 @@ export async function readSettledModelTriggerLabels(page: Page): Promise<ModelTr
   }
 }
 
+/** The labels at the widths where the folded model control changes what it shows. */
+export interface ModelTriggerLabelSweep {
+  /** The labels at the widest width. */
+  widest: ModelTriggerLabelState & { width: number };
+  /** The first width at which the thinking label is hidden. */
+  thinkingHidden: ModelTriggerLabelState & { width: number };
+  /** The first width at which the model label is truncated. */
+  modelTruncated: ModelTriggerLabelState & { width: number };
+}
+
+/**
+ * Narrows the viewport step by step and records where the thinking label disappears and where the
+ * model label first truncates.
+ */
+export async function sweepModelTriggerLabels(
+  page: Page,
+  widths: { from: number; to: number; step: number; height: number },
+): Promise<ModelTriggerLabelSweep> {
+  const steps: (ModelTriggerLabelState & { width: number })[] = [];
+  for (let width = widths.from; width >= widths.to; width -= widths.step) {
+    await page.setViewportSize({ width, height: widths.height });
+    const labels = await readSettledModelTriggerLabels(page);
+    steps.push({ ...labels, width });
+    if (labels.modelTruncated || !labels.modelShown) break;
+  }
+  const thinkingHidden = steps.find((step) => !step.thinkingShown);
+  const modelTruncated = steps.find((step) => step.modelTruncated);
+  if (!thinkingHidden || !modelTruncated) {
+    throw new Error(`the sweep never hid the thinking label and truncated the model label`);
+  }
+  return { widest: steps[0], thinkingHidden, modelTruncated };
+}
+
 /** No frame recorded so far painted a truncated model label beside the thinking label. */
 export async function expectNoFrameTruncatesModelBesideThinking(page: Page): Promise<void> {
   const frames = await page.evaluate(() => window.__modelTriggerFrames ?? []);
@@ -196,7 +229,7 @@ export async function readComposerToolbarRails(page: Page): Promise<ComposerTool
 /** The toolbar's outer ink sits on the text column's edges, within half a pixel. */
 export async function expectComposerToolbarOnTextRails(page: Page): Promise<void> {
   const rails = await readComposerToolbarRails(page);
-  const message = JSON.stringify(rails);
-  expect(Math.abs(rails.inkLeft - rails.textLeft), message).toBeLessThanOrEqual(0.5);
-  expect(Math.abs(rails.inkRight - rails.textRight), message).toBeLessThanOrEqual(0.5);
+  // A precision of 0 digits passes within half a pixel.
+  expect(rails.inkLeft).toBeCloseTo(rails.textLeft, 0);
+  expect(rails.inkRight).toBeCloseTo(rails.textRight, 0);
 }

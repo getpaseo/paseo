@@ -122,7 +122,7 @@ function useModelTriggerLabels(input: {
       fullWidth: fullWidth?.key === measuredKey ? fullWidth.width : undefined,
     },
   });
-  return { labels, onFrameLayout, onFullLayout };
+  return { labels, measuredKey, onFrameLayout, onFullLayout };
 }
 
 export function CompactModelSheet({
@@ -492,6 +492,9 @@ function ModelSheetTrigger({
       </ComboboxTrigger>
       {!iconOnly && thinkingLabel ? (
         <View
+          // Keyed by what it measures: a retained node whose size does not change emits no new
+          // layout event, so new labels would never be measured.
+          key={triggerLabels.measuredKey}
           style={[styles.trigger, styles.triggerMeasurer]}
           onLayout={triggerLabels.onFullLayout}
           pointerEvents="none"

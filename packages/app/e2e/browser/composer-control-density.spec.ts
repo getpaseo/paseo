@@ -8,7 +8,7 @@ import {
   readSettledModelTriggerLabels,
   recordComposerToolbarFrames,
   recordModelTriggerFramesFromLoad,
-  type ModelTriggerLabelState,
+  sweepModelTriggerLabels,
 } from "../support/helpers/composer-control-density";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -153,29 +153,28 @@ test.describe("Folded model control on a phone", () => {
       // has measured that they fit.
       await expectNoFrameTruncatesModelBesideThinking(page);
 
-      const steps: { width: number; labels: ModelTriggerLabelState }[] = [];
-      for (let width = 480; width >= 280; width -= 4) {
-        await page.setViewportSize({ width, height: 844 });
-        const labels = await readSettledModelTriggerLabels(page);
-        if (!labels.modelShown) break;
-        steps.push({ width, labels });
-        if (labels.modelTruncated) break;
-      }
+      const sweep = await sweepModelTriggerLabels(page, {
+        from: 480,
+        to: 280,
+        step: 4,
+        height: 844,
+      });
 
-      expect(steps[0].labels).toEqual({
-        modelShown: true,
+      expect(sweep.widest).toMatchObject({
         modelText: "Ten second stream",
         thinkingShown: true,
         modelTruncated: false,
       });
-      const thinkingHidden = steps.findIndex((step) => !step.labels.thinkingShown);
-      const modelTruncated = steps.findIndex((step) => step.labels.modelTruncated);
-      expect(thinkingHidden, JSON.stringify(steps)).toBeGreaterThan(0);
-      expect(steps[thinkingHidden].labels.modelTruncated).toBe(false);
-      expect(modelTruncated, JSON.stringify(steps)).toBeGreaterThan(thinkingHidden);
-      expect(steps[modelTruncated].labels.thinkingShown).toBe(false);
+      expect(sweep.thinkingHidden).toMatchObject({
+        modelText: "Ten second stream",
+        modelTruncated: false,
+      });
+      expect(sweep.modelTruncated.width).toBeLessThan(sweep.thinkingHidden.width);
       // A clean tail: the label ends on a whole word and the ellipsis, never on a space.
-      expect(steps[modelTruncated].labels.modelText).toBe("Ten second…");
+      expect(sweep.modelTruncated).toMatchObject({
+        modelText: "Ten second…",
+        thinkingShown: false,
+      });
     } finally {
       await session.cleanup();
     }

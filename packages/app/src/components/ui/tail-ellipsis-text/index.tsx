@@ -76,7 +76,10 @@ export function TailEllipsisText({
           {shownText}
         </Text>
       </View>
+      {/* Keyed by the text, so new text remounts the measurer and every width is measured again.
+          A retained node whose size does not change emits no new layout event. */}
       <View
+        key={text}
         style={styles.measurer}
         pointerEvents="none"
         accessibilityElementsHidden
