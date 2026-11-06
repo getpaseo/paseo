@@ -429,12 +429,14 @@ describe("host runtime app lifecycle", () => {
     let onHeartbeat = () => {};
     let heartbeatCount = 0;
     const serviceChanges: boolean[] = [];
+    const subscriptions = new Set<string>();
     const unbind = bindBackgroundConnectionKeeper(
       {
         getEarliestOnlineHostServerId: () => (online ? "host-a" : null),
         subscribeAll: (listener) => {
           onStoreChange = listener;
-          return () => {};
+          subscriptions.add("hosts");
+          return () => void subscriptions.delete("hosts");
         },
         sendBackgroundHeartbeats: () => {
           heartbeatCount += 1;
@@ -444,7 +446,8 @@ describe("host runtime app lifecycle", () => {
         currentState: state,
         addEventListener: (_event, listener) => {
           onAppState = listener;
-          return { remove: () => {} };
+          subscriptions.add("app-state");
+          return { remove: () => void subscriptions.delete("app-state") };
         },
       },
       {
@@ -454,7 +457,8 @@ describe("host runtime app lifecycle", () => {
         },
         subscribeHeartbeat: (listener) => {
           onHeartbeat = listener;
-          return () => {};
+          subscriptions.add("heartbeat");
+          return () => void subscriptions.delete("heartbeat");
         },
       },
     );
@@ -475,6 +479,45 @@ describe("host runtime app lifecycle", () => {
     onAppState(state);
     expect(serviceChanges).toEqual([true, false]);
     unbind();
+    expect([...subscriptions]).toEqual([]);
+  });
+
+  it("stops an enabled keeper and removes its subscriptions when the binding is disposed", () => {
+    const serviceChanges: boolean[] = [];
+    const subscriptions = new Set<string>();
+    const unbind = bindBackgroundConnectionKeeper(
+      {
+        getEarliestOnlineHostServerId: () => "host-a",
+        subscribeAll: () => {
+          subscriptions.add("hosts");
+          return () => void subscriptions.delete("hosts");
+        },
+        sendBackgroundHeartbeats: () => {},
+      },
+      {
+        currentState: "active",
+        addEventListener: () => {
+          subscriptions.add("app-state");
+          return { remove: () => void subscriptions.delete("app-state") };
+        },
+      },
+      {
+        setEnabled: (enabled) => {
+          serviceChanges.push(enabled);
+          return enabled;
+        },
+        subscribeHeartbeat: () => {
+          subscriptions.add("heartbeat");
+          return () => void subscriptions.delete("heartbeat");
+        },
+      },
+    );
+
+    expect(serviceChanges).toEqual([true]);
+    expect(subscriptions.size).toBe(3);
+    unbind();
+    expect(serviceChanges).toEqual([true, false]);
+    expect(subscriptions.size).toBe(0);
   });
 
   it("waits until the app is active to start a service for a connected host", () => {

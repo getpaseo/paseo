@@ -1,6 +1,6 @@
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import { AppState, Platform } from "react-native";
+import { AppState, Platform, type AppStateStatus } from "react-native";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
@@ -1841,6 +1841,15 @@ export interface CreateSessionAgentStreamReducerQueueInput {
   ) => void;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
   onCommitted?: (agentId: string) => void;
+  runtime?: SessionAgentStreamRuntime;
+}
+
+export interface SessionAgentStreamRuntime {
+  isAndroid: boolean;
+  getAppState: () => AppStateStatus | null;
+  subscribeAppState: (listener: (state: AppStateStatus) => void) => () => void;
+  scheduleFlush: (callback: () => void) => number;
+  cancelFlush: (id: number) => void;
 }
 
 interface ScheduledReducerFlush {
@@ -1897,6 +1906,18 @@ export function createSessionAgentStreamReducerQueue(
 ): AgentStreamReducerQueue {
   const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap, onCommitted } =
     input;
+  const runtime =
+    input.runtime ??
+    ({
+      isAndroid: Platform.OS === "android",
+      getAppState: () => AppState.currentState,
+      subscribeAppState: (listener: (state: AppStateStatus) => void) => {
+        const subscription = AppState.addEventListener("change", listener);
+        return () => subscription.remove();
+      },
+      scheduleFlush: scheduleAgentStreamReducerFlush,
+      cancelFlush: cancelAgentStreamReducerFlush,
+    } satisfies SessionAgentStreamRuntime);
 
   const queue = createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1964,23 +1985,22 @@ export function createSessionAgentStreamReducerQueue(
         }
       }
     },
-    scheduleFlush: scheduleAgentStreamReducerFlush,
-    cancelFlush: cancelAgentStreamReducerFlush,
-    shouldFlushImmediately: () => Platform.OS === "android" && AppState.currentState !== "active",
+    scheduleFlush: runtime.scheduleFlush,
+    cancelFlush: runtime.cancelFlush,
+    shouldFlushImmediately: () => runtime.isAndroid && runtime.getAppState() !== "active",
   });
 
-  const appStateSubscription =
-    Platform.OS === "android"
-      ? AppState.addEventListener("change", (state) => {
-          // A frame scheduled just before backgrounding may never fire there.
-          if (state !== "active") queue.flush();
-        })
-      : null;
+  const unsubscribeAppState = runtime.isAndroid
+    ? runtime.subscribeAppState((state) => {
+        // A frame scheduled just before backgrounding may never fire there.
+        if (state !== "active") queue.flush();
+      })
+    : null;
 
   return {
     ...queue,
     dispose(options) {
-      appStateSubscription?.remove();
+      unsubscribeAppState?.();
       queue.dispose(options);
     },
   };
