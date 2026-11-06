@@ -1733,6 +1733,77 @@ test(
 );
 
 test(
+  "a background caller's MCP and SDK children and workspaces on B are background unless it overrides",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon();
+    const { paseo } = await api(a);
+    await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "Fleet B" });
+    const directory = await online(paseo);
+    const workspace = await paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "Background parent",
+      background: true,
+    });
+    const mcp = new Client({ name: "background-delegation", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const response = await mcp.callTool({ name, arguments: args });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      return z.record(z.string(), z.unknown()).parse(response.structuredContent);
+    };
+    const serverId = directory.hosts[0]!.serverId!;
+    const hidden = await call("create_workspace", {
+      serverId,
+      isolation: "local",
+      path: b.staticDir,
+      title: "Inherited workspace",
+    });
+    const helper = await call("create_agent", {
+      serverId,
+      workspaceId: hidden.workspaceId,
+      title: "Inherited helper",
+      provider: "claude/claude-test",
+      initialPrompt: "Summarize",
+    });
+    const visible = await call("create_agent", {
+      serverId,
+      workspaceId: hidden.workspaceId,
+      title: "Visible helper",
+      provider: "claude/claude-test",
+      initialPrompt: "Summarize",
+      background: false,
+    });
+
+    const bApi = await api(b);
+    const workspaces = await bApi.client.fetchWorkspaces({ includeBackground: true });
+    expect(workspaces.entries.find((entry) => entry.id === hidden.workspaceId)).toMatchObject({
+      background: true,
+    });
+    const snapshot = async (agentId: unknown) =>
+      (await bApi.paseo.agents.ref(String(agentId)).refresh())?.agent;
+    expect(await snapshot(helper.agentId)).toMatchObject({ background: true });
+    expect((await snapshot(visible.agentId))?.background).toBeUndefined();
+
+    const sdkChild = await bApi.paseo.workspaces.ref(String(hidden.workspaceId)).agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "SDK helper",
+      parent,
+    });
+    expect(sdkChild.current()).toMatchObject({ background: true });
+  },
+);
+
+test(
   "remote agent reports, local CLI sends and automatic completion reach the same recipient",
   { timeout: 30000 },
   async () => {

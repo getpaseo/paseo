@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "playwright/test";
+import { expect, test, type Page } from "./fixtures";
 
 function languageButton(page: Page) {
   return page.getByRole("button", { name: /^(Language|语言)/ }).first();

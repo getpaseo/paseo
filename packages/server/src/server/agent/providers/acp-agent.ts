@@ -1,10 +1,12 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
+import { setImmediate } from "node:timers/promises";
 
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import type { ProcessTerminator } from "../../../utils/tree-kill.js";
@@ -166,6 +168,16 @@ function rejectOnProcessFailure(child: ChildProcess, stderrChunks: string[]): Pr
   });
 }
 
+function describeACPDisconnect(child: ChildProcess | null): string {
+  if (child?.signalCode) {
+    return `ACP agent disconnected (signal ${child.signalCode})`;
+  }
+  if (child?.exitCode != null) {
+    return `ACP agent disconnected (exit code ${child.exitCode})`;
+  }
+  return "ACP agent disconnected";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -323,6 +335,7 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -1756,6 +1769,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly earlySessionUpdates: SessionNotification[] = [];
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
+  private sessionModeState: SessionStateResponse["modes"] = null;
   private currentModel: string | null = null;
   private availableModels: AvailableACPModel[] | null = null;
   private thinkingOptionId: string | null = null;
@@ -1978,6 +1992,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!this.connection || !this.sessionId) {
       throw new Error(`${this.provider} session is not initialized`);
     }
+    if (this.connection.signal.aborted) {
+      throw new Error(describeACPDisconnect(this.child));
+    }
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
@@ -1992,7 +2009,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
+    const connection = this.connection;
+    const child = this.child;
+    const failOnDisconnect = () => void this.failDisconnectedTurn(turnId, child);
+    connection.signal.addEventListener("abort", failOnDisconnect, { once: true });
+    void connection
       .prompt({
         sessionId: this.sessionId,
         messageId,
@@ -2012,9 +2033,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
           turnId,
         });
-      });
+      })
+      .finally(() => connection.signal.removeEventListener("abort", failOnDisconnect));
 
     return { turnId };
+  }
+
+  // The SDK aborts the connection without rejecting the pending prompt, and before the child's
+  // exit event, so wait for the exit status before failing the turn.
+  private async failDisconnectedTurn(turnId: string, child: ChildProcess | null): Promise<void> {
+    await setImmediate();
+    if (child && child.exitCode === null && child.signalCode === null) {
+      await once(child, "exit", {
+        signal: AbortSignal.timeout(ACP_DISCONNECT_EXIT_GRACE_MS),
+      }).catch(() => undefined);
+    }
+    if (this.closed || this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+    this.synthesizeCanceledToolCalls();
+    const error = describeACPDisconnect(child);
+    this.finishTurn({
+      type: "turn_failed",
+      provider: this.provider,
+      error,
+      diagnostic: this.collectDiagnostic(error),
+      turnId,
+    });
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2104,11 +2149,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("ACP session not initialized");
     }
 
-    const selection = resolveACPModeSelection({
-      modeId,
-      availableModes: this.availableModes,
-      configOptions: this.configOptions,
-    });
+    const selection = this.resolveModeSelection(modeId);
     await this.setModeWithSelection({ modeId, selection });
   }
 
@@ -2134,7 +2175,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (providerResult.configOptions) {
         this.configOptions = this.transformConfigOptions(providerResult.configOptions);
       }
-      this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+      this.availableModes = this.modesFromConfig().modes;
       this.pushEvent({
         type: "mode_changed",
         provider: this.provider,
@@ -2213,7 +2254,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modeId,
       label: "mode",
     });
-    this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+    this.availableModes = this.modesFromConfig().modes;
     this.pushEvent({
       type: "mode_changed",
       provider: this.provider,
@@ -2966,6 +3007,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       : response;
 
     this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
+    this.sessionModeState = transformed.modes ?? null;
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
@@ -2991,11 +3033,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private async applyConfiguredOverrides(): Promise<void> {
     const configuredModeId = this.config.modeId;
     if (configuredModeId && configuredModeId !== this.currentMode) {
-      const selection = resolveACPModeSelection({
-        modeId: configuredModeId,
-        availableModes: this.availableModes,
-        configOptions: this.configOptions,
-      });
+      const selection = this.resolveModeSelection(configuredModeId);
       await this.setModeWithSelection({ modeId: configuredModeId, selection });
     }
     const configuredModelId = this.config.model;
@@ -3252,9 +3290,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentMode = this.transformModeId(update.currentModeId);
   }
 
+  private modesFromConfig() {
+    let modes = this.sessionModeState;
+    if (modes) {
+      let currentModeId = this.currentMode ?? modes.currentModeId;
+      const configMode = findSelectConfigOption({
+        configOptions: this.configOptions,
+        category: "mode",
+      });
+      // Copilot config updates name real modes; Hermes config values are a separate policy namespace.
+      if (configMode && modes.availableModes.some((mode) => mode.id === configMode.currentValue)) {
+        currentModeId = configMode.currentValue;
+      }
+      modes = { ...modes, currentModeId };
+    }
+    return deriveModesFromACP(this.defaultModes, modes, this.configOptions);
+  }
+
+  private resolveModeSelection(modeId: string): ACPModeSelection {
+    const hasSessionModes = Boolean(this.sessionModeState?.availableModes.length);
+    const modeConfig = findSelectConfigOption({
+      configOptions: this.configOptions,
+      category: "mode",
+    });
+    const configOnly = !hasSessionModes && modeConfig !== null;
+    const availableModes = configOnly ? [] : this.availableModes;
+    return resolveACPModeSelection({ modeId, availableModes, configOptions: this.configOptions });
+  }
+
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
     this.configOptions = this.transformConfigOptions(update.configOptions);
-    const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
+    const modeInfo = this.modesFromConfig();
     const nextMode = modeInfo.currentModeId;
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
     const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");

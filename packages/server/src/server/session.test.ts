@@ -411,6 +411,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
+      getAgentBackgroundWorkSummary: () => undefined,
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),
@@ -4239,7 +4240,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: {
         list: vi.fn().mockResolvedValue([project]),
         get: vi.fn().mockResolvedValue(project),
@@ -4319,7 +4320,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
       workspaceGitService: {
         getSnapshot: vi.fn(),
@@ -6104,4 +6105,252 @@ test("a failing direct source observes fire-and-forget file replies without unha
     await session.cleanup();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("answers an agent background work list request", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ id: "agent-a" })),
+      getAgentBackgroundWorkSummary: () => ({ count: 1 }),
+      listAgentBackgroundWork: vi.fn(() => [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-1",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-1",
+      agentId: "agent-a",
+      items: [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ],
+      error: null,
+    },
+  });
+});
+
+test("reports an unavailable inventory for a stored agent without loading it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const resumeAgentFromPersistence = vi.fn();
+  const createAgent = vi.fn();
+  const listAgentBackgroundWork = vi.fn(() => []);
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["claude"]),
+      resumeAgentFromPersistence,
+      createAgent,
+      listAgentBackgroundWork,
+    },
+    agentStorage: {
+      get: vi.fn().mockResolvedValue(
+        createStoredAgentRecord({
+          id: "agent-a",
+          cwd: "/tmp/repo",
+          provider: "claude",
+          persistence: { provider: "claude", sessionId: "session-a" },
+        }),
+      ),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-stored",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-stored",
+      agentId: "agent-a",
+      items: [],
+      error: "Background work inventory is unavailable",
+    },
+  });
+  expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+  expect(createAgent).not.toHaveBeenCalled();
+  expect(listAgentBackgroundWork).not.toHaveBeenCalled();
+});
+
+test.each([
+  {
+    name: "an archived agent",
+    record: createStoredAgentRecord({
+      id: "agent-a",
+      cwd: "/tmp/repo",
+      archivedAt: "2026-10-06T10:00:00.000Z",
+    }),
+    error: "Agent is archived: agent-a",
+  },
+  { name: "an unknown agent", record: undefined, error: "Unknown agent 'agent-a'" },
+  {
+    name: "an internal agent",
+    record: createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo", internal: true }),
+    error: "Unknown agent 'agent-a'",
+  },
+])("rejects a background work list request for $name that is not loaded", async (scenario) => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["codex"]),
+      resumeAgentFromPersistence: vi.fn(),
+      createAgent: vi.fn(),
+    },
+    agentStorage: { get: vi.fn().mockResolvedValue(scenario.record) },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-rejected",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: { requestId: "list-rejected", agentId: "agent-a", items: [], error: scenario.error },
+  });
+});
+
+test("never pushes background work to an old app", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  // provider_subagents makes subagent updates flow to this legacy socket, so the
+  // manager listener is installed for it.
+  const legacySocket = {};
+  session.updateClientCapabilities({ provider_subagents: true }, legacySocket);
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+
+  listener({
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+
+  const pushed = [...messages, ...targetedMessages.map((entry) => entry.message)];
+  expect(pushed.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("pushes background work only to clients that subscribed to it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const forward = (event: AgentManagerEvent) => {
+    for (const listener of agentEventListeners) listener(event);
+  };
+  const event: AgentManagerEvent = {
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  };
+
+  // Subscribe to an unrelated event so the manager listener is installed, then prove
+  // a client that did not ask for background work never receives it.
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-1",
+    events: ["agent.provider_subagents.update"],
+  });
+  if (agentEventListeners.length === 0) throw new Error("Agent event listener was not installed");
+  forward(event);
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-2",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+
+  forward(event);
+
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "agent.background_work.update",
+      payload: expect.objectContaining({ agentId: "agent-a", items: event.items }),
+    }),
+  );
+});
+
+test("does not publish internal agents' background work to subscribed clients", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: () => ({ id: "internal-agent", internal: true }) as never,
+      subscribe: (callback) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+  });
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "subscribe-internal-background",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "background_work",
+    agentId: "internal-agent",
+    items: [
+      { id: "work", kind: "shell", description: "private", startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
 });

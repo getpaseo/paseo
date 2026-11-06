@@ -811,64 +811,78 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
-  test("known packed remote refs materialize narrowly while namespace directories are ignored", async () => {
-    const watcher = createWatcherHarness();
-    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
-      ...createCheckoutFacts(cwd),
-      currentBranch: "feature",
-      remoteUrl: REMOTE_URL,
-      resolvedBaseRef: "main",
-      comparisonBaseRef: "origin/main",
-    }));
-    const getCheckoutRefDerivedState = vi.fn(async (_cwd, facts, current) => ({
-      ...current,
-      upstreamStatus: facts.upstreamStatus,
-    }));
-    const service = createService(watcher, {
-      getCheckoutSnapshotFacts,
-      getCheckoutRefDerivedState,
-      hasOriginRemote: vi.fn(async () => true),
-      runGitFetch: vi.fn(async (_cwd, observer) => {
-        observer.onRefSnapshot("before");
-        observer.onRefSnapshot("after");
-        return {
-          changes: [],
-          nonRemoteRefsChanged: false,
-          remoteRefs: new Set(["origin/main", "origin/load/00001"]),
-          error: null,
-        };
-      }),
-    });
-    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-    await vi.waitFor(() => {
-      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+  test.each([0, 100])(
+    "known packed remote refs materialize narrowly while namespace directories are ignored (watch setup delay %i ms)",
+    async (setupDelayMs) => {
+      const watcher = createWatcherHarness();
+      let fetchStarted = false;
+      const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+        ...createCheckoutFacts(cwd),
+        currentBranch: "feature",
+        remoteUrl: REMOTE_URL,
+        resolvedBaseRef: "main",
+        comparisonBaseRef: "origin/main",
+      }));
+      const getCheckoutRefDerivedState = vi.fn(async (_cwd, facts, current) => ({
+        ...current,
+        upstreamStatus: facts.upstreamStatus,
+      }));
+      const service = createService(watcher, {
+        subscribe: async (...args: Parameters<typeof watcher.subscribe>) => {
+          if (args[0] === GIT_DIR && setupDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, setupDelayMs));
+          }
+          return watcher.subscribe(...args);
+        },
+        getCheckoutSnapshotFacts,
+        getCheckoutRefDerivedState,
+        hasOriginRemote: vi.fn(async () => true),
+        runGitFetch: vi.fn(async (_cwd, observer) => {
+          fetchStarted = true;
+          observer.onRefSnapshot("before");
+          observer.onRefSnapshot("after");
+          return {
+            changes: [],
+            nonRemoteRefsChanged: false,
+            remoteRefs: new Set(["origin/main", "origin/load/00001"]),
+            error: null,
+          };
+        }),
+      });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      await vi.waitFor(() => {
+        // An idle fetch count also holds before observation setup starts.
+        expect(fetchStarted).toBe(true);
+        expect(service.getMetrics().fetchInFlightCount).toBe(0);
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      });
+
+      const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR)!;
+      expect(repoWatcher).toBeDefined();
+      repoWatcher.callback(null, [
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "load"), type: "create" },
+        {
+          path: path.join(GIT_DIR, "refs", "remotes", "origin", "load", "00001"),
+          type: "create",
+        },
+      ]);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-    });
+      expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
 
-    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
-    repoWatcher?.callback(null, [
-      { path: path.join(GIT_DIR, "refs", "remotes", "origin", "load"), type: "create" },
-      {
-        path: path.join(GIT_DIR, "refs", "remotes", "origin", "load", "00001"),
-        type: "create",
-      },
-    ]);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-    expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
+      repoWatcher.callback(null, [
+        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "create" },
+      ]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => {
+        expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
+      });
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
 
-    repoWatcher?.callback(null, [
-      { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "create" },
-    ]);
-    await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
-    });
-    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-
-    subscription.unsubscribe();
-    service.dispose();
-  });
+      subscription.unsubscribe();
+      await service.dispose();
+    },
+  );
 
   test("a second remote-ref move during a narrow refresh queues a final calculation", async () => {
     const watcher = createWatcherHarness();

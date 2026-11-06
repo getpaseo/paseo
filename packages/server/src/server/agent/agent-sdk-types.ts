@@ -468,6 +468,12 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
+    }
+  | {
+      /** Full replacement of the agent's live background work (shells, monitors…). */
+      type: "background_work";
+      provider: AgentProvider;
+      items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
@@ -705,6 +711,8 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /** Stop one currently owned background item and wait for provider confirmation. */
+  stopBackgroundWork?(id: string): Promise<void>;
   /** True only when releasing this runtime loses no background work or pending replies.
    * An optional additional veto: missing methods use daemon baseline eligibility;
    * implemented checks that reject or return false keep the runtime resident. */

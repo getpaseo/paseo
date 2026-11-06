@@ -10,6 +10,7 @@ test("plugin header and composer buttons share actions, menus, content, and upda
     await buttons.verifyObservationLifetime();
     await buttons.openWideMenusAndPopovers();
     await buttons.runAndUpdateActions();
+    await buttons.keepTrackSpaceWithoutPills();
     await buttons.openCompactSheets();
     await buttons.useCompactWorkspaceMenu();
     await buttons.hideAndUnloadOpenButtons();

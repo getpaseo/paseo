@@ -227,6 +227,57 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+describe("Codex file-change approvals", () => {
+  test("file-change approval includes the matching patch when notifications are still queued", async () => {
+    const appServer = createFakeCodexAppServer();
+    const { session } = await startPublicSteeringSession(appServer);
+    try {
+      for (const [id, filePath, diff] of [
+        ["file-alpha", "/workspace/project/alpha.txt", "@@ -1 +1 @@\n-blue\n+green\n"],
+        ["file-beta", "/workspace/project/beta.txt", "@@ -1 +1 @@\n-small\n+large\n"],
+      ]) {
+        appServer.startsFileChange({
+          threadId: "thread-1",
+          turnId: "native-A",
+          callId: id,
+          path: filePath,
+          diff,
+        });
+      }
+      const permission = waitForNextPermission(session);
+      appServer.requestFileChangeApproval({
+        itemId: "file-alpha",
+        threadId: "thread-1",
+        turnId: "native-A",
+        reason: "Apply the patch",
+      });
+
+      expect((await permission).request).toEqual({
+        id: "permission-file-alpha",
+        provider: "codex",
+        name: "CodexFileChange",
+        kind: "tool",
+        title: "Apply file changes: alpha.txt",
+        description: "Apply the patch",
+        detail: {
+          type: "edit",
+          filePath: "alpha.txt",
+          unifiedDiff: "@@ -1 +1 @@\n-blue\n+green\n",
+        },
+        metadata: { itemId: "file-alpha", threadId: "thread-1", turnId: "native-A" },
+      });
+
+      await session.respondToPermission("permission-file-alpha", { behavior: "allow" });
+      await expect(appServer.waitForApprovalDecision("file-alpha")).resolves.toEqual({
+        decision: "accept",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe("Codex active-turn steering admission", () => {
   test("steers an accepted turn whose native id arrives after startTurn returns", async () => {
     const appServer = createFakeCodexAppServer({
@@ -649,6 +700,20 @@ function markdownImageSource(markdown: string): string {
   }
   const source = match[1].replace(/\\\)/g, ")");
   return source.startsWith("file://") ? fileURLToPath(source) : source;
+}
+
+function latestBackgroundWork(events: AgentStreamEvent[]) {
+  return events.findLast((event) => event.type === "background_work");
+}
+
+function hasBackgroundListRequest(appServer: FakeCodexAppServer, threadId: string) {
+  return appServer
+    .requests()
+    .some(
+      (request) =>
+        request.method === "thread/backgroundTerminals/list" &&
+        (request.params as { threadId: string }).threadId === threadId,
+    );
 }
 
 function emitCodexUserMessage(
@@ -2121,13 +2186,16 @@ describe("Codex app-server provider", () => {
         expect.objectContaining({ type: "user_message", messageId: "user-1", text: "Hello" }),
         expect.objectContaining({ type: "assistant_message", text: "Hi there." }),
       ]);
-      expect(codex.threadMethods(0)).toEqual([
+      // Background terminal observation is independent of conversation history loading.
+      const historyMethods = (index: number) =>
+        codex.threadMethods(index).filter((method) => method !== "thread/backgroundTerminals/list");
+      expect(historyMethods(0)).toEqual([
         "thread/loaded/list",
         "thread/resume",
         "thread/read",
         "thread/read",
       ]);
-      expect(codex.threadMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
+      expect(historyMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
       expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
     } finally {
       await codex.close();
@@ -2495,6 +2563,77 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("keeps a background terminal controllable on its original thread after rewind", async () => {
+    let live = true;
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
+      "thread/read": () => ({ thread: { id: "thread-1", historyMode: "legacy", turns: [] } }),
+      "thread/backgroundTerminals/list": (params) => {
+        const threadId = (params as { threadId: string }).threadId;
+        if (threadId === "thread-1" && live)
+          return { data: [{ processId: "12", command: "sleep 180" }], nextCursor: null };
+        if (threadId === "forked-thread")
+          return { data: [{ processId: "12", command: "sleep 99" }], nextCursor: null };
+        return { data: [], nextCursor: null };
+      },
+      "thread/backgroundTerminals/terminate": (params) => {
+        expect(params).toMatchObject({ threadId: "thread-1", processId: "12" });
+        live = false;
+        return { terminated: true };
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("first");
+      emitCodexUserMessage(appServer, { id: "first", text: "first", turnId: "turn-first" });
+      appServer.completeTurn();
+      await vi.waitFor(() =>
+        expect(latestBackgroundWork(events)).toMatchObject({
+          items: [{ command: "sleep 180" }],
+        }),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.startTurn("second");
+      emitCodexUserMessage(appServer, { id: "second", text: "second", turnId: "turn-second" });
+      appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.revertConversation({ messageId: "second" });
+      await session.startTurn("continue");
+      appServer.startsTerminalCommand({
+        threadId: "forked-thread",
+        turnId: "turn-next",
+        itemId: "new",
+        processId: "12",
+        command: "echo hello",
+      });
+      await vi.waitFor(() =>
+        expect(hasBackgroundListRequest(appServer, "forked-thread")).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(latestBackgroundWork(events)).toMatchObject({
+          items: [{ command: "sleep 180" }, { command: "sleep 99" }],
+        }),
+      );
+      const items = latestBackgroundWork(events)?.items;
+      expect(items).toHaveLength(2);
+      expect(items![0].id).not.toBe(items![1].id);
+      await session.stopBackgroundWork(items![0].id);
+      expect(latestBackgroundWork(events)).toMatchObject({
+        items: [{ command: "sleep 99" }],
+      });
+    } finally {
+      await session.close();
+    }
   });
 
   test("rewinds a paginated conversation through the public session capability", async () => {
@@ -3384,6 +3523,87 @@ describe("Codex app-server provider", () => {
       expect(item.detail.newString).toBeUndefined();
     }
   });
+
+  test.each([
+    ["patch_apply_begin", undefined, "running", null],
+    ["patch_apply_end", true, "completed", null],
+    ["patch_apply_end", false, "failed", { message: "Cannot apply patch" }],
+  ] as const)(
+    "maps both files from legacy %s notifications (success: %s)",
+    async (type, success, status, error) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/tmp/repo" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      try {
+        await session.connect();
+        const nextTimelineItem = waitForNextTimelineItem(session);
+        appServer.child.stdout.write(
+          `${JSON.stringify({
+            method: `codex/event/${type}`,
+            params: {
+              conversationId: "thread-1",
+              msg: {
+                type,
+                call_id: "patch-array-alias",
+                changes: [
+                  {
+                    path: "/tmp/repo/src/array-alias.ts",
+                    kind: "modify",
+                    unified_diff: "@@\n-old\n+new\n",
+                  },
+                  {
+                    path: "/tmp/repo/src/second.ts",
+                    kind: "modify",
+                    unified_diff: "@@\n-before\n+after\n",
+                  },
+                ],
+                success,
+                stderr: "Cannot apply patch",
+              },
+            },
+          })}\n`,
+        );
+
+        await expect(nextTimelineItem).resolves.toEqual({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "tool_call",
+            callId: "patch-array-alias",
+            name: "apply_patch",
+            status,
+            error,
+            detail: {
+              type: "edit",
+              filePath: "src/array-alias.ts",
+              unifiedDiff: [
+                "diff --git a/src/array-alias.ts b/src/array-alias.ts",
+                "--- a/src/array-alias.ts",
+                "+++ b/src/array-alias.ts",
+                "@@",
+                "-old",
+                "+new",
+                "",
+                "diff --git a/src/second.ts b/src/second.ts",
+                "--- a/src/second.ts",
+                "+++ b/src/second.ts",
+                "@@",
+                "-before",
+                "+after",
+              ].join("\n"),
+            },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("maps Codex plan markdown to a synthetic plan tool call", () => {
     const item = mapCodexPlanToToolCall({
@@ -4739,6 +4959,10 @@ describe("Codex app-server provider", () => {
   test("settles a forced cancel when the app-server exits after the shutdown deadline", async () => {
     const stuckAppServer = createFakeCodexAppServer({
       "turn/interrupt": () => new Promise(() => undefined),
+      "thread/backgroundTerminals/list": () => ({
+        data: [{ processId: "shell-1", command: "sleep 180" }],
+        nextCursor: null,
+      }),
     });
     const replacementAppServer = createFakeCodexAppServer();
     const spawnedChildren = [stuckAppServer.child, replacementAppServer.child];
@@ -4754,7 +4978,9 @@ describe("Codex app-server provider", () => {
       },
     );
     const terminalEvents: TurnTerminalEvent[] = [];
+    const observedEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => {
+      observedEvents.push(event);
       if (
         event.type === "turn_completed" ||
         event.type === "turn_failed" ||
@@ -4767,7 +4993,18 @@ describe("Codex app-server provider", () => {
     try {
       await session.startTurn("Install dependencies.");
       stuckAppServer.startsTurn({ threadId: "thread-1", turnId: "turn-stuck" });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      stuckAppServer.startsTerminalCommand({
+        threadId: "thread-1",
+        turnId: "turn-stuck",
+        itemId: "command-1",
+        processId: "shell-1",
+        command: "sleep 180",
+      });
+      await vi.waitFor(() =>
+        expect(latestBackgroundWork(observedEvents)).toMatchObject({
+          items: [{ command: "sleep 180" }],
+        }),
+      );
       vi.useFakeTimers();
 
       const firstInterrupt = session.interrupt();
@@ -4792,6 +5029,7 @@ describe("Codex app-server provider", () => {
       expect(terminalEvents).toEqual([
         expect.objectContaining({ type: "turn_canceled", provider: CODEX_PROVIDER }),
       ]);
+      expect(latestBackgroundWork(observedEvents)).toMatchObject({ items: null });
 
       await session.startTurn("Try again.");
       await replacementAppServer.waitForTurnStart();
@@ -7947,7 +8185,7 @@ describe("Codex interactive resume startup", () => {
       unsubscribe();
       const laterEvents: AgentStreamEvent[] = [];
       session.subscribe((event) => laterEvents.push(event));
-      expect(laterEvents).toEqual([]);
+      expect(laterEvents.filter((event) => event.type !== "background_work")).toEqual([]);
     } finally {
       await session.close();
       appServer.assertNoErrors();
@@ -8090,4 +8328,94 @@ test("publishes a materialized image before dispatching the following turn compl
   } finally {
     await session.close();
   }
+});
+
+describe("legacy multi-file diff budget", () => {
+  test.each([true, false])(
+    "retains later file diffs when a large patch is running: %s",
+    (running) => {
+      const item = mapCodexPatchNotificationToToolCall({
+        callId: "large-legacy-patch",
+        cwd: "/repo",
+        running,
+        success: true,
+        changes: [
+          {
+            path: "/repo/alpha.txt",
+            kind: "modify",
+            unified_diff: "@@ -1 +1 @@\n-old\n+" + "a".repeat(14000),
+          },
+          { path: "/repo/beta.txt", kind: "modify", unified_diff: "@@ -1 +1 @@\n-small\n+large\n" },
+        ],
+      });
+      expect(item?.detail.type).toBe("edit");
+      if (item?.detail.type !== "edit") throw new Error("Expected edit detail");
+      expect(item.detail.unifiedDiff).toContain("diff --git a/beta.txt b/beta.txt");
+      expect(item.detail.unifiedDiff).toContain("+large");
+      expect(item.detail.unifiedDiff!.length).toBeLessThanOrEqual(12000);
+    },
+  );
+});
+
+describe("legacy multi-file move metadata", () => {
+  test.each([true, false])("preserves path-keyed moves while running: %s", (running) => {
+    const item = mapCodexPatchNotificationToToolCall({
+      callId: "legacy-move",
+      cwd: "/repo",
+      running,
+      success: true,
+      changes: {
+        "/repo/old.txt": {
+          type: "update",
+          move_path: "/repo/new.txt",
+          unified_diff: "@@ -1 +1 @@\n-old\n+new\n",
+        },
+        "/repo/other.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-before\n+after\n" },
+      },
+    });
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain("diff --git a/old.txt b/new.txt");
+    expect(item.detail.unifiedDiff).toContain("+++ b/new.txt");
+  });
+});
+
+describe("legacy move-only entries", () => {
+  test.each([true, false])(
+    "keeps a move-only file alongside another edit while running: %s",
+    (running) => {
+      const item = mapCodexPatchNotificationToToolCall({
+        callId: "legacy-move-only",
+        cwd: "/repo",
+        running,
+        success: true,
+        changes: {
+          "/repo/old.txt": { type: "update", move_path: "/repo/new.txt", unified_diff: "" },
+          "/repo/second.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-small\n+large\n" },
+        },
+      });
+      if (item?.detail.type !== "edit") throw new Error("Expected edit");
+      expect(item.detail.unifiedDiff).toContain("rename from old.txt\nrename to new.txt");
+      expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+    },
+  );
+});
+
+describe("legacy empty additions", () => {
+  test.each([true, false])("keeps an empty new file while running: %s", (running) => {
+    const item = mapCodexPatchNotificationToToolCall({
+      callId: "legacy-empty",
+      cwd: "/repo",
+      running,
+      success: true,
+      changes: {
+        "/repo/empty.txt": { type: "add", content: "" },
+        "/repo/second.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new\n" },
+      },
+    });
+    if (item?.detail.type !== "edit") throw new Error("Expected edit");
+    expect(item.detail.unifiedDiff).toContain(
+      "diff --git a/empty.txt b/empty.txt\n--- /dev/null\n+++ b/empty.txt",
+    );
+    expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
+  });
 });

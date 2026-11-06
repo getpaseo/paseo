@@ -1,3 +1,4 @@
+import { CodexBackgroundInventory } from "./codex/background-inventory.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
   getAgentStreamEventTurnId,
@@ -55,11 +56,13 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  fileChangesToPreview,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
+import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -1403,6 +1406,15 @@ interface CodexPatchFileChange {
   path: string;
   kind?: string;
   content?: string;
+  movePath?: string;
+}
+
+function codexPatchMovePath(value: unknown): string | undefined {
+  const record = toObjectRecord(value);
+  if (!record) return undefined;
+  const kind = toObjectRecord(record.kind);
+  const destination = record.move_path ?? kind?.move_path;
+  return typeof destination === "string" ? destination : undefined;
 }
 
 function extractPatchLikeText(value: unknown): string | undefined {
@@ -1535,6 +1547,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
             (typeof record.type === "string" && record.type) ||
             undefined,
           content: extractPatchLikeText(record),
+          movePath: codexPatchMovePath(record),
         };
       })
       .filter((entry): entry is CodexPatchFileChange => entry !== null);
@@ -1554,6 +1567,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
           (typeof recordChanges.type === "string" && recordChanges.type) ||
           undefined,
         content: extractPatchLikeText(recordChanges),
+        movePath: codexPatchMovePath(recordChanges),
       },
     ];
   }
@@ -1573,6 +1587,7 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
             ? ((value as { type?: string }).type ?? undefined)
             : undefined,
         content: extractPatchLikeText(value),
+        movePath: codexPatchMovePath(value),
       };
     })
     .filter((entry): entry is CodexPatchFileChange => entry !== null);
@@ -1681,6 +1696,31 @@ function mapCodexExecNotificationToToolCall(params: {
   return params.running ? toRunningToolCall(mapped) : mapped;
 }
 
+function codexPatchPreview(
+  files: CodexPatchFileChange[],
+  cwd?: string | null,
+): {
+  filePath: string | undefined;
+  patchText: string | undefined;
+} {
+  const preview =
+    files.length > 1
+      ? fileChangesToPreview(
+          files.map((file) => ({
+            path: normalizeCodexFilePath(file.path, cwd) ?? file.path,
+            kind: file.kind,
+            diff: file.content,
+            movePath: file.movePath ? normalizeCodexFilePath(file.movePath, cwd) : undefined,
+          })),
+        )
+      : undefined;
+  const firstPath = preview?.filePath ?? files[0]?.path;
+  const firstPatchText = files
+    .map((file) => file.content?.trim())
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  return { filePath: firstPath, patchText: preview?.unifiedDiff ?? firstPatchText };
+}
+
 export function mapCodexPatchNotificationToToolCall(params: {
   callId?: string | null;
   changes: unknown;
@@ -1691,11 +1731,7 @@ export function mapCodexPatchNotificationToToolCall(params: {
   running: boolean;
 }): ToolCallTimelineItem | null {
   const files = parseCodexPatchChanges(params.changes);
-  const firstPath = files[0]?.path;
-  const firstPatchText = files
-    .map((file) => file.content?.trim())
-    .find((value): value is string => typeof value === "string" && value.length > 0);
-  const patchText = firstPatchText;
+  const { filePath: firstPath, patchText } = codexPatchPreview(files, params.cwd);
   const patchFields = codexPatchTextFields(patchText);
   const mapped = mapCodexToolCallEnvelope({
     callId: params.callId ?? null,
@@ -3468,6 +3504,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   } | null = null;
   private client: CodexAppServerClient | null = null;
   private timedOutInterruptTarget: CodexInterruptTarget | null = null;
+  private readonly background = new CodexBackgroundInventory((event) => this.emitEvent(event));
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private startupEvents: AgentStreamEvent[] | null = null;
@@ -3492,6 +3529,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
+  private pendingToolCallDetails = new Map<string, ToolCallTimelineItem["detail"]>();
   private pendingAssistantMessageBoundary = false;
   private terminalCommandByProcessId = new Map<string, string>();
   // The root thread's still-running command process ids, keyed by the native turn that
@@ -3690,6 +3728,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connectionState = "connected";
+      this.background.start({ client, thread: this.currentThreadId });
     } catch (error) {
       try {
         if (this.client === client) {
@@ -3741,6 +3780,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleUnexpectedTermination(error: Error): void {
     this.connectionState = "disconnected";
+    this.background.stop();
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
     this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
     if (hasActiveRootTurn) {
@@ -4608,6 +4648,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     const startupEvents = this.startupEvents;
     this.startupEvents = null;
     for (const event of startupEvents ?? []) this.notifySubscribers(event);
+    const background = this.background.snapshot();
+    if (background) callback(background);
     return () => {
       this.subscribers.delete(callback);
     };
@@ -5189,6 +5231,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.client === target.client) {
       this.client = null;
       this.connectionState = "disconnected";
+      this.background.stop();
     }
     this.clearTimedOutInterruptTarget(target);
     if (!targetTurnStillActive) {
@@ -5209,6 +5252,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentTurnId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
+  }
+
+  stopBackgroundWork(id: string): Promise<void> {
+    return this.background.stopItem(id);
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -5372,7 +5419,9 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.background.stop();
     this.clearPendingPermissions();
+    this.pendingToolCallDetails.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
     this.startupEvents = null;
@@ -5401,6 +5450,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async disposeClient(): Promise<void> {
+    this.background.stop();
     const client = this.client;
     this.connectionState = "disconnected";
     this.currentTurnId = null;
@@ -5799,6 +5849,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.dispatchSubAgentNotification(parsed, route.callId);
       return;
     }
+    if (
+      parsed.kind === "turn_completed" ||
+      parsed.kind === "exec_command_started" ||
+      parsed.kind === "exec_command_completed" ||
+      ((parsed.kind === "item_started" || parsed.kind === "item_completed") &&
+        normalizeCodexThreadItemType(parsed.item.type) === "commandExecution")
+    )
+      this.background.changed(this.currentThreadId);
     await this.dispatchParsedNotification(parsed);
   }
 
@@ -6438,6 +6496,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     parsed: Extract<ParsedCodexNotification, { kind: "thread_started" }>,
   ): void {
     this.currentThreadId = parsed.threadId;
+    this.background.changed(this.currentThreadId);
     this.emitEvent({
       type: "thread_started",
       provider: CODEX_PROVIDER,
@@ -6540,6 +6599,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingReasoning.clear();
     this.pendingCommandOutputDeltas.clear();
     this.pendingFileChangeOutputDeltas.clear();
+    this.pendingToolCallDetails.clear();
     this.pendingAssistantMessageBoundary = false;
     this.warnedIncompleteEditToolCallIds.clear();
     this.pendingRootCompactionItemIds.clear();
@@ -6913,6 +6973,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
     }
+    if (parsed.item.id) {
+      this.pendingToolCallDetails.delete(parsed.item.id);
+    }
     this.receiveAsyncQuestion(parsed.threadId, parsed.item);
     if (this.isUserMessageItem(parsed.item)) {
       await this.handleUserMessageItem(parsed);
@@ -6960,10 +7023,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (timelineItem.type === "assistant_message") {
         this.pendingAssistantMessageBoundary = true;
       }
-      if (itemId) {
-        this.emittedItemCompletedIds.add(itemId);
-        this.emittedItemStartedIds.delete(itemId);
-      }
+      this.emittedItemCompletedIds.add(itemId);
+      this.emittedItemStartedIds.delete(itemId);
       await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
     }
@@ -6999,7 +7060,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private consumeStreamedTextCompletion(
     timelineItem: AgentTimelineItem,
     itemId: string | null | undefined,
-  ): boolean {
+  ): itemId is string {
     if (!itemId) {
       return false;
     }
@@ -7108,6 +7169,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!timelineItem || timelineItem.type !== "tool_call") {
       return;
     }
+    this.pendingToolCallDetails.set(timelineItem.callId, timelineItem.detail);
     const registeredChildThreadIds = this.registerSubAgentToolCall({
       timelineItem,
       rawItem: parsed.item,
@@ -7377,7 +7439,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+  private async handleFileChangeApprovalRequest(params: unknown): Promise<unknown> {
+    await this.pendingNotifications;
     const parsed = z
       .object({
         itemId: z.string(),
@@ -7387,20 +7450,25 @@ export class CodexAppServerAgentSession implements AgentSession {
       })
       .parse(params);
     const requestId = `permission-${parsed.itemId}`;
+    const detail: ToolCallTimelineItem["detail"] = this.pendingToolCallDetails.get(
+      parsed.itemId,
+    ) ?? {
+      type: "unknown",
+      input: { reason: parsed.reason ?? null },
+      output: null,
+    };
+    const title =
+      detail.type === "edit" && detail.filePath
+        ? `Apply file changes: ${detail.filePath}`
+        : "Apply file changes";
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: CODEX_PROVIDER,
       name: "CodexFileChange",
       kind: "tool",
-      title: "Apply file changes",
+      title,
       description: parsed.reason ?? undefined,
-      detail: {
-        type: "unknown",
-        input: {
-          reason: parsed.reason ?? null,
-        },
-        output: null,
-      },
+      detail,
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,

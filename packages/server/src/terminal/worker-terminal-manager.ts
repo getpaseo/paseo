@@ -21,11 +21,8 @@ import { resolvePaseoCliExecutablePath } from "./paseo-cli-path.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
-import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
-import {
-  createTerminalWorkerProcessInspector,
-  type TerminalWorkerProcessInspector,
-} from "./terminal-worker-processes.js";
+import { identifyTerminalWorker } from "./terminal-worker-ownership.js";
+import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
 import {
   listTerminalWorkerRecords,
@@ -1038,18 +1035,21 @@ export async function startWorkerTerminalManager(
       toReap.push(file.path);
       continue;
     }
-    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
-    if (worker.status === "owned") {
+    const worker = await identifyTerminalWorker(record);
+    if (worker.status === "owned" || worker.status === "unknown") {
+      if (worker.status === "unknown") {
+        // Its secret still proves it: only the worker that wrote the record can answer the
+        // hello below. An inconclusive probe does not authorize a signal.
+        logger.warn(
+          { recordPath: file.path, pid: record.pid, reason: worker.reason },
+          "Terminal worker socket probe inconclusive; attempting authentication",
+        );
+      }
       live.push({
         path: file.path,
         record,
         fit: classifyTerminalWorkerProtocol(record.protocolVersion),
       });
-    } else if (worker.status === "unknown") {
-      logger.warn(
-        { recordPath: file.path, pid: record.pid, reason: worker.reason },
-        "Cannot identify terminal worker; leaving its record",
-      );
     } else {
       // Its programs lost their PTY with the worker and cannot be adopted.
       toReap.push(file.path);
@@ -1142,10 +1142,7 @@ export async function startWorkerTerminalManager(
     const reconnect = () => {
       recovery ??= (async () => {
         while (!recoveryState.stopped) {
-          const ownership = classifyTerminalWorkerProcess(
-            record,
-            await inspector.inspect(record.pid),
-          );
+          const ownership = await identifyTerminalWorker(record);
           if (ownership.status === "gone" || ownership.status === "unrelated") {
             await reapTerminalWorkers({
               paseoHome: options.paseoHome,
@@ -1243,7 +1240,7 @@ export async function startWorkerTerminalManager(
   // Counted from the records rather than from what startup drove: a worker a cleanup could not
   // confirm gone keeps running, and a draining one exits on its own.
   const startCurrent = async (): Promise<TerminalWorkerPoolMember> => {
-    const running = await countRunningTerminalWorkers(options.paseoHome, inspector);
+    const running = await countRunningTerminalWorkers(options.paseoHome);
     if (running >= MAX_TERMINAL_WORKERS) {
       throw new NoTerminalWorkerAvailableError(
         `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them exits`,
@@ -1269,8 +1266,17 @@ export async function startWorkerTerminalManager(
     try {
       current = await startCurrent();
     } catch (error) {
-      if (!(error instanceof NoTerminalWorkerAvailableError)) throw error;
-      logger.warn(error.message);
+      if (error instanceof NoTerminalWorkerAvailableError) {
+        logger.warn(error.message);
+      } else {
+        // The daemon starts without terminals rather than not at all. A worker that cannot start
+        // here is launched again by the first terminal creation, which reports the same error
+        // if it still cannot.
+        logger.error(
+          { err: error },
+          "Terminal worker did not start; terminals are unavailable until one starts",
+        );
+      }
     }
   }
 
@@ -1289,11 +1295,9 @@ export async function startWorkerTerminalManager(
 
 // Every worker that may still run in this home, one per record: a worker and its cleanup record
 // are listed as one. Unreadable records and workers that cannot be identified count; a worker
-// confirmed gone, or a pid reused by another process, does not.
-async function countRunningTerminalWorkers(
-  paseoHome: string,
-  inspector: TerminalWorkerProcessInspector,
-): Promise<number> {
+// confirmed gone, or a pid now running something else (another birth time, or nothing listening
+// on the worker's socket), does not.
+async function countRunningTerminalWorkers(paseoHome: string): Promise<number> {
   let running = 0;
   for (const file of await listTerminalWorkerRecords(paseoHome)) {
     if ("error" in file) {
@@ -1302,7 +1306,7 @@ async function countRunningTerminalWorkers(
     }
     const { record } = file;
     if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) continue;
-    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    const worker = await identifyTerminalWorker(record);
     if (worker.status === "owned" || worker.status === "unknown") running += 1;
   }
   return running;

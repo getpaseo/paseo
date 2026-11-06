@@ -8,7 +8,24 @@ import {
   parsePluginOpenScreenInput,
   resolvePluginScreenTitle,
   resolvePluginSurfaceContribution,
+  resolvePluginSurfacePlaceholder,
 } from "./surface-contribution";
+
+it("shows loading instead of unavailable while the host catalog is pending", () => {
+  expect(
+    resolvePluginSurfacePlaceholder({ connectionStatus: "online", catalogStatus: "loading" }),
+  ).toBe("loading");
+});
+
+it.each([
+  ["online", "ready", "unavailable"],
+  ["online", "error", "error"],
+  ["connecting", "ready", "loading"],
+  ["offline", "loading", "offline"],
+  ["error", "loading", "offline"],
+] as const)("shows %s host with %s catalog as %s", (connectionStatus, catalogStatus, expected) => {
+  expect(resolvePluginSurfacePlaceholder({ connectionStatus, catalogStatus })).toBe(expected);
+});
 
 function installation(
   serverId: string,

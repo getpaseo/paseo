@@ -262,12 +262,15 @@ test.describe("Settings host page", () => {
   });
 });
 
-test("restart recovery host controls persist the opt-out and custom prompt", async ({ page }) => {
+test("restart recovery defaults off and persists opt-in and custom prompt", async ({ page }) => {
   const serverId = getServerId();
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, serverId);
   await openHostSection(page, serverId, "agents");
+  await expectRestartRecoveryEnabled(page, false);
+  await setRestartRecoveryEnabled(page, true);
+  await page.reload();
   await expectRestartRecoveryEnabled(page, true);
   await expectRestartRecoveryPrompt(page, "Resume working.");
   await editRestartRecoveryPrompt(page, "Continue the interrupted work.");
