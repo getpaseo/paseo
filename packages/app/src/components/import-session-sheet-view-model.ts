@@ -5,6 +5,15 @@ import { i18n } from "@/i18n/i18next";
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
+/** Account aliases share a Claude history; keep the owning provider on each row. */
+export function sessionImportProvider(provider: string): string {
+  return provider === "claude" || provider.startsWith("claude-") ? "claude" : provider;
+}
+
+export function sessionImportProviders(providers: readonly string[]): string[] {
+  return [...new Set(providers.map(sessionImportProvider))].sort();
+}
+
 /**
  * Paging grows the per-provider limit instead of carrying an offset. The daemon
  * ranks the whole candidate set on every request, so an offset into a previous
@@ -67,21 +76,35 @@ export function buildProviderLabelMap(
 
 export function aggregateSessionEntries(
   queries: ReadonlyArray<SessionsQueryResult>,
+  importedSessions: ReadonlyArray<{
+    provider: string;
+    archivedAt?: string | null;
+    persistence?: { sessionId: string; nativeHandle?: string | null } | null;
+  }> = [],
 ): FetchRecentProviderSessionEntry[] {
+  const key = (provider: string, handle: string) =>
+    JSON.stringify([sessionImportProvider(provider), handle]);
   const seen = new Set<string>();
-  const collected: FetchRecentProviderSessionEntry[] = [];
-  for (const query of queries) {
-    if (!query.data) continue;
-    for (const entry of query.data.entries) {
-      const key = `${entry.providerId}:${entry.providerHandleId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      collected.push(entry);
-    }
+  for (const agent of importedSessions) {
+    if (!agent.persistence || agent.archivedAt) continue;
+    seen.add(key(agent.provider, agent.persistence.sessionId));
+    if (agent.persistence.nativeHandle)
+      seen.add(key(agent.provider, agent.persistence.nativeHandle));
   }
-  collected.sort(
-    (a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime(),
-  );
+  const collected: FetchRecentProviderSessionEntry[] = [];
+  const candidates = queries
+    .flatMap((query) => query.data?.entries ?? [])
+    .sort(
+      (a, b) =>
+        new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime() ||
+        Number(b.providerId === "claude") - Number(a.providerId === "claude"),
+    );
+  for (const entry of candidates) {
+    const identity = key(entry.providerId, entry.providerHandleId);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    collected.push(entry);
+  }
   return collected;
 }
 
@@ -272,14 +295,19 @@ export function computeEmptyState(input: EmptyStateInputs): {
   // A query narrowing the list to nothing is a different answer from a host with
   // nothing to import, and the recovery is different too.
   if (input.hasQuery) {
-    return { showEmptyState, emptyStateTitle: i18n.t("importSession.empty.noMatches") };
+    return {
+      showEmptyState,
+      emptyStateTitle: i18n.t("importSession.empty.noMatches"),
+    };
   }
   const isFilteredEmpty = input.selectedProvider !== ALL_FILTER_VALUE && input.aggregatedCount > 0;
   if (isFilteredEmpty) {
     const label = input.providerLabelById.get(input.selectedProvider) ?? input.selectedProvider;
     return {
       showEmptyState,
-      emptyStateTitle: i18n.t("importSession.empty.noProviderSessions", { provider: label }),
+      emptyStateTitle: i18n.t("importSession.empty.noProviderSessions", {
+        provider: label,
+      }),
     };
   }
   if (input.totalAlreadyImportedCount > 0) {
@@ -288,5 +316,8 @@ export function computeEmptyState(input: EmptyStateInputs): {
       emptyStateTitle: i18n.t("importSession.empty.alreadyImported"),
     };
   }
-  return { showEmptyState, emptyStateTitle: i18n.t("importSession.empty.noRecent") };
+  return {
+    showEmptyState,
+    emptyStateTitle: i18n.t("importSession.empty.noRecent"),
+  };
 }
