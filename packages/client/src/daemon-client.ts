@@ -1296,6 +1296,7 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  receivedActivity: boolean;
   // Whether a timeout on this ping should be recorded as a liveness failure. Only the
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
@@ -1439,7 +1440,6 @@ export class DaemonClient {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
-  private connectionVerification: DaemonTransport | null = null;
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
@@ -1589,6 +1589,7 @@ export class DaemonClient {
         send: (frame) => transport.send(frame),
         onFailure: () => transport.close(4003, "Transport send failed"),
         deliver: (frame) => this.handleTransportMessage(frame),
+        onActivity: () => this.recordTransportActivity(),
       });
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
@@ -1785,7 +1786,7 @@ export class DaemonClient {
       this.shouldReconnect = true;
     }
     if (this.connectionState.status === "connected") {
-      if (options?.verify) this.verifyConnection();
+      if (options?.verify) this.tickLivenessHeartbeat();
       return;
     }
     if (this.connectionState.status === "connecting") return;
@@ -1798,26 +1799,9 @@ export class DaemonClient {
     );
   }
 
-  private verifyConnection(): void {
-    const transport = this.transport;
-    if (!transport || this.connectionVerification === transport) return;
-    this.connectionVerification = transport;
-    // A session probe has its own deadline, independent of a heartbeat that the OS
-    // may have suspended. A successful response also proves the session can serve RPCs.
-    void this.ping({ timeoutMs: 3_000 })
-      .catch((error: unknown) => {
-        if (this.transport !== transport || this.connectionState.status !== "connected") return;
-        this.disposeTransport(1001, "Connection verification failed");
-        this.scheduleReconnect({
-          reason: error instanceof Error ? error.message : String(error),
-          event: "CONNECTION_VERIFICATION_FAILED",
-          reasonCode: "liveness_timeout",
-        });
-        this.ensureConnected();
-      })
-      .finally(() => {
-        if (this.connectionVerification === transport) this.connectionVerification = null;
-      });
+  private recordTransportActivity(): void {
+    this.consecutiveLivenessFailures = 0;
+    if (this.pingProbe) this.pingProbe.receivedActivity = true;
   }
 
   requireConnectedHosts(): void {
@@ -2553,9 +2537,18 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    return this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }).catch((error) => {
-      throw toTimeoutError(error, "Latency measurement", timeoutMs);
+    let deadline: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
     });
+    return Promise.race([
+      this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }),
+      timeout,
+    ])
+      .catch((error) => {
+        throw toTimeoutError(error, "Latency measurement", timeoutMs);
+      })
+      .finally(() => clearTimeout(deadline));
   }
 
   private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
@@ -2591,21 +2584,23 @@ export class DaemonClient {
       resolveProbe = resolve;
       rejectProbe = reject;
     });
+    const expire = () => {
+      if (this.pingProbe !== probe) return;
+      this.pingProbe = null;
+      const error = new PingTimeoutError(timeoutMs);
+      probe.reject(error);
+      // Keep the deadline fixed so subsequent pings renew the daemon socket lease
+      // during a long download. Progress proves life even when its pong is queued.
+      if (probe.drivesLivenessFailure && !probe.receivedActivity) {
+        this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
+      }
+    };
     const probe: PingProbe = {
       promise,
       resolve: (value) => resolveProbe?.(value),
       reject: (error) => rejectProbe?.(error),
-      timeoutHandle: setTimeout(() => {
-        if (this.pingProbe !== probe) {
-          return;
-        }
-        this.pingProbe = null;
-        const error = new PingTimeoutError(timeoutMs);
-        probe.reject(error);
-        if (probe.drivesLivenessFailure) {
-          this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
-        }
-      }, timeoutMs),
+      timeoutHandle: setTimeout(expire, timeoutMs),
+      receivedActivity: false,
       startedAt,
       drivesLivenessFailure: params.drivesLivenessFailure,
     };
@@ -2646,12 +2641,19 @@ export class DaemonClient {
     }
     this.livenessHeartbeatTimer = setTimeout(() => {
       this.livenessHeartbeatTimer = null;
-      this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS })
-        .catch(() => {})
-        .finally(() => {
-          this.scheduleNextLivenessHeartbeat();
-        });
+      this.tickLivenessHeartbeat();
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private tickLivenessHeartbeat(): void {
+    this.stopLivenessHeartbeat();
+    const transport = this.transport;
+    const tick = this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS });
+    void tick
+      .catch(() => {})
+      .finally(() => {
+        if (this.transport === transport) this.scheduleNextLivenessHeartbeat();
+      });
   }
 
   // ============================================================================
@@ -3578,6 +3580,22 @@ export class DaemonClient {
       throw new Error(payload.error ?? "setWorkspacePinned rejected");
     }
     return { pinnedAt: payload.pinnedAt };
+  }
+
+  async setWorkspaceBaseBranch(options: {
+    workspaceId: string;
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }> {
+    const { requestId, workspaceId, baseRef } = options;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.base_branch.set.response">({
+        requestId,
+        message: { type: "workspace.base_branch.set.request", workspaceId, baseRef },
+      });
+    if (!payload.accepted)
+      throw new Error(payload.error ?? "Changing the workspace base branch failed");
+    return { baseRef: payload.baseRef };
   }
 
   async inspectWorkspaceRecovery(
@@ -5132,7 +5150,7 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; refMode?: "exact" },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -5142,6 +5160,7 @@ export class DaemonClient {
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,
+        refMode: options.refMode,
       },
       responseType: "branch_suggestions_response",
     });

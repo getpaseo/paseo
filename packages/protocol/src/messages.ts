@@ -1040,6 +1040,13 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceBaseBranchSetRequestSchema = z.object({
+  type: z.literal("workspace.base_branch.set.request"),
+  workspaceId: z.string(),
+  baseRef: z.string(),
+  requestId: z.string(),
+});
+
 export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
 export const WorkspaceLabelDefinitionSchema = z.object({
   name: z.string(),
@@ -2197,6 +2204,17 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspaceBaseBranchSetResponseSchema = z.object({
+  type: z.literal("workspace.base_branch.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    baseRef: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("recoverable"),
@@ -2514,6 +2532,7 @@ export const BranchSuggestionsRequestSchema = z.object({
   cwd: z.string(),
   query: z.string().optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  refMode: z.literal("exact").optional(),
   requestId: z.string(),
 });
 
@@ -3328,6 +3347,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceBaseBranchSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3712,6 +3732,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceBaseBranch): added after v0.11.2, remove gate after 2027-10-14.
+        workspaceBaseBranch: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -5405,6 +5427,7 @@ const CheckoutStatusCommonSchema = z.object({
   cwd: z.string(),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
+  baseRefExact: z.string().nullable().optional(),
   // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
   // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a
   // "refs/heads/..." ref for a branch tracking a local branch. Null when there is no
@@ -7203,6 +7226,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceBaseBranchSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -7564,6 +7588,7 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceBaseBranchSetRequest = z.infer<typeof WorkspaceBaseBranchSetRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
