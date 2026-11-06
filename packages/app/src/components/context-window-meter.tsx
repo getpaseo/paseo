@@ -9,7 +9,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useHostReportsUsage } from "@/usage";
 import type { Theme } from "@/styles/theme";
-import { TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { TOOLBAR_CONTROL_HEIGHT, type ToolbarRing } from "@/components/ui/control-geometry";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
 import { formatContextPercentage } from "./context-window-meter.utils";
@@ -21,8 +21,8 @@ interface ContextWindowMeterProps {
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
-  /** Optional glyph envelope for icon-toolbar alignment. */
-  glyphSize?: number;
+  /** The ring's box and stroke when it sits in an icon toolbar. */
+  toolbarRing?: ToolbarRing;
 }
 
 const SVG_SIZE = 14;
@@ -71,7 +71,7 @@ function getProgressColor(percentage: number, theme: Theme): string {
   return theme.colors.foregroundMuted;
 }
 
-function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
+function getMeterGeometry(showPercentage: boolean, ring?: ToolbarRing) {
   if (showPercentage) {
     return {
       svgSize: COMPACT_SVG_SIZE,
@@ -80,8 +80,8 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
       containerStyle: styles.containerWithLabel,
     };
   }
-  const resolvedSize = glyphSize ?? SVG_SIZE;
-  const resolvedStrokeWidth = glyphSize ? 2 : STROKE_WIDTH;
+  const resolvedSize = ring?.size ?? SVG_SIZE;
+  const resolvedStrokeWidth = ring?.strokeWidth ?? STROKE_WIDTH;
   return {
     svgSize: resolvedSize,
     radius: (resolvedSize - resolvedStrokeWidth) / 2,
@@ -151,7 +151,7 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
-  glyphSize,
+  toolbarRing,
 }: ContextWindowMeterProps) {
   const { t, i18n } = useTranslation();
   const { width } = useWindowDimensions();
@@ -165,7 +165,7 @@ export function ContextWindowMeter({
   const closeSheet = useCallback(() => setIsSheetOpen(false), []);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
-  const geometry = getMeterGeometry(showPercentage, glyphSize);
+  const geometry = getMeterGeometry(showPercentage, toolbarRing);
 
   const context = useMemo(
     () =>

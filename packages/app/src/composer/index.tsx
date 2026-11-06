@@ -33,9 +33,14 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
-  iconSizeFor,
+  TOOLBAR_CONTROL_GAP,
   TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_DISC_GLYPH_SIZES,
   TOOLBAR_DISC_SIZE,
+  TOOLBAR_RINGS,
+  toolbarGlyphsFor,
+  toolbarGlyphTone,
+  type ToolbarGlyph,
 } from "@/components/ui/control-geometry";
 import { usePanelStore } from "@/stores/panel-store";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
@@ -1082,7 +1087,7 @@ function ComposerForgeBinding({
 }
 
 interface ComposerCancelButtonProps {
-  buttonIconSize: number;
+  discGlyphSize: number;
   cancelButtonStyle: (object | undefined)[];
   handleCancelAgent: () => void;
   isConnected: boolean;
@@ -1092,7 +1097,7 @@ interface ComposerCancelButtonProps {
 }
 
 function ComposerCancelButton({
-  buttonIconSize,
+  discGlyphSize,
   cancelButtonStyle,
   handleCancelAgent,
   isConnected,
@@ -1106,7 +1111,7 @@ function ComposerCancelButton({
   const icon = isCancellingAgent ? (
     <LoadingSpinner size="small" color="white" />
   ) : (
-    <Square size={buttonIconSize} color="white" fill="white" />
+    <Square size={discGlyphSize} color="white" fill="white" />
   );
   const shortcutNode = agentInterruptKeys ? <Shortcut chord={agentInterruptKeys} /> : null;
   return (
@@ -1131,7 +1136,7 @@ function ComposerCancelButton({
 }
 
 interface ComposerVoiceModeButtonProps {
-  buttonIconSize: number;
+  glyph: ToolbarGlyph;
   handleToggleRealtimeVoice: () => void;
   isConnected: boolean;
   isVoiceSwitching: boolean;
@@ -1142,37 +1147,26 @@ interface ComposerVoiceModeButtonProps {
   t: TFunction;
 }
 
-interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
+function showsVoiceModeButton(input: {
   isVoiceModeForAgent: boolean;
   hasAgent: boolean;
   isAgentRunning: boolean;
   hasSendableContent: boolean;
   isCompact: boolean;
   showVoice: boolean;
-}
-
-function ComposerRightControlsSlot({
-  isVoiceModeForAgent,
-  hasAgent,
-  isAgentRunning,
-  hasSendableContent,
-  isCompact,
-  showVoice,
-  ...voiceProps
-}: ComposerRightControlsSlotProps) {
-  const hideVoiceForCompactInput = isCompact && hasSendableContent;
-  const showVoiceModeButton =
-    showVoice && !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
-  if (!showVoiceModeButton) return null;
+}): boolean {
+  const hideVoiceForCompactInput = input.isCompact && input.hasSendableContent;
   return (
-    <View style={styles.rightControls}>
-      <ComposerVoiceModeButton {...voiceProps} />
-    </View>
+    input.showVoice &&
+    !input.isVoiceModeForAgent &&
+    input.hasAgent &&
+    !input.isAgentRunning &&
+    !hideVoiceForCompactInput
   );
 }
 
 function ComposerVoiceModeButton({
-  buttonIconSize,
+  glyph,
   handleToggleRealtimeVoice,
   isConnected,
   isVoiceSwitching,
@@ -1186,10 +1180,19 @@ function ComposerVoiceModeButton({
       if (isVoiceSwitching) {
         return <LoadingSpinner size="small" color="white" />;
       }
-      const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
-      return <ThemedAudioLines size={buttonIconSize} uniProps={colorMapping} />;
+      const colorMapping =
+        toolbarGlyphTone(glyph, Boolean(hovered)) === "foreground"
+          ? iconForegroundMapping
+          : iconForegroundMutedMapping;
+      return (
+        <ThemedAudioLines
+          size={glyph.size}
+          strokeWidth={glyph.strokeWidth}
+          uniProps={colorMapping}
+        />
+      );
     },
-    [buttonIconSize, isVoiceSwitching],
+    [glyph, isVoiceSwitching],
   );
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -1311,7 +1314,9 @@ function ComposerContentImpl({
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
-  const buttonIconSize = iconSizeFor("md")[controlSizingForLayout(isCompactFormFactor)];
+  const controlSizing = controlSizingForLayout(isCompactFormFactor);
+  const toolbarGlyph = toolbarGlyphsFor(controlSizing).icon;
+  const discGlyphSize = TOOLBAR_DISC_GLYPH_SIZES[controlSizing];
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const { finePointer: hasFinePointer } = usePointerCapabilities();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
@@ -2028,7 +2033,7 @@ function ComposerContentImpl({
   const activeActionContent = useMemo(
     () => (
       <ComposerCancelButton
-        buttonIconSize={buttonIconSize}
+        discGlyphSize={discGlyphSize}
         cancelButtonStyle={cancelButtonStyle}
         handleCancelAgent={handleCancelAgent}
         isConnected={isConnected}
@@ -2039,7 +2044,7 @@ function ComposerContentImpl({
     ),
     [
       agentInterruptKeys,
-      buttonIconSize,
+      discGlyphSize,
       cancelButtonStyle,
       handleCancelAgent,
       isCancellingAgent,
@@ -2048,26 +2053,30 @@ function ComposerContentImpl({
     ],
   );
 
-  const rightContent = useMemo(
-    () => (
-      <ComposerRightControlsSlot
-        isVoiceModeForAgent={isVoiceModeForAgent}
-        hasAgent={hasAgent}
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isCompact={isCompactLayout}
-        showVoice={mode.showVoice}
-        buttonIconSize={buttonIconSize}
-        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-        isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitching}
-        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-        voiceToggleKeys={voiceToggleKeys}
-        t={t}
-      />
-    ),
+  const voiceModeContent = useMemo(
+    () =>
+      showsVoiceModeButton({
+        isVoiceModeForAgent,
+        hasAgent,
+        isAgentRunning,
+        hasSendableContent,
+        isCompact: isCompactLayout,
+        showVoice: mode.showVoice,
+      }) ? (
+        <View style={styles.rightControls}>
+          <ComposerVoiceModeButton
+            glyph={toolbarGlyph}
+            handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+            isConnected={isConnected}
+            isVoiceSwitching={isVoiceSwitching}
+            realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+            voiceToggleKeys={voiceToggleKeys}
+            t={t}
+          />
+        </View>
+      ) : null,
     [
-      buttonIconSize,
+      toolbarGlyph,
       handleToggleRealtimeVoice,
       hasAgent,
       hasSendableContent,
@@ -2093,7 +2102,7 @@ function ComposerContentImpl({
             maxTokens={agentState.contextWindowMaxTokens}
             usedTokens={agentState.contextWindowUsedTokens}
             totalCostUsd={agentState.totalCostUsd}
-            glyphSize={buttonIconSize}
+            toolbarRing={TOOLBAR_RINGS[controlSizing]}
           />
         </View>
       ) : null,
@@ -2104,7 +2113,7 @@ function ComposerContentImpl({
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
-      buttonIconSize,
+      controlSizing,
     ],
   );
 
@@ -2490,7 +2499,7 @@ function ComposerContentImpl({
                   disabled={isSubmitLoading}
                   leftContent={leftContent}
                   beforeVoiceContent={beforeVoiceContent}
-                  rightContent={rightContent}
+                  voiceModeContent={voiceModeContent}
                   activeActionContent={activeActionContent}
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
@@ -2602,7 +2611,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     height: TOOLBAR_CONTROL_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: theme.spacing[1],
+    marginLeft: TOOLBAR_CONTROL_GAP,
   },
   cancelButtonDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2615,7 +2624,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   rightControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: TOOLBAR_CONTROL_GAP,
   },
   contextWindowMeterSlot: {
     width: TOOLBAR_CONTROL_HEIGHT,
@@ -2624,15 +2633,17 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  // In the compact layout voice mode replaces Send as the trailing control, so it keeps Send's
+  // leading space and the trailing rail does not move.
+  realtimeVoiceButtonCompactReserve: {
+    marginLeft: TOOLBAR_CONTROL_GAP,
+  },
   realtimeVoiceButton: {
     width: TOOLBAR_CONTROL_HEIGHT,
     height: TOOLBAR_CONTROL_HEIGHT,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  realtimeVoiceButtonCompactReserve: {
-    marginLeft: theme.spacing[1],
   },
   realtimeVoiceButtonActive: {
     backgroundColor: theme.colors.palette.green[600],

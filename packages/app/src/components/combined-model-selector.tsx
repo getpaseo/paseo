@@ -13,7 +13,11 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import {
+  TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_GLYPH_SIZES,
+  type ToolbarGlyph,
+} from "@/components/ui/control-geometry";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -61,7 +65,7 @@ interface CombinedModelSelectorProps {
    */
   triggerFill?: boolean;
   toolbar?: {
-    glyphSize: number;
+    glyph: ToolbarGlyph;
     showCaret: boolean;
   };
 }
@@ -253,11 +257,13 @@ export function CombinedModelSelector({
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
           {selectedProvider.trim().length > 0 ? (
-            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
+            <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
               <ModelProviderGlyph
                 provider={selectedProvider}
                 serverId={serverId}
-                size={toolbar?.glyphSize ?? ICON_SIZE.md}
+                size={toolbar?.glyph.size ?? ICON_SIZE.md}
+                strokeWidth={toolbar?.glyph.strokeWidth}
+                tone={toolbar?.glyph.tone}
               />
             </View>
           ) : null}
@@ -306,14 +312,14 @@ const styles = StyleSheet.create((theme) => ({
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
   },
-  toolbarGlyph16: {
-    width: 16,
-    height: 16,
+  glyph: {
+    width: ICON_SIZE.md,
+    height: ICON_SIZE.md,
     flexShrink: 0,
   },
-  toolbarGlyph20: {
-    width: 20,
-    height: 20,
+  toolbarGlyph: {
+    width: TOOLBAR_GLYPH_SIZES.label,
+    height: TOOLBAR_GLYPH_SIZES.label,
     flexShrink: 0,
   },
   triggerPressed: {

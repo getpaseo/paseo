@@ -1,8 +1,14 @@
 import { test, expect } from "../support/fixtures";
 import { openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import { fillComposerDraft } from "../support/helpers/composer";
 import {
+  expectComposerToolbarOnTextRails,
   expectNoCollapsedComposerToolbarFrame,
+  expectNoFrameTruncatesModelBesideThinking,
+  readSettledModelTriggerLabels,
   recordComposerToolbarFrames,
+  recordModelTriggerFramesFromLoad,
+  type ModelTriggerLabelState,
 } from "../support/helpers/composer-control-density";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -123,4 +129,107 @@ test.describe("Composer controls folding on a touch device", () => {
       await session.cleanup();
     }
   });
+});
+
+test.describe("Folded model control on a phone", () => {
+  // Wide enough for "Ten second stream" and "Low" side by side; narrower, they no longer fit.
+  test.use({ viewport: { width: 480, height: 844 }, isMobile: true, hasTouch: true });
+  test.describe.configure({ timeout: 180_000 });
+
+  test("hides the thinking label before the model label truncates", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "composer-density-labels-",
+      title: "Label priority chat",
+      model: "ten-second-stream",
+    });
+    try {
+      await recordModelTriggerFramesFromLoad(page);
+      await openAgentRoute(page, session);
+      await expect(
+        page.getByTestId("combined-model-selector-thinking-label").filter({ visible: true }),
+      ).toHaveText("Low");
+      await readSettledModelTriggerLabels(page);
+      // From the first frame on, the control never guesses: it paints both labels only once it
+      // has measured that they fit.
+      await expectNoFrameTruncatesModelBesideThinking(page);
+
+      const steps: { width: number; labels: ModelTriggerLabelState }[] = [];
+      for (let width = 480; width >= 280; width -= 4) {
+        await page.setViewportSize({ width, height: 844 });
+        const labels = await readSettledModelTriggerLabels(page);
+        if (!labels.modelShown) break;
+        steps.push({ width, labels });
+        if (labels.modelTruncated) break;
+      }
+
+      expect(steps[0].labels).toEqual({
+        modelShown: true,
+        modelText: "Ten second stream",
+        thinkingShown: true,
+        modelTruncated: false,
+      });
+      const thinkingHidden = steps.findIndex((step) => !step.labels.thinkingShown);
+      const modelTruncated = steps.findIndex((step) => step.labels.modelTruncated);
+      expect(thinkingHidden, JSON.stringify(steps)).toBeGreaterThan(0);
+      expect(steps[thinkingHidden].labels.modelTruncated).toBe(false);
+      expect(modelTruncated, JSON.stringify(steps)).toBeGreaterThan(thinkingHidden);
+      expect(steps[modelTruncated].labels.thinkingShown).toBe(false);
+      // A clean tail: the label ends on a whole word and the ellipsis, never on a space.
+      expect(steps[modelTruncated].labels.modelText).toBe("Ten second…");
+    } finally {
+      await session.cleanup();
+    }
+  });
+});
+
+test.describe("Composer toolbar rails on touch", () => {
+  test.use({ isMobile: true, hasTouch: true });
+  test.describe.configure({ timeout: 180_000 });
+
+  for (const viewport of [
+    { device: "phone", width: 390, height: 844 },
+    { device: "tablet", width: 1024, height: 1366 },
+  ]) {
+    test(`the toolbar's outer ink sits on the text column edges on a ${viewport.device}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      const idle = await seedMockAgentWorkspace({
+        repoPrefix: "composer-rails-idle-",
+        title: "Rails idle chat",
+      });
+      let running: Awaited<ReturnType<typeof seedMockAgentWorkspace>> | null = null;
+      try {
+        await openAgentRoute(page, idle);
+        await expect(page.getByTestId("message-input-root").filter({ visible: true })).toBeVisible({
+          timeout: 30_000,
+        });
+        await test.step("empty composer: attach on the left, voice mode on the right", async () => {
+          await expectComposerToolbarOnTextRails(page);
+        });
+        await test.step("draft: the send disc on the right", async () => {
+          await fillComposerDraft(page, "Refactor the composer toolbar");
+          await expect(page.getByRole("button", { name: /send/i }).first()).toBeVisible();
+          await expectComposerToolbarOnTextRails(page);
+        });
+
+        running = await seedMockAgentWorkspace({
+          repoPrefix: "composer-rails-running-",
+          title: "Rails running chat",
+          model: "one-minute-stream",
+          initialPrompt: "stream for a while",
+        });
+        await openAgentRoute(page, running);
+        await test.step("running agent: the stop disc on the right", async () => {
+          await expect(page.getByRole("button", { name: /stop agent/i }).first()).toBeVisible({
+            timeout: 30_000,
+          });
+          await expectComposerToolbarOnTextRails(page);
+        });
+      } finally {
+        await idle.cleanup();
+        await running?.cleanup();
+      }
+    });
+  }
 });

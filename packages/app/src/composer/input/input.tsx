@@ -31,10 +31,19 @@ import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import {
   controlSizingForLayout,
-  iconSizeFor,
+  TOOLBAR_CONTROL_GAP,
   TOOLBAR_CONTROL_HEIGHT,
+  TOOLBAR_DISC_GLYPH_SIZES,
   TOOLBAR_DISC_SIZE,
+  toolbarGlyphsFor,
+  toolbarGlyphTone,
+  type ToolbarGlyph,
 } from "@/components/ui/control-geometry";
+import {
+  composerToolbarOverhang,
+  resolveComposerLeadingEdge,
+  resolveComposerTrailingEdge,
+} from "@/composer/input/toolbar-rails";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useDictation } from "@/hooks/use-dictation";
@@ -170,8 +179,8 @@ export interface MessageInputProps {
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
   beforeVoiceContent?: React.ReactNode;
-  /** Auxiliary content to render on the right side after the voice button. */
-  rightContent?: React.ReactNode;
+  /** The realtime voice mode button after the dictation button, or null when the row hides it. */
+  voiceModeContent?: React.ReactNode;
   /** Primary action to render when the agent is active and the composer has no sendable content. */
   activeActionContent?: React.ReactNode;
   voiceServerId?: string;
@@ -252,19 +261,28 @@ interface TextAreaHandle {
   };
 }
 
+function glyphColorMapping(glyph: ToolbarGlyph, hovered: boolean) {
+  return toolbarGlyphTone(glyph, hovered) === "foreground"
+    ? iconForegroundMapping
+    : iconForegroundMutedMapping;
+}
+
 function AttachButtonIcon({
   hovered,
   onAttachButtonRef,
-  buttonIconSize,
+  glyph,
 }: {
   hovered: boolean;
   onAttachButtonRef: ((node: View | null) => void) | undefined;
-  buttonIconSize: number;
+  glyph: ToolbarGlyph;
 }) {
-  const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
   return (
     <View ref={onAttachButtonRef} collapsable={false} style={styles.attachButtonAnchor}>
-      <ThemedPlus size={buttonIconSize} uniProps={colorMapping} />
+      <ThemedPlus
+        size={glyph.size}
+        strokeWidth={glyph.strokeWidth}
+        uniProps={glyphColorMapping(glyph, hovered)}
+      />
     </View>
   );
 }
@@ -342,25 +360,25 @@ function VoiceButtonIcon({
   hovered,
   isDictating,
   isMutedRealtime,
-  buttonIconSize,
+  glyph,
+  discGlyphSize,
 }: {
   hovered: boolean;
   isDictating: boolean;
   isMutedRealtime: boolean;
-  buttonIconSize: number;
+  glyph: ToolbarGlyph;
+  discGlyphSize: number;
 }) {
   if (isDictating) {
     return (
       <View style={styles.voiceButtonRecordingDisc}>
-        <Square size={buttonIconSize} color="white" fill="white" />
+        <Square size={discGlyphSize} color="white" fill="white" />
       </View>
     );
   }
-  const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
-  if (isMutedRealtime) {
-    return <ThemedMicOff size={buttonIconSize} uniProps={colorMapping} />;
-  }
-  return <ThemedMic size={buttonIconSize} uniProps={colorMapping} />;
+  const colorMapping = glyphColorMapping(glyph, hovered);
+  const Icon = isMutedRealtime ? ThemedMicOff : ThemedMic;
+  return <Icon size={glyph.size} strokeWidth={glyph.strokeWidth} uniProps={colorMapping} />;
 }
 
 type ShortcutChord = NonNullable<React.ComponentProps<typeof Shortcut>["chord"]>;
@@ -399,12 +417,12 @@ function SendButtonContent({
   isSubmitLoading,
   submitIcon,
   submitLabel,
-  buttonIconSize,
+  glyph,
 }: {
   isSubmitLoading: boolean;
   submitIcon: "arrow" | "return";
   submitLabel: string | undefined;
-  buttonIconSize: number;
+  glyph: ToolbarGlyph;
 }) {
   if (isSubmitLoading) {
     return <ThemedLoadingSpinner size="small" uniProps={iconAccentForegroundMapping} />;
@@ -413,9 +431,21 @@ function SendButtonContent({
     return <Text style={styles.sendButtonLabel}>{submitLabel}</Text>;
   }
   if (submitIcon === "return") {
-    return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
+    return (
+      <ThemedCornerDownLeft
+        size={glyph.size}
+        strokeWidth={glyph.strokeWidth}
+        uniProps={iconAccentForegroundMapping}
+      />
+    );
   }
-  return <ThemedArrowUp size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
+  return (
+    <ThemedArrowUp
+      size={glyph.size}
+      strokeWidth={glyph.strokeWidth}
+      uniProps={iconAccentForegroundMapping}
+    />
+  );
 }
 
 interface DesktopKeyPressContext {
@@ -808,7 +838,7 @@ function SendButtonTooltip({
   submitIcon,
   submitLabel,
   submitButtonTestID,
-  buttonIconSize,
+  glyph,
   sendKeys,
   sendTooltipLabel,
 }: {
@@ -825,7 +855,7 @@ function SendButtonTooltip({
   submitIcon: "arrow" | "return";
   submitLabel: string | undefined;
   submitButtonTestID: string | undefined;
-  buttonIconSize: number;
+  glyph: ToolbarGlyph;
   sendKeys: ShortcutChord | null | undefined;
   sendTooltipLabel: string;
 }) {
@@ -847,7 +877,7 @@ function SendButtonTooltip({
             isSubmitLoading={isSubmitLoading}
             submitIcon={submitIcon}
             submitLabel={submitLabel}
-            buttonIconSize={buttonIconSize}
+            glyph={glyph}
           />
         </View>
       </TooltipTrigger>
@@ -1140,7 +1170,7 @@ interface ResolvedMessageInputProps {
   disabled: boolean;
   leftContent: React.ReactNode;
   beforeVoiceContent: React.ReactNode;
-  rightContent: React.ReactNode;
+  voiceModeContent: React.ReactNode;
   activeActionContent: React.ReactNode;
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
@@ -1188,7 +1218,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     disabled: props.disabled ?? false,
     leftContent: props.leftContent,
     beforeVoiceContent: props.beforeVoiceContent,
-    rightContent: props.rightContent,
+    voiceModeContent: props.voiceModeContent,
     activeActionContent: props.activeActionContent,
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
@@ -1266,7 +1296,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       disabled,
       leftContent,
       beforeVoiceContent,
-      rightContent,
+      voiceModeContent,
       activeActionContent,
       voiceServerId,
       voiceAgentId,
@@ -1296,7 +1326,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const [renderedLines, setRenderedLines] = useState(1);
     const maxInputHeight = resolveMaxInputHeight(windowHeight, isCompact);
     const controlSizing = controlSizingForLayout(isCompact);
-    const buttonIconSize = iconSizeFor("md")[controlSizing];
+    const toolbarGlyph = toolbarGlyphsFor(controlSizing).icon;
+    const discGlyphSize = TOOLBAR_DISC_GLYPH_SIZES[controlSizing];
     const toast = useToast();
     const voice = useVoiceOptional();
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
@@ -1993,10 +2024,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <AttachButtonIcon
           hovered={Boolean(hovered)}
           onAttachButtonRef={onAttachButtonRef}
-          buttonIconSize={buttonIconSize}
+          glyph={toolbarGlyph}
         />
       ),
-      [onAttachButtonRef, buttonIconSize],
+      [onAttachButtonRef, toolbarGlyph],
     );
 
     const renderVoiceButtonIcon = useCallback(
@@ -2005,10 +2036,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           hovered={Boolean(hovered)}
           isDictating={isDictating}
           isMutedRealtime={Boolean(isRealtimeVoiceForCurrentAgent && voice?.isMuted)}
-          buttonIconSize={buttonIconSize}
+          glyph={toolbarGlyph}
+          discGlyphSize={discGlyphSize}
         />
       ),
-      [isDictating, isRealtimeVoiceForCurrentAgent, voice?.isMuted, buttonIconSize],
+      [isDictating, isRealtimeVoiceForCurrentAgent, voice?.isMuted, toolbarGlyph, discGlyphSize],
     );
 
     const sendButton = useMemo(
@@ -2029,7 +2061,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           submitIcon={submitIcon}
           submitLabel={submitLabel}
           submitButtonTestID={submitButtonTestID}
-          buttonIconSize={buttonIconSize}
+          glyph={toolbarGlyph}
           sendKeys={resolveSendKeys(sendShortcut)}
           sendTooltipLabel={sendTooltipLabel}
         />
@@ -2050,7 +2082,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         submitIcon,
         submitLabel,
         submitButtonTestID,
-        buttonIconSize,
+        toolbarGlyph,
         sendShortcut,
         sendTooltipLabel,
       ],
@@ -2124,9 +2156,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         focusInputKeys,
       ],
     );
+    const leadingEdge = resolveComposerLeadingEdge({
+      showsAttach: mode.showAttachments,
+      showsAgentControls: leftContent != null,
+    });
+    const trailingEdge = resolveComposerTrailingEdge({
+      hasPrimaryAction: isFullscreen || primaryActionKind !== "none",
+      showsVoiceMode: voiceModeContent != null,
+      showsDictation: mode.showVoice,
+      isDictating,
+    });
+    const buttonRowStyle = useMemo(
+      () => [
+        styles.buttonRow,
+        {
+          marginLeft: -composerToolbarOverhang(leadingEdge, controlSizing),
+          marginRight: -composerToolbarOverhang(trailingEdge, controlSizing),
+        },
+      ],
+      [controlSizing, leadingEdge, trailingEdge],
+    );
     const toolbar = useMemo(
       () => (
-        <View style={styles.buttonRow}>
+        <View style={buttonRowStyle}>
           {/* Toolbar left: attachment button + agent controls */}
           <View style={styles.leftButtonGroup}>
             <AttachmentDropdown
@@ -2156,12 +2208,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               voiceMuteToggleKeys={voiceMuteToggleKeys}
               dictationToggleKeys={dictationToggleKeys}
             />
-            {rightContent}
+            {voiceModeContent}
             {sendButton}
           </View>
         </View>
       ),
       [
+        buttonRowStyle,
         mode.showAttachments,
         isConnected,
         disabled,
@@ -2181,7 +2234,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isRealtimeVoiceForCurrentAgent,
         voiceMuteToggleKeys,
         dictationToggleKeys,
-        rightContent,
+        voiceModeContent,
         sendButton,
       ],
     );
@@ -2249,7 +2302,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <ComposerInputPresentation
           fullscreen={isFullscreen}
           controlSizing={controlSizing}
-          sendIconSize={buttonIconSize}
+          sendIconSize={toolbarGlyph.size}
           surface={textSurface}
           toolbar={toolbar}
           send={sendButton}
@@ -2382,7 +2435,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    marginHorizontal: -6,
   },
   leftButtonGroup: {
     minWidth: 0,
@@ -2396,7 +2448,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: TOOLBAR_CONTROL_GAP,
   },
   attachButton: {
     width: TOOLBAR_CONTROL_HEIGHT,
@@ -2432,7 +2484,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     height: TOOLBAR_CONTROL_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: theme.spacing[1],
+    marginLeft: TOOLBAR_CONTROL_GAP,
   },
   sendButtonDisc: {
     width: TOOLBAR_DISC_SIZE,

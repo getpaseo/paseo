@@ -42,10 +42,13 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
     },
     ref,
   ) {
-    const { glyphSize } = useComposerControlLayout();
+    const { glyphs } = useComposerControlLayout();
+    const glyphRole = showToolbarLabel ? "label" : "icon";
+    const glyph = glyphs[glyphRole];
     const isSheet = surface === "sheet";
-    const resolvedGlyphSize = isSheet ? 16 : glyphSize;
-    const resolvedIconColor = iconColor ?? styles.iconColor.color;
+    const toolbarIconColor =
+      glyph.tone === "foreground" ? styles.iconColorForeground.color : styles.iconColor.color;
+    const resolvedIconColor = iconColor ?? (isSheet ? styles.iconColor.color : toolbarIconColor);
     const showValue = isSheet || showToolbarLabel;
     const triggerStyle = useCallback(
       ({ pressed, hovered }: PressableStateCallbackType) => [
@@ -73,11 +76,11 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+            <Icon size={16} color={resolvedIconColor} />
           </View>
         ) : (
-          <ComposerToolbarGlyph size={resolvedGlyphSize}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+          <ComposerToolbarGlyph role={glyphRole}>
+            <Icon size={glyph.size} strokeWidth={glyph.strokeWidth} color={resolvedIconColor} />
           </ComposerToolbarGlyph>
         )}
         {isSheet ? (
@@ -167,5 +170,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconColor: {
     color: theme.colors.foregroundMuted,
+  },
+  iconColorForeground: {
+    color: theme.colors.foreground,
   },
 }));

@@ -1,5 +1,5 @@
 import type { StyleProp, ViewStyle } from "react-native";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, ICON_STROKE_WIDTH, type Theme } from "@/styles/theme";
 import {
   bySizing,
   controlSizingForLayout,
@@ -102,6 +102,13 @@ export const TOOLBAR_DISC_SIZES = { touch: 36, pointer: 28 } satisfies SizingVal
 export const TOOLBAR_DISC_SIZE = bySizing(TOOLBAR_DISC_SIZES);
 
 /**
+ * The space between adjacent toolbar controls. Touch-sized the 44pt hit frames already space
+ * their glyphs, so the frames sit edge to edge: one control every 44pt.
+ */
+export const TOOLBAR_CONTROL_GAPS = { touch: 0, pointer: 4 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_GAP = bySizing(TOOLBAR_CONTROL_GAPS);
+
+/**
  * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body
  * text, so each step is larger.
  */
@@ -111,6 +118,82 @@ export const TOUCH_ICON_SIZE: Record<IconSize, number> = { xs: 14, sm: 18, md: 2
 export function iconSizeFor(size: IconSize): SizingValue {
   return { touch: TOUCH_ICON_SIZE[size], pointer: ICON_SIZE[size] };
 }
+
+/**
+ * The glyph a toolbar control paints. Touch-sized an icon-only control's glyph fills its 44pt
+ * frame at 24pt with a 2px stroke and rests at `foreground`, so the row reads as solid controls;
+ * a glyph beside a label stays at the label's scale, 20pt, so it does not dwarf the label's
+ * x-height. Pointer-sized both are the `md` glyph at the app's stroke and rest muted until
+ * hovered.
+ */
+export type ToolbarGlyphTone = "foreground" | "muted";
+
+export interface ToolbarGlyph {
+  size: number;
+  strokeWidth: number;
+  /** The tone at rest; a hovering pointer brightens it to `foreground`. */
+  tone: ToolbarGlyphTone;
+}
+
+/** `icon` is an icon-only control's glyph; `label` is a glyph paired with a label. */
+export interface ToolbarGlyphs {
+  icon: ToolbarGlyph;
+  label: ToolbarGlyph;
+}
+
+const POINTER_TOOLBAR_GLYPH: ToolbarGlyph = {
+  size: ICON_SIZE.md,
+  strokeWidth: ICON_STROKE_WIDTH,
+  tone: "muted",
+};
+
+const TOOLBAR_GLYPHS: Record<ControlSizing, ToolbarGlyphs> = {
+  touch: {
+    icon: { size: 24, strokeWidth: 2, tone: "foreground" },
+    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: 2, tone: "foreground" },
+  },
+  pointer: { icon: POINTER_TOOLBAR_GLYPH, label: POINTER_TOOLBAR_GLYPH },
+};
+
+export function toolbarGlyphsFor(sizing: ControlSizing): ToolbarGlyphs {
+  return TOOLBAR_GLYPHS[sizing];
+}
+
+/** The slot each toolbar glyph sits in, as stylesheet values. */
+export const TOOLBAR_GLYPH_SIZES = {
+  icon: bySizing({ touch: TOOLBAR_GLYPHS.touch.icon.size, pointer: POINTER_TOOLBAR_GLYPH.size }),
+  label: bySizing({ touch: TOOLBAR_GLYPHS.touch.label.size, pointer: POINTER_TOOLBAR_GLYPH.size }),
+} satisfies Record<keyof ToolbarGlyphs, LayoutValue>;
+
+/**
+ * The context ring in a toolbar row. A full circle on a dim track reads smaller and lighter than
+ * an outline glyph of the same box, so touch-sized it runs 2pt over the toolbar glyph with a
+ * heavier stroke to match its neighbours' optical weight. Pointer-sized it is the `md` glyph.
+ */
+export interface ToolbarRing {
+  size: number;
+  strokeWidth: number;
+}
+
+export const TOOLBAR_RINGS = {
+  touch: { size: 26, strokeWidth: 3 },
+  pointer: { size: ICON_SIZE.md, strokeWidth: 2 },
+} satisfies Record<ControlSizing, ToolbarRing>;
+
+export function toolbarGlyphTone(glyph: ToolbarGlyph, hovered: boolean): ToolbarGlyphTone {
+  return hovered ? "foreground" : glyph.tone;
+}
+
+export function toolbarGlyphColor(theme: Theme, tone: ToolbarGlyphTone): string {
+  return tone === "foreground" ? theme.colors.foreground : theme.colors.foregroundMuted;
+}
+
+/**
+ * The solid glyph inside a toolbar disc, such as the stop square. It stays at the `md` glyph
+ * size: at the toolbar glyph size the square would fill half its disc. Send's outline arrow
+ * takes the toolbar glyph.
+ */
+export const TOOLBAR_DISC_GLYPH_SIZES = iconSizeFor("md");
 
 /** The height of a control of `size`, for code that has to compute with it outside a stylesheet. */
 export function controlHeightForLayout(size: ControlSize, isCompact: boolean): number {
