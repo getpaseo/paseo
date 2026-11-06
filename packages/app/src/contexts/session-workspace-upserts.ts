@@ -7,12 +7,18 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
  * - `archive`: the row is hidden; host upserts for it are dropped until its remove arrives.
  * - `undo`: the row is back; host removes for it are dropped until the undo response arrives.
  *
- * Only the request that set an intent may clear it, so a late response for an earlier
- * request never clears the intent of a newer one.
+ * Each request gets its own intent. A request settles or checks only the intent it set, so a
+ * late response for an earlier request never touches the intent of a newer one.
  */
-type LocalWorkspaceArchiveIntent = "archive" | "undo";
+export interface WorkspaceArchiveIntent {
+  readonly kind: "archive" | "undo";
+}
 
-const intentsByServer = new Map<string, Map<string, LocalWorkspaceArchiveIntent>>();
+const intentsByServer = new Map<string, Map<string, WorkspaceArchiveIntent>>();
+const targetByIntent = new WeakMap<
+  WorkspaceArchiveIntent,
+  { serverId: string; workspaceId: string }
+>();
 
 interface WorkspaceIntentTarget {
   serverId: string;
@@ -28,63 +34,82 @@ function resolveTarget(
   return { serverId, workspaceId };
 }
 
-function readIntent(input: WorkspaceIntentTarget): LocalWorkspaceArchiveIntent | null {
+function readIntent(input: WorkspaceIntentTarget): WorkspaceArchiveIntent | null {
   const target = resolveTarget(input);
   if (!target) return null;
   return intentsByServer.get(target.serverId)?.get(target.workspaceId) ?? null;
 }
 
-function setIntent(input: WorkspaceIntentTarget, intent: LocalWorkspaceArchiveIntent): void {
+function setIntent(
+  input: WorkspaceIntentTarget,
+  kind: WorkspaceArchiveIntent["kind"],
+): WorkspaceArchiveIntent {
+  const intent: WorkspaceArchiveIntent = { kind };
   const target = resolveTarget(input);
-  if (!target) return;
+  if (!target) return intent;
+  targetByIntent.set(intent, target);
   const intents = intentsByServer.get(target.serverId) ?? new Map();
   intents.set(target.workspaceId, intent);
   intentsByServer.set(target.serverId, intents);
+  return intent;
 }
 
-function clearIntent(input: WorkspaceIntentTarget, intent: LocalWorkspaceArchiveIntent): void {
-  const target = resolveTarget(input);
-  if (!target) return;
+function deleteIntent(target: { serverId: string; workspaceId: string }): void {
   const intents = intentsByServer.get(target.serverId);
-  if (intents?.get(target.workspaceId) !== intent) return;
+  if (!intents) return;
   intents.delete(target.workspaceId);
   if (intents.size === 0) intentsByServer.delete(target.serverId);
+}
+
+function clearIntentOfKind(
+  input: WorkspaceIntentTarget,
+  kind: WorkspaceArchiveIntent["kind"],
+): void {
+  const target = resolveTarget(input);
+  if (!target || readIntent(target)?.kind !== kind) return;
+  deleteIntent(target);
+}
+
+/** True while `intent` is still the latest thing this client asked for its workspace. */
+export function isWorkspaceArchiveIntentCurrent(intent: WorkspaceArchiveIntent): boolean {
+  const target = targetByIntent.get(intent);
+  return target !== undefined && readIntent(target) === intent;
+}
+
+/** The request behind `intent` settled. A newer request's intent stays in place. */
+export function settleWorkspaceArchiveIntent(intent: WorkspaceArchiveIntent): void {
+  const target = targetByIntent.get(intent);
+  if (target && readIntent(target) === intent) deleteIntent(target);
 }
 
 export function markWorkspaceArchivePending(input: {
   serverId: string;
   workspaceId: string;
-}): void {
-  setIntent(input, "archive");
+}): WorkspaceArchiveIntent {
+  return setIntent(input, "archive");
 }
 
+/** The host removed the workspace, which settles whichever archive this client has pending. */
 export function clearWorkspaceArchivePending(input: {
   serverId: string;
   workspaceId: string;
 }): void {
-  clearIntent(input, "archive");
+  clearIntentOfKind(input, "archive");
 }
 
 export function isWorkspaceArchivePending(input: WorkspaceIntentTarget): boolean {
-  return readIntent(input) === "archive";
+  return readIntent(input)?.kind === "archive";
 }
 
 export function markWorkspaceArchiveUndoPending(input: {
   serverId: string;
   workspaceId: string;
-}): void {
-  setIntent(input, "undo");
-}
-
-export function clearWorkspaceArchiveUndoPending(input: {
-  serverId: string;
-  workspaceId: string;
-}): void {
-  clearIntent(input, "undo");
+}): WorkspaceArchiveIntent {
+  return setIntent(input, "undo");
 }
 
 export function isWorkspaceArchiveUndoPending(input: WorkspaceIntentTarget): boolean {
-  return readIntent(input) === "undo";
+  return readIntent(input)?.kind === "undo";
 }
 
 export function shouldSuppressWorkspaceForLocalArchive(input: {

@@ -205,6 +205,24 @@ describe("WorkspaceArchiveOperations", () => {
     expect(restored).toEqual([["agent-a"]]);
   });
 
+  test("an archive of an already archived workspace keeps the earlier archive's agents for undo", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    await operations.archive("ws", async () => archived(["agent-a"]));
+    await operations.archive("ws", async () => ({
+      archivedAgentIds: ["agent-a"],
+      newlyArchivedAgentIds: [],
+      archivedWorkspaceIds: [],
+      removedDirectory: false,
+    }));
+    const restored: string[][] = [];
+
+    await operations.undo("ws", async ({ agentIds }) => {
+      restored.push(agentIds);
+    });
+
+    expect(restored).toEqual([["agent-a"]]);
+  });
+
   test("an undo restores the archive's agents once; a repeat undo restores none", async () => {
     const operations = new WorkspaceArchiveOperations();
     await operations.archive("ws", async () => archived(["agent-a"]));

@@ -612,10 +612,14 @@ async function archiveWorkspaceContentsWithProgress(
       ...matchingStoredRecords.filter((record) => !record.archivedAt).map((record) => record.id),
     ]),
   ];
-  // Internal agents are retired rather than archived: nothing on disk can bring them back.
+  // Undo brings back only what this archive took down. Internal agents are retired rather than
+  // archived, and an agent loaded only to read its history was archived before this request.
   const restorableAgentIds = new Set(agentIdsToArchive);
   for (const agent of liveAgents) {
     if (agent.internal) restorableAgentIds.delete(agent.id);
+  }
+  for (const record of matchingStoredRecords) {
+    if (record.archivedAt) restorableAgentIds.delete(record.id);
   }
   const [agentResults, [terminalResult]] = await Promise.all([
     Promise.allSettled(

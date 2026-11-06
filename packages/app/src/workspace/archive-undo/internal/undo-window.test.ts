@@ -8,10 +8,9 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import { seedSessionHosts } from "@/test/seed-session";
 import {
   archiveWorkspaceWithUndo,
-  hasUndoableWorkspaceArchive,
   undoLatestWorkspaceArchive,
   type UndoableWorkspaceArchiveClient,
-} from "./undo-window";
+} from "@/workspace/archive-undo";
 
 const SERVER_ID = "workspace-archive-undo-window";
 
@@ -159,9 +158,9 @@ describe("archiveWorkspaceWithUndo", () => {
     expect(committed).toEqual([]);
 
     toast.timeOut();
-    expect({ committed, undoable: hasUndoableWorkspaceArchive() }).toEqual({
+    expect({ committed, undone: undoLatestWorkspaceArchive() }).toEqual({
       committed: ["a"],
-      undoable: false,
+      undone: false,
     });
   });
 
@@ -250,7 +249,7 @@ describe("archiveWorkspaceWithUndo", () => {
     await archive;
     undoLatestWorkspaceArchive();
     host.failUndo("a", new Error("Branch is gone"));
-    await expect.poll(() => toast.errors).toEqual(["Branch is gone"]);
+    await expect.poll(() => toast.errors).toEqual(["Couldn't undo the archive"]);
 
     expect(storedWorkspace("a")).toBeUndefined();
   });
@@ -277,8 +276,8 @@ describe("archiveWorkspaceWithUndo", () => {
     await expect(archive).rejects.toThrow("registry unavailable");
     expect({
       toast: toast.shownTestID,
-      undoable: hasUndoableWorkspaceArchive(),
+      undone: undoLatestWorkspaceArchive(),
       row: storedWorkspace("a"),
-    }).toEqual({ toast: null, undoable: false, row: workspace("a") });
+    }).toEqual({ toast: null, undone: false, row: workspace("a") });
   });
 });

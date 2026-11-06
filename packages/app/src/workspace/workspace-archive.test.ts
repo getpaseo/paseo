@@ -4,7 +4,6 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearWorkspaceArchivePending,
-  clearWorkspaceArchiveUndoPending,
   isWorkspaceArchivePending,
   isWorkspaceArchiveUndoPending,
 } from "@/contexts/session-workspace-upserts";
@@ -105,7 +104,6 @@ afterEach(() => {
   clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-2" });
   clearWorkspaceArchivePending({ serverId: SECOND_SERVER_ID, workspaceId: "workspace-1" });
   clearWorkspaceArchivePending({ serverId: SECOND_SERVER_ID, workspaceId: "workspace-2" });
-  clearWorkspaceArchiveUndoPending({ serverId: SERVER_ID, workspaceId: "workspace-1" });
   useSessionStore.setState((state) => ({ ...state, sessions: {} }));
 });
 
@@ -313,5 +311,58 @@ describe("undoWorkspaceArchiveOptimistically", () => {
     expect(rearchive.hidden).toEqual(archived);
     expect(storedWorkspace(archived.id)).toBeUndefined();
     expect(isWorkspaceArchivePending(target())).toBe(true);
+  });
+  it("puts the row back when another client's undo cancels this archive", async () => {
+    const archived = workspace();
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
+    const archive = beginOptimisticWorkspaceArchive({
+      client: createClient(async () =>
+        archivePayload({ workspaceId: archived.id, canceled: true, error: "undone" }),
+      ),
+      workspace: target(),
+    });
+
+    await expect(archive.done).resolves.toBe("canceled");
+
+    expect({
+      row: storedWorkspace(archived.id),
+      archivePending: isWorkspaceArchivePending(target()),
+    }).toEqual({ row: archived, archivePending: false });
+  });
+
+  it("an earlier undo settling keeps holding the row for a later undo", async () => {
+    const archived = workspace();
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
+    const firstUndoResponse = deferred<void>();
+    const secondUndoResponse = deferred<void>();
+    const first = beginOptimisticWorkspaceArchive({
+      client: createClient(async () => archivePayload({ workspaceId: archived.id })),
+      workspace: target(),
+    });
+    await first.done;
+    const firstUndo = undoWorkspaceArchiveOptimistically({
+      client: { undoWorkspaceArchive: async () => firstUndoResponse.promise },
+      workspace: target(),
+      hidden: first.hidden,
+    });
+    const second = beginOptimisticWorkspaceArchive({
+      client: createClient(async () => new Promise<ArchiveWorkspacePayload>(() => {})),
+      workspace: target(),
+    });
+    const secondUndo = undoWorkspaceArchiveOptimistically({
+      client: { undoWorkspaceArchive: async () => secondUndoResponse.promise },
+      workspace: target(),
+      hidden: second.hidden,
+    });
+
+    firstUndoResponse.resolve();
+    await firstUndo;
+
+    expect({
+      row: storedWorkspace(archived.id),
+      undoPending: isWorkspaceArchiveUndoPending(target()),
+    }).toEqual({ row: archived, undoPending: true });
+    secondUndoResponse.resolve();
+    await secondUndo;
   });
 });

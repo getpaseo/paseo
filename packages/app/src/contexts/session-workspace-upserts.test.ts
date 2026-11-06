@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
-  clearWorkspaceArchiveUndoPending,
   isWorkspaceArchivePending,
   markWorkspaceArchivePending,
   markWorkspaceArchiveUndoPending,
   shouldSuppressWorkspaceForLocalArchive,
+  settleWorkspaceArchiveIntent,
   shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 
@@ -125,7 +125,7 @@ describe("workspace archive undo intent", () => {
 
   it("lets host upserts through and holds host removes while an undo is pending", () => {
     markWorkspaceArchivePending(target);
-    markWorkspaceArchiveUndoPending(target);
+    const undo = markWorkspaceArchiveUndoPending(target);
 
     expect({
       upsertSuppressed: shouldSuppressWorkspaceForLocalArchive({
@@ -135,20 +135,25 @@ describe("workspace archive undo intent", () => {
       removeSuppressed: shouldSuppressWorkspaceRemovalForLocalUndo(target),
     }).toEqual({ upsertSuppressed: false, removeSuppressed: true });
 
-    clearWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(undo);
     expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(false);
   });
 
   it("keeps a newer intent when the request behind an older one settles late", () => {
-    markWorkspaceArchivePending(target);
-    markWorkspaceArchiveUndoPending(target);
+    const firstArchive = markWorkspaceArchivePending(target);
+    const firstUndo = markWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(firstArchive);
     clearWorkspaceArchivePending(target);
     expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
 
     markWorkspaceArchivePending(target);
-    clearWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(firstUndo);
     expect(isWorkspaceArchivePending(target)).toBe(true);
 
-    clearWorkspaceArchivePending(target);
+    const secondUndo = markWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(firstUndo);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
+
+    settleWorkspaceArchiveIntent(secondUndo);
   });
 });

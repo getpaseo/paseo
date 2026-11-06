@@ -190,6 +190,36 @@ test.skipIf(process.platform === "win32")(
   60000,
 );
 
+test.skipIf(process.platform === "win32")(
+  "an undo sent right behind its archive leaves the workspace active",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, directory, agentId } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      "archive-then-undo-same-tick",
+    );
+
+    const [archiveResponse] = await Promise.all([
+      ctx.client.archiveWorkspace(workspaceId),
+      ctx.client.undoWorkspaceArchive(workspaceId),
+    ]);
+
+    expect({
+      archiveCanceled: archiveResponse.canceled ?? false,
+      workspaceActive: await isWorkspaceActive(workspaceId),
+      directoryExists: existsSync(directory),
+      agentArchived: await isAgentArchived(agentId),
+    }).toEqual({
+      archiveCanceled: true,
+      workspaceActive: true,
+      directoryExists: true,
+      agentArchived: false,
+    });
+  },
+  60000,
+);
+
 test("an undo on a workspace that was never archived leaves it as it was", async () => {
   const repo = createRepoWithGatedTeardown();
   repo.releaseTeardown();

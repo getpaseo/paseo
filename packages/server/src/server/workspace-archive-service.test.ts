@@ -1191,6 +1191,34 @@ describe("archiveByScope cancellation", () => {
     expect(result.archivedAgentIds.sort()).toEqual(["agent-active", "agent-already-archived"]);
     expect(result.newlyArchivedAgentIds).toEqual(["agent-active"]);
   });
+
+  test("an archived agent loaded to read its history is not reported as newly archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "loaded-archived");
+    const workspaceId = "ws-loaded-archived";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.agentStorage = storedAgents(workspaceId, [
+      { id: "agent-active", archivedAt: null },
+      { id: "agent-history", archivedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    deps.agentManager.listAgents = () =>
+      [
+        { id: "agent-active", workspaceId },
+        { id: "agent-history", workspaceId },
+      ] as ManagedAgent[];
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-loaded-archived",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.newlyArchivedAgentIds).toEqual(["agent-active"]);
+  });
 });
 
 describe("resolveWorkspaceIdAtPath", () => {

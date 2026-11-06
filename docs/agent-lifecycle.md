@@ -270,6 +270,9 @@ The daemon runs one archive lane per workspace, shared by every connection
 | an undo runs: archive    | waits for the undo, then archives                         |
 | an undo runs: undo       | joins the running undo                                    |
 
+A request takes its place in the lane before its first `await`. Arrival order decides, so an undo
+sent right behind its archive still cancels it.
+
 An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
 the agents that archive itself archived. Deleting the worktree directory is the point of no
 return: an undo after it recreates the worktree through workspace recovery. The client shows or

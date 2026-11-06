@@ -31,7 +31,8 @@ const DEFAULT_UNDO_RETENTION_MS = 10 * 60_000;
  * Each call claims the lane synchronously, so whichever request arrives last decides the
  * workspace's final state no matter how the earlier work interleaves.
  *
- * The agents an archive took down are kept in memory for the undo window. After a daemon
+ * The agents an archive took down are kept in memory for the undo window. An archive that took
+ * nothing down, such as a repeat archive from a stale client, leaves them alone. After a daemon
  * restart, undo still restores the workspace but its agents stay archived.
  */
 export class WorkspaceArchiveOperations {
@@ -58,11 +59,15 @@ export class WorkspaceArchiveOperations {
       await settled(current?.done);
       try {
         const result = await run(controller.signal);
-        this.retainUndoable(workspaceId, result.newlyArchivedAgentIds);
+        if (result.archivedWorkspaceIds.length > 0 || result.newlyArchivedAgentIds.length > 0) {
+          this.retainUndoable(workspaceId, result.newlyArchivedAgentIds);
+        }
         return { kind: "archived", result };
       } catch (error) {
         if (!(error instanceof WorkspaceArchiveCanceledError)) throw error;
-        this.retainUndoable(workspaceId, error.newlyArchivedAgentIds);
+        if (error.recordArchived || error.newlyArchivedAgentIds.length > 0) {
+          this.retainUndoable(workspaceId, error.newlyArchivedAgentIds);
+        }
         return { kind: "canceled" };
       }
     })();

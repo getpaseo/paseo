@@ -7807,15 +7807,16 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "archive_workspace_request" }>,
   ): Promise<void> {
     try {
-      const existing = await this.workspaceRegistry.get(request.workspaceId);
-      if (!existing) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
-
+      // Claim the archive queue before any await, so an undo sent right behind this request
+      // queues after it and cancels it instead of running first.
       const outcome = await this.workspaceArchiveOperations.archive(
-        existing.workspaceId,
-        (signal) =>
-          archiveByScope(
+        request.workspaceId,
+        async (signal) => {
+          const existing = await this.workspaceRegistry.get(request.workspaceId);
+          if (!existing) {
+            throw new Error(`Workspace not found: ${request.workspaceId}`);
+          }
+          return archiveByScope(
             {
               paseoHome: this.paseoHome,
               paseoWorktreesBaseRoot: this.worktreesRoot,
@@ -7844,7 +7845,8 @@ export class Session {
               requestId: request.requestId,
               signal,
             },
-          ),
+          );
+        },
       );
 
       if (outcome.kind === "canceled") {

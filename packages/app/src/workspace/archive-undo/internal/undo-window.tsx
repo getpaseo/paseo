@@ -72,11 +72,8 @@ class UndoWindow {
     this.release();
     this.dismissToast();
     void undoWorkspaceArchiveOptimistically(this.input).catch((error: unknown) => {
-      this.input.toast.error(
-        error instanceof Error
-          ? error.message
-          : i18n.t("sidebar.workspace.toasts.undoArchiveFailed"),
-      );
+      console.warn("[workspace-archive-undo] undo failed", error);
+      this.input.toast.error(i18n.t("sidebar.workspace.toasts.undoArchiveFailed"));
     });
     return true;
   };

@@ -8,9 +8,9 @@ import {
 } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
-  clearWorkspaceArchiveUndoPending,
   markWorkspaceArchivePending,
   markWorkspaceArchiveUndoPending,
+  settleWorkspaceArchiveIntent,
 } from "@/contexts/session-workspace-upserts";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
@@ -388,18 +388,18 @@ it("keeps a workspace whose archive is being undone when the host reports its re
   const replica = new WorkspaceDirectoryReplica(serverId);
   const restored = normalizeWorkspaceDescriptor(workspace("restored"));
 
+  const undo = markWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
   try {
     replica.acceptWorkspaces([restored]);
-    markWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
 
     expect(replica.applyDelta({ kind: "remove", id: restored.id })).toEqual([]);
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(restored.id)).toBe(true);
 
-    clearWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
+    settleWorkspaceArchiveIntent(undo);
     replica.applyDelta({ kind: "remove", id: restored.id });
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(restored.id)).toBe(false);
   } finally {
-    clearWorkspaceArchiveUndoPending({ serverId, workspaceId: restored.id });
+    settleWorkspaceArchiveIntent(undo);
     store.clearSession(serverId);
   }
 });

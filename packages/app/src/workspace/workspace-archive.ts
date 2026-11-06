@@ -1,10 +1,10 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
-  clearWorkspaceArchivePending,
-  clearWorkspaceArchiveUndoPending,
-  isWorkspaceArchiveUndoPending,
+  isWorkspaceArchiveIntentCurrent,
   markWorkspaceArchivePending,
   markWorkspaceArchiveUndoPending,
+  settleWorkspaceArchiveIntent,
+  type WorkspaceArchiveIntent,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
@@ -34,6 +34,7 @@ export interface OptimisticWorkspaceArchive {
 
 interface OptimisticWorkspaceArchiveSnapshot {
   workspace: WorkspaceDescriptor | null;
+  intent: WorkspaceArchiveIntent;
 }
 
 export interface WorkspaceArchiveFailure {
@@ -63,23 +64,24 @@ function hideWorkspaceOptimistically(
     workspaceId: workspace.workspaceId,
   });
   const snapshot = workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null;
-  markWorkspaceArchivePending({
+  const intent = markWorkspaceArchivePending({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
   getHostRuntimeStore().removeWorkspaceSnapshot(workspace.serverId, workspace.workspaceId);
-  return { workspace: snapshot };
+  return { workspace: snapshot, intent };
 }
 
+/**
+ * Puts back a row whose archive did not happen. Skipped when a newer request on this client
+ * (an undo, or another archive) owns the row by now.
+ */
 function restoreOptimisticallyHiddenWorkspace(input: {
   serverId: string;
-  workspaceId: string;
   snapshot: OptimisticWorkspaceArchiveSnapshot;
 }): void {
-  clearWorkspaceArchivePending({
-    serverId: input.serverId,
-    workspaceId: input.workspaceId,
-  });
+  if (!isWorkspaceArchiveIntentCurrent(input.snapshot.intent)) return;
+  settleWorkspaceArchiveIntent(input.snapshot.intent);
   if (input.snapshot.workspace) {
     getHostRuntimeStore().acceptWorkspaceSnapshots(input.serverId, [input.snapshot.workspace]);
   }
@@ -99,7 +101,10 @@ async function archiveWorkspaceOrThrow(input: {
   return "archived";
 }
 
-/** Hides the row now and archives it on the host. A failed archive puts the row back. */
+/**
+ * Hides the row now and archives it on the host. A failed archive puts the row back, and so
+ * does a canceled one: an undo from another client stopped it, so the workspace stays.
+ */
 export function beginOptimisticWorkspaceArchive(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
@@ -107,16 +112,16 @@ export function beginOptimisticWorkspaceArchive(input: {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
   const done = (async () => {
     try {
-      return await archiveWorkspaceOrThrow({
+      const outcome = await archiveWorkspaceOrThrow({
         client: input.client,
         workspaceId: input.workspace.workspaceId,
       });
+      if (outcome === "canceled") {
+        restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });
+      }
+      return outcome;
     } catch (error) {
-      restoreOptimisticallyHiddenWorkspace({
-        serverId: input.workspace.serverId,
-        workspaceId: input.workspace.workspaceId,
-        snapshot,
-      });
+      restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });
       throw error;
     }
   })();
@@ -141,19 +146,19 @@ export async function undoWorkspaceArchiveOptimistically(input: {
   hidden: WorkspaceDescriptor | null;
 }): Promise<void> {
   const { serverId, workspaceId } = input.workspace;
-  markWorkspaceArchiveUndoPending({ serverId, workspaceId });
+  const intent = markWorkspaceArchiveUndoPending({ serverId, workspaceId });
   if (input.hidden) {
     getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [input.hidden]);
   }
   try {
     await input.client.undoWorkspaceArchive(workspaceId);
   } catch (error) {
-    if (isWorkspaceArchiveUndoPending({ serverId, workspaceId })) {
+    if (isWorkspaceArchiveIntentCurrent(intent)) {
       getHostRuntimeStore().removeWorkspaceSnapshot(serverId, workspaceId);
     }
     throw error;
   } finally {
-    clearWorkspaceArchiveUndoPending({ serverId, workspaceId });
+    settleWorkspaceArchiveIntent(intent);
   }
 }
 
