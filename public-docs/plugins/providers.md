@@ -294,7 +294,8 @@ children. File-only rewind keeps the current session and conversation history.
 
 Use `restoration: "core"` when Paseo can reopen a session from persistence. A provider-owned child
 uses `restoration: "parent"`; emit it as another `session.opened` event with `parentSessionId` and
-recreate it while restoring the parent.
+recreate it while restoring the parent. The parent's `session.opened` capabilities must include
+`session.subsession`. Paseo fails the whole connection when a parent without it opens a child.
 
 ## Add commands and steering
 
