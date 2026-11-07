@@ -12,6 +12,7 @@ export const builtinPlugins = [
   "hoplite-provider",
   "kimi-usage-source",
   "minimax-usage-source",
+  "mistral-vibe-usage-source",
   "muse-provider",
   "opencode-go-usage-source",
   "worktree-include",
