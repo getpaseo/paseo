@@ -19,7 +19,7 @@ Provider 插件把一个编程 Agent 接入 Paseo，而无需把它加入 Paseo 
 
 示例有：
 
-- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct)：会话、设置、提示词、持久化、子会话，以及一个由 Provider 拥有的时间线渲染器；
+- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct)：会话、设置、提示词、持久化、子会话、由 Provider 拥有的子会话副标题，以及一个由 Provider 拥有的时间线渲染器；
 - [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer)：一个 ACP 命令模板，带有一个用 Zod 校验的厂商编辑转换器。加载之前，请把 `example-acp --stdio` 替换为一个已安装的 ACP Agent；
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking)：一个只包含渲染器、不实现 Provider 的插件。
 
@@ -255,6 +255,37 @@ Paseo 会在 Composer 中渲染这些控件。用户的修改会以 `session.con
 Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，然后用当前的配置和持久化值重新打开。请在 `session.open` 期间重新读取凭据、环境变量、全局配置和 MCP 服务器。没有单独的重新加载操作。
 
 当 Paseo 可以从持久化值重新打开会话时，使用 `restoration: "core"`。由 Provider 拥有的子会话使用 `restoration: "parent"`；把它作为另一个带有 `parentSessionId` 的 `session.opened` 事件发出，并在恢复父会话时重新创建它。
+
+## 显示由 Provider 拥有的子会话副标题 {#show-provider-owned-subagent-subtitles}
+
+由 Provider 拥有的子会话可以在行标签下方携带一段紧凑的副标题，例如 `general-purpose · Opus 5.5 · Medium · 1 tokens`。内容与格式由 Provider 拥有；Paseo 只展示并按宽度截断该字符串，不解析其中的 Provider 专属模型、思考档位或用量字段。初始副标题直接放在子会话的 `session.opened` 事件里：
+
+```ts
+emit({
+  type: "session.opened",
+  sessionId: childSessionId,
+  parentSessionId,
+  capabilities: [],
+  restoration: "parent",
+  title: "Example child",
+  subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
+  cwd,
+});
+```
+
+子会话运行期间，副标题背后的事实会变化（模型切换、token 数增长），因此每当组合出的副标题变化时，发布 `session.subagent_presentation`：
+
+```ts
+emit({
+  type: "session.subagent_presentation",
+  sessionId: childSessionId,
+  subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+});
+```
+
+`subtitle` 会替换该行当前的副标题；`null` 清除副标题。只在副标题真的变化时发送：客户端会整条替换描述符，重复的相同更新是无效开销。该事件只面向 Provider 子会话；Paseo 会忽略根会话或未知会话 ID 上的事件。
+
+`session.subagent_presentation` 是宿主通告的能力位。宿主在 connect 请求（`ProviderConnectRequest.capabilities`）中列出自己理解的能力；把它加入你的 supported 列表，并按[注册直接实现的 Provider](#register-a-direct-provider)所示进行协商，然后只在协商后的能力包含它时才发该事件。不支持该能力位的旧宿主会在 `ProviderEventSchema` 校验中拒绝这个事件，并关闭整条 Provider 连接，连接上的所有会话随之失败——事件不会被静默丢弃。`session.opened` 上的可选 `subtitle` 不需要这道门：旧宿主会忽略未知字段。
 
 ## 添加命令和引导 {#add-commands-and-steering}
 

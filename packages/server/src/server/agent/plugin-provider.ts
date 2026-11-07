@@ -1469,6 +1469,7 @@ class PluginAgentSession implements AgentSession {
         toolCallId: opened.toolCallId ?? null,
         title: opened.title ?? null,
         description: opened.description ?? null,
+        subtitle: opened.subtitle ?? null,
         status: "running",
         cwd: opened.cwd,
       },
@@ -1681,6 +1682,15 @@ class PluginAgentSession implements AgentSession {
           id: childId,
           status: event.state === "started" ? "running" : event.state,
         },
+      });
+      return;
+    }
+    if (event.type === "session.subagent_presentation") {
+      // Presentation-only: keep the stored status so a late label update never revives a child.
+      this.publish({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: { type: "upsert", id: childId, subtitle: event.subtitle },
       });
       return;
     }

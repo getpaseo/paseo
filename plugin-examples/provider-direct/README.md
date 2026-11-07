@@ -2,7 +2,8 @@
 
 This plugin implements `ProviderRegistration` directly. It demonstrates connection negotiation,
 catalog and session listing, session creation, prompt and command disposition, settings,
-persistence and replay, archive actions, and an ordinary child session.
+persistence and replay, archive actions, an ordinary child session, and a provider-owned subtitle
+that demonstrates the runtime replacement path.
 
 The provider emits versioned `provider-result` timeline items for its root and child sessions.
 `index.client.tsx` registers the Zod schema and React Native renderer for those items. The server

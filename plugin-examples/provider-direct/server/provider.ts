@@ -20,6 +20,7 @@ const CAPABILITIES = [
   "session.configure",
   "session.list",
   "session.persistence",
+  "session.subagent_presentation",
   "session.subsession",
   "session.unarchive",
   "timeline.plugin",
@@ -321,8 +322,18 @@ function publishChild(parentSessionId: string, turn: number, state: ExampleState
     capabilities: [],
     restoration: "parent",
     title: "Example child",
+    subtitle: "Example model · Medium · 1 tokens",
     cwd: requireSession(state, parentSessionId).config.cwd,
   });
+  if (state.capabilities.includes("session.subagent_presentation")) {
+    // Runtime facts change as the child works; the example replaces the subtitle once to show the
+    // update path a provider uses when its composed label changes.
+    state.emit({
+      type: "session.subagent_presentation",
+      sessionId,
+      subtitle: "Example model · Medium · 2k tokens",
+    });
+  }
   state.emit({
     type: "timeline.item",
     sessionId,

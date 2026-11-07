@@ -1164,6 +1164,197 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("applies a provider-owned subtitle to a plugin child and follows presentation updates", async () => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const manager = new AgentManager({
+      logger,
+      clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+      providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "plugin-direct", cwd: tmpdir() },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      harness.emit({
+        type: "session.opened",
+        sessionId: "presented-child",
+        parentSessionId: open.sessionId,
+        capabilities: [],
+        restoration: "parent",
+        title: "Presented child",
+        subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
+        cwd: tmpdir(),
+      });
+      await nextTurn();
+      expect(manager.listProviderSubagents(agent.id)).toContainEqual(
+        expect.objectContaining({
+          id: "presented-child",
+          title: "Presented child",
+          subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
+          status: "running",
+        }),
+      );
+
+      harness.emit({
+        type: "session.turn",
+        sessionId: "presented-child",
+        turnId: "presented-turn",
+        state: "completed",
+      });
+      harness.emit({
+        type: "session.subagent_presentation",
+        sessionId: "presented-child",
+        subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+      });
+      await nextTurn();
+      // A presentation update says nothing about progress, so the finished child stays finished.
+      expect(manager.listProviderSubagents(agent.id)).toContainEqual(
+        expect.objectContaining({
+          id: "presented-child",
+          subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+          status: "completed",
+        }),
+      );
+
+      harness.emit({
+        type: "session.subagent_presentation",
+        sessionId: "presented-child",
+        subtitle: null,
+      });
+      await nextTurn();
+      expect(manager.listProviderSubagents(agent.id)).toContainEqual(
+        expect.objectContaining({ id: "presented-child", subtitle: null, status: "completed" }),
+      );
+    } finally {
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await plugins.shutdown();
+    }
+  });
+
+  test("keeps a plugin child row intact when the provider sends no subtitle", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      harness.emit({
+        type: "session.opened",
+        sessionId: "plain-child",
+        parentSessionId: open.sessionId,
+        capabilities: [],
+        restoration: "parent",
+        title: "Plain child",
+        cwd: "/workspace",
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: {
+            type: "upsert",
+            id: "plain-child",
+            parentSubagentId: null,
+            toolCallId: null,
+            title: "Plain child",
+            description: null,
+            subtitle: null,
+            status: "running",
+            cwd: "/workspace",
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("ignores presentation updates for root and unknown plugin sessions", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      harness.emit({
+        type: "session.subagent_presentation",
+        sessionId: open.sessionId,
+        subtitle: "Root sessions have no subtitle row",
+      });
+      harness.emit({
+        type: "session.subagent_presentation",
+        sessionId: "unknown-child",
+        subtitle: "Unknown sessions must not create a row",
+      });
+      await nextTurn();
+      expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("replays a child presentation update buffered before the child attaches", async () => {
+    const harness = createProviderHarness({
+      openChildren(rootSessionId, emit) {
+        emit({
+          type: "session.opened",
+          sessionId: "buffered-child",
+          parentSessionId: rootSessionId,
+          capabilities: [],
+          restoration: "parent",
+          title: "Buffered child",
+          subtitle: "Buffered · 1 tokens",
+          cwd: "/workspace",
+        });
+        emit({
+          type: "session.subagent_presentation",
+          sessionId: "buffered-child",
+          subtitle: "Buffered · 2k tokens",
+        });
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const session = await registry.clients()[harness.registration.id]!.createSession({
+        provider: harness.registration.id,
+        cwd: "/workspace",
+      });
+      const subtitles: Array<string | null | undefined> = [];
+      for await (const event of session.streamHistory()) {
+        if (
+          event.type === "provider_subagent" &&
+          event.event.type === "upsert" &&
+          event.event.id === "buffered-child"
+        ) {
+          subtitles.push(event.event.subtitle);
+        }
+      }
+      expect(subtitles).toEqual(["Buffered · 1 tokens", "Buffered · 2k tokens"]);
+      await session.close();
+    } finally {
+      registry.replace([]);
+    }
+  });
+
   test.each(["completed", "canceled", "failed"] as const)(
     "reports a reused plugin child as running until its next turn is %s",
     async (outcome) => {
