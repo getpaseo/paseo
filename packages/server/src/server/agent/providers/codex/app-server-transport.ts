@@ -64,6 +64,16 @@ export class CodexAppServerRpcError extends Error {
   }
 }
 
+export class CodexAppServerRequestTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`Codex app-server request timed out for ${method}`);
+    this.name = "CodexAppServerRequestTimeoutError";
+  }
+}
+
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
@@ -189,6 +199,7 @@ function readProviderTurnId(params: unknown): string | undefined {
 
 export class CodexAppServerClient {
   private readonly stdoutLineReader: { close(): void };
+  private readonly exitPromise: Promise<void>;
   private activeProviderRequests = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
@@ -203,6 +214,11 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
+    this.exitPromise =
+      (child.exitCode !== null && child.exitCode !== undefined) ||
+      (child.signalCode !== null && child.signalCode !== undefined)
+        ? Promise.resolve()
+        : new Promise((resolve) => child.once("exit", () => resolve()));
     // Split only on LF: U+2028/U+2029 are valid raw characters inside Codex JSON.
     const reader = new ProviderLineReader(
       CODEX_PROVIDER_LINE_BYTES,
@@ -260,6 +276,14 @@ export class CodexAppServerClient {
     return this.pending.size > 0 || this.activeProviderRequests > 0;
   }
 
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  whenExited(): Promise<void> {
+    return this.exitPromise;
+  }
+
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     if (this.disposed) {
       return Promise.reject(new Error("Codex app-server client is closed"));
@@ -271,7 +295,7 @@ export class CodexAppServerClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Codex app-server request timed out for ${method}`));
+        reject(new CodexAppServerRequestTimeoutError(method, timeoutMs));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
     });
@@ -294,6 +318,15 @@ export class CodexAppServerClient {
   }
 
   async dispose(): Promise<void> {
+    await this.terminate("SIGTERM");
+  }
+
+  /** Skips the SIGTERM grace period for an app-server that has stopped answering requests. */
+  async forceDispose(): Promise<void> {
+    await this.terminate("SIGKILL");
+  }
+
+  private async terminate(firstSignal: "SIGTERM" | "SIGKILL"): Promise<void> {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.stdoutLineReader.close();
@@ -304,12 +337,13 @@ export class CodexAppServerClient {
       // ignore
     }
     const result = await terminateWithTreeKill(this.child, {
+      gracefulSignal: firstSignal,
       gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS,
       onForceSignal: () => {
         this.logger.warn(
-          { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-          "Codex app-server did not exit after SIGTERM; sending SIGKILL",
+          { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS, firstSignal },
+          `Codex app-server did not exit after ${firstSignal}; sending SIGKILL`,
         );
       },
     });
