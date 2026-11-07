@@ -771,6 +771,7 @@ export const es: TranslationResources = {
         importSession: "Importar sesión",
         copyPath: "Copiar ruta del espacio de trabajo",
         copyBranchName: "Copiar nombre de sucursal",
+        rename: "Cambiar nombre del espacio de trabajo",
         showSetup: "Mostrar configuración",
       },
       toasts: {

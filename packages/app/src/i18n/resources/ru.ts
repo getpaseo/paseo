@@ -771,6 +771,7 @@ export const ru: TranslationResources = {
         importSession: "Импортировать сессию",
         copyPath: "Скопировать путь к рабочему пространству",
         copyBranchName: "Скопировать название ветки",
+        rename: "Переименовать рабочее пространство",
         showSetup: "Показать настройку рабочего пространства",
       },
       toasts: {

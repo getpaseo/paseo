@@ -768,6 +768,7 @@ export const ja: TranslationResources = {
         importSession: "セッションをインポート",
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
+        rename: "ワークスペースの名前を変更",
         showSetup: "セットアップを表示",
       },
       toasts: {

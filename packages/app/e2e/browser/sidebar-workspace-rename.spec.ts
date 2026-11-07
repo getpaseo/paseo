@@ -3,6 +3,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -68,6 +69,42 @@ test.describe("Sidebar workspace rename", () => {
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,
         { timeout: 30_000 },
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+// The workspace header's ⋯ menu offers the same rename as the sidebar row, so a workspace can be
+// renamed from the screen you are on without finding its row first.
+test.describe("Workspace header rename", () => {
+  test("renaming from the header menu updates the header and the sidebar row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "header-rename-" });
+
+    try {
+      await gotoAppShell(page);
+      await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
+
+      await page.getByRole("button", { name: "Workspace actions" }).click();
+      await page.getByTestId("workspace-header-rename").click();
+
+      const input = page.getByTestId("workspace-rename-modal-global-input");
+      await expect(input).toBeVisible({ timeout: 10_000 });
+      await expect(input).toHaveValue("main");
+
+      const customTitle = "Header Rename";
+      await input.fill(customTitle);
+      await page.getByTestId("workspace-rename-modal-global-submit").click();
+
+      await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(page.getByTestId("workspace-header-title").filter({ visible: true })).toHaveText(
+        customTitle,
+        { timeout: 15_000 },
+      );
+      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
+        customTitle,
+        { timeout: 15_000 },
       );
     } finally {
       await workspace.cleanup();

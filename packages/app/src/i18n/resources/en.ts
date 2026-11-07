@@ -759,6 +759,7 @@ export const en = {
         importSession: "Import session",
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
+        rename: "Rename workspace",
         showSetup: "Show setup",
       },
       toasts: {
