@@ -1135,10 +1135,6 @@ export async function createPaseoDaemon(
       });
     },
   });
-  await workspaceReconciliation.start();
-  void workspaceReconciliation.reconcileNow().catch((error) => {
-    logger.warn({ err: error }, "Initial workspace reconciliation failed");
-  });
   const checkoutDiffManager = new CheckoutDiffManager({
     logger,
     paseoHome: config.paseoHome,
@@ -1246,6 +1242,11 @@ export async function createPaseoDaemon(
         };
       }),
   );
+  // Recovery must own surviving blocks before reconciliation can archive their workspaces.
+  await workspaceReconciliation.start();
+  void workspaceReconciliation.reconcileNow().catch((error) => {
+    logger.warn({ err: error }, "Initial workspace reconciliation failed");
+  });
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,

@@ -148,19 +148,29 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
     // Reserve all blocks first, including unused ports, before resuming endpoint
     // monitoring or allowing another workspace to allocate.
-    for (const terminal of terminals.values()) {
-      // COMPAT(workspaceLaunchPortBlock): added in v0.15.0, remove after 2027-05-05 once pre-metadata launch workers drain.
-      const metadata = (terminal.workspacePortBlock ?? terminal.workspaceLaunch)!;
-      await this.deps.workspaceRuntimeEnvironment.adopt({
-        workspaceId: terminal.workspaceId,
-        portBase: metadata.portBase,
-        portCount: metadata.portCount,
+    for (const captured of terminals.values()) {
+      await this.runExclusive(captured.workspaceId, async () => {
+        // Reconciliation can remove a captured terminal before recovery gets the queue.
+        const terminal = terminalManager.getTerminal(captured.id);
+        if (!terminal || terminal.workspaceId !== captured.workspaceId) return;
+        // COMPAT(workspaceLaunchPortBlock): added in v0.15.0, remove after 2027-05-05 once pre-metadata launch workers drain.
+        const metadata = terminal.workspacePortBlock ?? terminal.workspaceLaunch;
+        if (!metadata) return;
+        await this.deps.workspaceRuntimeEnvironment.adopt({
+          workspaceId: terminal.workspaceId,
+          portBase: metadata.portBase,
+          portCount: metadata.portCount,
+        });
       });
     }
     const contextsById = new Map(contexts.map((context) => [context.workspaceId, context]));
-    for (const terminal of terminals.values()) {
-      const context = contextsById.get(terminal.workspaceId);
-      if (context && terminal.workspaceLaunch) this.recoverTerminal(context, terminal);
+    for (const captured of terminals.values()) {
+      await this.runExclusive(captured.workspaceId, async () => {
+        const terminal = terminalManager.getTerminal(captured.id);
+        if (!terminal || terminal.workspaceId !== captured.workspaceId) return;
+        const context = contextsById.get(terminal.workspaceId);
+        if (context && terminal.workspaceLaunch) this.recoverTerminal(context, terminal);
+      });
     }
   }
 

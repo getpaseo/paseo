@@ -343,6 +343,129 @@ describe("WorkspaceLaunchManager", () => {
     },
   );
 
+  it("does not restore a captured script block after workspace disposal", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-recovery-disposal-"));
+    tempDirs.push(directory);
+    const terminalManager = createTerminalManager();
+    const workspaceId = "disposed-during-recovery";
+    const owner = await terminalManager.manager.createTerminal({
+      cwd: directory,
+      workspaceId,
+      workspacePortBlock: { portBase: 42000, portCount: 4 },
+    });
+    const captured = createDeferred();
+    const resumeDiscovery = createDeferred();
+    const getTerminals = terminalManager.manager.getTerminals.bind(terminalManager.manager);
+    vi.spyOn(terminalManager.manager, "getTerminals").mockImplementationOnce(
+      async (cwd, options) => {
+        const terminals = await getTerminals(cwd, options);
+        captured.resolve();
+        await resumeDiscovery.promise;
+        return terminals;
+      },
+    );
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      checkPortAvailable: async () => true,
+      random: () => 0,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const recovery = manager.initialize([]);
+    await captured.promise;
+    try {
+      await manager.disposeWorkspace(workspaceId);
+      expect(terminalManager.manager.getTerminal(owner.id)).toBeUndefined();
+      resumeDiscovery.resolve();
+      await recovery;
+      expect(environment.get(workspaceId)).toBeNull();
+      await expect(
+        environment.ensure({
+          workspaceId: "replacement-workspace",
+          cwd: directory,
+          branchName: null,
+          allocation: { range: "42000-42003", blockSize: 4 },
+        }),
+      ).resolves.toMatchObject({ portBase: 42000, portCount: 4 });
+    } finally {
+      resumeDiscovery.resolve();
+      await Promise.allSettled([recovery]);
+      await manager.disposeWorkspace(workspaceId);
+      environment.release("replacement-workspace");
+    }
+  });
+
+  it("serializes launch adoption with disposal without restoring stale output", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-adoption-disposal-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/dev" } } }),
+    );
+    const terminalManager = createTerminalManager();
+    const workspaceId = "disposed-during-adoption";
+    const owner = await terminalManager.manager.createTerminal({
+      cwd: directory,
+      workspaceId,
+      workspaceLaunch: {
+        launchName: "dev",
+        command: "./bin/dev",
+        portBase: 42000,
+        portCount: 4,
+      },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService();
+    const adopt = environment.adopt.bind(environment);
+    const adoptionStarted = createDeferred();
+    const resumeAdoption = createDeferred();
+    vi.spyOn(environment, "adopt").mockImplementationOnce(async (input) => {
+      adoptionStarted.resolve();
+      await resumeAdoption.promise;
+      return await adopt(input);
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId,
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    const recovery = manager.initialize([context]);
+    await adoptionStarted.promise;
+    const disposal = manager.disposeWorkspace(workspaceId);
+    try {
+      await flushAsyncWork();
+      expect(terminalManager.killed).toEqual([]);
+      resumeAdoption.resolve();
+      await Promise.all([recovery, disposal]);
+      expect(terminalManager.manager.getTerminal(owner.id)).toBeUndefined();
+      expect(environment.get(workspaceId)).toBeNull();
+      expect(await manager.buildSnapshot(context)).toEqual([
+        expect.objectContaining({ launchName: "dev", lifecycle: "stopped", terminalId: null }),
+      ]);
+    } finally {
+      resumeAdoption.resolve();
+      await Promise.allSettled([recovery, disposal]);
+      await manager.disposeWorkspace(workspaceId);
+    }
+  });
+
   it.each(["deleted", "moved"])(
     "closes all block owners before reusing a %s worktree's ports and restarting",
     async (removal) => {
