@@ -44,7 +44,9 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
     inputTokens,
     cachedInputTokens,
     outputTokens,
-    totalCostUsd,
+    // PI reports cost 0 for a model it has no rates for, which would render as a
+    // fake $0.00; omitting the field makes the cost line disappear instead.
+    ...(totalCostUsd > 0 ? { totalCostUsd } : {}),
     ...(typeof contextWindowMaxTokens === "number" ? { contextWindowMaxTokens } : {}),
     ...(typeof contextWindowUsedTokens === "number" ? { contextWindowUsedTokens } : {}),
   };

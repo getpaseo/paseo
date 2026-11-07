@@ -85,6 +85,25 @@ describe("Pi usage poller", () => {
     expect(scheduler.activePollCount()).toBe(0);
   });
 
+  test("omits the cost when the provider reports none for the tokens it used", async () => {
+    const scheduler = new ManualPollScheduler();
+    const updates: AgentUsage[] = [];
+    const poller = new PiUsagePoller({
+      scheduler,
+      readStats: async () => ({ tokens: { input: 100, output: 20 }, cost: 0 }),
+      onUsage: (update) => updates.push(update),
+      onPollError: (error) => {
+        throw error;
+      },
+    });
+
+    poller.startTurn();
+    scheduler.poll();
+    await waitForImmediate();
+
+    expect(updates).toEqual([{ inputTokens: 100, cachedInputTokens: 0, outputTokens: 20 }]);
+  });
+
   test("drops an in-flight poll without hiding the final refresh", async () => {
     const scheduler = new ManualPollScheduler();
     const inFlightStats = deferred<PiSessionStats>();
@@ -93,7 +112,6 @@ describe("Pi usage poller", () => {
       inputTokens: 0,
       cachedInputTokens: 0,
       outputTokens: 0,
-      totalCostUsd: 0,
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 150,
     };

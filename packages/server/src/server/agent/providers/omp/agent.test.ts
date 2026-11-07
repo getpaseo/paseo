@@ -440,7 +440,6 @@ describe("OMP agent client and session", () => {
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,
-        totalCostUsd: 0,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 130,
       },
