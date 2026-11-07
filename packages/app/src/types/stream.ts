@@ -545,6 +545,35 @@ function reconcileReplacementHeadAgainstTail(
   };
 }
 
+function isCoveredAssistantContinuation(
+  item: StreamItem,
+  canonical: StreamItem | undefined,
+): boolean {
+  if (item.kind !== "assistant_message" || canonical?.kind !== "assistant_message") return false;
+  if (!item.text.startsWith(canonical.text)) return false;
+  if (item.messageId !== undefined || canonical.messageId !== undefined) {
+    return item.messageId === canonical.messageId;
+  }
+  if (item.id === canonical.id) return true;
+  const cursor = item.timelineCursor;
+  return (
+    cursor !== undefined &&
+    cursor.epoch === canonical.timelineCursor?.epoch &&
+    cursor.seq === canonical.timelineCursor.seq
+  );
+}
+
+function haveConflictingAssistantIds(
+  left: AssistantMessageItem,
+  right: AssistantMessageItem,
+): boolean {
+  return (
+    left.messageId !== undefined &&
+    right.messageId !== undefined &&
+    left.messageId !== right.messageId
+  );
+}
+
 function preserveReplacementHead(
   tail: StreamItem[],
   currentHead: StreamItem[],
@@ -558,9 +587,7 @@ function preserveReplacementHead(
         (item) =>
           !item.timelineCursor ||
           isAfterCanonicalCoverage(item.timelineCursor, canonicalCoverage) ||
-          (item.kind === "assistant_message" &&
-            canonicalTailAssistant?.kind === "assistant_message" &&
-            item.text.startsWith(canonicalTailAssistant.text)),
+          isCoveredAssistantContinuation(item, canonicalTailAssistant),
       )
     : currentHead.filter(
         (item) =>
@@ -584,6 +611,12 @@ function preserveReplacementHead(
     !tailAssistant ||
     tailAssistant.kind !== "assistant_message"
   ) {
+    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+  }
+
+  // Equal text from different provider messages is still two replies.
+  const differentIdentifiedMessages = haveConflictingAssistantIds(liveAssistant, tailAssistant);
+  if (differentIdentifiedMessages) {
     return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
 
