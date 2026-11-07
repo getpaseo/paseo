@@ -570,6 +570,13 @@ Register a usage source from `index.server.ts` with `server.registerUsageSource(
 
 When the host’s **Check usage** switch is off, the daemon rejects usage requests before discovery, without reading logins or calling vendors. Otherwise, the daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
+## Replace sidebar content
+
+The sidebar view slot is global across hosts, while header and footer contributions retain their
+host selection. The slot owns selection loading, fallback and the error boundary; the plugin owns
+its layout. This keeps plugin failures from removing navigation or recovery controls. The
+[sidebar view guide](../public-docs/plugins/sidebar-views.md) owns the author API.
+
 ## Contribute sidebar items
 
 Sidebar header and footer items are plugin components, not descriptors. The

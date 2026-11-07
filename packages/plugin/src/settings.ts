@@ -4,10 +4,10 @@ import { defineRpc } from "./rpc.js";
 
 export interface SettingsDefinition<Schema extends ZodType = ZodType> {
   id: string;
-  scope: "host";
+  scope: "host" | "device";
   version: number;
   schema: Schema;
-  /** Convert a previous stored version to the current schema. Runs on the host. */
+  /** Convert a previous stored version to the current schema. Runs in the selected scope. */
   migrate?: (values: unknown, fromVersion: number) => unknown | Promise<unknown>;
 }
 
@@ -15,7 +15,8 @@ export function defineSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
 ): SettingsDefinition<Schema> {
   if (!/^[a-z][a-z0-9_-]*$/.test(definition.id)) throw new Error("Invalid settings ID");
-  if (definition.scope !== "host") throw new Error("Only host-scoped settings are supported");
+  if (definition.scope !== "host" && definition.scope !== "device")
+    throw new Error("Invalid settings scope");
   if (!Number.isSafeInteger(definition.version) || definition.version < 1)
     throw new Error("Invalid settings version");
   return definition;
