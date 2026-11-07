@@ -55,6 +55,7 @@ export async function observeReplayWorkflows(input: {
   >;
   convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
 }): Promise<SubagentObservation[]> {
+  if (input.workflows.length === 0) return [];
   const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
 
