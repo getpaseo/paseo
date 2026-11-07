@@ -1216,9 +1216,12 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 
 The daemon stamps `pluginId` from the calling plugin session and rejects this RPC from non-plugin
 sessions. The row appears live, survives timeline refetches, and keeps only the latest value for the
-same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row. Daemons
-reject `data` over the limit rather than truncating it. Daemons that support this operation
-advertise `server_info.features.pluginTimelineItems`.
+same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row.
+
+`kind` starts with a lowercase letter and contains lowercase letters, numbers, or hyphens, the same
+rule `addTimelineRenderer` applies. Daemons reject any other `kind`. Daemons reject `data` over the
+limit rather than truncating it. Daemons that support this operation advertise
+`server_info.features.pluginTimelineItems`.
 
 ## Theme and layout
 
