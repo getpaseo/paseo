@@ -25,6 +25,9 @@
 # 10. A size change keeps only a row shouldRestorePosition accepts in place (prepareMVCP), as a
 #    data change already does, so a disclosure that only grows (a todo card) holds the cut-off
 #    row instead of the first row in view.
+# 11. A 0 x 0 measurement is not a size (updateItemSizesBatch): rows of a hidden retained tab
+#    (display: none) still render and measure 0 x 0. Recording it collapsed the row, and a row
+#    whose frame was unchanged when the tab showed again got no layout event to correct it.
 #
 # Upgrading: drop each hunk whose fix the new version ships, regenerate with
 # `npx patch-package @legendapp/list`, and copy this header back on top.
@@ -45,7 +48,7 @@ index 983e937..970ba51 100644
       * Returns a stable item type used for pooling and size estimation.
       */
 diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legendapp/list/react-native.js
-index eeb3fb0..b1689ad 100644
+index eeb3fb0..5fe940d 100644
 --- a/node_modules/@legendapp/list/react-native.js
 +++ b/node_modules/@legendapp/list/react-native.js
 @@ -1497,7 +1497,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -205,7 +208,19 @@ index eeb3fb0..b1689ad 100644
  }
  
  // src/core/updateItemSizes.ts
-@@ -5414,7 +5458,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -5291,6 +5335,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // Paseo patch: a view inside a display: none ancestor measures 0 x 0. That is no measurement: a
++    // laid-out row is as wide as the list even when it has no height. Recording 0 there collapsed
++    // the row, and when the list showed again a row whose frame had not changed got no layout event
++    // to correct it, so the next row overlapped it.
++    if (measurement.size.width === 0 && measurement.size.height === 0) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);
+@@ -5414,7 +5463,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
      state.fixedItemSizeKeys.add(itemKey);
    }
    const prevSizeKnown = sizesKnown.get(itemKey);
@@ -214,7 +229,7 @@ index eeb3fb0..b1689ad 100644
      return 0;
    }
    const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
-@@ -6283,6 +6327,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+@@ -6283,6 +6332,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
  
  // src/components/Containers.native.tsx
  var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
@@ -225,7 +240,7 @@ index eeb3fb0..b1689ad 100644
  var ContainersLayer = typedMemo(function ContainersLayer2({
    children,
    freshDataTransitionEpoch,
-@@ -6290,7 +6338,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+@@ -6290,7 +6343,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
  }) {
    const ctx = useStateContext();
    const columnWrapperStyle = ctx.columnWrapperStyle;
@@ -234,7 +249,7 @@ index eeb3fb0..b1689ad 100644
    const minSize = useCommittedMinSize();
    const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
    const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
-@@ -6513,6 +6561,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+@@ -6513,6 +6566,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
      null
    );
  });
@@ -249,7 +264,7 @@ index eeb3fb0..b1689ad 100644
  var ListComponent = typedMemo(function ListComponent2({
    canRender,
    freshDataTransitionEpoch,
-@@ -6651,7 +6707,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6651,7 +6712,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      /* @__PURE__ */ React2__namespace.createElement(ScrollAdjust, null),
@@ -258,7 +273,7 @@ index eeb3fb0..b1689ad 100644
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React2__namespace.createElement(
-@@ -6665,7 +6721,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6665,7 +6726,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -267,7 +282,7 @@ index eeb3fb0..b1689ad 100644
      IS_DEV && ENABLE_DEVMODE
    );
  });
-@@ -7886,7 +7942,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+@@ -7886,7 +7947,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
    const state = ctx.state;
    if (stylePaddingTop !== void 0) {
      const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
@@ -279,7 +294,7 @@ index eeb3fb0..b1689ad 100644
        let prevTotalSize = peek$(ctx, "totalSize") || 0;
        set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
        state.timeoutSetPaddingTop = setTimeout(() => {
-@@ -7989,6 +8048,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7989,6 +8053,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -287,7 +302,7 @@ index eeb3fb0..b1689ad 100644
      getItemType,
      horizontal,
      rtl,
-@@ -8282,6 +8342,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8282,6 +8347,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance,
      estimatedItemSize,
@@ -296,7 +311,7 @@ index eeb3fb0..b1689ad 100644
      getItemType: useWrapIfItem(getItemType),
      hasExternalScroll,
 diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legendapp/list/react-native.mjs
-index fe5f415..e61945e 100644
+index fe5f415..7f1b9dd 100644
 --- a/node_modules/@legendapp/list/react-native.mjs
 +++ b/node_modules/@legendapp/list/react-native.mjs
 @@ -1476,7 +1476,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -456,7 +471,19 @@ index fe5f415..e61945e 100644
  }
  
  // src/core/updateItemSizes.ts
-@@ -5393,7 +5437,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -5270,6 +5314,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // Paseo patch: a view inside a display: none ancestor measures 0 x 0. That is no measurement: a
++    // laid-out row is as wide as the list even when it has no height. Recording 0 there collapsed
++    // the row, and when the list showed again a row whose frame had not changed got no layout event
++    // to correct it, so the next row overlapped it.
++    if (measurement.size.width === 0 && measurement.size.height === 0) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);
+@@ -5393,7 +5442,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
      state.fixedItemSizeKeys.add(itemKey);
    }
    const prevSizeKnown = sizesKnown.get(itemKey);
@@ -465,7 +492,7 @@ index fe5f415..e61945e 100644
      return 0;
    }
    const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
-@@ -6262,6 +6306,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+@@ -6262,6 +6311,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
  
  // src/components/Containers.native.tsx
  var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
@@ -476,7 +503,7 @@ index fe5f415..e61945e 100644
  var ContainersLayer = typedMemo(function ContainersLayer2({
    children,
    freshDataTransitionEpoch,
-@@ -6269,7 +6317,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+@@ -6269,7 +6322,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
  }) {
    const ctx = useStateContext();
    const columnWrapperStyle = ctx.columnWrapperStyle;
@@ -485,7 +512,7 @@ index fe5f415..e61945e 100644
    const minSize = useCommittedMinSize();
    const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
    const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
-@@ -6492,6 +6540,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+@@ -6492,6 +6545,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
      null
    );
  });
@@ -500,7 +527,7 @@ index fe5f415..e61945e 100644
  var ListComponent = typedMemo(function ListComponent2({
    canRender,
    freshDataTransitionEpoch,
-@@ -6630,7 +6686,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6630,7 +6691,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      /* @__PURE__ */ React2.createElement(ScrollAdjust, null),
@@ -509,7 +536,7 @@ index fe5f415..e61945e 100644
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React2.createElement(
-@@ -6644,7 +6700,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6644,7 +6705,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -518,7 +545,7 @@ index fe5f415..e61945e 100644
      IS_DEV && ENABLE_DEVMODE
    );
  });
-@@ -7865,7 +7921,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+@@ -7865,7 +7926,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
    const state = ctx.state;
    if (stylePaddingTop !== void 0) {
      const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
@@ -530,7 +557,7 @@ index fe5f415..e61945e 100644
        let prevTotalSize = peek$(ctx, "totalSize") || 0;
        set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
        state.timeoutSetPaddingTop = setTimeout(() => {
-@@ -7968,6 +8027,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7968,6 +8032,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -538,7 +565,7 @@ index fe5f415..e61945e 100644
      getItemType,
      horizontal,
      rtl,
-@@ -8261,6 +8321,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8261,6 +8326,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance,
      estimatedItemSize,

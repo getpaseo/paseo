@@ -1,3 +1,4 @@
+import { getPluginClientApi } from "./client-state/api";
 import appPackage from "../../package.json";
 import { afterEach, expect, it } from "vitest";
 import { QueryObserver } from "@tanstack/react-query";
@@ -139,7 +140,7 @@ function harness() {
           },
           installation.lifetime.signal,
         ),
-        paseo: installation.paseo,
+        paseo: getPluginClientApi(installation).paseo,
         i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected runtime RPC");

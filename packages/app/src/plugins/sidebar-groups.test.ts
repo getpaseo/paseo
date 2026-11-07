@@ -31,6 +31,7 @@ function installed(
     },
     settingsScreens: [],
     surfaces: [{ id: "surface", title: "Surface", Component: () => null }],
+    sidebarViews: [],
     sidebarItems: {
       header: [{ id: contributionId, title: "Example", Component: () => null }],
       footer: [{ id: "status", title: "Status", Component: () => null }],

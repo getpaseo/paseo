@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  pasteRichTextIntoComposer,
+  fillComposerDraft,
+  copyLatestTurnIntoComposer,
+  selectComposerDraftRange,
+  undoComposerEdit,
+  redoComposerEdit,
   blurComposerInput,
   roundTripComposerTabBeforePaint,
   composerLocator,
@@ -28,6 +34,7 @@ import {
   openMobileAgentSidebarWithKeyboard,
   swipeOpenMobileExplorer,
 } from "../support/helpers/sidebar";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
 import {
   expectTimelinePromptPositionPreserved,
@@ -55,7 +62,9 @@ test("clicking chat text or background focuses the feed for keyboard paging", as
     await expect
       .poll(async () => (await readScrollMetrics(page)).offsetY)
       .toBeLessThan(beforePaging.offsetY - beforePaging.viewportHeight / 2);
-    await page.screenshot({ path: testInfo.outputPath("chat-keyboard-paging.png") });
+    await page.screenshot({
+      path: testInfo.outputPath("chat-keyboard-paging.png"),
+    });
     await page.keyboard.press("PageDown");
     await expect
       .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
@@ -124,11 +133,15 @@ test("focusing the feed preserves assistant text selection and code copy control
 });
 
 test("submitting a message leaves the composer ready for the next message", async ({ page }) => {
+  const copiedTable =
+    "| Resource | Status |\n| --- | --- |\n| [Unicode](https://example.com/日本語) | ~~closed~~ |\n| [Space](<https://example.com/a b>) | **open** |\n| [ASCII](https://example.com/1) | closed |";
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "composer-focus-",
     title: "Composer focus",
+    featureValues: { mockAssistantResponse: copiedTable },
   });
 
+  const connection = await installDaemonWebSocketGate(page);
   try {
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
@@ -136,8 +149,62 @@ test("submitting a message leaves the composer ready for the next message", asyn
     await submitMessage(page, "First message");
     await expectComposerFocused(page);
 
-    await typeIntoFocusedComposer(page, "Second message");
-    await expectComposerDraft(page, "Second message");
+    await typeIntoFocusedComposer(page, "Investigate: replace this. Thanks");
+    await selectComposerDraftRange(page, 13, 25);
+    await pasteRichTextIntoComposer({
+      page,
+      html: '<a href="https://example.com/issues/39150">this FR</a>',
+      text: "this FR",
+    });
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150). Thanks",
+    );
+    await undoComposerEdit(page);
+    await expectComposerDraft(page, "Investigate: replace this. Thanks");
+    await redoComposerEdit(page);
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150). Thanks",
+    );
+    await typeIntoFocusedComposer(page, " next");
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150) next. Thanks",
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await expect(page.getByRole("button", { name: "Copy turn", exact: true })).toBeVisible();
+    await connection.drop();
+    await connection.waitForBlockedConnection();
+    await pasteRichTextIntoComposer({
+      page,
+      html: '<a href="https://example.com/offline">offline link</a>',
+      text: "offline link",
+    });
+    await expectComposerDraft(
+      page,
+      "Investigate: [this FR](https://example.com/issues/39150) next[offline link](https://example.com/offline). Thanks",
+    );
+    await fillComposerDraft(page, "");
+    await pasteRichTextIntoComposer({
+      page,
+      html: '<table><thead><tr><th>Resource</th><th>Status</th></tr></thead><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr></tbody></table>',
+      text: "Resource\tStatus\nIssue\tclosed",
+    });
+    await expectComposerDraft(
+      page,
+      "| Resource | Status |\n| --- | --- |\n| [Issue](https://example.com/issue) | closed |",
+    );
+    await fillComposerDraft(page, "");
+    await pasteRichTextIntoComposer({
+      page,
+      html: '<a href="https://example.com/">Issue</a><table></table>',
+      text: "Issue",
+    });
+    await expectComposerDraft(page, "[Issue](https://example.com/)");
+    await copyLatestTurnIntoComposer(page);
+    await expectComposerDraft(page, copiedTable);
+    await expectComposerFocused(page);
   } finally {
     await agent.cleanup();
   }
@@ -168,7 +235,11 @@ async function waitForAnimationFrames(page: Page, count: number): Promise<void> 
 test.describe("touch screen wide enough for the desktop layout", () => {
   // A tablet or an unfolded foldable gets the desktop layout, but focusing the
   // composer there raises the on-screen keyboard over the conversation.
-  test.use({ viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true });
+  test.use({
+    viewport: { width: 1024, height: 768 },
+    isMobile: true,
+    hasTouch: true,
+  });
 
   test("remounting an inline composer does not restore focus on touch", async ({ page }) => {
     const agent = await seedMockAgentWorkspace({
@@ -192,7 +263,9 @@ test.describe("touch screen wide enough for the desktop layout", () => {
   test("returning to an inactive inline composer does not restore focus on touch", async ({
     page,
   }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "composer-touch-retained-" });
+    const workspace = await seedWorkspace({
+      repoPrefix: "composer-touch-retained-",
+    });
     try {
       const first = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,

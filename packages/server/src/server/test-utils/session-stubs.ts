@@ -38,6 +38,7 @@ export function asAgentManager(stub: {
     listProviderSubagentActivity: () => [],
     getRetiredInternalAgent: () => null,
     effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
+    getAgentBackgroundWorkSummary: () => undefined,
     ...stub,
   });
 }

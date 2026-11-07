@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { StyleSheet } from "react-native-unistyles";
+import { DensityIcon } from "@/components/ui/density-icon";
 import type { AgentOptionControl, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
 import {
@@ -146,7 +146,7 @@ function ThinkingOption({
   onPress: () => void;
 }) {
   const leadingSlot = useMemo(
-    () => <ThinkingIcon size={16} color={styles.thinkingIcon.color} />,
+    () => <DensityIcon icon={ThinkingIcon} size="md" color="foreground" />,
     [],
   );
   return (
@@ -159,7 +159,3 @@ function ThinkingOption({
     />
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  thinkingIcon: { color: theme.colors.foreground },
-}));

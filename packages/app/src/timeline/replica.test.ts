@@ -11,6 +11,7 @@ import type { CachedTimeline } from "@/runtime/replica-cache";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
+import type { TurnLivenessTransition } from "./turn-liveness";
 import {
   createTimelineReplica,
   createViewedTimelineOwner,
@@ -40,7 +41,13 @@ function cachedTimeline(): CachedTimeline {
   };
 }
 
-function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
+function createOwner(
+  storage: TimelineReplicaStorage,
+  applyTurnLiveness: (
+    agentId: string,
+    transitions: readonly TurnLivenessTransition[],
+  ) => void = () => undefined,
+): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
     storage,
@@ -51,6 +58,7 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     replica,
     replaceDemandedAgentIds: () => undefined,
     drainQueuedAgentMessage: () => undefined,
+    applyTurnLiveness,
     ports: {
       observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
       readCursor: () => undefined,
@@ -98,7 +106,7 @@ describe("viewed timeline persistence", () => {
               .status,
         )
         .toBe("painted");
-      owner.enqueueStreamEvent(AGENT_ID, {
+      owner.applyStreamEvent(AGENT_ID, {
         event: {
           type: "timeline",
           provider: "codex",
@@ -147,7 +155,7 @@ describe("viewed timeline persistence", () => {
           .map((entry) => entry.text);
       };
       expect.soft(replyTexts()).toEqual([complete]);
-      owner.enqueueStreamEvent(AGENT_ID, {
+      owner.applyStreamEvent(AGENT_ID, {
         event: { type: "turn_completed", provider: "codex" } as AgentStreamEventPayload,
         seq: 7,
         epoch: "epoch-1",
@@ -281,7 +289,7 @@ describe("viewed timeline persistence", () => {
       )
       .toMatchObject({ status: "painted" });
 
-    first.enqueueStreamEvent(AGENT_ID, {
+    first.applyStreamEvent(AGENT_ID, {
       event: {
         type: "timeline",
         provider: "codex",
@@ -460,7 +468,7 @@ describe("viewed timeline persistence", () => {
       readTimeline: async () => undefined,
       commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
     });
-    owner.enqueueStreamEvent(AGENT_ID, {
+    owner.applyStreamEvent(AGENT_ID, {
       event: {
         type: "timeline",
         provider: "codex",
@@ -525,7 +533,7 @@ describe("viewed timeline persistence", () => {
       [AGENT_ID, 9],
       ["agent-2", 4],
     ] as const) {
-      owner.enqueueStreamEvent(agentId, {
+      owner.applyStreamEvent(agentId, {
         event: {
           type: "timeline",
           provider: "codex",
@@ -539,6 +547,81 @@ describe("viewed timeline persistence", () => {
     }
 
     expect(keys).toEqual([AGENT_ID, "agent-2"]);
+    owner.dispose();
+  });
+});
+
+describe("turn boundaries", () => {
+  it("commits a turn's final reply before the turn stops running", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 8);
+    const committedKinds = () => {
+      const session = useSessionStore.getState().sessions[SERVER_ID];
+      return [
+        ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+        ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+      ]
+        .filter((entry) => entry.id !== `network-${AGENT_ID}`)
+        .map((entry) => entry.kind);
+    };
+    const livenessChanges: { type: string; committed: string[] }[] = [];
+    const owner = createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      (_agentId, transitions) => {
+        for (const transition of transitions) {
+          livenessChanges.push({ type: transition.type, committed: committedKinds() });
+        }
+      },
+    );
+    const at = (second: number) => new Date(`2026-08-26T10:00:0${second}.000Z`);
+
+    // One frame's worth of live events: the frame flush that would commit them never runs.
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_started", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: at(1),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-1",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "ls" },
+        },
+      } as AgentStreamEventPayload,
+      seq: 9,
+      epoch: "epoch-1",
+      timestamp: at(2),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-1",
+        item: { type: "assistant_message", text: "Done.", messageId: "reply-1" },
+      } as AgentStreamEventPayload,
+      seq: 10,
+      epoch: "epoch-1",
+      timestamp: at(3),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: at(4),
+    });
+
+    expect(livenessChanges.at(-1)).toEqual({
+      type: "stream_close",
+      committed: ["tool_call", "assistant_message"],
+    });
     owner.dispose();
   });
 });
@@ -606,6 +689,7 @@ describe("create handoff lifetime", () => {
       replica,
       replaceDemandedAgentIds: () => undefined,
       drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
       ports: {
         observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
         readCursor: () => undefined,

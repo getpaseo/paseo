@@ -19,6 +19,7 @@ import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol
 export interface AgentControlIconProps {
   size: number;
   color: string;
+  strokeWidth?: number;
 }
 
 export type AgentControlIcon = ComponentType<AgentControlIconProps>;

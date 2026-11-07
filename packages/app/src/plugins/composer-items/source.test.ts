@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createPaseoApi } from "@getpaseo/client";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -26,7 +27,13 @@ function plugin(): InstalledPlugin {
     locale: "en",
     i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     queryClient: new QueryClient(),
-    paseo: {} as InstalledPlugin["paseo"],
+    paseo: createPaseoApi(
+      new DaemonClient({
+        url: "ws://127.0.0.1:1",
+        clientId: "plugin-composer-test",
+        clientType: "cli",
+      }),
+    ),
     invoke: async () => undefined,
     subscribe: () => {
       throw new Error("Subscriptions are not used here");
@@ -36,6 +43,7 @@ function plugin(): InstalledPlugin {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    sidebarViews: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],

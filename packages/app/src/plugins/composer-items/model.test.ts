@@ -29,6 +29,7 @@ function installed(): InstalledPlugin {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    sidebarViews: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],

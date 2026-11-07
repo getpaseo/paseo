@@ -137,6 +137,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useWorkspaceArchiveUndoRunning } from "@/workspace/archive-undo";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
@@ -379,9 +380,9 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
   const handleTouch = useCallback(() => {
-    if (!isPaneFocused && paneId) onFocusPane(paneId);
+    if (paneId) onFocusPane(paneId);
     return false;
-  }, [isPaneFocused, onFocusPane, paneId]);
+  }, [onFocusPane, paneId]);
 
   return (
     <RenderProfile id={`MobileMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
@@ -870,8 +871,12 @@ function WorkspaceDocumentTitleEffectSlot({
   );
 }
 
+/**
+ * The header floats over a conversation's timeline. A draft and the agent it creates share one
+ * timeline, so their surfaces match and the timeline does not move when the tab retargets.
+ */
 function floatsHeaderOverContent(activeTab: WorkspaceTabDescriptor | null): boolean {
-  return supportsStreamTopOverlay && activeTab?.kind === "agent";
+  return supportsStreamTopOverlay && (activeTab?.kind === "agent" || activeTab?.kind === "draft");
 }
 
 /** A fullscreen composer covers the compact header; the column lays out without it. */
@@ -1245,6 +1250,11 @@ function WorkspaceScreenContent({
   const hasHydratedAgents = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedAgents ?? false,
   );
+  // An undo puts the row back before the host restores its agents. Their tabs stay until it settles.
+  const isArchiveUndoRunning = useWorkspaceArchiveUndoRunning({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
   const workspaceRouteState = useResolvedWorkspaceRouteState({
     serverId: normalizedServerId,
     workspace: workspaceDescriptor,
@@ -1545,7 +1555,7 @@ function WorkspaceScreenContent({
       persistenceKey,
       buildWorkspaceTabSnapshot({
         agentVisibility: workspaceAgentVisibility,
-        agentsHydrated: hasHydratedAgents,
+        agentsHydrated: hasHydratedAgents && !isArchiveUndoRunning,
         terminalsHydrated: terminalsQuery.isSuccess,
         knownTerminalIds,
         standaloneTerminalIds,
@@ -1556,6 +1566,7 @@ function WorkspaceScreenContent({
     );
   }, [
     hasHydratedAgents,
+    isArchiveUndoRunning,
     hasHydratedWorkspaceLayoutStore,
     pendingTerminalCreateInput,
     createTerminalMutation.isPending,

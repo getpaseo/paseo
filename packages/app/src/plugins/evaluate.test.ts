@@ -55,6 +55,29 @@ describe("evaluatePluginClientBundle", () => {
     expect(active).toBe(0);
   });
 
+  it("registers sidebar views without selecting one and removes them on cleanup", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "sidebar",
+      bundle(`
+      plugin.addSidebarView({ id: "workspaces", title: "Workspaces", Component() { return null; } });
+    `),
+    );
+    expect(plugin.sidebarViews.map((view) => view.id)).toEqual(["workspaces"]);
+    await plugin.cleanup();
+    expect(plugin.sidebarViews).toEqual([]);
+  });
+  it("rejects duplicate sidebar view ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "sidebar",
+        bundle(`
+      const view = { id: "workspaces", title: "Workspaces", Component() { return null; } };
+      plugin.addSidebarView(view); plugin.addSidebarView(view);
+    `),
+      ),
+    ).toThrow("Duplicate sidebar view");
+  });
+
   it("accepts memoized settings screens", () => {
     const plugin = evaluatePluginClientBundle(
       "settings",

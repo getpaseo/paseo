@@ -100,9 +100,25 @@ function staysVisibleWhenCollapsed(item: StreamItem): boolean {
   return isTurnTrigger(item) || item.kind === "compaction";
 }
 
-function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
+function isAssistantReply(item: StreamItem): boolean {
+  return (
+    item.kind === "assistant_message" ||
+    (item.kind === "plugin" && item.sourceKind === "assistant_message")
+  );
+}
+
+function findLastReplyIndex(tail: StreamItem[], start: number, end: number): number {
   for (let index = end - 1; index >= start; index -= 1) {
-    if (tail[index]?.kind === "assistant_message") return index;
+    const item = tail[index]!;
+    if (!isAssistantReply(item)) continue;
+    const messageId = getStreamItemMessageId(item);
+    // A transformer can split one reply into several cards; keep the whole reply visible.
+    while (index > start) {
+      const previous = tail[index - 1]!;
+      if (!isAssistantReply(previous) || getStreamItemMessageId(previous) !== messageId) break;
+      index -= 1;
+    }
+    return index;
   }
   return -1;
 }
@@ -125,7 +141,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const flushRun = (runEnd: number) => {
     const host = tail[runStart - 1];
     const isClosed = runEnd < tail.length || !input.isLatestTurnOpen;
-    const replyIndex = findLastAssistantIndex(tail, runStart, runEnd);
+    const replyIndex = findLastReplyIndex(tail, runStart, runEnd);
     if (
       !host ||
       (host.kind !== "user_message" && host.kind !== "tool_call") ||
@@ -137,7 +153,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     }
     const folded = tail.slice(runStart, replyIndex);
     const summary = summarizeTurn(folded, input.getGroupedCalls);
-    if (!hasWork(summary) && !folded.some((item) => item.kind === "assistant_message")) {
+    if (!hasWork(summary) && !folded.some(isAssistantReply)) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }

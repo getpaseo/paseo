@@ -129,7 +129,8 @@ function mountList(heldRowId: string) {
     }
     return position - state.scroll;
   };
-  return { render, scrollTo, heldRowTop };
+  const rowSize = (rowId: string) => listRef.current?.getState().sizes.get(rowId);
+  return { render, scrollTo, heldRowTop, rowSize };
 }
 
 it("anchors a data change on a held row whose top is above the viewport", async () => {
@@ -168,4 +169,22 @@ it("anchors a size change on a held row whose top is above the viewport", async 
   await wait(150);
 
   expect(list.heldRowTop()).toBe(-20);
+});
+
+it("keeps measured row sizes while the list is not laid out", async () => {
+  // A hidden retained tab is display: none. Its rows still render, and a row measured there
+  // reports 0 x 0. When the tab shows again, a row whose frame did not change gets no new layout
+  // event, so a 0 recorded while hidden would stay and the next row would overlap it.
+  const rows: Row[] = Array.from({ length: 3 }, (_, index) => ({ id: `row-${index}`, height: 40 }));
+  const list = mountList("row-0");
+  list.render(rows);
+  await wait(150);
+  expect(rows.map((row) => list.rowSize(row.id))).toEqual([40, 40, 40]);
+
+  host.style.display = "none";
+  await wait(150);
+  list.render(rows.map((row) => ({ ...row })));
+  await wait(150);
+
+  expect(rows.map((row) => list.rowSize(row.id))).toEqual([40, 40, 40]);
 });

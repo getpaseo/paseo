@@ -47,7 +47,15 @@ import {
   resolveProviderSnapshotEntry,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { controlSizingForLayout, TOOLBAR_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import {
+  controlSizingForLayout,
+  TOOLBAR_CONTROL_GAP,
+  bySizing,
+  toolbarGlyphColor,
+  type ToolbarGlyphs,
+  TOUCH_ICON_SIZE,
+  toolbarSlot,
+} from "@/components/ui/control-geometry";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -503,7 +511,7 @@ function ControlledAgentControls({
   const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
   const layoutContextValue = useMemo(
     () => ({
-      glyphSize: toolbarGeometry.glyphSize,
+      glyphs: toolbarGeometry.glyphs,
       presentation,
     }),
     [presentation, toolbarGeometry],
@@ -653,8 +661,8 @@ function ControlledAgentControls({
             handleSheetOpenChange={setOpenSelector}
             modeControl={modeControl}
             presentation={presentation}
-            glyphSize={layoutContextValue.glyphSize}
             pluginItemCount={pluginItemCount}
+            glyphs={layoutContextValue.glyphs}
             activeSheet={activeSheet}
             handleOpenSheet={handleOpenSheet}
             handleCloseSheet={handleCloseSheet}
@@ -684,7 +692,7 @@ function ControlledAgentControls({
             handleSheetModelSelect={handleSheetModelSelect}
             handleSheetOpenChange={setOpenSelector}
             modeControl={modeControl}
-            glyphSize={layoutContextValue.glyphSize}
+            glyphs={layoutContextValue.glyphs}
             showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
@@ -716,7 +724,7 @@ interface AgentControlsContentProps {
   openSelector: string | null;
   handleSheetOpenChange: (id: string | null) => void;
   modeControl?: AgentModeControlValue | null;
-  glyphSize: number;
+  glyphs: ToolbarGlyphs;
   modelSelectorServerId: string | null;
 }
 
@@ -759,15 +767,15 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     modeControl,
     presentation,
     pluginItemCount,
-    glyphSize,
+    glyphs,
     activeSheet,
     handleOpenSheet,
     handleCloseSheet,
     modelSelectorServerId,
   } = props;
   const modelToolbar = useMemo(
-    () => ({ glyphSize, showCaret: presentation.showCarets }),
-    [glyphSize, presentation.showCarets],
+    () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
+    [glyphs, presentation.showCarets],
   );
   const featuresSheetHeader = useMemo<SheetHeader>(
     () => ({ title: t("agentControls.features.title") }),
@@ -830,8 +838,12 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             accessibilityLabel={t("agentControls.features.open")}
             testID="agent-controls-features"
           >
-            <ComposerToolbarGlyph size={glyphSize}>
-              <Settings2 size={glyphSize} color={theme.colors.foregroundMuted} />
+            <ComposerToolbarGlyph role="icon">
+              <Settings2
+                size={glyphs.icon.size}
+                strokeWidth={glyphs.icon.strokeWidth}
+                color={toolbarGlyphColor(theme, glyphs.icon.tone)}
+              />
             </ComposerToolbarGlyph>
           </Pressable>
           <AdaptiveModalSheet
@@ -900,7 +912,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleSheetModelSelect,
     handleSheetOpenChange,
     modeControl,
-    glyphSize,
+    glyphs,
     showLabels,
     modelSelectorServerId,
     canSwitchProvider,
@@ -949,7 +961,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       onRetryProvider={onRetryModelProvider}
       isRetryingProvider={isRetryingModelProvider}
       serverId={modelSelectorServerId}
-      glyphSize={glyphSize}
+      glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
     >
@@ -1439,16 +1451,19 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: TOOLBAR_CONTROL_GAP,
+    // Clips pickers that run out of room. Touch-sized the pickers' pills and circles reach 8 past
+    // what the row spaces, so the clip reaches as far.
     overflow: "hidden",
+    paddingHorizontal: bySizing({ touch: theme.spacing[2], pointer: 0 }),
+    marginHorizontal: bySizing({ touch: -theme.spacing[2], pointer: 0 }),
   },
   modelControl: {
     minWidth: 0,
     flexShrink: 1,
   },
   modeIconBadge: {
-    width: TOOLBAR_CONTROL_HEIGHT,
-    height: TOOLBAR_CONTROL_HEIGHT,
+    ...toolbarSlot(TOUCH_ICON_SIZE.md),
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,

@@ -812,6 +812,8 @@ export interface PluginTimelineStreamItem {
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */
   sourceId?: string;
+  /** The original row kind, retained by projection for turn folding. */
+  sourceKind?: StreamItem["kind"];
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;

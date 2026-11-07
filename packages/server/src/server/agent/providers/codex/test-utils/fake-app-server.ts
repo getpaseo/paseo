@@ -175,6 +175,7 @@ export function createFakeCodexAppServer(
     "skills/list": () => ({ data: [] }),
     "thread/start": () => ({ thread: { id: "thread-1" } }),
     "thread/loaded/list": () => ({ data: [] }),
+    "thread/backgroundTerminals/list": () => ({ data: [], nextCursor: null }),
     "thread/resume": () => ({}),
     "turn/start": () => ({}),
     "thread/fork": (params) => ({

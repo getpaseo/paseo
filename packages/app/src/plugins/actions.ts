@@ -1,4 +1,5 @@
 import { pluginComposersSource } from "./composer-items/source";
+import { getPluginClientApi } from "./client-state/api";
 import { callPluginRpc } from "@getpaseo/plugin/client/host";
 import type {
   PluginAgentCommandContext,
@@ -33,7 +34,7 @@ export function createPluginCapabilities(
     navigation.openSurface(plugin.id, screenId, params);
   }
   return {
-    paseo: plugin.paseo,
+    paseo: getPluginClientApi(plugin).paseo,
     rpc: (contract, input) => callPluginRpc(contract, plugin.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))

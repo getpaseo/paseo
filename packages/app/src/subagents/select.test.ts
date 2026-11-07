@@ -353,6 +353,7 @@ describe("selectSubagentsForParent", () => {
         provider: "claude",
         title: "Review child",
         status: "running",
+        backgroundWork: { count: 1 },
         requiresAttention: true,
         createdAt,
         model: "should-not-leak",
@@ -379,6 +380,7 @@ describe("selectSubagentsForParent", () => {
         description: null,
         subtitle: null,
         status: "running",
+        backgroundWork: { count: 1 },
         turn: { phase: "idle", cancellationRequestId: null },
         requiresAttention: true,
         createdAt,
@@ -386,6 +388,7 @@ describe("selectSubagentsForParent", () => {
     ]);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
       "address",
+      "backgroundWork",
       "createdAt",
       "description",
       "id",

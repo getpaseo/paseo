@@ -213,8 +213,18 @@ async function settleDesktopStartup(page) {
   }
 }
 
+const CSP_PAGE_PATH = "/csp-no-eval";
+
 async function startTargetPage() {
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (request.url === CSP_PAGE_PATH) {
+      response.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'self'; script-src 'self'",
+      });
+      response.end("<!doctype html><title>CSP page</title><h1>CSP page heading</h1>");
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
@@ -244,6 +254,67 @@ async function startTargetPage() {
 
 async function closeServer(server) {
   await new Promise((resolve) => server.close(resolve));
+}
+
+// browser_logs must report what the server answered: a 404 may not look like a 200.
+async function verifyNetworkLogsReportStatus(client) {
+  const server = createServer((request, response) => {
+    response.writeHead(request.url === "/missing" ? 404 : 200, {
+      "content-type": "text/html; charset=utf-8",
+    });
+    response.end("<!doctype html><title>Status page</title><h1>Status page heading</h1>");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert(address && typeof address !== "string", "Status page did not bind a TCP port");
+  let browserId = null;
+  try {
+    const created = await callBrowserTool(client, "browser_new_tab", {
+      url: `http://127.0.0.1:${address.port}/`,
+    });
+    browserId = created.browserId;
+    assert(
+      typeof browserId === "string",
+      "browser_new_tab returned no browserId for the status page",
+    );
+    await callBrowserTool(client, "browser_wait", {
+      browserId,
+      text: "Status page heading",
+      timeoutMs: 15_000,
+    });
+    const fetched = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function:
+        "async () => { const response = await fetch('/missing'); await response.text(); return response.status; }",
+    });
+    assert(
+      JSON.parse(fetched.resultJson) === 404,
+      `The status page did not answer 404: ${fetched.resultJson}`,
+    );
+    // The browser records a request's timing entry a moment after the response completes.
+    const deadline = Date.now() + 5_000;
+    let seen = [];
+    while (Date.now() < deadline) {
+      const logs = await callBrowserTool(client, "browser_logs", { browserId });
+      seen = logs.network.map((entry) => ({
+        pathname: new URL(entry.url).pathname,
+        status: entry.status ?? null,
+      }));
+      const reported = (pathname, status) =>
+        seen.some((entry) => entry.pathname === pathname && entry.status === status);
+      if (reported("/missing", 404) && reported("/", 200)) return;
+      await delay(100);
+    }
+    throw new Error(
+      `browser_logs did not report 404 for /missing and 200 for the page: ${JSON.stringify(seen)}`,
+    );
+  } finally {
+    if (browserId) await callBrowserTool(client, "browser_close_tab", { browserId });
+    await closeServer(server);
+  }
 }
 
 function mcpPayload(result, command) {
@@ -288,6 +359,42 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
     await delay(50);
   }
   return false;
+}
+
+// A page whose Content Security Policy omits 'unsafe-eval' refuses eval(); the tools must still work.
+async function verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl) {
+  const created = await callBrowserTool(client, "browser_new_tab", {
+    url: new URL(CSP_PAGE_PATH, targetUrl).href,
+  });
+  const browserId = created.browserId;
+  assert(typeof browserId === "string", "browser_new_tab returned no browserId for the CSP page");
+  try {
+    await callBrowserTool(client, "browser_wait", {
+      browserId,
+      text: "CSP page heading",
+      timeoutMs: 15_000,
+    });
+    const title = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => document.title",
+    });
+    assert(
+      JSON.parse(title.resultJson) === "CSP page",
+      `browser_evaluate on a page without 'unsafe-eval' returned ${title.resultJson}`,
+    );
+    // The control: the page itself really does refuse eval().
+    const probe = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function:
+        '() => { try { (0, eval)("1"); return "eval allowed"; } catch (error) { return error.message; } }',
+    });
+    assert(
+      /Content Security Policy/.test(JSON.parse(probe.resultJson)),
+      `The CSP page did not refuse eval(): ${probe.resultJson}`,
+    );
+  } finally {
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  }
 }
 
 async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
@@ -675,6 +782,8 @@ async function runRegression({
     document.body.appendChild(overlayRoot);
   });
 
+  await verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl);
+
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
   assert(typeof browserId === "string", "browser_new_tab returned no browserId");
@@ -1020,6 +1129,7 @@ async function runRegression({
     JSON.parse(readyStateResult.resultJson) === "complete",
     "Local browser document did not finish loading",
   );
+  await verifyNetworkLogsReportStatus(client);
   // Reproduce the report's mismatch: the guest is complete, but the pane's
   // last loading signal says it is not ready.
   await page.evaluate((id) => {
@@ -1106,6 +1216,7 @@ async function runRegression({
     snapshot: "passed",
     click: "passed",
     localPageSelectors: "passed",
+    evaluateWithoutUnsafeEval: "passed",
   };
 }
 

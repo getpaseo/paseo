@@ -41,8 +41,11 @@ export function useReplicaQuery<
   TError = Error,
   TData = TQueryFnData,
   TQueryKey extends QueryKey = QueryKey,
->(input: ReplicaQueryInput<TQueryFnData, TError, TData, TQueryKey>): UseQueryResult<TData, TError> {
-  return useQuery(replicaQueryOptions(input));
+>(
+  input: ReplicaQueryInput<TQueryFnData, TError, TData, TQueryKey>,
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> {
+  return useQuery(replicaQueryOptions(input), queryClient);
 }
 
 export function useFetchQuery<
