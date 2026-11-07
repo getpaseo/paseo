@@ -212,7 +212,10 @@ import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environm
 import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "./workspace-git-metadata.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
-import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
+import {
+  assertWorkspaceAutomationAllowed,
+  assertWorkspaceAutomationAllowedForWorkspace,
+} from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
@@ -1209,8 +1212,12 @@ export async function createPaseoDaemon(
     terminalManager,
     serviceProxy,
     workspaceRuntimeEnvironment,
-    assertAutomationAllowed: (workspaceId) =>
-      assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
+    assertAutomationAllowed: async (workspaceId) => {
+      const workspace = await workspaceRegistry.get(workspaceId);
+      if (!workspace || workspace.archivedAt)
+        throw new Error(`Workspace not found: ${workspaceId}`);
+      assertWorkspaceAutomationAllowed(workspace.untrustedSource);
+    },
     scriptRuntimeStore,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     serviceProxyPublicBaseUrl,

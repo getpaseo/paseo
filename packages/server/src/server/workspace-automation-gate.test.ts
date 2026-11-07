@@ -8,6 +8,25 @@ import {
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 describe("workspace automation gate", () => {
+  const workspace: PersistedWorkspaceRecord = {
+    workspaceId: "workspace",
+    projectId: "project",
+    cwd: "/repo",
+    kind: "directory",
+    displayName: "repo",
+    title: null,
+    branch: null,
+    worktreeRoot: null,
+    baseBranch: null,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
+    createdAt: "2026-11-07T00:00:00Z",
+    updatedAt: "2026-11-07T00:00:00Z",
+    archivedAt: null,
+    autoArchivedChangeRequestUrl: null,
+    pinnedAt: null,
+    background: false,
+  };
   it("refuses executable repository automation for a cross-repository change request", () => {
     expect(() =>
       assertWorkspaceAutomationAllowed({
@@ -31,38 +50,35 @@ describe("workspace automation gate", () => {
   });
 
   it.each([null, "2026-11-07T00:00:00Z"])(
-    "checks current workspace availability with archivedAt=%s",
+    "allows trusted cleanup with archivedAt=%s",
     async (archivedAt) => {
-      const workspace: PersistedWorkspaceRecord = {
-        workspaceId: "workspace",
-        projectId: "project",
-        cwd: "/repo",
-        kind: "directory",
-        displayName: "repo",
-        title: null,
-        branch: null,
-        worktreeRoot: null,
-        baseBranch: null,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
-        createdAt: "2026-11-07T00:00:00Z",
-        updatedAt: "2026-11-07T00:00:00Z",
-        archivedAt,
-        autoArchivedChangeRequestUrl: null,
-        pinnedAt: null,
-        background: false,
-      };
-      const result = assertWorkspaceAutomationAllowedForWorkspace(
-        { get: async () => workspace },
-        workspace.workspaceId,
-      );
-      if (archivedAt) {
-        await expect(result).rejects.toThrow("Workspace not found: workspace");
-      } else {
-        await expect(result).resolves.toBeUndefined();
-      }
+      await expect(
+        assertWorkspaceAutomationAllowedForWorkspace(
+          { get: async () => ({ ...workspace, archivedAt }) },
+          workspace.workspaceId,
+        ),
+      ).resolves.toBeUndefined();
     },
   );
+
+  it("still blocks untrusted teardown after archival", async () => {
+    const blockedWorkspace: PersistedWorkspaceRecord = {
+      ...workspace,
+      archivedAt: "2026-11-07T00:00:00Z",
+      untrustedSource: {
+        kind: "change_request",
+        forge: "github",
+        number: 42,
+        headRepository: "contributor/paseo",
+      },
+    };
+    await expect(
+      assertWorkspaceAutomationAllowedForWorkspace(
+        { get: async () => blockedWorkspace },
+        workspace.workspaceId,
+      ),
+    ).rejects.toBeInstanceOf(WorkspaceAutomationBlockedError);
+  });
 
   it("rejects automation after a workspace is removed", async () => {
     await expect(

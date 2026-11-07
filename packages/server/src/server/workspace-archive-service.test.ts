@@ -20,7 +20,11 @@ import {
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
-import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import {
+  WorkspaceAutomationBlockedError,
+  assertWorkspaceAutomationAllowedForWorkspace,
+} from "./workspace-automation-gate.js";
+import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
 const cleanupPaths: string[] = [];
 
@@ -589,25 +593,42 @@ describe("archiveByScope", () => {
     const matchesWorkspaceCwd = createRealpathAwarePathMatcher(workspaceCwd);
     const workspaceId = "ws-nested-teardown";
 
-    const result = await archiveByScope(
-      createArchiveDeps({
-        paseoHome,
-        activeWorkspaces: [
-          {
-            workspaceId,
-            cwd: workspaceCwd,
-            kind: "worktree",
-            worktreeRoot: worktree.worktreePath,
-            isPaseoOwnedWorktree: true,
-            mainRepoRoot: repoDir,
-          },
-        ],
-      }),
-      {
-        scope: { kind: "workspace", workspaceId },
-        requestId: "req-nested-teardown",
-      },
-    );
+    const dependencies = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: workspaceCwd,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "project-nested-teardown",
+      cwd: workspaceCwd,
+      kind: "worktree",
+      displayName: "nested-teardown",
+      createdAt: "2026-11-07T00:00:00Z",
+      updatedAt: "2026-11-07T00:00:00Z",
+    });
+    const archiveRecord = dependencies.archiveWorkspaceRecord;
+    dependencies.archiveWorkspaceRecord = async (id) => {
+      await archiveRecord(id);
+      workspace.archivedAt = "2026-11-07T00:00:00Z";
+    };
+    dependencies.assertWorkspaceAutomationAllowed = vi.fn(async (id) => {
+      expect(workspace.archivedAt).toBe("2026-11-07T00:00:00Z");
+      await assertWorkspaceAutomationAllowedForWorkspace({ get: async () => workspace }, id);
+    });
+
+    const result = await archiveByScope(dependencies, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-nested-teardown",
+    });
 
     assertArchiveResult(result, {
       archivedWorkspaceIds: [workspaceId],
@@ -617,6 +638,7 @@ describe("archiveByScope", () => {
     expect(
       matchesWorkspaceCwd(readFileSync(path.join(repoDir, "nested-teardown.log"), "utf8")),
     ).toBe(true);
+    expect(dependencies.assertWorkspaceAutomationAllowed).toHaveBeenCalledWith(workspaceId);
   });
 
   test("worktree scope archives root and subdirectory workspaces before removing the backing worktree", async () => {
