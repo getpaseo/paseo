@@ -1371,3 +1371,109 @@ it("resolves modeless providers once their empty catalog is ready", () => {
   expect(ready.form).toMatchObject({ provider: "pi", model: "" });
   expect(ready.resolution.status).toBe("completed");
 });
+
+it("ignores equivalent pending inputs with freshly built fork defaults", () => {
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: { provider: "codex", model: "gpt-5.3-codex", modeId: "full-access" },
+    preferences: null,
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", null]]),
+  };
+  const pending = resolveAgentForm(makeState(), inputs);
+  expect(resolveAgentForm(pending, { ...inputs, initialValues: { ...inputs.initialValues } })).toBe(
+    pending,
+  );
+});
+
+it("keeps the new provider's mode and thinking when switching away from pending fork defaults", () => {
+  const claudeModels: AgentModelDefinition[] = [
+    {
+      provider: "claude",
+      id: "sonnet",
+      label: "Sonnet",
+      defaultThinkingOptionId: "low",
+      thinkingOptions: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+    },
+  ];
+  const claudePrefs = { mode: "bypassPermissions", thinkingByModel: { sonnet: "high" } };
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modeId: "full-access",
+      thinkingOptionId: "low",
+    },
+    preferences: { providerPreferences: { claude: claudePrefs } },
+    allowedProviderMap: bothProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([
+      ["codex", null],
+      ["claude", claudeModels],
+    ]),
+  };
+  const pending = resolveAgentForm(makeState(), inputs);
+  const switched = resolveAgentForm(pending, {
+    type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+    provider: "claude",
+    modelId: "sonnet",
+    providerDef: TEST_CLAUDE_DEFINITION,
+    providerModels: claudeModels,
+    providerPrefs: claudePrefs,
+  });
+  expect(switched.form).toMatchObject({
+    provider: "claude",
+    model: "sonnet",
+    modeId: "bypassPermissions",
+    thinkingOptionId: "high",
+  });
+  expect(resolveAgentForm(switched, inputs).form).toEqual(switched.form);
+});
+
+it("keeps a new model's thinking preference when pending fork defaults finish resolving", () => {
+  const models: AgentModelDefinition[] = [
+    ...CODEX_MODELS,
+    { ...CODEX_MODELS[0], id: "next-model", defaultThinkingOptionId: "low" },
+  ];
+  const preferences = {
+    providerPreferences: { codex: { thinkingByModel: { "next-model": "xhigh" } } },
+  };
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: { provider: "codex", model: "gpt-5.3-codex", thinkingOptionId: "low" },
+    preferences,
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", null]]),
+  };
+  const pending = resolveAgentForm(makeState(), inputs);
+  const edited = resolveAgentForm(pending, {
+    type: "SET_MODEL_FROM_USER",
+    modelId: "next-model",
+    availableModels: models,
+    providerPrefs: preferences.providerPreferences.codex,
+  });
+  expect(edited.form.thinkingOptionId).toBe("xhigh");
+  const ready = resolveAgentForm(edited, {
+    ...inputs,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", models]]),
+  });
+  expect(ready.form).toEqual(edited.form);
+});

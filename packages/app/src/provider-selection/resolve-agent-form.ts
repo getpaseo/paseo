@@ -345,8 +345,11 @@ function resolveThinkingOption(input: {
   } = input;
   if (!provider) return "";
   if (userModified) return currentThinkingOptionId;
+  const initialModel = normalizeSelectedModelId(initialValues?.model);
+  const matchesInitialModel =
+    !initialModel || resolveCanonicalModelId(availableModels, initialModel) === modelId;
   const initialThinkingOptionId =
-    typeof initialValues?.thinkingOptionId === "string"
+    matchesInitialModel && typeof initialValues?.thinkingOptionId === "string"
       ? initialValues.thinkingOptionId.trim()
       : "";
   const preferredThinking = resolvePreferredThinkingOptionId({
@@ -376,6 +379,10 @@ export function resolveFormState(
     preferences,
   });
 
+  const providerInitialValues =
+    initialValues?.provider && initialValues.provider !== result.provider
+      ? undefined
+      : initialValues;
   const providerDef = result.provider ? allowedProviderMap.get(result.provider) : undefined;
   const providerPrefs = result.provider
     ? preferences?.providerPreferences?.[result.provider]
@@ -385,7 +392,7 @@ export function resolveFormState(
     provider: result.provider,
     userModified: userModified.modeId,
     currentModeId: result.modeId,
-    initialValues,
+    initialValues: providerInitialValues,
     providerDef,
     providerPrefs,
   });
@@ -394,7 +401,7 @@ export function resolveFormState(
     provider: result.provider,
     userModified: userModified.model,
     currentModel: result.model,
-    initialValues,
+    initialValues: providerInitialValues,
     providerPrefs,
     availableModels,
   });
@@ -404,7 +411,7 @@ export function resolveFormState(
     userModified: userModified.thinkingOptionId,
     currentThinkingOptionId: result.thinkingOptionId,
     modelId: result.model,
-    initialValues,
+    initialValues: providerInitialValues,
     providerPrefs,
     availableModels,
   });
@@ -535,14 +542,12 @@ function completeResolution(
   );
   const waitingForModels =
     resolved.provider !== null && action.providerModelsByProvider.get(resolved.provider) === null;
-  const nextState = {
-    ...state,
-    resolution: waitingForModels
-      ? PENDING_AGENT_FORM_RESOLUTION
-      : ({ status: "completed" } as const),
-  };
-  if (!hasFormStateChanged(state.form, resolved)) return nextState;
-  return { ...nextState, form: resolved };
+  const resolution = waitingForModels
+    ? PENDING_AGENT_FORM_RESOLUTION
+    : ({ status: "completed" } as const);
+  const form = hasFormStateChanged(state.form, resolved) ? resolved : state.form;
+  if (form === state.form && resolution.status === state.resolution.status) return state;
+  return { ...state, resolution, form };
 }
 
 function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) {
