@@ -492,6 +492,13 @@ Resolve the session account from that session's launch environment. Return `[]` 
 Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
 
+The host's Usage list also runs session discovery once for each enabled provider that sets its own
+`env`, so a custom provider's login shows before any of its agents runs. That scope carries the
+provider's launch environment and no `model`. Its `provider` is the provider it extends, or its own
+ID when it extends none. The daemon sets the `harness` of each login found this way to the
+provider's label, so a failed login names its provider. A login that the host's own discovery found
+first keeps its `harness`.
+
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
 input against your schema before calling `fetch()`. The same key in any scope is the same report;
 fetches share a five-minute cache only when their ordered login inputs match. Each login fetch
