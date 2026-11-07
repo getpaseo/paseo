@@ -9,6 +9,8 @@ import {
 } from "@getpaseo/plugin";
 import type { PluginIcon } from "@getpaseo/plugin/client";
 import type { IconProps } from "@getpaseo/plugin/client/ui";
+import { GitHubIcon } from "@/components/icons/github-icon";
+import { GitLabIcon } from "@/components/icons/gitlab-icon";
 import { SvgIcon } from "@/components/provider-icons";
 
 /** Host surfaces may thin a Lucide stroke; SVG and plugin components ignore it. */
@@ -19,7 +21,21 @@ type HostIcon = (props: HostIconProps) => ReactElement | null;
 const lucideIconComponents = new Map<string, HostIcon>();
 const svgIconComponents = new Map<string, HostIcon>();
 
-function findLucideIcon(name: string): LucideIcon | null {
+/** A Lucide name, or a brand name Lucide 1.x removed, drawn from size, color, and stroke width. */
+type NamedIcon = ComponentType<HostIconProps>;
+
+/**
+ * Lucide 1.0 dropped its brand icons. Plugins written against 0.x still name them, so the host
+ * draws its own brand icon for each.
+ */
+const REMOVED_LUCIDE_BRAND_ICONS = new Map<string, NamedIcon>([
+  ["Github", GitHubIcon],
+  ["Gitlab", GitLabIcon],
+]);
+
+function findLucideIcon(name: string): NamedIcon | null {
+  const brand = REMOVED_LUCIDE_BRAND_ICONS.get(name);
+  if (brand) return brand;
   const candidate = Reflect.get(LucideIcons, name);
   if (candidate === LucideIcons.Icon || candidate === LucideIcons.createLucideIcon) return null;
   return isComponent(candidate) ? (candidate as LucideIcon) : null;
@@ -85,7 +101,7 @@ function MissingIcon(): null {
   return null;
 }
 
-function createLucideIcon(name: string, Lucide: LucideIcon): HostIcon {
+function createLucideIcon(name: string, Lucide: NamedIcon): HostIcon {
   function PluginLucideIcon({ size, color, strokeWidth }: HostIconProps) {
     return createElement(Lucide, { size, color, strokeWidth });
   }
