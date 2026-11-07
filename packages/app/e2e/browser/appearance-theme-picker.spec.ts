@@ -9,9 +9,11 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
   await openSettingsSection(page, "appearance");
 
-  const themeTrigger = page.getByLabel("Theme: System", { exact: true });
-  await themeTrigger.click();
-  await expect(page.getByText("Pure black", { exact: true })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "System", exact: true })).toBeChecked();
+  await expect(
+    page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio").first(),
+  ).toHaveAccessibleName("System");
+  await expect(page.getByRole("radio", { name: "Pure black", exact: true })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("appearance-theme-picker.png"),
     fullPage: true,
@@ -35,7 +37,7 @@ test("keeps the selected workspace visible in Light", async ({ page }, testInfo)
     await row.click();
 
     await expect(row).toHaveAttribute("aria-selected", "true");
-    await expect(row).toHaveCSS("background-color", "rgb(228, 228, 231)");
+    await expect(row).toHaveCSS("background-color", "rgb(212, 212, 216)");
     await page.screenshot({
       path: testInfo.outputPath("light-selected-workspace.png"),
       fullPage: true,

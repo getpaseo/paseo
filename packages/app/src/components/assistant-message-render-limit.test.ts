@@ -56,3 +56,11 @@ describe("assistant message render limit", () => {
     });
   });
 });
+
+it("preserves complete native multi-paragraph messages and the newline-heavy repro", async () => {
+  const native = await import("./assistant-message-render-limit.native");
+  const message = "Paragraph.\n\n".repeat(3000) + "Section 60";
+  expect(native.capAssistantMessageForRender(message)).toEqual({ text: message, capped: false });
+  const lines = "x\n".repeat(16_000) + "HIDDEN_OVERSIZED_MESSAGE_TAIL";
+  expect(native.capAssistantMessageForRender(lines)).toEqual({ text: lines, capped: false });
+});

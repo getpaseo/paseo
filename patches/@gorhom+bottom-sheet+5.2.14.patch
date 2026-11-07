@@ -1,0 +1,178 @@
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
+index ee51e76..dc1bc17 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
+@@ -315,7 +315,9 @@ function BottomSheetModalComponent(props, ref) {
+     }
+     currentIndexRef.current = _index;
+     nextIndexRef.current = null;
+-    statusRef.current = _index === -1 ? _constants.MODAL_STATUS.MINIMIZED : _constants.MODAL_STATUS.PRESENTED;
++    if (!(_index === -1 && statusRef.current === _constants.MODAL_STATUS.DISMISSING)) {
++      statusRef.current = _index === -1 ? _constants.MODAL_STATUS.MINIMIZED : _constants.MODAL_STATUS.PRESENTED;
++    }
+     if (_providedOnChange) {
+       _providedOnChange(_index, _position, _type);
+     }
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
+index 973d05c..b484b5f 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
+@@ -86,7 +86,7 @@ function useAnimatedLayout(containerLayoutState, topInset, bottomInset, modal, s
+     });
+   }, [state, verticalInset, modal]);
+   (0, _react.useEffect)(() => {
+-    _reactNative.Dimensions.addEventListener('change', ({
++    const subscription = _reactNative.Dimensions.addEventListener('change', ({
+       window
+     }) => {
+       state.modify(_state => {
+@@ -96,6 +96,7 @@ function useAnimatedLayout(containerLayoutState, topInset, bottomInset, modal, s
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
+index e44ad86..96555ef 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
+@@ -15,6 +15,7 @@ var _exportNames = {
+   useBottomSheetTimingConfigs: true,
+   useBottomSheetInternal: true,
+   useBottomSheetModalInternal: true,
++  BottomSheetModalInternalProvider: true,
+   useScrollEventsHandlersDefault: true,
+   useGestureEventsHandlersDefault: true,
+   useBottomSheetGestureHandlers: true,
+@@ -220,6 +221,13 @@ var _useBottomSheetSpringConfigs = require("./hooks/useBottomSheetSpringConfigs"
+ var _useBottomSheetTimingConfigs = require("./hooks/useBottomSheetTimingConfigs");
+ var _useBottomSheetInternal = require("./hooks/useBottomSheetInternal");
+ var _useBottomSheetModalInternal = require("./hooks/useBottomSheetModalInternal");
++var _modalInternal = require("./contexts/modal/internal");
++Object.defineProperty(exports, "BottomSheetModalInternalProvider", {
++  enumerable: true,
++  get: function () {
++    return _modalInternal.BottomSheetModalInternalProvider;
++  }
++});
+ var _useScrollEventsHandlersDefault = require("./hooks/useScrollEventsHandlersDefault");
+ var _useGestureEventsHandlersDefault = require("./hooks/useGestureEventsHandlersDefault");
+ var _useBottomSheetGestureHandlers = require("./hooks/useBottomSheetGestureHandlers");
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
+index 94fabdb..60ca66a 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
+@@ -308,7 +308,9 @@ function BottomSheetModalComponent(props, ref) {
+     }
+     currentIndexRef.current = _index;
+     nextIndexRef.current = null;
+-    statusRef.current = _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++    if (!(_index === -1 && statusRef.current === MODAL_STATUS.DISMISSING)) {
++      statusRef.current = _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++    }
+     if (_providedOnChange) {
+       _providedOnChange(_index, _position, _type);
+     }
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js b/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
+index b0eec93..67713a2 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
+@@ -82,7 +82,7 @@ export function useAnimatedLayout(containerLayoutState, topInset, bottomInset, m
+     });
+   }, [state, verticalInset, modal]);
+   useEffect(() => {
+-    Dimensions.addEventListener('change', ({
++    const subscription = Dimensions.addEventListener('change', ({
+       window
+     }) => {
+       state.modify(_state => {
+@@ -92,6 +92,7 @@ export function useAnimatedLayout(containerLayoutState, topInset, bottomInset, m
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/index.js b/node_modules/@gorhom/bottom-sheet/lib/module/index.js
+index 8259637..eb057fe 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/index.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/index.js
+@@ -14,6 +14,7 @@ export { useBottomSheetSpringConfigs } from './hooks/useBottomSheetSpringConfigs
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts b/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
+index ffc6caa..550f1b3 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
++++ b/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
+@@ -7,6 +7,8 @@ export { useBottomSheetSpringConfigs } from './hooks/useBottomSheetSpringConfigs
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
++export type { BottomSheetModalInternalContextType } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
+diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
+index 2954b3f..7260656 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
++++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
+@@ -432,8 +432,15 @@ function BottomSheetModalComponent<T = never>(
+       currentIndexRef.current = _index;
+       nextIndexRef.current = null;
+ 
+-      statusRef.current =
+-        _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++      // A sheet that is dismissing (dismiss(), or unmounting while presented) keeps that status,
++      // so `onClose` lands on DISMISSED and unmounts it; MINIMIZED would read as a user close,
++      // which with `enableDismissOnClose=false` leaves the portal mounted forever.
++      if (_index === -1 && statusRef.current === MODAL_STATUS.DISMISSING) {
++        // keep dismissing
++      } else {
++        statusRef.current =
++          _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++      }
+ 
+       if (_providedOnChange) {
+         _providedOnChange(_index, _position, _type);
+diff --git a/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts b/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
+index 68c674d..564833c 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
++++ b/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
+@@ -106,13 +106,14 @@ export function useAnimatedLayout(
+     [state, verticalInset, modal]
+   );
+   useEffect(() => {
+-    Dimensions.addEventListener('change', ({ window }) => {
++    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+       state.modify(_state => {
+         'worklet';
+         _state.window = window;
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
+diff --git a/node_modules/@gorhom/bottom-sheet/src/index.ts b/node_modules/@gorhom/bottom-sheet/src/index.ts
+index 7aaea57..6a5f5a4 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/index.ts
++++ b/node_modules/@gorhom/bottom-sheet/src/index.ts
+@@ -12,6 +12,8 @@ export { useBottomSheetSpringConfigs } from './hooks/useBottomSheetSpringConfigs
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
++export type { BottomSheetModalInternalContextType } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';

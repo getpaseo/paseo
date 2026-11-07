@@ -40,18 +40,6 @@ function hasMeaningfulFetchDetail(detail: Extract<ToolCallDetail, { type: "fetch
   return Boolean(detail.url || detail.result || detail.codeText);
 }
 
-function hasMeaningfulWorktreeSetupDetail(
-  detail: Extract<ToolCallDetail, { type: "worktree_setup" }>,
-): boolean {
-  return Boolean(detail.branchName || detail.worktreePath || detail.log);
-}
-
-function hasMeaningfulSubAgentDetail(
-  detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
-): boolean {
-  return Boolean(detail.subAgentType || detail.description || detail.log);
-}
-
 function hasMeaningfulPlainTextDetail(
   detail: Extract<ToolCallDetail, { type: "plain_text" }>,
 ): boolean {
@@ -81,9 +69,9 @@ export function hasMeaningfulToolCallDetail(detail: ToolCallDetail | undefined):
     case "fetch":
       return hasMeaningfulFetchDetail(detail);
     case "worktree_setup":
-      return hasMeaningfulWorktreeSetupDetail(detail);
+    // A sub-agent card is a launch marker; the child's activity lives in the sub-agent panel.
     case "sub_agent":
-      return hasMeaningfulSubAgentDetail(detail);
+      return false;
     case "plain_text":
       return hasMeaningfulPlainTextDetail(detail);
     case "plan":
@@ -98,6 +86,7 @@ export function isPendingToolCallDetail(params: {
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   error: unknown;
 }): boolean {
+  if (params.detail?.type === "worktree_setup" || params.detail?.type === "sub_agent") return false;
   const isRunning = params.status === "running" || params.status === "executing";
   return isRunning && params.error == null && !hasMeaningfulToolCallDetail(params.detail);
 }

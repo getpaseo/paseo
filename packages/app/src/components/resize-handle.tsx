@@ -3,7 +3,7 @@ import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -47,9 +47,9 @@ export function ResizeHandle({
   onResizeSplit,
 }: ResizeHandleProps) {
   const { theme } = useUnistyles();
-  const finePointer = useHasFinePointer();
+  const { finePointer } = usePointerCapabilities();
   const pointerStatesRef = useRef(new Map<number, PointerState>());
-  const touchDragRef = useRef<ResizeHandleDrag | null>(null);
+  const touchStateRef = useRef<PointerState | null>(null);
   const cursorBeforeDragRef = useRef<string | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
@@ -151,23 +151,30 @@ export function ResizeHandle({
   const touchGesture = useMemo(() => {
     const gesture = Gesture.Pan()
       .runOnJS(true)
-      .onBegin(() => setDragging(true))
-      .onStart(() => {
-        touchDragRef.current = startResizeHandleDrag({
-          sizes,
-          index,
-          preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
-          commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
-        });
+      .onBegin((event) => {
+        setDragging(true);
+        touchStateRef.current = {
+          containerSize,
+          pointerStart: direction === "horizontal" ? event.absoluteX : event.absoluteY,
+          drag: startResizeHandleDrag({
+            sizes,
+            index,
+            preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
+            commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
+          }),
+        };
       })
       .onUpdate((event) => {
-        if (containerSize <= 0) return;
-        const translation = direction === "horizontal" ? event.translationX : event.translationY;
-        touchDragRef.current?.move(translation / containerSize);
+        const state = touchStateRef.current;
+        if (!state || state.containerSize <= 0) return;
+        // Gesture Handler resets web translation when the pan activates. Measure from
+        // the initial press so the activation distance is included on every platform.
+        const pointerCurrent = direction === "horizontal" ? event.absoluteX : event.absoluteY;
+        state.drag.move((pointerCurrent - state.pointerStart) / state.containerSize);
       })
-      .onEnd(() => touchDragRef.current?.finish())
+      .onEnd(() => touchStateRef.current?.drag.finish())
       .onFinalize(() => {
-        touchDragRef.current = null;
+        touchStateRef.current = null;
         setDragging(false);
       });
 

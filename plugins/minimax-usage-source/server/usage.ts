@@ -1,10 +1,11 @@
 import type { UsageInput } from "../shared/input.js";
-import { existsSync, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -148,83 +149,10 @@ export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  void input;
-  const configPath = join(homedir(), ".mmx", "config.json");
-  const credentialsPath = join(homedir(), ".mmx", "credentials.json");
-  const env = process.env;
-  const now = Date.now;
-
-  async function resolveAuth(): Promise<MiniMaxResolvedAuth | null> {
-    const envToken = env["MINIMAX_API_KEY"];
-    if (envToken) {
-      const envBase = env["MINIMAX_BASE_URL"];
-      return {
-        token: envToken,
-        baseUrl: resolveBaseUrl({ baseUrl: envBase }),
-      };
-    }
-
-    const credentials = await readCredentials();
-    if (credentials?.access_token && !isExpired(credentials.expires_at)) {
-      return {
-        token: credentials.access_token,
-        baseUrl: resolveBaseUrl({ baseUrl: credentials.resource_url }),
-      };
-    }
-
-    const config = await readConfig();
-    if (config?.api_key) {
-      return {
-        token: config.api_key,
-        baseUrl: resolveBaseUrl({
-          baseUrl: config.base_url,
-          region: config.region,
-        }),
-      };
-    }
-
-    if (config?.oauth?.access_token && !isExpired(config.oauth.expires_at)) {
-      return {
-        token: config.oauth.access_token,
-        baseUrl: resolveBaseUrl({
-          baseUrl: config.oauth.resource_url ?? config.base_url,
-          region: config.region,
-        }),
-      };
-    }
-
-    return null;
-  }
-
-  function isExpired(expiresAt: string | null | undefined): boolean {
-    if (!expiresAt) return false;
-    const parsed = Date.parse(expiresAt);
-    if (!Number.isFinite(parsed)) return false;
-    return parsed <= now();
-  }
-
-  async function readCredentials(): Promise<z.infer<typeof MiniMaxCredentialsSchema> | null> {
-    if (!existsSync(credentialsPath)) return null;
-    try {
-      const raw = JSON.parse(await fs.readFile(credentialsPath, "utf8"));
-      return MiniMaxCredentialsSchema.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-
-  async function readConfig(): Promise<z.infer<typeof MiniMaxConfigSchema> | null> {
-    if (!existsSync(configPath)) return null;
-    try {
-      const raw = JSON.parse(await fs.readFile(configPath, "utf8"));
-      return MiniMaxConfigSchema.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-
-  const auth = await resolveAuth();
-  if (!auth) return unavailableUsage();
+  const auth = await readAuth(input);
+  if (!auth) throw new Error("MiniMax login store no longer exists");
+  if (auth.expiresAt && Date.parse(auth.expiresAt) <= Date.now())
+    return unavailable({ kind: "expired", expiresAt: new Date(auth.expiresAt).toISOString() });
 
   const res = await fetchApi(`${auth.baseUrl}/v1/token_plan/remains`, {
     signal: AbortSignal.timeout(15_000),
@@ -234,15 +162,18 @@ export async function fetchUsage(
     },
   });
 
-  if (!res.ok) {
-    return unavailableUsage();
-  }
+  if (res.status === 401 || res.status === 403)
+    return unavailable({ kind: "rejected", status: res.status });
+  if (!res.ok) throw new Error(`MiniMax usage API returned ${res.status}`);
 
   const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
 
   const statusCode = resp.base_resp?.status_code;
   if (typeof statusCode === "number" && statusCode !== 0) {
-    return unavailableUsage();
+    return unavailable({
+      kind: "no_quota",
+      detail: resp.base_resp?.status_msg ?? "No active coding plan",
+    });
   }
 
   const models = resp.model_remains ?? [];
@@ -255,10 +186,11 @@ export async function fetchUsage(
     const weeklyWindow = toWeeklyWindow(name, model);
     if (weeklyWindow) windows.push(weeklyWindow);
   }
-  if (windows[0]) windows[0].headline = true;
 
+  if (windows.length === 0)
+    return unavailable({ kind: "no_quota", detail: "No active coding plan" });
   return {
-    status: windows.length > 0 ? "available" : "unavailable",
+    status: "available",
     planLabel: undefined,
     windows,
     balances: [],
@@ -266,24 +198,55 @@ export async function fetchUsage(
   };
 }
 
-export async function identify() {
-  if (process.env["MINIMAX_API_KEY"]) return { key: "default" };
-  const home = join(homedir(), ".mmx");
-  try {
-    const credentials = MiniMaxCredentialsSchema.parse(
-      JSON.parse(await fs.readFile(join(home, "credentials.json"), "utf8")),
-    );
-    if (credentials.access_token) return { key: "default" };
-  } catch {
-    /* Check config next. */
+async function readAuth(
+  input: UsageInput,
+): Promise<(MiniMaxResolvedAuth & { expiresAt?: string }) | undefined> {
+  if (input.store === "env") {
+    const token = process.env[input.locator];
+    return token
+      ? { token, baseUrl: resolveBaseUrl({ baseUrl: process.env.MINIMAX_BASE_URL }) }
+      : undefined;
   }
   try {
-    const config = MiniMaxConfigSchema.parse(
-      JSON.parse(await fs.readFile(join(home, "config.json"), "utf8")),
-    );
-    if (config.api_key || config.oauth?.access_token) return { key: "default" };
+    const raw: unknown = JSON.parse(await fs.readFile(input.locator, "utf8"));
+    if (input.store === "credentials") {
+      const credentials = MiniMaxCredentialsSchema.parse(raw);
+      return credentials.access_token
+        ? {
+            token: credentials.access_token,
+            baseUrl: resolveBaseUrl({ baseUrl: credentials.resource_url }),
+            expiresAt: credentials.expires_at ?? undefined,
+          }
+        : undefined;
+    }
+    const config = MiniMaxConfigSchema.parse(raw);
+    if (config.api_key)
+      return {
+        token: config.api_key,
+        baseUrl: resolveBaseUrl({ baseUrl: config.base_url, region: config.region }),
+      };
+    return config.oauth?.access_token
+      ? {
+          token: config.oauth.access_token,
+          baseUrl: resolveBaseUrl({
+            baseUrl: config.oauth.resource_url ?? config.base_url,
+            region: config.region,
+          }),
+          expiresAt: config.oauth.expires_at ?? undefined,
+        }
+      : undefined;
   } catch {
-    /* No configured account. */
+    return undefined;
   }
-  return null;
+}
+export async function discover(): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = [
+    { store: "env", locator: "MINIMAX_API_KEY" },
+    { store: "credentials", locator: join(homedir(), ".mmx", "credentials.json") },
+    { store: "config", locator: join(homedir(), ".mmx", "config.json") },
+  ];
+  const accounts: UsageAccount[] = [];
+  for (const input of candidates)
+    if (await readAuth(input)) accounts.push({ key: "default", input });
+  return accounts;
 }

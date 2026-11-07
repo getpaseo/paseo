@@ -6,6 +6,8 @@ const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
 const { extractFile } = require("@electron/asar");
+const { WebSocket } = require("ws");
+const assert = require("node:assert/strict");
 
 const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -29,6 +31,29 @@ const REQUIRED_DESKTOP_BRIDGE_KEYS = [
 
 function createTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+async function assertBuiltinPluginsStarted(listen) {
+  const { DaemonClient } = await import("@getpaseo/client/internal/daemon-client");
+  const { builtinPlugins } =
+    await import("../../server/dist/server/server/plugins/builtin/index.js");
+  const client = new DaemonClient({
+    url: `ws://${listen}/ws`,
+    clientId: "packaged-builtin-smoke",
+    webSocketFactory: (url, options) =>
+      new WebSocket(url, options?.protocols, { headers: options?.headers }),
+  });
+  try {
+    await client.connect();
+    const catalog = await client.getPluginCatalog();
+    assert.deepEqual(
+      catalog.map(({ id }) => id).sort(),
+      [...builtinPlugins].sort(),
+      "Every built-in plugin must start in the packaged desktop daemon",
+    );
+  } finally {
+    await client.close();
+  }
 }
 
 function assertExecutable(filePath, label) {
@@ -779,6 +804,11 @@ async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
     ],
     label: "Create packaged smoke workspace",
   });
+  // The fresh daemon had no projects at launch, so first-run setup is open over the sidebar.
+  await page.evaluate(() =>
+    localStorage.setItem("@paseo:onboarding", JSON.stringify({ completedAt: "1970-01-01" })),
+  );
+  await page.reload();
   await page.getByRole("button", { name: "Sandbox smoke workspace", exact: true }).click();
   await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
   await page.getByRole("button", { name: "Agent", exact: true }).click();
@@ -823,6 +853,11 @@ async function assertSandboxState({ browser, page, expectedSandbox, stdout, stde
 
 function assertLinuxDesktopIdentity(appPath) {
   if (process.platform === "linux") {
+    assert.deepEqual(
+      fs.readFileSync(path.join(appPath, "resources", "icon.png")),
+      fs.readFileSync(path.join(__dirname, "..", "assets", "icon.png")),
+      "Packaged Linux windows must have the Paseo icon at their runtime lookup path",
+    );
     const metadata = JSON.parse(
       extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
     );
@@ -915,6 +950,8 @@ async function smokePackagedDesktopApp({
       deadline,
     });
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
+    await assertBuiltinPluginsStarted(listen);
+    console.log("Packaged desktop smoke: every built-in plugin started");
     await smokeCliShim({ appPath, env });
     await smokeCliTerminal({ appPath, env });
     if (expectedSandbox !== undefined) {

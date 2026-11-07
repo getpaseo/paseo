@@ -10,9 +10,9 @@ export const PRIMARY_LAUNCH_ORDER = [
 
 export const SUPPORTING_LAUNCH_ORDER = [
   "changes",
+  "terminal",
   "diff",
   "files",
-  "terminal",
   "agent",
   "browser",
   "pullRequest",

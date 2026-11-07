@@ -9,6 +9,7 @@ export const PROVIDER_CAPABILITIES = [
   "prompt.image",
   "prompt.output_schema",
   "prompt.steer",
+  "session.can_stop_runtime",
   "session.archive",
   "session.configure",
   "session.list",
@@ -18,7 +19,6 @@ export const PROVIDER_CAPABILITIES = [
   "session.revert.files",
   "session.subsession",
   "session.unarchive",
-  "session.usage_reference",
   "permission",
   "permission.tool_policy",
   "timeline.plugin",
@@ -27,8 +27,13 @@ export const PROVIDER_CAPABILITIES = [
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
 export interface ProviderRegistration {
+  /** Activate only while agents.providers contains this provider ID, independently of enabled. */
+  requiresConfiguration?: boolean;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  /** Default executable and arguments; the daemon resolves overrides before status/connect. */
+  command?: readonly [string, ...string[]];
+  status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
   description?: string;
@@ -38,10 +43,34 @@ export interface ProviderRegistration {
 }
 
 export type ProviderCatalogOptions =
-  | { scope: "global"; force?: boolean }
-  | { scope: "workspace"; cwd: string; force?: boolean };
+  | { scope: "global"; force?: boolean; launch?: ProviderLaunch }
+  | { scope: "workspace"; cwd: string; force?: boolean; launch?: ProviderLaunch };
+
+export const ProviderLaunchSchema = z
+  .object({
+    /** Resolved executable path. */
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    /** Complete daemon-owned environment, including overrides and parent-session stripping. */
+    env: z.record(z.string(), z.string()),
+  })
+  .strip();
+
+export type ProviderLaunch = z.infer<typeof ProviderLaunchSchema>;
+
+export interface ProviderStatusRequest {
+  launch?: ProviderLaunch;
+}
+
+export const ProviderStatusSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(true), diagnostic: z.string().optional() }).strip(),
+  z.object({ available: z.literal(false), diagnostic: z.string().min(1) }).strip(),
+]);
+
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export interface ProviderConnectRequest {
+  launch?: ProviderLaunch;
   versions: readonly number[];
   capabilities: readonly string[];
 }
@@ -88,7 +117,7 @@ export interface ProviderSessionConfig {
   mode?: string;
   thinkingOption?: string;
   settings: Readonly<Record<string, JsonValue>>;
-  providerOptions?: Readonly<Record<string, JsonValue>>;
+  providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
 }
@@ -228,7 +257,6 @@ export type ProviderInput =
     }
   | { type: "session.prompt"; sessionId: string; prompt: ProviderPrompt }
   | { type: "session.interrupt"; requestId: string; sessionId: string }
-  | { type: "session.usage_reference"; requestId: string; sessionId: string }
   | {
       type: "session.permission";
       sessionId: string;
@@ -250,6 +278,7 @@ export type ProviderInput =
     }
   | { type: "session.archive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.unarchive"; requestId: string; persistence: ProviderPersistence }
+  | { type: "session.can_stop_runtime"; requestId: string; sessionId: string }
   | { type: "session.close"; requestId: string; sessionId: string };
 
 export interface ProviderThinkingOption {
@@ -525,14 +554,10 @@ export type ProviderTimelineItem =
     });
 
 export type ProviderEvent =
+  | { type: "session.can_stop_runtime"; requestId: string; sessionId: string; canStop: boolean }
   | { type: "catalog"; requestId: string; catalog: ProviderCatalog }
   | { type: "sessions"; requestId: string; sessions: ProviderSessionSummary[] }
   | { type: "request.completed"; requestId: string }
-  | {
-      type: "usage_reference";
-      requestId: string;
-      reference: { source: string; input: JsonValue } | null;
-    }
   | { type: "request.failed"; requestId: string; error: ProviderError }
   | {
       type: "session.opened";
@@ -612,12 +637,12 @@ function requiredPromptCapabilities(prompt: ProviderPrompt): readonly ProviderCa
 
 export function requiredProviderCapabilities(input: ProviderInput): readonly ProviderCapability[] {
   switch (input.type) {
+    case "session.can_stop_runtime":
+      return ["session.can_stop_runtime"];
     case "catalog":
     case "session.interrupt":
     case "session.close":
       return [];
-    case "session.usage_reference":
-      return ["session.usage_reference"];
     case "sessions":
       return ["session.list"];
     case "session.open": {
@@ -724,7 +749,7 @@ const sessionConfigSchema = z
     mode: z.string().optional(),
     thinkingOption: z.string().optional(),
     settings: jsonObjectSchema,
-    providerOptions: jsonObjectSchema.optional(),
+    providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
   })
@@ -898,13 +923,6 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
     .strict(),
   z
     .object({
-      type: z.literal("session.usage_reference"),
-      requestId: idSchema,
-      sessionId: idSchema,
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal("session.permission"),
       sessionId: idSchema,
       permissionId: idSchema,
@@ -940,6 +958,13 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
       type: z.literal("session.unarchive"),
       requestId: idSchema,
       persistence: persistenceSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("session.can_stop_runtime"),
+      requestId: idSchema,
+      sessionId: idSchema,
     })
     .strict(),
   z.object({ type: z.literal("session.close"), requestId: idSchema, sessionId: idSchema }).strict(),
@@ -1289,13 +1314,6 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
     .strip(),
   z.object({ type: z.literal("request.completed"), requestId: idSchema }).strip(),
   z
-    .object({
-      type: z.literal("usage_reference"),
-      requestId: idSchema,
-      reference: z.object({ source: idSchema, input: z.json() }).nullable(),
-    })
-    .strip(),
-  z
     .object({ type: z.literal("request.failed"), requestId: idSchema, error: providerErrorSchema })
     .strip(),
   z
@@ -1318,6 +1336,14 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       type: z.literal("session.ready"),
       requestId: idSchema.optional(),
       sessionId: idSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.can_stop_runtime"),
+      requestId: idSchema,
+      sessionId: idSchema,
+      canStop: z.boolean(),
     })
     .strip(),
   z

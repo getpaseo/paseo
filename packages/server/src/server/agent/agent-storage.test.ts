@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
+import { Session as InspectorSession } from "node:inspector/promises";
+import type { HeapProfiler } from "node:inspector";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
@@ -148,6 +150,101 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("workspace and active queries follow updates, removal, and reload", async () => {
+    const base = {
+      provider: "codex",
+      cwd: tmpDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      labels: {},
+    };
+    await storage.upsert({
+      ...base,
+      id: "a",
+      workspaceId: "one",
+      lastUserMessageAt: base.createdAt,
+    });
+    await storage.upsert({ ...base, id: "b", workspaceId: "two", archivedAt: base.createdAt });
+    expect((await storage.listActive()).map((r) => r.id)).toEqual(["a"]);
+    await storage.upsert({
+      ...base,
+      id: "a",
+      workspaceId: "two",
+      lastUserMessageAt: base.updatedAt,
+    });
+    expect(await storage.listByWorkspaces(["one"])).toEqual([]);
+    expect((await storage.listByWorkspaces(["two"])).map((r) => r.id)).toEqual(["a"]);
+    expect(
+      (await storage.listByWorkspaces(["two"], { includeArchived: true })).map((r) => r.id).sort(),
+    ).toEqual(["a", "b"]);
+    expect(await storage.lastUserMessageAtByWorkspace(["one", "two"])).toEqual(
+      new Map([["two", base.createdAt]]),
+    );
+    await storage.flush();
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    expect((await reloaded.listActive()).map((r) => r.id)).toEqual(["a"]);
+    expect(
+      await reloaded.lastUserMessageAtByWorkspace(["two"], { excludeAgentIds: ["a"] }),
+    ).toEqual(new Map());
+    await reloaded.remove("a");
+    expect(await reloaded.listActive()).toEqual([]);
+    expect(await reloaded.lastUserMessageAtByWorkspace(["two"])).toEqual(new Map());
+  });
+
+  test("single-agent lookups keep allocations bounded with a large stored history", async () => {
+    await fs.mkdir(storagePath, { recursive: true });
+    const record = {
+      id: "history-0",
+      provider: "codex",
+      cwd: tmpDir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      labels: {},
+      lastStatus: "idle",
+    };
+    for (let offset = 0; offset < 2048; offset += 64) {
+      await Promise.all(
+        Array.from({ length: 64 }, (_, index) => {
+          const id = `history-${offset + index}`;
+          return fs.writeFile(
+            path.join(storagePath, `${id}.json`),
+            JSON.stringify({ ...record, id }),
+          );
+        }),
+      );
+    }
+    await storage.initialize();
+    expect(await storage.listAll()).toHaveLength(2048);
+    const expected = await storage.get(record.id);
+    expect(expected).toMatchObject(record);
+
+    const inspector = new InspectorSession();
+    inspector.connect();
+    let allocatedBytes = 0;
+    let matches = 0;
+    try {
+      await inspector.post("HeapProfiler.startSampling", {
+        samplingInterval: 16384,
+        includeObjectsCollectedByMajorGC: true,
+        includeObjectsCollectedByMinorGC: true,
+      });
+      for (let index = 0; index < 1000; index++) {
+        if ((await storage.get(record.id)) === expected) matches++;
+      }
+      const { profile } = await inspector.post("HeapProfiler.stopSampling");
+      const sum = (node: HeapProfiler.SamplingHeapProfileNode): number =>
+        node.selfSize + node.children.reduce((bytes, child) => bytes + sum(child), 0);
+      allocatedBytes = sum(profile.head);
+    } finally {
+      inspector.disconnect();
+    }
+
+    expect(matches).toBe(1000);
+    // Copying this history on every lookup allocates >16 MiB. Allow generous
+    // sampling/runtime overhead without relying on the host's execution speed.
+    expect(allocatedBytes).toBeLessThan(4 * 1024 * 1024);
+  });
+
   test("applySnapshot persists configs and snapshot metadata", async () => {
     await storage.applySnapshot(
       createManagedAgent({
@@ -172,7 +269,7 @@ describe("AgentStorage", () => {
       }),
     );
 
-    const records = await storage.list();
+    const records = await storage.listAll();
     expect(records).toHaveLength(1);
     const [record] = records;
     expect(record.provider).toBe("claude");
@@ -189,8 +286,8 @@ describe("AgentStorage", () => {
     expect(record.lastModeId).toBe("coding");
     expect(record.lastStatus).toBe("idle");
 
-    const reloaded = new AgentStorage(storagePath, logger);
-    const [persisted] = await reloaded.list();
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    const [persisted] = await reloaded.listAll();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
@@ -210,7 +307,7 @@ describe("AgentStorage", () => {
     const record = await storage.get("agent-feature-values");
     expect(record?.config?.featureValues).toEqual({ fast_mode: true });
 
-    const reloaded = new AgentStorage(storagePath, logger);
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
     const persisted = await reloaded.get("agent-feature-values");
     expect(persisted?.config?.featureValues).toEqual({ fast_mode: true });
     expect(buildSessionConfig(persisted!).featureValues).toEqual({ fast_mode: true });
@@ -223,7 +320,7 @@ describe("AgentStorage", () => {
       }),
     );
 
-    const reloaded = new AgentStorage(storagePath, logger);
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
     const persisted = await reloaded.get("agent-no-feature-values");
     expect(persisted?.config?.featureValues).toBeUndefined();
     expect(buildSessionConfig(persisted!).featureValues).toBeUndefined();
@@ -312,7 +409,7 @@ describe("AgentStorage", () => {
     const current = await storage.get("agent-2");
     expect(current?.title).toBe("Fix Login Bug");
 
-    const reloaded = new AgentStorage(storagePath, logger);
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
     const persisted = await reloaded.get("agent-2");
     expect(persisted?.title).toBe("Fix Login Bug");
   });
@@ -415,7 +512,7 @@ describe("AgentStorage", () => {
     );
 
     // Registry should return all agents - filtering is done at the manager level
-    const records = await storage.list();
+    const records = await storage.listAll();
     expect(records).toHaveLength(2);
   });
 
@@ -486,12 +583,12 @@ describe("AgentStorage", () => {
     );
 
     // Reload the registry from disk
-    const reloaded = new AgentStorage(storagePath, logger);
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
     const record = await reloaded.get("internal-agent");
     expect(record?.internal).toBe(true);
 
     // Registry returns all agents - filtering happens at manager level
-    const records = await reloaded.list();
+    const records = await reloaded.listAll();
     expect(records).toHaveLength(1);
     expect(records[0]?.internal).toBe(true);
   });
@@ -543,8 +640,8 @@ describe("AgentStorage", () => {
     );
 
     // Force a reload so the registry has to discover from disk (and may choose either copy).
-    const reloaded = new AgentStorage(storagePath, logger);
-    const before = await reloaded.list();
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    const before = await reloaded.listAll();
     expect(before.map((r) => r.id)).toContain(agentId);
 
     await reloaded.remove(agentId);
@@ -571,8 +668,8 @@ describe("AgentStorage", () => {
 
     expect(await hasAnyRecordFile()).toBe(false);
 
-    const afterReload = new AgentStorage(storagePath, logger);
-    const after = await afterReload.list();
+    const afterReload = new AgentStorage(storagePath, createTestLogger());
+    const after = await afterReload.listAll();
     expect(after.some((r) => r.id === agentId)).toBe(false);
   });
 });

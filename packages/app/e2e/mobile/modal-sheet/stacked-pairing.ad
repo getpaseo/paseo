@@ -1,0 +1,50 @@
+# Fresh English app at Welcome, local relay host with PASSWORD, see README.md.
+# Run on phones and tablets: the confirmation lives at the root, outside the pairing sheet.
+context platform=ios timeout=180000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"welcome-paste-pairing-link\"" 20000
+screenshot "${OUT}/01-welcome.png"
+press "id=\"welcome-paste-pairing-link\""
+wait stable
+# Type without tapping the input: opening the sheet must retain its autofocus.
+wait "id=\"pair-link-input\"" 10000
+type "relay://"
+wait "id=\"pair-link-input\" value=\"relay://\"" 5000
+screenshot "${OUT}/20-pairing-autofocus-without-tap.png"
+fill "id=\"pair-link-input\"" "${PAIRING_LINK}"
+wait stable
+screenshot "${OUT}/02-pairing-input.png"
+press "id=\"pair-link-submit\""
+wait stable
+wait "id=\"host-confirmation-connect\"" 10000
+screenshot "${OUT}/03-confirmation-on-top.png"
+press "id=\"host-confirmation-cancel\""
+wait stable
+wait "id=\"pair-link-submit\" enabled=true" 10000
+screenshot "${OUT}/04-cancel-returns-to-pairing.png"
+# Close and reopen the underlying sheet, then edit it and submit again.
+press "id=\"pair-link-cancel\""
+wait stable
+wait "id=\"welcome-paste-pairing-link\"" 10000
+screenshot "${OUT}/05-underlying-sheet-closes.png"
+press "id=\"welcome-paste-pairing-link\""
+wait stable
+wait "id=\"pair-link-input\"" 10000
+fill "id=\"pair-link-input\"" "${PAIRING_LINK}"
+wait stable
+press "id=\"pair-link-submit\""
+wait stable
+wait "id=\"host-confirmation-connect\"" 10000
+screenshot "${OUT}/06-confirmation-reopens.png"
+press "id=\"host-confirmation-connect\""
+wait stable
+wait "id=\"pair-link-password-input\"" 20000
+screenshot "${OUT}/07-password-after-connect.png"
+fill "id=\"pair-link-password-input\"" "${PASSWORD}"
+wait stable
+press "id=\"pair-link-submit\""
+wait stable
+wait text "Open a folder on your machine" 30000
+screenshot "${OUT}/08-connected.png"
