@@ -1215,6 +1215,7 @@ export const ptBR: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espaços em segundo plano",
+      showEmptyProjects: "Mostrar projetos vazios",
       trigger: "Preferências de exibição",
       heading: "Exibição",
       sort: {

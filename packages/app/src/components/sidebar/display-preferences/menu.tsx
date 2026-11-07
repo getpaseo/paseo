@@ -390,6 +390,17 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           >
             {t("sidebar.display.showBackground")}
           </MenuItem>
+          {/* Status grouping has no project headers, so there is no empty project to hide. */}
+          {preferences.grouping === "project" ? (
+            <MenuItem
+              selected={preferences.showEmptyProjects}
+              closeOnSelect={false}
+              onSelect={preferences.toggleEmptyProjects}
+              testID="sidebar-display-show-empty-projects"
+            >
+              {t("sidebar.display.showEmptyProjects")}
+            </MenuItem>
+          ) : null}
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />
