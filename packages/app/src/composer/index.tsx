@@ -1628,7 +1628,9 @@ function ComposerContentImpl({
       } catch (error) {
         if (!explicitClientMessageId) {
           failedDirectSendRetryRef.current =
-            error instanceof DaemonConnectionError && error.outcome === "unknown"
+            error instanceof DaemonConnectionError &&
+            (error.outcome === "unknown" ||
+              pendingRetry?.clientMessageId === resolvedClientMessageId)
               ? {
                   agentId: targetAgentId,
                   text,
