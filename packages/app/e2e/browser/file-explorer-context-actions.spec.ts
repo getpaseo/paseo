@@ -2,7 +2,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
-import { downloadFileFromExplorer, openFileExplorer } from "../support/helpers/file-explorer";
+import {
+  downloadFileFromExplorer,
+  downloadFileFromTab,
+  openFileExplorer,
+  openFileFromExplorer,
+} from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
@@ -471,5 +476,29 @@ test("downloads a file over direct TCP with its original filename and bytes", as
   const savedFile = testInfo.outputPath(fileName);
   await downloaded.saveAs(savedFile);
   expect(await downloaded.failure()).toBeNull();
+  expect(await readFile(savedFile)).toEqual(source);
+});
+
+test("downloads an opened file from its tab menu", async ({ page }, testInfo) => {
+  const fileName = "tab-download données.md";
+  const source = Buffer.from("# Tab download\n\nRemote-safe file content.\n");
+  await writeFile(path.join(workspace.workspaceDirectory, fileName), source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await openFileFromExplorer(page, fileName);
+  const downloaded = await downloadFileFromTab(page, fileName, {
+    onMenuReady: async () => {
+      await testInfo.attach("tab-download-menu", {
+        body: await page.screenshot({ path: testInfo.outputPath("tab-download-menu.png") }),
+        contentType: "image/png",
+      });
+    },
+  });
+
+  const savedFile = testInfo.outputPath(fileName);
+  const download = await downloaded;
+  await download.saveAs(savedFile);
+  expect(download.suggestedFilename()).toBe(fileName);
+  expect(await download.failure()).toBeNull();
   expect(await readFile(savedFile)).toEqual(source);
 });
