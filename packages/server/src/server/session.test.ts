@@ -379,6 +379,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     getCheckout: vi.fn(),
     getCheckoutDiff: vi.fn(),
     getSnapshot: vi.fn(),
+    peekSnapshot: vi.fn().mockReturnValue(null),
     suggestBranchesForCwd: vi.fn(),
     listStashes: vi.fn(),
 
