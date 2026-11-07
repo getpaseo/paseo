@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 
@@ -171,6 +171,62 @@ async function startMockResponsesServer(sequence: string[]): Promise<{
   };
 }
 
+async function startHeldFirstResponseServer(): Promise<{
+  url: string;
+  requestBodies: string[];
+  releaseFirstResponse: () => void;
+  close: () => Promise<void>;
+}> {
+  const requestBodies: string[] = [];
+  let heldResponse: ServerResponse | null = null;
+  const reply = (res: ServerResponse) => {
+    res.statusCode = 200;
+    res.setHeader("content-type", "text/event-stream");
+    res.end(assistantMessageSse("done"));
+  };
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on("end", () => {
+      if (req.method !== "POST" || req.url !== "/v1/responses") {
+        res.statusCode = 404;
+        res.end("not found");
+        return;
+      }
+      requestBodies.push(Buffer.concat(chunks).toString("utf8"));
+      if (requestBodies.length === 1) {
+        heldResponse = res;
+      } else {
+        reply(res);
+      }
+    });
+  });
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP address for mock responses server");
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requestBodies,
+    releaseFirstResponse: () => {
+      if (!heldResponse) throw new Error("No held response to release");
+      reply(heldResponse);
+      heldResponse = null;
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.closeAllConnections();
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      }),
+  };
+}
+
 function writeMockCodexConfig(codexHome: string, serverUrl: string): void {
   writeFileSync(
     path.join(codexHome, "config.toml"),
@@ -217,6 +273,72 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 }
 
 describe("Codex app-server provider (local e2e)", () => {
+  test.runIf(isCodexInstalled())(
+    "rewinding a steer message keeps the earlier prompt of its turn in model context",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-steer-rewind-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-steer-rewind-home-"));
+      const mockServer = await startHeldFirstResponseServer();
+
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url);
+        const client = new CodexAppServerAgentClient(createTestLogger());
+        const session = await client.createSession(
+          { provider: "codex", cwd, modeId: "auto", model: "mock-model" },
+          { env: { CODEX_HOME: codexHome } },
+        );
+
+        try {
+          const userMessageIds = new Map<string, string>();
+          session.subscribe((event) => {
+            if (
+              event.type === "timeline" &&
+              event.item.type === "user_message" &&
+              event.item.messageId
+            ) {
+              userMessageIds.set(event.item.text, event.item.messageId);
+            }
+          });
+          const turnFinished = waitForEvent({
+            session,
+            timeoutMs: 15_000,
+            label: "turn completion",
+            predicate: (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
+              event.type === "turn_completed",
+          });
+
+          const started = await session.startTurn("ORIGINAL_PROMPT");
+          await vi.waitFor(() => expect(mockServer.requestBodies).toHaveLength(1), {
+            timeout: 15_000,
+          });
+          await expect(
+            session.steerActiveTurn!("STEER_PROMPT", { expectedTurnId: started.turnId }),
+          ).resolves.toEqual({ status: "accepted" });
+          mockServer.releaseFirstResponse();
+          await turnFinished;
+
+          await vi.waitFor(() => expect(userMessageIds.get("STEER_PROMPT")).toBeDefined(), {
+            timeout: 15_000,
+          });
+          await expect(
+            session.revertConversation!({ messageId: userMessageIds.get("STEER_PROMPT")! }),
+          ).rejects.toThrow("Select the first message in the turn instead");
+
+          await session.run("AFTER_REWIND");
+          expect(mockServer.requestBodies.at(-1)).toContain("AFTER_REWIND");
+          expect(mockServer.requestBodies.at(-1)).toContain("ORIGINAL_PROMPT");
+        } finally {
+          await session.close();
+        }
+      } finally {
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
+
   test.runIf(isCodexInstalled())(
     "reloads a persisted idle thread repeatedly without overlapping writers",
     async () => {
