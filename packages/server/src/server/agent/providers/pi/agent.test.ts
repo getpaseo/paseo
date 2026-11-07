@@ -2183,6 +2183,48 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test.each([false, true])(
+    "closing Pi releases an active turn without publishing a terminal outcome (autonomous=%s)",
+    async (autonomous) => {
+      const { pi, session, events } = await createSession();
+      if (autonomous) {
+        pi.latestSession().emit({ type: "agent_start" });
+        pi.latestSession().emit({ type: "turn_start" });
+      } else {
+        await session.startTurn("keep working");
+      }
+      const before = events.turnLifecycleEvents();
+
+      await session.close();
+
+      expect(pi.latestSession().closeCalls).toBe(1);
+      expect(events.turnLifecycleEvents()).toEqual(before);
+    },
+  );
+
+  test("closing Pi before prompt acknowledgement preserves the unfinished turn", async () => {
+    const { pi, session, events } = await createSession();
+    pi.latestSession().holdNextPrompt();
+    await session.startTurn("keep working");
+    expect(pi.latestSession().prompts).toHaveLength(1);
+    const before = events.turnLifecycleEvents();
+
+    await session.close();
+
+    expect(events.turnLifecycleEvents()).toEqual(before);
+  });
+
+  test("a rejected prompt still fails an open Pi session", async () => {
+    const { pi, session, events } = await createSession();
+    pi.latestSession().holdNextPrompt();
+    await session.startTurn("keep working");
+
+    await pi.latestSession().failHeldPrompt(new Error("Prompt rejected"));
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Prompt rejected" });
+    await session.close();
+  });
+
   test("fails the active turn when the Pi process exits mid-turn", async () => {
     const { pi, session, events } = await createSession();
 

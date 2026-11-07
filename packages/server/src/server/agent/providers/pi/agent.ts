@@ -1734,6 +1734,17 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private publish(event: AgentStreamEvent): void {
+    // Runtime release preserves unfinished work for restart recovery. Cleanup
+    // may still emit timeline updates, but must not settle or restart its turn.
+    if (
+      this.closed &&
+      (event.type === "turn_started" ||
+        event.type === "turn_completed" ||
+        event.type === "turn_canceled" ||
+        event.type === "turn_failed")
+    ) {
+      return;
+    }
     for (const subscriber of this.subscribers) subscriber(event);
   }
 
