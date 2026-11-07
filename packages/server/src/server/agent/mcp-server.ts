@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import type { CallToolResult, ServerContext } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ServerContext,
+  StandardSchemaWithJSON,
+} from "@modelcontextprotocol/server";
 
 import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
@@ -30,25 +34,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     version: "2.0.0",
   });
 
-  // The v2 SDK types `ZodRawShape` through the `zod/v4` core entry while Paseo
-  // declares tool schemas via the `zod` root entry. Both resolve to the same zod
-  // runtime, so the shapes are interchangeable at runtime but not by type
-  // identity; narrow once here instead of casting every call site.
-  const registerTool = server.registerTool.bind(server) as unknown as (
-    name: string,
-    config: { title?: string; description?: string; inputSchema?: unknown },
-    cb: (args: unknown, context: McpToolContext) => Promise<CallToolResult>,
-  ) => unknown;
-
   for (const tool of catalog.tools.values()) {
-    registerTool(
+    server.registerTool(
       tool.name,
       {
         title: tool.title,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        // Paseo declares tool schemas through the `zod` root entry; the SDK types
+        // its input schema through the `zod/v4` core entry. Both are the same zod
+        // runtime, but the two entry points carry distinct type identities, so a
+        // single narrowing cast is required at this boundary.
+        inputSchema: tool.inputSchema as StandardSchemaWithJSON,
       },
-      async (args, context) =>
+      async (args: unknown, context?: McpToolContext) =>
         toMcpToolResult(
           await catalog.executeTool(tool.name, args, { signal: context?.mcpReq?.signal }),
         ),
