@@ -7,6 +7,7 @@ main = "./src/server-entry.ts"
 routes = [
   { pattern = "paseo.sh", custom_domain = true },
   { pattern = "www.paseo.sh", custom_domain = true },
+  { pattern = "plugins.paseo.sh", custom_domain = true },
 ]
 
 [observability]

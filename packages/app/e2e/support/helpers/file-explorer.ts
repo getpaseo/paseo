@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Download, type Page } from "@playwright/test";
 import { openFilesPanel } from "./workspace-tabs";
 
 function fileExplorerTree(page: Page) {
@@ -38,4 +38,11 @@ export async function expectFileTabOpen(page: Page, filePath: string): Promise<v
   await expect(page.getByTestId(`workspace-tab-file_${filePath}`).first()).toBeVisible({
     timeout: 30_000,
   });
+}
+
+export async function downloadFileFromExplorer(page: Page, fileName: string): Promise<Download> {
+  await fileExplorerEntry(page, fileName).click({ button: "right" });
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+  return downloaded;
 }

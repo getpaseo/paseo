@@ -38,7 +38,10 @@ export class Sessions {
             updatedAt: session.updatedAt,
             persistence: {
               version: 1,
-              data: { sessionId: session.sessionId, model: session.modelId },
+              data: {
+                sessionId: session.sessionId,
+                ...(session.modelId === null ? {} : { model: session.modelId }),
+              },
             },
           });
           if (input.limit && summaries.length >= input.limit) return summaries;

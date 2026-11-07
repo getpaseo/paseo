@@ -8,7 +8,9 @@ category: Providers
 
 # Providers
 
-Paseo doesn't ship its own coding agent. It launches and supervises **existing CLIs you've already installed and authenticated**, Claude Code, Codex, OpenCode, Antigravity, Muse Code, Cursor, Gemini, and the rest. Your subscriptions, your config, your skills, your MCP servers all stay intact. Paseo just gives you a UI, a CLI, a relay, and orchestration on top.
+Paseo runs **existing coding agents you've installed and authenticated** in workspaces with an editor, terminals, diffs, and, on desktop, a browser. Run several agents in parallel, choose a provider for each task, and review their work in the same app. Your subscriptions, config, skills, and MCP servers stay intact.
+
+To try the workflow, [run parallel tasks in separate worktrees](/docs/parallel-development).
 
 ## Mental model
 

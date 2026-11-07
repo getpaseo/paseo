@@ -1,5 +1,4 @@
 import { useCallback, useMemo } from "react";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { AppSettings } from "@/hooks/use-settings/storage";
 import { useInstalledPlugins } from "@/plugins/registry";
@@ -28,15 +27,14 @@ export function useSidebarNavItems<Section extends SidebarSection>(
   section: Section,
 ): UseSidebarNavItemsReturn<Section> {
   const plugins = useInstalledPlugins();
-  const compact = useIsCompactFormFactor();
   const { settings, updateSettings } = useAppSettings();
   const field = PREFERENCE_FIELDS[section];
   const preferences = settings[field];
   const pluginGroups = useMemo(() => groupPluginSidebarItems(plugins, section), [plugins, section]);
 
   const items = useMemo(
-    () => resolveSidebarNavItems({ section, compact, pluginGroups, preferences }),
-    [compact, pluginGroups, preferences, section],
+    () => resolveSidebarNavItems({ section, pluginGroups, preferences }),
+    [pluginGroups, preferences, section],
   );
 
   const setVisible = useCallback(
@@ -45,7 +43,6 @@ export function useSidebarNavItems<Section extends SidebarSection>(
         const previous = current[field];
         const currentItems = resolveSidebarNavItems({
           section,
-          compact,
           pluginGroups,
           preferences: previous,
         });
@@ -54,7 +51,7 @@ export function useSidebarNavItems<Section extends SidebarSection>(
         };
       });
     },
-    [compact, field, pluginGroups, section, updateSettings],
+    [field, pluginGroups, section, updateSettings],
   );
 
   const move = useCallback(
@@ -63,7 +60,6 @@ export function useSidebarNavItems<Section extends SidebarSection>(
         const previous = current[field];
         const currentItems = resolveSidebarNavItems({
           section,
-          compact,
           pluginGroups,
           preferences: previous,
         });
@@ -72,7 +68,7 @@ export function useSidebarNavItems<Section extends SidebarSection>(
         };
       });
     },
-    [compact, field, pluginGroups, section, updateSettings],
+    [field, pluginGroups, section, updateSettings],
   );
 
   return { items, setVisible, move };

@@ -105,6 +105,54 @@ const child = await workspace.agents.create({
 
 `parent` establishes parentage. Archiving a parent cascade-archives its children. Call `detach()` first when a child should continue independently.
 
+## Run work in a background workspace
+
+Create a background workspace and its first agent in one call. Put `background` on the
+workspace options and the agent's configuration under `agent`:
+
+```ts
+const cwd = "/Users/me/dev/storefront";
+const workspace = await client.workspaces.create({
+  source: { kind: "directory", path: cwd },
+  background: true,
+  agent: {
+    cwd,
+    config: { provider: "codex/gpt-5.5" },
+    prompt: "Review the checkout flow.",
+  },
+});
+```
+
+The call returns a workspace handle and starts its first agent with the supplied prompt.
+
+Background agents keep their history and survive daemon restarts. Default discovery hides them;
+use `client.agents.list({ filter: { includeBackground: true } })` to include them.
+Exact-ID handles work normally. See [workspace creation](./workspaces.md#create-a-fresh-workspace)
+for defaults and caller inheritance.
+
+## Run a helper as a background agent
+
+Pass `background: true` to run a helper in a workspace the user may have open. A background agent
+opens no tab, stays out of its parent's subagent track and the sidebar status, and raises no
+notifications. Default lists leave it out.
+
+```ts
+const helper = await client.workspaces.ref(workspaceId).agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  prompt: "Summarize the last turn in one line.",
+  background: true,
+});
+const result = await helper.waitForFinish();
+console.log(result.lastMessage);
+await helper.archive();
+```
+
+An agent created under a background `parent` is background unless you pass `background: false`.
+A parent on another host passes this on only as a handle; with a bare address, pass `background`.
+Placing a background agent in an existing workspace or under a parent requires
+`features.backgroundAgents`; on an older host the SDK throws "Update the host to use background
+agents." before sending.
+
 ## Request structured output
 
 ```ts

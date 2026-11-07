@@ -1,3 +1,4 @@
+import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import { userMessageImages } from "../user-message-images.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
@@ -74,13 +75,13 @@ export class OmpHistoryMapper {
     private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity> = new Map(),
   ) {}
 
-  mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
+  async mapMessages(messages: readonly OmpAgentMessage[]): Promise<AgentStreamEvent[]> {
     const events: AgentStreamEvent[] = [];
 
     for (const message of messages) {
       switch (message.role) {
         case "user":
-          events.push(...this.mapUserMessage(message));
+          events.push(...(await this.mapUserMessage(message)));
           break;
         case "custom":
           events.push(...this.mapCustomMessage(message));
@@ -104,9 +105,11 @@ export class OmpHistoryMapper {
     return events;
   }
 
-  private mapUserMessage(message: Extract<OmpAgentMessage, { role: "user" }>): AgentStreamEvent[] {
+  private async mapUserMessage(
+    message: Extract<OmpAgentMessage, { role: "user" }>,
+  ): Promise<AgentStreamEvent[]> {
     const text = getUserMessageText(message.content);
-    const images = userMessageImages(message.content);
+    const images = await userMessageImages(message.content);
     this.userIndex += 1;
     if (!text && images.length === 0) {
       return [];
@@ -158,7 +161,7 @@ export class OmpHistoryMapper {
       {
         type: "timeline",
         provider: this.provider,
-        item: { type: "assistant_message", text, messageId },
+        item: mapCustomMessageToToolCall(message, text, messageId),
       },
     ];
   }
@@ -289,7 +292,7 @@ export async function* streamOmpCoreHistory(
   hooks: OmpHistoryMapperHooks = {},
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new OmpHistoryMapper(provider, userEntries, hooks);
-  for (const event of mapper.mapMessages(messages)) {
+  for (const event of await mapper.mapMessages(messages)) {
     if (event) {
       yield event;
     }

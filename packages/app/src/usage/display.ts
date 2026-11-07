@@ -1,7 +1,5 @@
 import { useCallback, useMemo } from "react";
 import { useAppSettings } from "@/hooks/use-settings";
-import { useUsageHostId } from "./hosts";
-import { useUsageHostReports } from "./queries";
 import {
   isUsagePinned,
   setUsageDisplayAs,
@@ -10,6 +8,7 @@ import {
   type UsagePin,
   type UsagePreferences,
 } from "./preferences";
+import type { UsageReportEntry } from "./types";
 
 /** What usage views need from the preferences: how to read percents, and the pins. */
 export interface UsageDisplay {
@@ -19,15 +18,15 @@ export interface UsageDisplay {
   togglePin: (pin: UsagePin) => void;
 }
 
-/** The device's usage preferences, and the commands that change them. */
-export function useUsagePreferences(serverId?: string): {
+interface UsagePreferencesState {
   preferences: UsagePreferences;
   display: UsageDisplay;
-} {
+}
+
+/** The device's usage preferences, with pins resolved against the given reports. */
+export function useUsageDisplay(reports: readonly UsageReportEntry[]): UsagePreferencesState {
   const { settings, updateSettings } = useAppSettings();
   const preferences = settings.usage;
-  const defaultServerId = useUsageHostId();
-  const reports = useUsageHostReports(serverId ?? defaultServerId);
   const setDisplayAs = useCallback(
     (displayAs: UsageDisplayAs) => {
       void updateSettings((current) => ({ usage: setUsageDisplayAs(current.usage, displayAs) }));

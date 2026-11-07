@@ -2,10 +2,6 @@ import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
-import {
-  openMobileAgentSidebar,
-  expectMobileAgentSidebarVisible,
-} from "../support/helpers/sidebar";
 
 async function openExample(page: Page, example: string) {
   await page.getByRole("button", { name: `Open ${example}`, exact: true }).click();
@@ -122,9 +118,7 @@ async function openWideExamples(page: Page) {
 
 async function openCompactExamples(page: Page) {
   await page.setViewportSize({ width: 390, height: 844 });
-  await openMobileAgentSidebar(page);
-  await expectMobileAgentSidebarVisible(page);
-  await page.getByRole("button", { name: "Modal examples", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open Form", exact: true })).toBeVisible();
 }
 
 async function expectDeniedCopyFeedback(page: Page) {

@@ -1,3 +1,7 @@
+import {
+  FloatingHeaderOverlay,
+  useFloatingHeaderOverlayClearance,
+} from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -31,6 +35,8 @@ export interface ToastShowOptions {
   durationMs?: number | null;
   nativeAndroid?: boolean;
   testID?: string;
+  /** Runs once when this toast leaves the screen: timed out, dismissed, or replaced. */
+  onDismiss?: () => void;
 }
 
 export interface ToastState {
@@ -41,10 +47,14 @@ export interface ToastState {
   variant: ToastVariant;
   durationMs: number | null;
   testID?: string;
+  onDismiss?: () => void;
 }
 
+/** Dismisses the toast it was returned for; a no-op once another toast replaced it. */
+export type DismissToast = () => void;
+
 export interface ToastApi {
-  show: (content: ReactNode, options?: ToastShowOptions) => void;
+  show: (content: ReactNode, options?: ToastShowOptions) => DismissToast;
   copied: (label?: string) => void;
   error: (message: string) => void;
 }
@@ -52,6 +62,7 @@ export interface ToastApi {
 type ToastViewportPlacement = "app-shell" | "panel";
 
 const DEFAULT_DURATION_MS = 2200;
+const noopDismiss: DismissToast = () => {};
 const TOAST_MAX_WIDTH = 480;
 const toastEntering = FadeIn.duration(140);
 const toastExiting = FadeOut.duration(140);
@@ -70,37 +81,55 @@ export function useToastHost(): {
   dismiss: () => void;
 } {
   const { t } = useTranslation();
-  const [toast, setToast] = useState<ToastState | null>(null);
+  const [toast, setToastState] = useState<ToastState | null>(null);
+  const toastRef = useRef<ToastState | null>(null);
   const idRef = useRef(0);
 
-  const show = useCallback((content: ReactNode, options?: ToastShowOptions) => {
-    const nativeMessage = typeof content === "string" ? content.trim() : null;
-    if (!content || nativeMessage === "") {
-      return;
-    }
-
-    const variant = options?.variant ?? "default";
-    const durationMs = options?.durationMs === undefined ? DEFAULT_DURATION_MS : options.durationMs;
-    const nativeAndroid = options?.nativeAndroid ?? false;
-
-    if (Platform.OS === "android" && nativeAndroid && nativeMessage) {
-      const duration =
-        durationMs !== null && durationMs <= 2500 ? ToastAndroid.SHORT : ToastAndroid.LONG;
-      ToastAndroid.showWithGravity(nativeMessage, duration, ToastAndroid.TOP);
-      return;
-    }
-
-    idRef.current += 1;
-    setToast({
-      id: idRef.current,
-      content,
-      nativeMessage,
-      icon: options?.icon,
-      variant,
-      durationMs,
-      testID: options?.testID,
-    });
+  const setToast = useCallback((next: ToastState | null) => {
+    const previous = toastRef.current;
+    if (previous === next) return;
+    toastRef.current = next;
+    setToastState(next);
+    previous?.onDismiss?.();
   }, []);
+
+  const show = useCallback(
+    (content: ReactNode, options?: ToastShowOptions): DismissToast => {
+      const nativeMessage = typeof content === "string" ? content.trim() : null;
+      if (!content || nativeMessage === "") {
+        return noopDismiss;
+      }
+
+      const variant = options?.variant ?? "default";
+      const durationMs =
+        options?.durationMs === undefined ? DEFAULT_DURATION_MS : options.durationMs;
+      const nativeAndroid = options?.nativeAndroid ?? false;
+
+      if (Platform.OS === "android" && nativeAndroid && nativeMessage) {
+        const duration =
+          durationMs !== null && durationMs <= 2500 ? ToastAndroid.SHORT : ToastAndroid.LONG;
+        ToastAndroid.showWithGravity(nativeMessage, duration, ToastAndroid.TOP);
+        return noopDismiss;
+      }
+
+      idRef.current += 1;
+      const id = idRef.current;
+      setToast({
+        id,
+        content,
+        nativeMessage,
+        icon: options?.icon,
+        variant,
+        durationMs,
+        testID: options?.testID,
+        onDismiss: options?.onDismiss,
+      });
+      return () => {
+        if (toastRef.current?.id === id) setToast(null);
+      };
+    },
+    [setToast],
+  );
 
   const api = useMemo<ToastApi>(
     () => ({
@@ -117,7 +146,7 @@ export function useToastHost(): {
 
   const dismiss = useCallback(() => {
     setToast(null);
-  }, []);
+  }, [setToast]);
 
   return { api, toast, dismiss };
 }
@@ -184,9 +213,11 @@ export function ToastViewport({
     return clearTimer;
   }, [clearTimer, durationMs, scheduleDismiss, toastId]);
 
+  const panelClearance = useFloatingHeaderOverlayClearance();
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const topOffset = placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : 0;
+  const topOffset =
+    placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
   const content = (
     <View
@@ -214,7 +245,7 @@ export function ToastViewport({
     return createPortal(content, getOverlayRoot());
   }
 
-  return content;
+  return placement === "panel" ? <FloatingHeaderOverlay>{content}</FloatingHeaderOverlay> : content;
 }
 
 function ToastCard({

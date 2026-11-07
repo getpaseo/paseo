@@ -1,57 +1,90 @@
-import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { View } from "react-native";
-import {
-  SettingsCard,
-  SettingsCollapsibleRow,
-  SettingsRow,
-  SettingsSwitch,
-} from "@/components/settings";
+import { Settings } from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
+import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { SettingsRow, SettingsSwitch } from "@/components/settings";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
-import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
+import { Alert } from "@/components/ui/alert";
+import { useHosts } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { usageCopy } from "./copy";
-import type { UsageDisplay } from "./display";
+import { useUsageSetting } from "./setting";
+import { useUsageDisplay } from "./display";
+import { useUsageInSidebar } from "./in-sidebar";
 import type { UsageDisplayAs } from "./preferences";
 
-const DISPLAY_AS_OPTIONS: SegmentedControlOption<UsageDisplayAs>[] = [
-  { value: "used", label: usageCopy.displayUsed, testID: "usage-display-used" },
-  { value: "remaining", label: usageCopy.displayRemaining, testID: "usage-display-remaining" },
-];
+const ThemedSettings = withUnistyles(Settings);
 
-/**
- * The usage options, folded above the reports: whether the sidebar shows the summary (the same
- * switch as Settings > Sidebar) and whether percents read as used or remaining.
- */
-export function UsageOptions({ display }: { display: UsageDisplay }) {
-  const sidebarItems = useSidebarNavItems("footer");
-  const inSidebar = sidebarItems.items.some((item) => item.key === "usage" && item.visible);
-  const { setVisible } = sidebarItems;
-  const setInSidebar = useCallback(
-    (visible: boolean) => setVisible("usage", visible),
-    [setVisible],
-  );
+/** The shared usage preferences, opened from a cog as a popover or compact sheet. */
+export function UsageOptions({ serverId }: { serverId: string | null }) {
+  const setting = useUsageSetting(serverId);
+  const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
+  const { t } = useTranslation();
+  const displayAsOptions: SegmentedControlOption<UsageDisplayAs>[] = [
+    { value: "used", label: t("providerUsage.displayUsed"), testID: "usage-display-used" },
+    {
+      value: "remaining",
+      label: t("providerUsage.displayRemaining"),
+      testID: "usage-display-remaining",
+    },
+  ];
+  const compact = useIsCompactFormFactor();
+  const { display } = useUsageDisplay([]);
+  const { inSidebar, setInSidebar } = useUsageInSidebar();
   return (
-    <View style={settingsStyles.section}>
-      <SettingsCard>
-        <SettingsCollapsibleRow label={usageCopy.options} testID="usage-options">
-          <SettingsSwitch
-            label={usageCopy.showInSidebar}
-            hint={usageCopy.showInSidebarHint}
-            value={inSidebar}
-            onValueChange={setInSidebar}
-            testID="usage-show-in-sidebar"
-          />
-          <SettingsRow label={usageCopy.displayAs}>
-            <SegmentedControl
-              options={DISPLAY_AS_OPTIONS}
-              value={display.displayAs}
-              onValueChange={display.setDisplayAs}
-              size="sm"
-              testID="usage-display-as"
+    <DropdownMenu compactMode="sheet">
+      <ToolbarButton
+        kind="menu"
+        label={t("providerUsage.options")}
+        compact={compact}
+        testID="usage-options-menu"
+      >
+        <ThemedSettings
+          size={paneContentToolbarIconSize(compact)}
+          uniProps={extraMutedIconColorMapping}
+        />
+      </ToolbarButton>
+      <DropdownMenuContent
+        align="end"
+        width={340}
+        sheetTitle={t("providerUsage.options")}
+        testID="usage-options-surface"
+      >
+        <View testID="usage-options-fields">
+          {setting.error ? <Alert variant="error" description={setting.error.message} /> : null}
+          {setting.supported ? (
+            <SettingsSwitch
+              label={t("providerUsage.checkUsage")}
+              hint={t("providerUsage.checkUsageHint", { host: hostLabel })}
+              disabled={!setting.ready}
+              value={setting.enabled}
+              onValueChange={setting.setEnabled}
             />
-          </SettingsRow>
-        </SettingsCollapsibleRow>
-      </SettingsCard>
-    </View>
+          ) : null}
+          <View style={setting.supported ? settingsStyles.rowBorder : undefined}>
+            <SettingsSwitch
+              label={t("providerUsage.showInSidebar")}
+              hint={t("providerUsage.showInSidebarHint")}
+              value={inSidebar}
+              onValueChange={setInSidebar}
+              testID="usage-show-in-sidebar"
+            />
+          </View>
+          <View style={settingsStyles.rowBorder}>
+            <SettingsRow label={t("providerUsage.displayAs")}>
+              <SegmentedControl
+                options={displayAsOptions}
+                value={display.displayAs}
+                onValueChange={display.setDisplayAs}
+                testID="usage-display-as"
+              />
+            </SettingsRow>
+          </View>
+        </View>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

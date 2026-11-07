@@ -71,11 +71,11 @@ describe("OMP provider subagent mapper", () => {
     });
   });
 
-  test("maps child message events onto the descriptor timeline", () => {
+  test("maps child message events onto the descriptor timeline", async () => {
     const index = new OmpSubagentIndex();
     const parent = {};
     expect(
-      index.handleEvent(parent, {
+      await index.handleEvent(parent, {
         id: "child-1",
         event: {
           type: "message_end",

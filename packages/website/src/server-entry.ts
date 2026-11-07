@@ -1,13 +1,16 @@
+import { handlePluginRegistryRequest } from "~/plugins/published";
 import type { Register } from "@tanstack/react-router";
 import type { RequestHandler } from "@tanstack/react-start/server";
 import { getAndroidVersionCode } from "~/android-version";
 import { getCanonicalRedirect } from "~/canonical-url";
-import { getDoc, getLegacyDocsRedirect } from "~/docs";
+import { getLegacyDocsRedirect, resolveDocMarkdownPath } from "~/docs";
+import { splitLocalePath, withLocalePrefix } from "~/i18n";
 import { getLatestAndroidVersion } from "~/latest-release";
 import { buildLlmsTxt } from "~/llms";
 
 interface WebsiteEnv {
   WEBSITE_CACHE?: KVNamespace;
+  PLUGINS_REGISTRY_URL?: string;
 }
 
 function markdownResponse(body: string): Response {
@@ -26,12 +29,6 @@ function plainTextResponse(body: string): Response {
       "cache-control": "public, max-age=300, s-maxage=300",
     },
   });
-}
-
-function docSlugFromMarkdownPath(pathname: string): string | null {
-  if (pathname === "/docs.md") return "";
-  const match = pathname.match(/^\/docs\/(.+)\.md$/);
-  return match ? match[1] : null;
 }
 
 /**
@@ -75,9 +72,22 @@ async function getStartFetch(): Promise<RequestHandler<Register>> {
   return cachedStartFetch;
 }
 
+function getRetiredPathRedirect(path: string): string | undefined {
+  if (path === "/cloud" || path === "/cloud/") return "/hub";
+  const alternative = /^\/docs\/alternatives\/(.+?)\/?$/.exec(path);
+  if (alternative) return `/alternatives/${alternative[1]}`;
+  return getLegacyDocsRedirect(path);
+}
+
 export default {
   async fetch(request: Request, env: WebsiteEnv, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    const pluginResponse = await handlePluginRegistryRequest(request, env, {
+      cache: env.WEBSITE_CACHE ?? null,
+      waitUntil: (promise) => context.waitUntil(promise),
+    });
+    if (pluginResponse) return pluginResponse;
 
     const environment = import.meta.env.DEV ? "development" : "production";
     const canonicalRedirect = getCanonicalRedirect(url, environment);
@@ -85,25 +95,16 @@ export default {
       return Response.redirect(canonicalRedirect, 301);
     }
 
-    if (url.pathname === "/cloud" || url.pathname === "/cloud/") {
-      url.pathname = "/hub";
+    // Retired paths redirect in every language: `/zh-CN/cloud` lands on `/zh-CN/hub`.
+    const { locale, path } = splitLocalePath(url.pathname);
+    const retiredPath = getRetiredPathRedirect(path);
+    if (retiredPath) {
+      url.pathname = withLocalePrefix(retiredPath, locale);
       return Response.redirect(url.toString(), 301);
     }
 
-    const altRedirectMatch = url.pathname.match(/^\/docs\/alternatives\/(.+?)\/?$/);
-    if (altRedirectMatch) {
-      url.pathname = `/alternatives/${altRedirectMatch[1]}`;
-      return Response.redirect(url.toString(), 301);
-    }
-
-    const legacyDocsRedirect = getLegacyDocsRedirect(url.pathname);
-    if (legacyDocsRedirect) {
-      url.pathname = legacyDocsRedirect;
-      return Response.redirect(url.toString(), 301);
-    }
-
-    if (url.pathname === "/llms.txt") {
-      return markdownResponse(buildLlmsTxt());
+    if (path === "/llms.txt") {
+      return markdownResponse(buildLlmsTxt(locale));
     }
 
     if (url.pathname === "/android-version.txt") {
@@ -114,11 +115,10 @@ export default {
       return plainTextResponse(`${getAndroidVersionCode(version)}\n`);
     }
 
-    const slug = docSlugFromMarkdownPath(url.pathname);
-    if (slug !== null) {
-      const doc = getDoc(slug);
-      if (!doc) return new Response("Not found", { status: 404 });
-      return markdownResponse(doc.content);
+    const markdown = resolveDocMarkdownPath(url.pathname);
+    if (markdown) {
+      if (!markdown.doc) return new Response("Not found", { status: 404 });
+      return markdownResponse(markdown.doc.content);
     }
 
     const startFetch = await getStartFetch();

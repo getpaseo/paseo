@@ -33,7 +33,8 @@ const Notification = NotificationEntry.extend({
   others: z.array(NotificationEntry).optional(),
 });
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
-  if (value === "completed") return "completed";
+  // A soft turn-limit wrap-up has finished; it is not an in-flight steering request.
+  if (value === "completed" || value === "steered") return "completed";
   if (value === "error") return "failed";
   if (value === "aborted" || value === "stopped") return "canceled";
   return "running";
@@ -56,7 +57,8 @@ export const tintinwebPiSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: title,
         description,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        // COMPAT(subagent-log): remove after 2027-04-30.
+        log: "",
       };
       if (call.status === "running")
         return {
@@ -83,6 +85,10 @@ export const tintinwebPiSubagents: PiExtension = {
       const file = outputFileFromToolResult(call.result);
       const childSessions = file && !readSessions.has(file) ? [{ id: call.callId, file }] : [];
       if (file) readSessions.add(file);
+      const childStatus = status(details.data.status);
+      // A foreground child has no session file; its answer is the tool result.
+      const answer =
+        !file && childStatus !== "running" ? extractTextFromToolResult(call.result)?.trim() : "";
       return {
         detail,
         subagents: [
@@ -92,8 +98,17 @@ export const tintinwebPiSubagents: PiExtension = {
             title,
             description,
             toolCallId: call.callId,
-            status: status(details.data.status),
+            status: childStatus,
           },
+          ...(answer
+            ? [
+                {
+                  type: "timeline" as const,
+                  id: call.callId,
+                  item: { type: "assistant_message" as const, text: answer },
+                },
+              ]
+            : []),
         ],
         childSessions,
       };
@@ -109,7 +124,8 @@ export const tintinwebPiSubagents: PiExtension = {
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        // COMPAT(subagent-log): remove after 2027-04-30.
+        log: "",
       };
       if (call.status === "running" || !details.success) return { detail };
       return {

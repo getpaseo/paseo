@@ -12,6 +12,8 @@ import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-st
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import {
   buildGitActions,
+  isCurrentBranchBase,
+  canMergeIntoLocalBase,
   narrowPullRequestState,
   type BuildGitActionsInput,
   type GitAction,
@@ -116,7 +118,7 @@ interface DeriveGitActionsStateArgs {
   hasUncommittedChanges: boolean;
   postShipArchiveSuggested: boolean;
   isStatusLoading: boolean;
-  baseRefLabel: string;
+  baseRef: string | undefined;
 }
 
 interface DerivedGitActionsState {
@@ -129,6 +131,7 @@ interface DerivedGitActionsState {
   hasRemote: boolean;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
+  canMergeLocally: boolean;
   shouldPromoteArchive: boolean;
 }
 
@@ -167,7 +170,7 @@ function deriveGitActionsState(args: DeriveGitActionsStateArgs): DerivedGitActio
     hasUncommittedChanges,
     postShipArchiveSuggested,
     isStatusLoading,
-    baseRefLabel,
+    baseRef,
   } = args;
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
@@ -178,7 +181,8 @@ function deriveGitActionsState(args: DeriveGitActionsStateArgs): DerivedGitActio
     hasPullRequest: Boolean(prStatus?.url),
     hasRemote: gitStatus?.hasRemote ?? false,
     isPaseoOwnedWorktree,
-    isOnBaseBranch: gitStatus?.currentBranch === baseRefLabel,
+    isOnBaseBranch: isCurrentBranchBase(gitStatus?.currentBranch, baseRef),
+    canMergeLocally: canMergeIntoLocalBase(gitStatus?.currentBranch, baseRef),
     shouldPromoteArchive: computeShouldPromoteArchive({
       hasUncommittedChanges,
       postShipArchiveSuggested,
@@ -653,7 +657,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     hasUncommittedChanges,
     postShipArchiveSuggested,
     isStatusLoading,
-    baseRefLabel,
+    baseRef,
   });
   const {
     actionsDisabled,
@@ -665,6 +669,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     hasRemote,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
+    canMergeLocally,
     shouldPromoteArchive,
   } = derived;
 
@@ -695,6 +700,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       hasRemote,
       isPaseoOwnedWorktree,
       isOnBaseBranch,
+      canMergeLocally,
       hasUncommittedChanges,
       baseRefAvailable: Boolean(baseRef),
       baseRefLabel,
@@ -812,6 +818,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     behindBaseCount,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
+    canMergeLocally,
     githubFeaturesEnabled,
     forge,
     githubAutoMergeActionsEnabled,

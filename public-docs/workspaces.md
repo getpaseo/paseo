@@ -48,6 +48,8 @@ The workspace is the product concept; a git worktree is one way to isolate its f
 
 ## Creating a workspace
 
+For a desktop walkthrough from starting parallel agents to reviewing and testing their changes, see [Run parallel tasks](/docs/parallel-development).
+
 You can create a workspace in the app or from the CLI:
 
 ```bash

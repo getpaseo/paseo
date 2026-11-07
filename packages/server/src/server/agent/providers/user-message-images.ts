@@ -30,36 +30,61 @@ function resolveMimeType(value: unknown, source: unknown): string | undefined {
 
 // Only top-level image blocks belong to the user's message. Tool-result images are
 // mapped separately, and must not become user attachments during history replay.
-export function userMessageImages(content: unknown): AgentTimelineImage[] {
+export async function userMessageImages(content: unknown): Promise<AgentTimelineImage[]> {
   if (!Array.isArray(content)) return [];
-  return content.flatMap((value) => {
-    const block = record(value);
-    const source = record(block.source);
-    const local = block.type === "local_image" || block.type === "localImage";
-    const file = block.type === "file";
-    if (!local && !file && block.type !== "image") return [];
-    const url = block.url ?? block.uri ?? source.url;
-    const originalPath = local ? block.path : url;
-    const rawMime = block.mimeType ?? block.mime ?? source.media_type;
-    const mimeType = resolveMimeType(rawMime, originalPath);
-    if (file && !mimeType?.startsWith("image/")) return [];
-    const data = block.data ?? source.data;
-    const resolvedSource = resolveSource(originalPath, data, mimeType ?? "image/png");
-    if (!resolvedSource) return [];
-    return [
-      {
-        id: createHash("sha256").update(resolvedSource).digest("hex"),
-        source: resolvedSource,
-        mimeType: mimeType ?? "image/png",
-      },
-    ];
-  });
+  const images = await Promise.all(
+    content.flatMap((value) => {
+      const candidate = readUserImageCandidate(value);
+      return candidate ? [resolveUserImage(candidate)] : [];
+    }),
+  );
+  return images.filter((image) => image !== undefined);
 }
 
-function resolveSource(source: unknown, data: unknown, mimeType: string): string | undefined {
-  if (typeof data === "string") return materializeProviderImage({ data, mimeType }).path;
+interface UserImageCandidate {
+  source: unknown;
+  data: unknown;
+  mimeType: string;
+}
+
+function readUserImageCandidate(value: unknown): UserImageCandidate | null {
+  const block = record(value);
+  const source = record(block.source);
+  const local = block.type === "local_image" || block.type === "localImage";
+  const file = block.type === "file";
+  if (!local && !file && block.type !== "image") return null;
+  const url = block.url ?? block.uri ?? source.url;
+  const originalPath = local ? block.path : url;
+  const rawMime = block.mimeType ?? block.mime ?? source.media_type;
+  const mimeType = resolveMimeType(rawMime, originalPath);
+  if (file && !mimeType?.startsWith("image/")) return null;
+  return {
+    source: originalPath,
+    data: block.data ?? source.data,
+    mimeType: mimeType ?? "image/png",
+  };
+}
+
+async function resolveUserImage(
+  candidate: UserImageCandidate,
+): Promise<AgentTimelineImage | undefined> {
+  const resolvedSource = await resolveSource(candidate.source, candidate.data, candidate.mimeType);
+  if (!resolvedSource) return undefined;
+  return {
+    id: createHash("sha256").update(resolvedSource).digest("hex"),
+    source: resolvedSource,
+    mimeType: candidate.mimeType,
+  };
+}
+
+async function resolveSource(
+  source: unknown,
+  data: unknown,
+  mimeType: string,
+): Promise<string | undefined> {
+  if (typeof data === "string") return (await materializeProviderImage({ data, mimeType })).path;
   if (typeof source !== "string") return undefined;
   if (source.startsWith("data:image/"))
-    return materializeProviderImage({ data: source, mimeType }).path;
+    return (await materializeProviderImage({ data: source, mimeType })).path;
   return source;
 }

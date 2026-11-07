@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { FolderTree } from "lucide-react-native";
 import {
@@ -53,6 +54,7 @@ export interface JumpToFileProps {
 /** Compact overview of a loaded diff: a floating action that opens the changed-files tree. */
 export function JumpToFile({ files, mode, onSelectFile }: JumpToFileProps) {
   const { t } = useTranslation();
+  const { bottom } = useSafeAreaInsets();
   const [isOpen, setIsOpen] = useState(false);
   // The sheet is a transient overview, so it always opens fully expanded and
   // never writes to the panel's persisted folder state.
@@ -83,6 +85,7 @@ export function JumpToFile({ files, mode, onSelectFile }: JumpToFileProps) {
     <>
       <FloatingActionButton
         icon={FolderTree}
+        bottomInset={bottom}
         accessibilityLabel={title}
         onPress={open}
         testID="changes-jump-to-file"

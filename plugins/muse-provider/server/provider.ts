@@ -10,7 +10,7 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import { serveArgs } from "./options.js";
 import { Usage } from "./usage.js";
-import { execFile } from "node:child_process";
+import { execCommand } from "@getpaseo/plugin/server";
 import { Catalog, launchKey } from "./catalog.js";
 import { MspConnection } from "./connection.js";
 import { MuseError, actionableError } from "./errors.js";
@@ -63,24 +63,23 @@ function requireLaunch(launch: ProviderLaunch | undefined): ProviderLaunch {
 async function status(launch: ProviderLaunch): Promise<ProviderStatus> {
   let host: MspConnection | undefined;
   try {
-    const versionText = await new Promise<string>((resolve, reject) => {
-      execFile(
-        launch.command,
-        [...launch.args, "--version"],
-        { env: launch.env, timeout: 3000, maxBuffer: 8192 },
-        (error, stdout) => {
-          if (error) reject(new MuseError("version", error.message));
-          else resolve(stdout);
-        },
-      );
-    });
+    const { stdout: versionText } = await execCommand(
+      launch.command,
+      [...launch.args, "--version"],
+      {
+        env: launch.env,
+        timeout: 3000,
+        maxBuffer: 8192,
+      },
+    );
     const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(versionText);
     if (!match) return { available: false, diagnostic: "Muse returned an unrecognized version." };
     const major = Number(match[1]);
     const minor = Number(match[2]);
     if (major < 1 || (major === 1 && minor < 3))
       return { available: false, diagnostic: `Update Muse Code: found ${match[0]}, need ≥1.3.0` };
-    host = new MspConnection({ launch, timeoutMs: 3000 });
+    // Leave room for the version probe, account read and cleanup within the status RPC deadline.
+    host = new MspConnection({ launch, timeoutMs: 3000, startupTimeoutMs: 20000 });
     await host.initialize();
     const account = await host.request("account/read", {}, accountSchema);
     if (account.state === "loggedOut")

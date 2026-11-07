@@ -6,8 +6,19 @@ import { fileURLToPath } from "node:url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const scenario = process.env.MUSE_TEST_SCENARIO || "text-reasoning";
 if (process.argv.includes("--version")) {
+  if (process.env.MUSE_TEST_VERSION_ERROR) {
+    process.stderr.write(process.env.MUSE_TEST_VERSION_ERROR + "\n");
+    process.exit(17);
+  }
   process.stdout.write(`Muse Code ${process.env.MUSE_TEST_VERSION || "1.4.1"}\n`);
   process.exit(0);
+}
+if (process.env.MUSE_TEST_STUBBORN) {
+  setInterval(() => {}, 1000);
+  appendFileSync(
+    process.env.MUSE_TEST_REQUESTS,
+    JSON.stringify({ event: "stubbornHost", pid: process.pid }) + "\n",
+  );
 }
 const rows = readFixture(scenario);
 if (process.env.MUSE_TEST_REQUESTS)
@@ -22,6 +33,14 @@ const receipts = new Set();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
+  const parsed = JSON.parse(line);
+  if (parsed.method === "initialize" && process.env.MUSE_TEST_INITIALIZE_DELAY_MS) {
+    setTimeout(() => receiveFrame(line), Number(process.env.MUSE_TEST_INITIALIZE_DELAY_MS));
+    return;
+  }
+  receiveFrame(line);
+}
+function receiveFrame(line) {
   const frame = JSON.parse(line);
   if (process.env.MUSE_TEST_REQUESTS)
     appendFileSync(process.env.MUSE_TEST_REQUESTS, JSON.stringify(frame) + "\n");
@@ -61,10 +80,34 @@ function receive(line) {
   } else for (const row of messages) emitFixtureMessage(row.msg, recorded, frame);
 }
 function controlResponse(frame) {
+  if (frame.method === "session/resume" && process.env.MUSE_TEST_HISTORY) {
+    const result = responseFor(readFixture("resume-without-cursor"), "session/resume");
+    result.session.sessionId = frame.params.sessionId;
+    result.history = frame.params.cursor
+      ? { mode: "none", noneReason: "cursorSuffix", items: null, snapshot: null }
+      : {
+          mode: "inline",
+          items: readFileSync(process.env.MUSE_TEST_HISTORY, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line)),
+          snapshot: null,
+        };
+    respond(frame, result);
+    return true;
+  }
   if (frame.method === "initialized") return true;
   if (frame.method === "initialize" && process.env.MUSE_TEST_EXIT) {
     process.stderr.write("diagnostic tail, not protocol\n");
     process.exit(Number(process.env.MUSE_TEST_EXIT));
+  }
+  if (frame.method === "initialize" && process.env.MUSE_TEST_NULL_ERROR_ID) {
+    send({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Cannot recover request id", data: { kind: "parseError" } },
+    });
+    return true;
   }
   if (process.env.MUSE_TEST_HANG === frame.method) return true;
   if (frame.method === "session/setReasoningEffort") {
@@ -138,6 +181,9 @@ function parityResponse(frame) {
   if (frame.method === "session/list") {
     const result = responseFor(catalogRows, "session/list");
     result.nextCursor = null;
+    if (process.env.MUSE_TEST_NULL_MODEL) {
+      for (const session of result.sessions) session.modelId = null;
+    }
     respond(frame, result);
     return true;
   }
@@ -262,6 +308,7 @@ function emitFixtureMessage(recordedMessage, recorded, frame) {
     return;
   if (frame.method === "session/start" && message.result?.session?.approvalMode)
     message.result.session.approvalMode.mode = frame.params.approvalMode;
+  applyWireVariants(message);
   if (message.result?.viewCursor && process.env.MUSE_TEST_EMPTY_CURSOR)
     message.result.viewCursor = "";
   applyTestVariants(message);
@@ -280,6 +327,19 @@ function emitFixtureMessage(recordedMessage, recorded, frame) {
         item: { ...message.params.item, revision: 1, text: "STALE_REVISION" },
       },
     });
+  }
+}
+function applyWireVariants(message) {
+  if (
+    message.method === "item/delta" &&
+    message.params?.field === "text" &&
+    process.env.MUSE_TEST_IMPLICIT_TEXT_DELTA
+  ) {
+    delete message.params.field;
+  }
+  if (message.result?.session && process.env.MUSE_TEST_NULL_MODEL) {
+    message.result.session.modelId = null;
+    message.result.session.providerId = null;
   }
 }
 function parityDelivery(message) {
@@ -394,6 +454,9 @@ function replace(value) {
   return value;
 }
 function send(frame) {
+  if (frame.method === "item/completed" && process.env.MUSE_TEST_HISTORY) {
+    appendFileSync(process.env.MUSE_TEST_HISTORY, JSON.stringify(frame.params.item) + "\n");
+  }
   process.stdout.write(JSON.stringify(frame) + "\n");
 }
 function respond(frame, result) {
