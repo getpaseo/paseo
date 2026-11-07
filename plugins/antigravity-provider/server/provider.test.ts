@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PROVIDER_CAPABILITIES,
   ProviderEventSchema,
@@ -13,6 +14,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
+import { startDriver } from "./internal/process.js";
 import { signalPlan } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
@@ -402,6 +404,324 @@ it("stops an unresponsive driver and still respawns the conversation", async () 
   await h.completed(await h.prompt("HELLO"));
 });
 
+it.runIf(process.platform !== "win32")(
+  "settles an interrupted turn and accepts another prompt after a signal failure",
+  async () => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    await h.open();
+    const message = await h.prompt("HANG");
+    await h.wait(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    const pid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal === "SIGKILL")
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    try {
+      await h.request({ type: "session.interrupt", requestId: "interrupt-error", sessionId: "s" });
+      expect(h.events).toContainEqual(
+        expect.objectContaining({
+          type: "request.failed",
+          requestId: "interrupt-error",
+        }),
+      );
+      expect(await h.completed(message)).toMatchObject({ state: "failed" });
+    } finally {
+      kill.mockRestore();
+      try {
+        realKill(pid, "SIGKILL");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "ESRCH" });
+      }
+    }
+    expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+  },
+);
+
+it.runIf(process.platform === "darwin")(
+  "cancels an interrupted turn when the leader exits before zombie-group signal errors settle",
+  async () => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    await h.open();
+    const message = await h.prompt("HANG");
+    await h.wait(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    const pid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    const realKill = process.kill.bind(process);
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let zombieError = false;
+    let stragglerError = false;
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal === "SIGTERM") {
+        realKill(target, "SIGKILL");
+        const until = Date.now() + 50;
+        while (Date.now() < until) {
+          /* Hold the leader unreaped for the real macOS group signal. */
+        }
+        try {
+          return realKill(target, signal);
+        } catch (error) {
+          zombieError = error instanceof Error && "code" in error && error.code === "EPERM";
+          throw error;
+        }
+      }
+      if (target === -pid && signal === "SIGKILL" && zombieError) {
+        stragglerError = true;
+        throw Object.assign(new Error("straggler EPERM"), { code: "EPERM" });
+      }
+      return realKill(target, signal);
+    });
+    try {
+      await h.request({ type: "session.interrupt", requestId: "zombie-interrupt", sessionId: "s" });
+      expect(zombieError).toBe(true);
+      expect(stragglerError).toBe(true);
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "request.completed", requestId: "zombie-interrupt" }),
+      );
+      expect(await h.completed(message)).toMatchObject({ state: "canceled" });
+      expect(diagnostic).toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+      diagnostic.mockRestore();
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "closes and reopens a session after post-exit cleanup EPERM",
+  async () => {
+    const h = await harness();
+    await h.open();
+    const pid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal === "SIGKILL")
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    try {
+      await h.request({ type: "session.close", requestId: "close-eperm", sessionId: "s" });
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "session.closed", sessionId: "s" }),
+      );
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "request.completed", requestId: "close-eperm" }),
+      );
+      await h.open(undefined, "s");
+      expect(
+        h.events.filter((event) => event.type === "session.ready" && event.sessionId === "s"),
+      ).toHaveLength(2);
+      await expect(h.connection.close()).resolves.toBeUndefined();
+    } finally {
+      kill.mockRestore();
+    }
+  },
+);
+
+it("does not announce a close for an unknown session", async () => {
+  const h = await harness();
+  await h.request({ type: "session.close", requestId: "close-unknown", sessionId: "nope" });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.failed",
+      requestId: "close-unknown",
+      error: expect.objectContaining({ message: "Unknown Antigravity session: nope" }),
+    }),
+  );
+  expect(h.events).not.toContainEqual(
+    expect.objectContaining({ type: "session.closed", sessionId: "nope" }),
+  );
+});
+
+it.runIf(process.platform !== "win32")(
+  "removes a session and clears a connection when a live driver cannot be stopped",
+  async () => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    await h.open();
+    const firstPid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    const realKill = process.kill.bind(process);
+    const end = vi.spyOn(Socket.prototype, "end").mockImplementation(function (this: Socket) {
+      return this;
+    });
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target < 0 && signal === "SIGKILL")
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    try {
+      await h.request({ type: "session.close", requestId: "failed-close", sessionId: "s" });
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "request.failed", requestId: "failed-close" }),
+      );
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "session.closed", sessionId: "s" }),
+      );
+      await h.open(undefined, "s");
+      expect(
+        h.events.filter((event) => event.type === "session.ready" && event.sessionId === "s"),
+      ).toHaveLength(2);
+      await expect(h.connection.close()).resolves.toBeUndefined();
+    } finally {
+      end.mockRestore();
+      kill.mockRestore();
+      for (const entry of (await h.records()).filter((item) =>
+        item.args?.includes("--input-format"),
+      )) {
+        try {
+          realKill(entry.pid, "SIGKILL");
+        } catch {
+          /* Already exited. */
+        }
+      }
+      try {
+        realKill(firstPid, "SIGKILL");
+      } catch {
+        /* Already exited. */
+      }
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "respawns after model change despite old driver cleanup EPERM",
+  async () => {
+    const h = await harness();
+    await h.open();
+    const pid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    await h.request({
+      type: "session.configure",
+      requestId: "new-model",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal === "SIGKILL")
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    try {
+      expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+      expect(
+        (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
+      ).toHaveLength(2);
+    } finally {
+      kill.mockRestore();
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32").each(["SIGINT", "SIGTERM"] as const)(
+  "attempts SIGKILL and awaits exit after %s fails",
+  async (failingSignal) => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    const driver = startDriver({
+      launch: h.launch,
+      config: {
+        cwd: h.cwd,
+        env: {},
+        settings: {},
+        mcpServers: {},
+        persist: true,
+        systemPrompt: "",
+      },
+      conversationId: null,
+      onFrame: () => undefined,
+      onExit: () => undefined,
+    });
+    await driver.ready;
+    const pid = (await h.records()).findLast((entry) => entry.pid)?.pid as number;
+    const realKill = process.kill.bind(process);
+    const attempts: NodeJS.Signals[] = [];
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal) {
+        attempts.push(signal as NodeJS.Signals);
+        if (signal === failingSignal)
+          throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      }
+      return realKill(target, signal);
+    });
+    try {
+      await driver.stop("interrupt").catch(() => undefined);
+      expect(attempts).toContain("SIGTERM");
+      expect(attempts).toContain("SIGKILL");
+      expect(() => realKill(pid, 0)).toThrow();
+    } finally {
+      kill.mockRestore();
+      try {
+        realKill(pid, "SIGKILL");
+      } catch {
+        /* Already exited. */
+      }
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "emits one prompt result when write and cleanup fail",
+  async () => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    await h.open();
+    const pid = (await h.records()).findLast((entry) => entry.args?.includes("--input-format"))
+      ?.pid as number;
+    const realWrite = Socket.prototype.write;
+    const realKill = process.kill.bind(process);
+    const write = vi.spyOn(Socket.prototype, "write").mockImplementation(function (
+      this: Socket,
+      chunk: unknown,
+      encodingOrCallback?: unknown,
+      callback?: unknown,
+    ) {
+      const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+      if (
+        typeof chunk === "string" &&
+        chunk.includes("TRIGGER_WRITE_ERR") &&
+        typeof done === "function"
+      ) {
+        queueMicrotask(() => (done as (error: Error) => void)(new Error("write EPIPE")));
+        return false;
+      }
+      return realWrite.apply(this, arguments as unknown as Parameters<typeof realWrite>);
+    });
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal === "SIGINT")
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    try {
+      const id = await h.prompt("TRIGGER_WRITE_ERR");
+      await h.completed(id);
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      expect(
+        h.events.filter(
+          (event) => event.type === "session.prompt_result" && event.clientMessageId === id,
+        ),
+      ).toHaveLength(1);
+      expect(await h.completed(id)).toMatchObject({
+        state: "failed",
+        error: { message: "write EPIPE" },
+      });
+    } finally {
+      write.mockRestore();
+      kill.mockRestore();
+      try {
+        realKill(pid, "SIGKILL");
+      } catch {
+        /* Already exited. */
+      }
+    }
+  },
+);
+
 it("rejects plan and keeps the full-access selection without respawning", async () => {
   const h = await harness();
   await h.open();
@@ -669,6 +989,60 @@ describe("discovery", () => {
     ).not.toBe(key);
   });
 });
+
+it.runIf(process.platform !== "win32").each(["SIGTERM", "SIGKILL"] as const)(
+  "contains %s escalation failures within the provider stop operation",
+  async (failingSignal) => {
+    const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+    const driver = startDriver({
+      launch: h.launch,
+      config: {
+        cwd: h.cwd,
+        env: {},
+        settings: {},
+        mcpServers: {},
+        persist: true,
+        systemPrompt: "",
+      },
+      conversationId: null,
+      onFrame: () => undefined,
+      onExit: () => undefined,
+    });
+    await driver.ready;
+    const records = await h.records();
+    const pid = records.find((entry) => entry.pid)?.pid as number;
+    const realKill = process.kill.bind(process);
+    const attempts: NodeJS.Signals[] = [];
+    const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (target === -pid && signal) attempts.push(signal as NodeJS.Signals);
+      // Keep the leader alive: an earlier EPERM is only fatal if SIGKILL cannot finish cleanup.
+      if (target === -pid && (signal === failingSignal || signal === "SIGKILL"))
+        throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      return realKill(target, signal);
+    });
+    const fallback = setTimeout(() => {
+      try {
+        realKill(pid, "SIGKILL");
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+      }
+    }, 4500);
+    try {
+      await expect(driver.stop("interrupt")).rejects.toMatchObject({ code: "EPERM" });
+      expect(attempts).toContain("SIGKILL");
+      expect(realKill(pid, 0)).toBe(true);
+      await expect(driver.stop("interrupt")).rejects.toMatchObject({ code: "EPERM" });
+    } finally {
+      clearTimeout(fallback);
+      kill.mockRestore();
+      try {
+        realKill(pid, "SIGKILL");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "ESRCH" });
+      }
+    }
+  },
+);
 
 describe("process signal plans", () => {
   it.each(["SIGINT", "SIGTERM", "SIGKILL"] as const)("kills the Windows tree for %s", (signal) => {
