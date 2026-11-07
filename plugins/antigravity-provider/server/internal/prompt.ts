@@ -5,7 +5,7 @@ import path from "node:path";
 import type { ProviderPrompt } from "@getpaseo/plugin/server/provider";
 import { AntigravityError } from "./wire.js";
 
-interface EncodedPrompt {
+export interface EncodedPrompt {
   text: string;
   nativeText: string;
 }
@@ -13,17 +13,29 @@ interface EncodedPrompt {
 export class PromptFiles {
   private directory: string | null = null;
 
+  get directoryPath(): string | null {
+    return this.directory;
+  }
+
   async encode(prompt: ProviderPrompt): Promise<EncodedPrompt> {
-    if (
-      prompt.input.type !== "message" ||
-      prompt.delivery === "steer" ||
-      prompt.outputSchema !== undefined
-    )
-      throw new AntigravityError("Antigravity supports messages only");
+    if (prompt.delivery === "steer" || prompt.outputSchema !== undefined) {
+      throw new AntigravityError(
+        "Antigravity supports standard messages and slash commands only",
+        "UNSUPPORTED_PROMPT",
+      );
+    }
+    if (prompt.input.type === "command") {
+      const args = prompt.input.arguments.trim();
+      const commandText = args ? `/${prompt.input.name} ${args}` : `/${prompt.input.name}`;
+      return { text: commandText, nativeText: commandText };
+    }
     const parts = prompt.input.content.map((part) => {
       if (part.type === "text") return part;
       if (part.type === "image") return { ...part, extension: imageExtension(part.mimeType) };
-      throw new AntigravityError("Antigravity supports text and image content only");
+      throw new AntigravityError(
+        "Antigravity supports text and image content only",
+        "UNSUPPORTED_CONTENT",
+      );
     });
     const text: string[] = [];
     const native: string[] = [];
@@ -56,7 +68,12 @@ export class PromptFiles {
 
 function imageExtension(mimeType: string): string {
   const match = /^image\/([a-z0-9][a-z0-9.+-]*)$/i.exec(mimeType);
-  if (!match) throw new AntigravityError(`Expected an image MIME type, received ${mimeType}`);
+  if (!match) {
+    throw new AntigravityError(
+      `Expected an image MIME type, received ${mimeType}`,
+      "INVALID_IMAGE_MIME",
+    );
+  }
   const subtype = match[1].toLowerCase();
   if (subtype === "jpeg") return "jpg";
   if (subtype === "svg+xml") return "svg";

@@ -78,20 +78,32 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    mode?: string,
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
         settings: {},
-        mcpServers: {},
+        mcpServers: {
+          "test-mcp": {
+            type: "stdio",
+            command: "node",
+            args: ["mcp.js"],
+          },
+        },
         persist: true,
         systemPrompt: "SYSTEM PREFIX",
+        ...(mode ? { mode } : {}),
       },
     });
   }
@@ -140,6 +152,35 @@ async function harness(env: Record<string, string> = {}) {
       throw new Error("Missing persistence");
     return opened.persistence;
   }
+  async function acpLaunches() {
+    return (await records()).filter((entry) => entry.args?.includes("acp"));
+  }
+  async function modelChanges() {
+    return (await records())
+      .filter((entry) => entry.rpc?.method === "session/set_model")
+      .map((entry) => entry.rpc.params as { sessionId: string; modelId: string });
+  }
+  async function selectedPermissionOptions() {
+    return (await records())
+      .filter((entry) => entry.rpc?.result?.outcome?.outcome === "selected")
+      .map((entry) => entry.rpc.result.outcome.optionId as string);
+  }
+  async function hasRpcMethod(method: string) {
+    return (await records()).some((entry) => entry.rpc?.method === method);
+  }
+  async function allowPermission(name?: string, sessionId = "s") {
+    const perm = (await wait(
+      (event) =>
+        event.type === "session.permission" && (name === undefined || event.request.name === name),
+    )) as Extract<ProviderEvent, { type: "session.permission" }>;
+    await connection.send({
+      type: "session.permission",
+      sessionId,
+      permissionId: perm.request.id,
+      response: { behavior: "allow" },
+    });
+    return perm.request;
+  }
   return {
     connection,
     events,
@@ -153,18 +194,46 @@ async function harness(env: Record<string, string> = {}) {
     completed,
     records,
     persistence,
+    acpLaunches,
+    modelChanges,
+    selectedPermissionOptions,
+    hasRpcMethod,
+    allowPermission,
   };
 }
 
-it("streams complete text snapshots, prefixes the system prompt only once and preserves launch argv/env", async () => {
+it("starts via agy acp --stdio without full-access warnings, passes systemPrompt in _meta, and exposes slash commands", async () => {
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.command",
     "prompt.image",
     "session.configure",
     "session.persistence",
+    "permission",
   ]);
   await h.open();
+  expect(h.events.some((event) => event.type === "session.notice")).toBe(false);
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "session.config",
+      sessionId: "s",
+      config: expect.objectContaining({
+        mode: "default",
+        model: "gemini-4-argon-medium",
+      }),
+    }),
+  );
+  await h.wait((event) => event.type === "session.commands");
+  expect(h.events).toContainEqual({
+    type: "session.commands",
+    sessionId: "s",
+    commands: [
+      { name: "plan", description: "Plan a task before execution", argumentHint: "<task>" },
+      { name: "compact", description: "Compact conversation context" },
+    ],
+  });
+
   await h.completed(await h.prompt("HELLO"));
   await h.completed(await h.prompt("HELLO AGAIN"));
   const text = h.events.filter(
@@ -177,145 +246,203 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
         : "",
     ),
   ).toEqual(["PHASE0_HELLO", "PHASE0_HELLO\n", "PHASE0_HELLO", "PHASE0_HELLO\n"]);
+
   const records = await h.records();
-  expect(records.find((entry) => entry.args.includes("--input-format")).args).toEqual([
-    "--launch-prefix",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--add-dir",
-    h.cwd,
-    "--disable-slash-commands",
-    "--dangerously-skip-permissions",
-  ]);
-  expect(records.find((entry) => entry.args.includes("--input-format")).env).toBe(
-    "session-overlay",
-  );
+  const launchEntry = records.find((entry) => entry.args?.includes("acp"));
+  expect(launchEntry.args).toEqual(["--launch-prefix", "acp", "--stdio", "--add-dir", h.cwd]);
+  expect(launchEntry.args).not.toContain("--dangerously-skip-permissions");
+  expect(launchEntry.env).toBe("session-overlay");
+
+  const sessionNewRpc = records.find((entry) => entry.rpc?.method === "session/new")?.rpc;
+  expect(sessionNewRpc?.params).toMatchObject({
+    cwd: h.cwd,
+    mcpServers: [{ name: "test-mcp", command: "node", args: ["mcp.js"], env: [] }],
+    _meta: {
+      antigravity: {
+        systemPrompt: { append: "SYSTEM PREFIX" },
+      },
+    },
+  });
   expect(
     records.filter((entry) => entry.input).map((entry) => entry.input.message.content),
-  ).toEqual(["SYSTEM PREFIX\n\nHELLO", "HELLO AGAIN"]);
+  ).toEqual(["HELLO", "HELLO AGAIN"]);
 });
 
-it("maps tools and emits one denial notice for a SUCCESS result", async () => {
+it("prompts for tool permission in default mode and resolves allow and deny responses", async () => {
   const h = await harness();
   await h.open();
-  // This capture contains three distinct native results, one for each submitted prompt.
-  await h.completed(await h.prompt("TOOLS"));
-  await h.completed(await h.prompt("TOOLS"));
-  const result = await h.completed(await h.prompt("TOOLS"));
-  expect(result).toMatchObject({ type: "session.turn", state: "completed" });
-  const tools = h.events.filter(
-    (event) => event.type === "timeline.item" && event.item.type === "tool_call",
+
+  // Turn 1: Deny the shell command
+  const firstPrompt = await h.prompt("TOOLS");
+  const firstPermission = await h.wait(
+    (event) => event.type === "session.permission" && event.request.kind === "tool",
   );
-  expect(tools).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        item: expect.objectContaining({
-          name: "view_file",
-          status: "completed",
-          detail: expect.objectContaining({ type: "read" }),
-        }),
-      }),
-      expect.objectContaining({
-        item: expect.objectContaining({
-          name: "write_to_file",
-          status: "completed",
-          detail: expect.objectContaining({ type: "write" }),
-        }),
-      }),
-      expect.objectContaining({
-        item: expect.objectContaining({
-          name: "run_command",
-          status: "failed",
-          detail: expect.objectContaining({ type: "shell", command: "printf PHASE0_SHELL" }),
-        }),
-      }),
-    ]),
-  );
-  const notices = h.events.filter(
-    (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-  );
-  expect(notices).toHaveLength(1);
-  expect(notices[0]).toMatchObject({
-    notice: {
-      title: "Shell command denied",
-      description: "Antigravity's own policy denied it.",
-    },
+  if (firstPermission.type !== "session.permission") throw new Error("Expected permission");
+  expect(firstPermission.request).toMatchObject({
+    name: "run_command",
+    kind: "tool",
+    title: "printf PHASE0_SHELL",
+    detail: { type: "shell", command: "printf PHASE0_SHELL" },
   });
-});
-
-it("reports only new process denials across replayed turns and resets after respawn", async () => {
-  const h = await harness();
-  await h.open();
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(
-    h.events.filter(
-      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-    ),
-  ).toHaveLength(1);
-  const followupStart = h.events.length;
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  const followup = h.events.slice(followupStart);
-  expect(
-    followup.some(
-      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-    ),
-  ).toBe(false);
-  expect(followup).toContainEqual(
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: firstPermission.request.id,
+    response: { behavior: "deny" },
+  });
+  await h.wait(
+    (event) =>
+      event.type === "session.permission_resolved" &&
+      event.permissionId === firstPermission.request.id,
+  );
+  expect(await h.completed(firstPrompt)).toMatchObject({ state: "completed" });
+  expect(h.events).toContainEqual(
     expect.objectContaining({
       type: "timeline.item",
-      item: expect.objectContaining({ type: "assistant_message", text: "FOLLOWUP_OK\n" }),
+      item: expect.objectContaining({
+        name: "run_command",
+        status: "failed",
+        detail: expect.objectContaining({ type: "shell", command: "printf PHASE0_SHELL" }),
+      }),
     }),
   );
+
+  // Turn 2: Allow the shell command
+  const secondPrompt = await h.prompt("TOOLS");
+  const secondPermission = await h.wait(
+    (event) =>
+      event.type === "session.permission" &&
+      event.request.kind === "tool" &&
+      event.request.id !== firstPermission.request.id,
+  );
+  if (secondPermission.type !== "session.permission") throw new Error("Expected permission");
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: secondPermission.request.id,
+    response: { behavior: "allow" },
+  });
+  expect(await h.completed(secondPrompt)).toMatchObject({ state: "completed" });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({
+        name: "run_command",
+        status: "completed",
+        detail: expect.objectContaining({
+          type: "shell",
+          command: "printf PHASE0_SHELL",
+          output: "PHASE0_SHELL",
+        }),
+      }),
+    }),
+  );
+});
+
+it("auto-approves edits in accept-edits mode while still prompting for shell commands, and auto-approves everything in full-access mode", async () => {
+  const h = await harness();
+  await h.open(undefined, "s", "accept-edits");
+
+  const editAndShell = await h.prompt("EDIT_AND_SHELL");
+  const shellPerm = await h.wait((event) => event.type === "session.permission");
+  if (shellPerm.type !== "session.permission") throw new Error("Expected shell permission");
+  // The edit tool was auto-approved; only the shell command requested permission!
+  expect(shellPerm.request).toMatchObject({
+    name: "run_command",
+    kind: "tool",
+    detail: { type: "shell", command: "npm test" },
+  });
+
+  // Switching mode to full-access while a permission is pending auto-approves it immediately!
   await h.request({
     type: "session.configure",
+    requestId: "switch-full",
     sessionId: "s",
-    requestId: "mode",
-    changes: { model: "gemini-3.8-flash-low" },
+    changes: { mode: "full-access" },
   });
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(
-    h.events.filter(
-      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-    ),
-  ).toHaveLength(2);
-  expect(
-    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
-  ).toHaveLength(2);
+  expect(await h.completed(editAndShell)).toMatchObject({ state: "completed" });
+
+  // In full-access mode, subsequent tool calls run without any session.permission prompt
+  const permCountBefore = h.events.filter((event) => event.type === "session.permission").length;
+  await h.completed(await h.prompt("TOOLS"));
+  expect(h.events.filter((event) => event.type === "session.permission")).toHaveLength(
+    permCountBefore,
+  );
 });
 
-it("counts repeated native action denials without exposing tool identifiers", async () => {
-  const h = await harness({ AGY_TEST_DENIAL_COUNTS: "2,2,3" });
+it("maps elicitation/create (ask_question) to a native question permission and returns user answers", async () => {
+  const h = await harness();
   await h.open();
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  const notices = h.events.filter(
-    (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
+
+  const askTurn = await h.prompt("ASK_QUESTION");
+  const questionEvent = await h.wait(
+    (event) => event.type === "session.permission" && event.request.kind === "question",
   );
-  expect(notices).toHaveLength(1);
-  expect(notices[0]).toMatchObject({
-    notice: {
-      title: "2 actions denied",
-      description: "Antigravity's own policy denied it.",
+  if (questionEvent.type !== "session.permission") throw new Error("Expected question permission");
+  expect(questionEvent.request).toMatchObject({
+    name: "ask_question",
+    kind: "question",
+    title: "The agent has a question.",
+    input: {
+      questions: [
+        {
+          id: "q0",
+          header: "Question",
+          question: "Which UI library should we use?",
+          options: [{ label: "React" }, { label: "Vue" }],
+          multiSelect: false,
+          allowOther: true,
+          allowEmpty: false,
+        },
+      ],
     },
   });
-  await h.completed(await h.prompt("DENIAL_REPLAY"));
-  expect(
-    h.events.filter(
-      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-    ),
-  ).toHaveLength(2);
-  expect(
-    h.events.findLast(
-      (event) => event.type === "session.notice" && event.notice.id !== "s:full-access",
-    ),
-  ).toMatchObject({
-    notice: { title: "Shell command denied" },
+
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: questionEvent.request.id,
+    response: {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          Question: "Svelte",
+        },
+      },
+    },
   });
+
+  expect(await h.completed(askTurn)).toMatchObject({ state: "completed" });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({
+        type: "assistant_message",
+        text: 'QUESTION_RESULT:{"action":"accept","content":{"q0":"Other","q0_other":"Svelte"}}\n',
+      }),
+    }),
+  );
 });
 
-it("accounts DONE generation usage once without adding cumulative results, including resume", async () => {
+it("stays alive and completes turn when Antigravity logs transient API retry messages to stderr", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("TRANSIENT_RETRY"));
+  expect(turn).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({
+        type: "assistant_message",
+        text: "RECOVERED_AFTER_RETRY\n",
+      }),
+    }),
+  );
+  const launches = (await h.records()).filter((entry) => entry.args?.includes("acp"));
+  expect(launches).toHaveLength(1);
+});
+
+it("streams reasoning, usage updates, and resumes session via session/load with history replay or skip", async () => {
   const h = await harness();
   await h.open();
   await h.completed(await h.prompt("MULTI"));
@@ -324,14 +451,41 @@ it("accounts DONE generation usage once without adding cumulative results, inclu
   expect(
     usages.map((event) => (event.type === "session.usage" ? event.usage.inputTokens : null)),
   ).toEqual([11263, 11604]);
+  expect(
+    h.events.some((event) => event.type === "timeline.item" && event.item.type === "reasoning"),
+  ).toBe(true);
+
   const persistence = h.persistence();
   await h.request({ type: "session.close", sessionId: "s", requestId: "close" });
-  await h.open(persistence);
-  await h.completed(await h.prompt("RESUME"));
-  expect(h.events.filter((event) => event.type === "session.usage")).toHaveLength(3);
-  expect(h.events.findLast((event) => event.type === "session.usage")).toMatchObject({
+
+  const second = await harness();
+  await second.open(persistence);
+  expect(
+    second.events
+      .filter((event) => event.type === "timeline.item")
+      .map((event) => (event.type === "timeline.item" ? event.item : null)),
+  ).toEqual([
+    {
+      type: "user_message",
+      id: "user_message_chunk:replay-u1",
+      messageId: "replay-u1",
+      text: "REPLAYED_USER",
+    },
+    {
+      type: "assistant_message",
+      id: "agent_message_chunk:replay-a1",
+      messageId: "replay-a1",
+      text: "REPLAYED_ASSISTANT",
+    },
+  ]);
+  await second.completed(await second.prompt("RESUME"));
+  expect(second.events.findLast((event) => event.type === "session.usage")).toMatchObject({
     usage: { inputTokens: 11815 },
   });
+
+  const third = await harness();
+  await third.open(persistence, "s", undefined, "skip");
+  expect(third.events.filter((event) => event.type === "timeline.item")).toEqual([]);
 });
 
 it("maps subagent steps to a tool carrying the child conversation ID", async () => {
@@ -356,7 +510,7 @@ it("maps subagent steps to a tool carrying the child conversation ID", async () 
 });
 
 it.each(["HANG", "TOOL_HANG"])(
-  "interrupts %s, settles canceled, and respawns the same conversation",
+  "cancels %s cleanly via ACP session/cancel without killing the process",
   async (text) => {
     const h = await harness();
     await h.open();
@@ -369,26 +523,13 @@ it.each(["HANG", "TOOL_HANG"])(
     await h.request({ type: "session.interrupt", requestId: "interrupt", sessionId: "s" });
     expect(await h.completed(message)).toMatchObject({ state: "canceled" });
     await h.completed(await h.prompt("HELLO"));
-    const records = await h.records();
-    const launches = records.filter((entry) => entry.args && entry.args.includes("--input-format"));
-    expect(launches).toHaveLength(2);
-    expect(launches[1].args.slice(-2)).toEqual([
-      "--conversation",
-      "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
-    ]);
-    // Windows taskkill terminates the tree without invoking the CLI's signal handlers.
-    expect(records.filter((entry) => entry.signal)).toEqual(
-      process.platform === "win32" ? [] : [{ signal: "SIGINT" }],
-    );
-    const canceled = h.events.filter(
-      (event) => event.type === "session.turn" && event.state === "canceled",
-    );
-    expect(canceled).toHaveLength(1);
+    expect(await h.acpLaunches()).toHaveLength(1);
+    expect(await h.hasRpcMethod("session/cancel")).toBe(true);
   },
 );
 
-it("stops an unresponsive driver and still respawns the conversation", async () => {
-  const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+it("stops an unresponsive driver that ignores session/cancel and signals, then reloads the conversation on next prompt", async () => {
+  const h = await harness({ AGY_TEST_IGNORE_CANCEL: "yes", AGY_TEST_IGNORE_SIGNALS: "yes" });
   await h.open();
   const message = await h.prompt("HANG");
   await h.wait(
@@ -400,129 +541,125 @@ it("stops an unresponsive driver and still respawns the conversation", async () 
     process.platform === "win32" ? [] : [{ signal: "SIGINT" }, { signal: "SIGTERM" }],
   );
   await h.completed(await h.prompt("HELLO"));
-});
-
-it("rejects plan and keeps the full-access selection without respawning", async () => {
-  const h = await harness();
-  await h.open();
-  await h.request({
-    type: "session.configure",
-    requestId: "plan",
-    sessionId: "s",
-    changes: { mode: "plan" },
-  });
-  expect(h.events).toContainEqual(
-    expect.objectContaining({
-      type: "request.failed",
-      requestId: "plan",
-      error: { code: "INVALID_MODE", message: "Unknown Antigravity mode: plan" },
-    }),
-  );
-  await h.request({
-    type: "session.configure",
-    requestId: "full",
-    sessionId: "s",
-    changes: { mode: "full-access" },
-  });
-  await h.completed(await h.prompt("HELLO"));
   expect(
-    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
-  ).toHaveLength(1);
+    h.events.some(
+      (event) =>
+        event.type === "timeline.item" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.text.startsWith("REPLAYED_"),
+    ),
+  ).toBe(false);
+  expect(await h.acpLaunches()).toHaveLength(2);
+  expect(await h.hasRpcMethod("session/load")).toBe(true);
 });
 
-it("emits one full-access warning per open, none on respawn, and one again on resume", async () => {
-  const h = await harness();
-  await h.open();
-  const warning = {
-    type: "session.notice",
-    sessionId: "s",
-    notice: {
-      id: "s:full-access",
-      severity: "warning",
-      title: "Antigravity is running with full access",
-      description:
-        "Antigravity's CLI cannot ask for permission when another app drives it, so Paseo starts it with --dangerously-skip-permissions. Every tool call, including shell commands, runs without asking.",
-    },
-  };
-  const opened = h.events.findIndex((event) => event.type === "session.opened");
-  expect(h.events[opened + 1]).toEqual(warning);
-  expect(h.events.slice(0, opened).some((event) => event.type === "session.notice")).toBe(false);
-  await h.completed(await h.prompt("HELLO"));
-  await h.request({
-    type: "session.configure",
-    requestId: "model",
-    sessionId: "s",
-    changes: { model: "gemini-3.8-flash-low" },
-  });
-  await h.completed(await h.prompt("HELLO"));
-  expect(h.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
-  const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
-  expect(launches).toHaveLength(2);
-  for (const launch of launches) {
-    expect(launch.args).toContain("--dangerously-skip-permissions");
-    expect(launch.args).not.toContain("--mode");
-  }
-  const persistence = h.persistence();
-  await h.connection.close();
-  const resumed = await harness();
-  await resumed.open(persistence);
-  await resumed.completed(await resumed.prompt("RESUME"));
-  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
-});
-
-it("defers model and mode changes until the next prompt, then respawns with validated flags", async () => {
+it("switches models dynamically via session/set_model without respawning the process, and rejects invalid models/modes", async () => {
   const h = await harness();
   await h.open();
   await h.request({
     type: "session.configure",
     requestId: "change",
     sessionId: "s",
-    changes: { model: "gemini-3.8-flash-low", mode: "full-access" },
+    changes: { model: "gemini-3.8-flash-low", mode: "accept-edits" },
   });
-  expect(
-    (await h.records()).filter((entry) => entry.args && entry.args.includes("--input-format")),
-  ).toHaveLength(1);
   await h.completed(await h.prompt("HELLO"));
-  const launches = (await h.records()).filter(
-    (entry) => entry.args && entry.args.includes("--input-format"),
-  );
-  expect(launches).toHaveLength(2);
-  expect(launches[1].args.slice(-4)).toEqual([
-    "--model",
-    "gemini-3.8-flash-low",
-    "--conversation",
-    "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
+  expect(
+    h.events.some(
+      (event) =>
+        event.type === "timeline.item" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.text.startsWith("REPLAYED_"),
+    ),
+  ).toBe(false);
+  expect(await h.acpLaunches()).toHaveLength(1);
+  expect(await h.modelChanges()).toEqual([
+    {
+      sessionId: "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
+      modelId: "gemini-3.8-flash-low",
+    },
   ]);
+
   await h.request({
     type: "session.configure",
-    requestId: "invalid",
+    requestId: "clear-model",
+    sessionId: "s",
+    changes: { model: null },
+  });
+  expect((await h.modelChanges()).map((change) => change.modelId)).toEqual([
+    "gemini-3.8-flash-low",
+    "gemini-4-argon-medium",
+  ]);
+
+  await h.request({
+    type: "session.configure",
+    requestId: "invalid-mode",
+    sessionId: "s",
+    changes: { mode: "plan" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.failed",
+      requestId: "invalid-mode",
+      error: { code: "INVALID_MODE", message: "Unknown Antigravity mode: plan" },
+    }),
+  );
+
+  await h.request({
+    type: "session.configure",
+    requestId: "invalid-model",
     sessionId: "s",
     changes: { model: "unknown" },
   });
   expect(h.events).toContainEqual(
     expect.objectContaining({
       type: "request.failed",
-      requestId: "invalid",
+      requestId: "invalid-model",
       error: expect.objectContaining({ code: "INVALID_MODEL" }),
     }),
   );
 });
 
-it("resumes after connection close without replay or another system prefix", async () => {
-  const first = await harness();
-  await first.open();
-  await first.completed(await first.prompt("HELLO"));
-  const persistence = first.persistence();
-  await first.connection.close();
-  const second = await harness();
-  await second.open(persistence);
-  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([]);
-  await second.completed(await second.prompt("RESUME"));
-  expect(
-    (await second.records())
-      .filter((entry) => entry.input)
-      .map((entry) => entry.input.message.content),
-  ).toEqual(["RESUME"]);
+it("keeps the previous model when session/set_model fails so a retry succeeds", async () => {
+  const h = await harness({ AGY_TEST_FAIL_SET_MODEL_ONCE: "yes" });
+  await h.open();
+  await h.request({
+    type: "session.configure",
+    requestId: "set-model-fail",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.failed",
+      requestId: "set-model-fail",
+    }),
+  );
+  await h.request({
+    type: "session.configure",
+    requestId: "set-model-retry",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "request.completed",
+      requestId: "set-model-retry",
+    }),
+  );
+  expect(await h.acpLaunches()).toHaveLength(1);
+  expect((await h.modelChanges()).map((change) => change.modelId)).toEqual([
+    "gemini-3.8-flash-low",
+    "gemini-3.8-flash-low",
+  ]);
+});
+
+it("prompts for external MCP tools with a query field in accept-edits mode and prefers allow_once", async () => {
+  const h = await harness();
+  await h.open(undefined, "s", "accept-edits");
+  const id = await h.prompt("MCP_QUERY_TOOL");
+  await h.allowPermission("mcp__db__query");
+  await h.completed(id);
+  expect(await h.selectedPermissionOptions()).toEqual(["allow_once"]);
 });
 
 it.each(["auth", "exit", "stderr"])(
@@ -586,12 +723,16 @@ describe("discovery", () => {
       (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
     ).toHaveLength(2);
   });
-  it.each(["1.1.15", "1.2.12", "1.2.13"])("accepts driver-capable version %s", async (version) => {
-    const h = await harness({ AGY_TEST_VERSION: version });
-    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
-  });
 
-  it("parses tab-separated catalog and exposes only full access without thinking options", async () => {
+  it.each(["1.1.15", "1.2.12", "1.2.13", "1.4.1"])(
+    "accepts driver-capable version %s",
+    async (version) => {
+      const h = await harness({ AGY_TEST_VERSION: version });
+      expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+    },
+  );
+
+  it("parses tab-separated catalog and exposes default, accept-edits, and full-access modes", async () => {
     const h = await harness();
     await h.request({ type: "catalog", requestId: "catalog" });
     const event = h.events[0];
@@ -602,23 +743,37 @@ describe("discovery", () => {
           { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
         ]),
         thinkingOptions: [],
-        defaultMode: "full-access",
+        defaultMode: "default",
       },
     });
     if (event.type !== "catalog") throw new Error("Missing catalog");
     expect(event.catalog.models).toHaveLength(11);
     expect(event.catalog.modes).toEqual([
       {
+        id: "default",
+        label: "Default",
+        icon: "ShieldCheck",
+        colorTier: "safe",
+        description: "Asks for permission before running shell commands or editing files.",
+      },
+      {
+        id: "accept-edits",
+        label: "Accept edits",
+        icon: "ShieldAlert",
+        colorTier: "moderate",
+        description: "Automatically approves file edits and asks before running shell commands.",
+      },
+      {
         id: "full-access",
         label: "Full access",
         icon: "ShieldOff",
         colorTier: "dangerous",
         isUnattended: true,
-        description:
-          "Antigravity cannot ask for permission when another app drives it. Paseo starts it with --dangerously-skip-permissions.",
+        description: "Automatically approves all tool calls and shell commands without asking.",
       },
     ]);
   });
+
   it("reports missing, old, unauthenticated and available launches", async () => {
     expect(await provider.status?.({})).toMatchObject({
       available: false,
@@ -643,6 +798,7 @@ describe("discovery", () => {
     const authenticated = await harness();
     expect(await provider.status?.({ launch: authenticated.launch })).toEqual({ available: true });
   });
+
   it("keys catalog caching by the complete effective launch without exposing env values", async () => {
     const h = await harness();
     const key = await provider.getCatalogCacheKey?.({ scope: "global", launch: h.launch });
@@ -692,7 +848,7 @@ describe("process signal plans", () => {
 
 describe("image prompts", () => {
   it.each(["session", "connection"])(
-    "encodes mixed content as private session files and cleans up on %s close",
+    "encodes mixed content as private session files, auto-approves session image reads in default mode, and cleans up on %s close",
     async (close) => {
       const h = await harness();
       await h.open();
@@ -710,10 +866,10 @@ describe("image prompts", () => {
       );
       const sent = (await h.records()).find((entry) => entry.input).input.message.content;
       const lines = sent.split("\n");
-      const pngPath = lines[3].slice("Attached image: ".length);
-      const jpegPath = lines[5].slice("Attached image: ".length);
+      const pngPath = lines[1].slice("Attached image: ".length);
+      const jpegPath = lines[3].slice("Attached image: ".length);
       expect(sent).toBe(
-        `SYSTEM PREFIX\n\nDescribe these images.\nAttached image: ${pngPath}\nCompare them.\nAttached image: ${jpegPath}`,
+        `Describe these images.\nAttached image: ${pngPath}\nCompare them.\nAttached image: ${jpegPath}`,
       );
       expect(path.isAbsolute(pngPath)).toBe(true);
       expect(path.extname(pngPath)).toBe(".png");
@@ -727,8 +883,14 @@ describe("image prompts", () => {
         expect((await stat(pngPath)).mode & 0o777).toBe(0o600);
         expect((await stat(jpegPath)).mode & 0o777).toBe(0o600);
       }
-      const args = (await h.records()).find((entry) => entry.args?.includes("--input-format")).args;
-      expect(args.filter((arg: string) => arg === "--add-dir")).toHaveLength(1);
+      // Reading the attached image in default mode was auto-approved without a permission prompt
+      expect(h.events.filter((event) => event.type === "session.permission")).toHaveLength(0);
+      expect(h.events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({ type: "assistant_message", text: "IMAGE_READ_OK\n" }),
+        }),
+      );
       if (close === "connection") await h.connection.close();
       else await h.request({ type: "session.close", requestId: "close-images", sessionId: "s" });
       await expect(stat(path.dirname(pngPath))).rejects.toMatchObject({ code: "ENOENT" });
