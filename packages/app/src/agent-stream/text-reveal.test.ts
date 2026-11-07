@@ -12,6 +12,7 @@ import {
   TEXT_REVEAL_FRAME_INTERVAL_MS,
   TEXT_REVEAL_HORIZON_MS,
   visibleRevealedText,
+  withholdPartialClosingFence,
 } from "./text-reveal";
 
 describe("computeRevealStep", () => {
@@ -273,5 +274,129 @@ describe("trailing fragments from arrival boundaries", () => {
   it("leaves ordinary trailing text alone", () => {
     const prose = "just some prose";
     expect(visibleRevealedText(beginTextReveal(prose), { streaming: true })).toBe(prose);
+  });
+});
+
+describe("a closing fence still being typed", () => {
+  const code = "Intro\n\n```ts\nconst a = 1;\n";
+
+  it("holds back one or two backticks that can only become the closing fence", () => {
+    expect(withholdPartialClosingFence(`${code}\``)).toBe(code);
+    expect(withholdPartialClosingFence(`${code}\`\``)).toBe(code);
+    expect(withholdPartialClosingFence(`${code}  \`\``)).toBe(code);
+  });
+
+  it.each([
+    { char: "`", length: 3, whitespace: " " },
+    { char: "`", length: 3, whitespace: "\t" },
+    { char: "`", length: 4, whitespace: " " },
+    { char: "`", length: 4, whitespace: "\t" },
+    { char: "~", length: 3, whitespace: " " },
+    { char: "~", length: 3, whitespace: "\t" },
+    { char: "~", length: 5, whitespace: " " },
+    { char: "~", length: 5, whitespace: "\t" },
+  ])(
+    "paints real code after whitespace ends a $length $char run ($whitespace)",
+    ({ char, length, whitespace }) => {
+      const prefix = `${char.repeat(length)}\ncode\n`;
+      const run = char.repeat(length - 1);
+      expect(withholdPartialClosingFence(prefix + run)).toBe(prefix);
+      const text = prefix + run + whitespace;
+      expect(withholdPartialClosingFence(text)).toBe(text);
+      expect(visibleRevealedText(beginTextReveal(text), { streaming: true })).toBe(text);
+    },
+  );
+
+  it("paints the fence once it closes the block", () => {
+    expect(withholdPartialClosingFence(`${code}\`\`\``)).toBe(`${code}\`\`\``);
+    expect(withholdPartialClosingFence(`${code}\`\`\`\n\nAfter`)).toBe(`${code}\`\`\`\n\nAfter`);
+  });
+
+  it("needs a run as long as the opener and of the same character", () => {
+    const long = "````md\nInside\n";
+    expect(withholdPartialClosingFence(`${long}\`\`\``)).toBe(long);
+    expect(withholdPartialClosingFence(`${long}\`\`\`\``)).toBe(`${long}\`\`\`\``);
+    const tilde = "~~~\ncode\n";
+    expect(withholdPartialClosingFence(`${tilde}~~`)).toBe(tilde);
+    expect(withholdPartialClosingFence(`${tilde}\``)).toBe(`${tilde}\``);
+  });
+
+  it.each([
+    { lineEnding: "LF", newline: "\n", closer: "```" },
+    { lineEnding: "CRLF", newline: "\r\n", closer: "```" },
+    { lineEnding: "LF", newline: "\n", closer: "``` \t" },
+    { lineEnding: "CRLF", newline: "\r\n", closer: "``` \t" },
+  ])(
+    "recognizes completed closers before a tilde block with $lineEnding ($closer)",
+    ({ newline, closer }) => {
+      const backtickBlock = ["Intro", "```ts", "const a = 1;", closer, ""].join(newline);
+      const tildeBlock = backtickBlock + ["~~~md", "code", ""].join(newline);
+
+      expect(withholdPartialClosingFence(tildeBlock + "~~")).toBe(tildeBlock);
+      expect(withholdPartialClosingFence(tildeBlock + "~~~")).toBe(tildeBlock + "~~~");
+      expect(withholdPartialClosingFence(tildeBlock + "~~ not a closer")).toBe(
+        tildeBlock + "~~ not a closer",
+      );
+
+      const closedTildeBlock = tildeBlock + "~~~" + newline;
+      expect(withholdPartialClosingFence(closedTildeBlock + "`")).toBe(closedTildeBlock + "`");
+    },
+  );
+
+  it.each([
+    { marker: "-", fence: "```", newline: "\n" },
+    { marker: "1.", fence: "~~~", newline: "\n" },
+    { marker: "-", fence: "~~~", newline: "\r\n" },
+    { marker: "1.", fence: "```", newline: "\r\n" },
+  ])(
+    "keeps prose after a closed $marker list fence ($fence, $newline)",
+    ({ marker, fence, newline }) => {
+      const indent = " ".repeat(marker.length + 1);
+      const closed = [`${marker} ${fence}`, `${indent}code`, `${indent}${fence}`, "", ""].join(
+        newline,
+      );
+      const prose = closed + fence[0];
+      expect(withholdPartialClosingFence(prose)).toBe(prose);
+      expect(visibleRevealedText(beginTextReveal(prose), { streaming: true })).toBe(prose);
+      const open = [`${marker} ${fence}`, `${indent}code`, ""].join(newline);
+      expect(withholdPartialClosingFence(open + indent + fence[0])).toBe(open);
+    },
+  );
+
+  it("does not take an indented code block's fence for a top-level opener", () => {
+    const text = "    code\n    ```\n\n`";
+    expect(withholdPartialClosingFence(text)).toBe(text);
+  });
+
+  it("leaves backticks alone outside a code block", () => {
+    expect(withholdPartialClosingFence("Prose\n`")).toBe("Prose\n`");
+    const closed = "```\na\n```\n";
+    expect(withholdPartialClosingFence(`${closed}\``)).toBe(`${closed}\``);
+    expect(withholdPartialClosingFence("`` inline ``\n`")).toBe("`` inline ``\n`");
+  });
+
+  it("leaves a code line that only starts with backticks alone", () => {
+    expect(withholdPartialClosingFence(`${code}\`x`)).toBe(`${code}\`x`);
+  });
+
+  it("never paints a lone backtick line while a paced reveal crosses the closing fence", () => {
+    const full = `${code}\`\`\`\n\nAfter the block.`;
+    let state = retargetTextReveal(beginTextReveal(code), full);
+    const painted: string[] = [];
+    for (let frame = 0; frame < 120 && !isTextRevealSettled(state); frame += 1) {
+      state = advanceTextReveal(state, 16, 1_000);
+      painted.push(visibleRevealedText(state, { streaming: true }));
+    }
+    expect(painted.at(-1)).toBe(full);
+    for (const text of painted) {
+      expect(full.startsWith(text)).toBe(true);
+      expect(text.endsWith("\n`") || text.endsWith("\n``")).toBe(false);
+    }
+  });
+
+  it("holds the fence back when an arrival ends inside it, and paints it once the turn ends", () => {
+    const state = beginTextReveal(`${code}\``);
+    expect(visibleRevealedText(state, { streaming: true })).toBe(code);
+    expect(visibleRevealedText(state, { streaming: false })).toBe(`${code}\``);
   });
 });
