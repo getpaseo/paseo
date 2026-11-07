@@ -305,10 +305,12 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         options={isolationPicker.options}
         value={isolation.effectiveIsolation}
         onSelect={isolationPicker.onSelect}
+        searchable={false}
         title={t("newWorkspace.isolation.label")}
         open={isolation.openState}
         onOpenChange={isolation.onOpenChange}
         desktopPlacement="bottom-start"
+        desktopMinWidth={200}
         anchorRef={isolation.anchorRef}
         renderOption={isolationPicker.renderOption}
       />
