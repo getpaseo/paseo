@@ -676,6 +676,7 @@ export interface AgentPermissionResult {
 export interface AgentUsageSession {
   provider: string;
   model?: string;
+  args?: readonly string[];
   env: Record<string, string>;
   sessionKey: string;
 }
