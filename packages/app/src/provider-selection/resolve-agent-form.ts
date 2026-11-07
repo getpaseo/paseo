@@ -533,7 +533,14 @@ function completeResolution(
     state.form,
     action.allowedProviderMap,
   );
-  const nextState = { ...state, resolution: { status: "completed" } as const };
+  const waitingForModels =
+    resolved.provider !== null && action.providerModelsByProvider.get(resolved.provider) === null;
+  const nextState = {
+    ...state,
+    resolution: waitingForModels
+      ? PENDING_AGENT_FORM_RESOLUTION
+      : ({ status: "completed" } as const),
+  };
   if (!hasFormStateChanged(state.form, resolved)) return nextState;
   return { ...nextState, form: resolved };
 }

@@ -1296,3 +1296,78 @@ it("owns input readiness, reopening and user edits in the reducer", () => {
   state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
   expect(state.form).toMatchObject({ provider: "codex", model: "astra" });
 });
+
+it("resolves a remembered model against the new host after its catalog finishes loading", () => {
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "second-host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: undefined,
+    preferences: {
+      provider: "codex",
+      providerPreferences: { codex: { model: "remote/model" } },
+    },
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", null]]),
+  };
+  const firstHost = resolveAgentForm(makeState(), {
+    ...inputs,
+    serverId: "first-host",
+    providerModelsByProvider: makeProviderModelsByProvider([
+      ["codex", [{ provider: "codex", id: "remote/model", label: "Remote" }]],
+    ]),
+  });
+  const opening = resolveAgentForm(firstHost, inputs);
+  expect(opening.form.model).toBe("remote/model");
+  expect(opening.resolution.status).toBe("pending");
+  const ready = resolveAgentForm(opening, {
+    ...inputs,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+  });
+  expect(ready.form.model).toBe("gpt-5.3-codex");
+  expect(ready.form.thinkingOptionId).toBe("xhigh");
+  expect(ready.resolution.status).toBe("completed");
+});
+
+it("retains user input while the opening catalog is pending", () => {
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: undefined,
+    preferences: { provider: "codex", providerPreferences: { codex: { model: "remote/model" } } },
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", null]]),
+  };
+  const opening = resolveAgentForm(makeState(), inputs);
+  const edited = resolveAgentForm(opening, {
+    type: "SET_MODEL_FROM_USER",
+    modelId: "manual/model",
+    availableModels: null,
+    providerPrefs: undefined,
+  });
+  const ready = resolveAgentForm(edited, {
+    ...inputs,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+  });
+  expect(ready.form.model).toBe("manual/model");
+  expect(ready.resolution.status).toBe("completed");
+});
+
+it("resolves modeless providers once their empty catalog is ready", () => {
+  const ready = resolveAgentForm(makeState(), {
+    type: "COMPLETE_RESOLUTION",
+    initialValues: undefined,
+    preferences: { provider: "pi" },
+    providerModelsByProvider: makeProviderModelsByProvider([["pi", []]]),
+    allowedProviderMap: buildProviderDefinitionMap([TEST_PI_DEFINITION]),
+  });
+  expect(ready.form).toMatchObject({ provider: "pi", model: "" });
+  expect(ready.resolution.status).toBe("completed");
+});

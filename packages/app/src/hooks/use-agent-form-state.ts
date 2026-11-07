@@ -113,7 +113,7 @@ function buildProviderModelsByProvider(
   for (const entry of snapshotEntries ?? []) {
     map.set(
       entry.provider,
-      entry.status === "ready" ? filterSelectableModels(entry.models ?? null) : null,
+      entry.status === "ready" ? filterSelectableModels(entry.models ?? []) : null,
     );
   }
   return map;
@@ -249,8 +249,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
+  const selectedProviderHasError =
+    snapshotSelectedEntry?.status === "error" || snapshotSelectedEntry?.status === "unavailable";
   const isModelSelectionLoading =
     isConnected &&
+    !selectedProviderHasError &&
     (resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading);
   const isAllModelsLoading = isModelSelectionLoading;
 
