@@ -298,6 +298,8 @@ import type {
   AgentUsage,
   JsonValue,
 } from "./agent-types.js";
+// The stop-reason schema is a value, not a type: the wire schema below uses it.
+import { AgentTurnStopReasonSchema } from "./agent-types.js";
 
 // WebSocket payloads have already crossed JSON serialization. Keeping this as
 // unknown avoids zod-aot's recursive z.json() object-codegen regression.
@@ -784,6 +786,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
     usage: AgentUsageSchema.optional(),
+    stopReason: AgentTurnStopReasonSchema.optional(),
   }),
   z.object({
     type: z.literal("turn_failed"),
