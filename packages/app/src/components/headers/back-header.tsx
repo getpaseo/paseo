@@ -11,6 +11,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 
 interface BackHeaderProps {
   title?: string;
+  titleTestID?: string;
   rightContent?: ReactNode;
   onBack?: () => void;
 }
@@ -19,15 +20,30 @@ function goBack(): void {
   router.back();
 }
 
-export function BackHeader({ title, rightContent, onBack }: BackHeaderProps) {
+export function BackHeader({ title, titleTestID, rightContent, onBack }: BackHeaderProps) {
   const isCompact = useIsCompactFormFactor();
   if (isCompact) {
-    return <CompactHeader navigation="back" title={title} onBack={onBack} actions={rightContent} />;
+    return (
+      <CompactHeader
+        navigation="back"
+        title={title}
+        titleTestID={titleTestID}
+        onBack={onBack}
+        actions={rightContent}
+      />
+    );
   }
-  return <DesktopBackHeader title={title} rightContent={rightContent} onBack={onBack} />;
+  return (
+    <DesktopBackHeader
+      title={title}
+      titleTestID={titleTestID}
+      rightContent={rightContent}
+      onBack={onBack}
+    />
+  );
 }
 
-function DesktopBackHeader({ title, rightContent, onBack }: BackHeaderProps) {
+function DesktopBackHeader({ title, titleTestID, rightContent, onBack }: BackHeaderProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const handleBack = useCallback(() => {
@@ -50,7 +66,7 @@ function DesktopBackHeader({ title, rightContent, onBack }: BackHeaderProps) {
           >
             <ArrowLeft size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
           </Pressable>
-          {title && <ScreenTitle>{title}</ScreenTitle>}
+          {title && <ScreenTitle testID={titleTestID}>{title}</ScreenTitle>}
         </>
       }
       right={rightContent}

@@ -12,6 +12,11 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 
 type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
+const COMPACT_VIEWPORT_MAX_WIDTH = 500;
+function isCompactViewport(page: Page): boolean {
+  return (page.viewportSize()?.width ?? 0) <= COMPACT_VIEWPORT_MAX_WIDTH;
+}
+
 const TABBED_PLUGIN_ID = "settings-tabs";
 const TABBED_PLUGIN_NAME = "Tabbed settings";
 /** Two settings screens, so the settings page shows a tab per screen. */
@@ -46,18 +51,39 @@ export default function contribute(client) {
 }
 `;
 
-async function writeTabbedPlugin() {
-  const directory = await mkdtemp(path.join(tmpdir(), `paseo-${TABBED_PLUGIN_ID}-`));
+const MEMORY_PLUGIN_ID = "settings-memory";
+const MEMORY_PLUGIN_NAME = "Memory tools";
+const MEMORY_SCREEN_TITLE = "Memory";
+/** One settings screen. The manifest name is deliberately different from the screen title. */
+const MEMORY_SOURCE = `import React from "react";
+import { Text } from "react-native";
+
+function Memory({ theme }) {
+  return <Text style={{ color: theme.colors.foreground }}>Memory settings body</Text>;
+}
+
+export default function contribute(client) {
+  client.addSettingsScreen({ id: "memory", title: "Memory", icon: "Settings", Component: Memory });
+  return () => {};
+}
+`;
+
+async function writeSyntheticPlugin(id: string, name: string, source: string) {
+  const directory = await mkdtemp(path.join(tmpdir(), `paseo-${id}-`));
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({
-      id: TABBED_PLUGIN_ID,
-      name: TABBED_PLUGIN_NAME,
-      requirements: pluginRequirements,
-    }),
+    JSON.stringify({ id, name, requirements: pluginRequirements }),
   );
-  await writeFile(path.join(directory, "index.client.tsx"), TABBED_SOURCE);
+  await writeFile(path.join(directory, "index.client.tsx"), source);
   return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
+
+function writeTabbedPlugin() {
+  return writeSyntheticPlugin(TABBED_PLUGIN_ID, TABBED_PLUGIN_NAME, TABBED_SOURCE);
+}
+
+function writeMemoryPlugin() {
+  return writeSyntheticPlugin(MEMORY_PLUGIN_ID, MEMORY_PLUGIN_NAME, MEMORY_SOURCE);
 }
 
 export const test = base.extend<{ settingsPlugin: SettingsClient }>({
@@ -68,19 +94,23 @@ export const test = base.extend<{ settingsPlugin: SettingsClient }>({
       const previous = await client.getDaemonConfig();
       const example = await copyPluginExample("settings");
       const tabbed = await writeTabbedPlugin();
+      const memory = await writeMemoryPlugin();
       try {
         await client.patchDaemonConfig({ pluginsEnabled: true });
         await client.installDirectoryPlugin(example.directory);
         await client.installDirectoryPlugin(tabbed.directory);
+        await client.installDirectoryPlugin(memory.directory);
         await provide(client);
         await page.screenshot({ path: testInfo.outputPath("settings.png") });
       } finally {
         await client.removePlugin("settings-example");
         await client.removePlugin(TABBED_PLUGIN_ID);
+        await client.removePlugin(MEMORY_PLUGIN_ID);
         await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
         await client.close();
         await example.cleanup();
         await tabbed.cleanup();
+        await memory.cleanup();
       }
     },
     { auto: true },
@@ -101,6 +131,68 @@ async function openPluginScreen(page: Page) {
   await openHostSection(page, getServerId(), "plugins");
   await openSettingsFromCog(page);
 }
+export async function openMemorySettings(page: Page) {
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openMemoryPluginScreen(page);
+}
+export async function openCompactMemorySettings(page: Page) {
+  await gotoAppShell(page);
+  await openCompactSettings(page, new URL(page.url()).pathname);
+  await openMemoryPluginScreen(page);
+}
+async function openMemoryPluginScreen(page: Page) {
+  await openHostSection(page, getServerId(), "plugins");
+  await settingsButton(page, MEMORY_PLUGIN_ID).click();
+  await expect(page.getByText("Memory settings body", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("plugin-settings-tabs")).toHaveCount(0);
+}
+export async function expectMemorySettingsHeader(page: Page) {
+  await expectSettingsHeader(page, MEMORY_SCREEN_TITLE);
+  // The manifest name and plugin id stay out of the header, including the id prefix.
+  await expect(
+    page.getByText(MEMORY_PLUGIN_NAME, { exact: true }).filter({ visible: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(MEMORY_PLUGIN_ID, { exact: true }).filter({ visible: true }),
+  ).toHaveCount(0);
+}
+/**
+ * A plugin screen has one Back control. On desktop it sits in the detail pane; the sidebar's
+ * workspace exit returns when the plugin screen is closed.
+ */
+export async function expectSinglePluginBackControl(page: Page) {
+  if (isCompactViewport(page)) {
+    await expect(
+      page.getByRole("button", { name: "Back", exact: true }).filter({ visible: true }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Back to plugins", exact: true }).filter({ visible: true }),
+    ).toHaveCount(0);
+    return;
+  }
+  const sidebar = page.getByTestId("settings-sidebar").filter({ visible: true });
+  await expect(sidebar.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+  const pane = page.getByTestId("settings-detail-pane").filter({ visible: true });
+  await expect(pane.getByRole("button", { name: "Back to plugins", exact: true })).toHaveCount(1);
+  await expect(pane.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+}
+export async function returnFromMemoryToPlugins(page: Page) {
+  if (isCompactViewport(page)) {
+    await page.getByRole("button", { name: "Back", exact: true }).filter({ visible: true }).click();
+  } else {
+    await page
+      .getByTestId("settings-detail-pane")
+      .filter({ visible: true })
+      .getByRole("button", { name: "Back to plugins", exact: true })
+      .click();
+  }
+  await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "plugins"));
+  await expect(settingsButton(page, MEMORY_PLUGIN_ID)).toBeVisible();
+  if (!isCompactViewport(page)) {
+    await expect(page.getByTestId("settings-back-to-workspace")).toBeVisible();
+  }
+}
 /** The cog on a plugin's row. Its label is "Settings"; the row tells plugins apart. */
 function settingsButton(page: Page, pluginId: string) {
   return page
@@ -111,9 +203,9 @@ function settingsButton(page: Page, pluginId: string) {
 async function openSettingsFromCog(page: Page) {
   await settingsButton(page, "settings-example").click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
-  // A plugin with one settings screen shows no tabs, and the header names only the plugin.
+  // A plugin with one settings screen shows no tabs, so the header names the screen.
   await expect(page.getByTestId("plugin-settings-tabs")).toHaveCount(0);
-  await expectSettingsHeader(page, "settings-example");
+  await expectSettingsHeader(page, "Display");
 }
 export async function openPluginsPage(page: Page) {
   await gotoAppShell(page);
@@ -155,6 +247,7 @@ export async function openTabbedSettings(page: Page) {
   await expectSettingsTab(page, "General");
   // The Advanced icon reads the plugin's translations; the General icon throws and is dropped.
   await expect(page.getByTestId("advanced-tab-icon")).toBeVisible();
+  await expectSinglePluginBackControl(page);
 }
 function settingsTab(page: Page, title: string) {
   return page.getByTestId("plugin-settings-tabs").getByRole("button", { name: title, exact: true });
@@ -170,6 +263,7 @@ export async function expectSettingsTab(page: Page, title: "General" | "Advanced
   await expect(page.getByText(`${other} settings body`, { exact: true })).toHaveCount(0);
   // The header names the plugin by its manifest name; the tab names the screen.
   await expectSettingsHeader(page, TABBED_PLUGIN_NAME);
+  await expectSinglePluginBackControl(page);
   await expectAppRoute(
     page,
     `${buildSettingsHostSectionRoute(getServerId(), "plugins")}/${TABBED_PLUGIN_ID}/${title.toLowerCase()}`,
@@ -246,7 +340,9 @@ export async function returnToPluginsPage(page: Page) {
 }
 async function expectSettingsHeader(page: Page, title: string) {
   // Settings keeps the Plugins page mounted beneath, so read the visible title only.
-  await expect(page.getByText(title, { exact: true }).filter({ visible: true })).toHaveCount(1);
+  await expect(
+    page.getByTestId("settings-detail-header-title").filter({ visible: true }),
+  ).toHaveText(title);
 }
 export async function expectSettingsUnavailable(page: Page) {
   await expect(

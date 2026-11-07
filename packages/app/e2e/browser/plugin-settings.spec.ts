@@ -17,6 +17,11 @@ import {
   returnToPluginsPage,
   expectSettingsUnavailable,
   openPluginsPage,
+  openMemorySettings,
+  openCompactMemorySettings,
+  expectMemorySettingsHeader,
+  expectSinglePluginBackControl,
+  returnFromMemoryToPlugins,
   expectActionsMenuWithoutSettings,
   expectNoSettingsCogWithoutScreens,
   openTabbedSettings,
@@ -57,6 +62,16 @@ test("Back to plugins returns from a plugin settings screen", async ({ page }) =
   await returnToPluginsPage(page);
 });
 
+test("a single-screen plugin titles its screen and has one back control", async ({
+  page,
+}, testInfo) => {
+  await openMemorySettings(page);
+  await page.screenshot({ path: testInfo.outputPath("memory-settings-desktop.png") });
+  await expectMemorySettingsHeader(page);
+  await expectSinglePluginBackControl(page);
+  await returnFromMemoryToPlugins(page);
+});
+
 test("plugin settings open from the cog and show a tab per screen", async ({ page }) => {
   await openPluginsPage(page);
   await test.step("plugin rows show the display name", async () => {
@@ -85,6 +100,16 @@ test("a settings screen link opens its tab", async ({ page }) => {
 
 test.describe("compact plugin settings", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("a single-screen plugin titles its screen and has one back control", async ({
+    page,
+  }, testInfo) => {
+    await openCompactMemorySettings(page);
+    await page.screenshot({ path: testInfo.outputPath("memory-settings-compact.png") });
+    await expectMemorySettingsHeader(page);
+    await expectSinglePluginBackControl(page);
+    await returnFromMemoryToPlugins(page);
+  });
 
   test("Back and plugin re-enable restore the settings screen", async ({
     page,

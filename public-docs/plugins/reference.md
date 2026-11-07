@@ -1305,8 +1305,9 @@ Register a component with `client.addSettingsScreen({ id, title, icon, Component
 `index.client.tsx`. Your plugin's row in **Settings → Plugins** on that host then shows a settings
 button (cog) that opens your first screen. When you register several screens, the settings page shows
 one tab per screen, labeled with its `title` and `icon`, in registration order. With one screen there
-are no tabs. The page header shows your manifest `name`, or your plugin ID when you leave `name`
-out; it never includes a screen title. `id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
+are no tabs, and the page header shows that screen's `title`. With several screens the header shows
+your manifest `name`, or your plugin ID when you leave `name` out; the tabs name each screen.
+`id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
 idempotent remover, and plugin teardown removes remaining screens.
 
 Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
