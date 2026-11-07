@@ -33,7 +33,7 @@ import {
   getPromptPreview,
   getSessionTitle,
   hasMoreSessions,
-  resolveDirectoryLabel,
+  createDirectoryLabelResolver,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
   type ProviderErrorRow,
@@ -598,12 +598,14 @@ export function ImportSessionSheet({
 
   // A scoped sheet only lists one directory, so naming it on every row is noise.
   const showRowFolders = scopeCwd === null;
+  const resolveDirectory = useMemo(
+    () => (showRowFolders ? createDirectoryLabelResolver(directoryProjects) : null),
+    [showRowFolders, directoryProjects],
+  );
   const resolveFolder = useCallback(
     (entry: FetchRecentProviderSessionEntry) =>
-      showRowFolders
-        ? formatDirectoryLabel(resolveDirectoryLabel(entry.cwd, directoryProjects))
-        : null,
-    [showRowFolders, directoryProjects],
+      resolveDirectory ? formatDirectoryLabel(resolveDirectory(entry.cwd)) : null,
+    [resolveDirectory],
   );
 
   const filterComboboxOptions = useMemo<ComboboxOption[]>(
