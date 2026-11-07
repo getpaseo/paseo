@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   toneFromUsedPct,
   usedPctOf,
   unavailable,
@@ -114,7 +115,7 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const token = await readToken(input);
   if (!token) throw new Error("Grok login store no longer exists");

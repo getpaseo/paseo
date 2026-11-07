@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   unavailable,
   type UsageAccount,
   windowFromUsedPct,
@@ -147,7 +148,7 @@ function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): UsageWind
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const auth = await readAuth(input);
   if (!auth) throw new Error("MiniMax login store no longer exists");

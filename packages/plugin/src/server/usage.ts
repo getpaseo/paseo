@@ -202,3 +202,11 @@ export function hashAccountKey(value: string): string {
 export function unavailable(problem: UsageProblem): UsageReport {
   return { status: "unavailable", problem };
 }
+
+export {
+  fetchWithAutoProxy,
+  isProxyBypassed,
+  requestThroughProxy,
+  resolveUsageProxyUrl,
+  type UsageProxyOptions,
+} from "./usage-proxy.js";
