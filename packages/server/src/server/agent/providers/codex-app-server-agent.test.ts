@@ -1379,6 +1379,42 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test.each([undefined, "configured-model"])(
+    "import resolves model %s before the first collaboration turn",
+    async (configuredModel) => {
+      const appServer = createFakeCodexAppServer({
+        "config/read": () => ({
+          config: { model: configuredModel, model_reasoning_effort: "low" },
+        }),
+        "collaborationMode/list": () => ({
+          data: [{ name: "Code", mode: "default", model: null, reasoning_effort: null }],
+        }),
+      });
+      const provider = createProviderWithFakeAppServer(appServer);
+      const config = createConfig({ model: undefined, thinkingOptionId: undefined });
+      const imported = await provider.importSession(
+        { providerHandleId: "native-thread", cwd: config.cwd! },
+        { config, storedConfig: config },
+      );
+
+      try {
+        await imported.session.startTurn("first follow-up after import");
+        await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+          threadId: "native-thread",
+          model: configuredModel ?? "gpt-5.4",
+          effort: "low",
+          collaborationMode: {
+            mode: "default",
+            settings: { model: configuredModel ?? "gpt-5.4", reasoning_effort: "low" },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await imported.session.close();
+      }
+    },
+  );
+
   test("provider persistence leaves options owned by the stored agent config", async () => {
     const appServer = createFakeCodexAppServer();
     const provider = createProviderWithFakeAppServer(appServer);
