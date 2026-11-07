@@ -1223,14 +1223,16 @@ describe("browser MCP tools", () => {
       expect(toolNames).not.toContain("list_agents");
       expect(toolNames).not.toContain("browser_list_tabs");
       expect(toolNames).toEqual(expect.arrayContaining(["create_agent", "browser_snapshot"]));
-      await expect(client.callTool({ name: "list_agents", arguments: {} })).resolves.toEqual({
-        content: [{ type: "text", text: "MCP error -32602: Tool list_agents not found" }],
-        isError: true,
-      });
-      await expect(client.callTool({ name: "browser_list_tabs", arguments: {} })).resolves.toEqual({
-        content: [{ type: "text", text: "MCP error -32602: Tool browser_list_tabs not found" }],
-        isError: true,
-      });
+      // Calling a tool that is not registered is a JSON-RPC error (-32602) on the
+      // wire, not a tool result. The v1 SDK server folded it into an `isError`
+      // result; the v2 server surfaces it as the protocol error it is, so assert
+      // the rejection here.
+      await expect(client.callTool({ name: "list_agents", arguments: {} })).rejects.toThrow(
+        /Tool list_agents not found/,
+      );
+      await expect(client.callTool({ name: "browser_list_tabs", arguments: {} })).rejects.toThrow(
+        /Tool browser_list_tabs not found/,
+      );
       expect(broker.calls).toEqual([]);
     } finally {
       await client.close();

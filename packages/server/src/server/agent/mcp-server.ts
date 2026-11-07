@@ -1,10 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type {
-  CallToolResult,
-  ServerNotification,
-  ServerRequest,
-} from "@modelcontextprotocol/sdk/types.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import type { CallToolResult, ServerContext } from "@modelcontextprotocol/server";
 
 import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
@@ -12,7 +7,7 @@ import type { PaseoToolResult } from "./tools/types.js";
 
 export type AgentMcpServerOptions = PaseoToolHostDependencies;
 
-type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
+type McpToolContext = ServerContext;
 
 function toMcpToolResult(result: PaseoToolResult): CallToolResult {
   const modelVisibleResult = addModelVisibleStructuredContent(result);
@@ -35,16 +30,28 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     version: "2.0.0",
   });
 
+  // The v2 SDK types `ZodRawShape` through the `zod/v4` core entry while Paseo
+  // declares tool schemas via the `zod` root entry. Both resolve to the same zod
+  // runtime, so the shapes are interchangeable at runtime but not by type
+  // identity; narrow once here instead of casting every call site.
+  const registerTool = server.registerTool.bind(server) as unknown as (
+    name: string,
+    config: { title?: string; description?: string; inputSchema?: unknown },
+    cb: (args: unknown, context: McpToolContext) => Promise<CallToolResult>,
+  ) => unknown;
+
   for (const tool of catalog.tools.values()) {
-    server.registerTool(
+    registerTool(
       tool.name,
       {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
       },
-      async (args: unknown, context?: McpToolContext) =>
-        toMcpToolResult(await catalog.executeTool(tool.name, args, { signal: context?.signal })),
+      async (args, context) =>
+        toMcpToolResult(
+          await catalog.executeTool(tool.name, args, { signal: context?.mcpReq?.signal }),
+        ),
     );
   }
 
