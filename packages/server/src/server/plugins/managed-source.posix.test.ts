@@ -522,7 +522,9 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
   const { resolveNpm } = await import("./managed-source/npm.js");
   const npm = await startNpmRegistry(npmPluginPackages());
   const previous = process.env.npm_config_userconfig;
+  const previousAllowRemote = process.env.npm_config_allow_remote;
   process.env.npm_config_userconfig = npm.userconfig;
+  process.env.npm_config_allow_remote = "none";
   const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-npm-"));
   roots.push(home);
   const intents: Array<string | string[] | undefined> = [];
@@ -573,6 +575,8 @@ it("installs and updates only the npm artifacts pinned by the plugin registry", 
     await npm.close();
     if (previous === undefined) delete process.env.npm_config_userconfig;
     else process.env.npm_config_userconfig = previous;
+    if (previousAllowRemote === undefined) delete process.env.npm_config_allow_remote;
+    else process.env.npm_config_allow_remote = previousAllowRemote;
   }
 }, 30_000);
 
