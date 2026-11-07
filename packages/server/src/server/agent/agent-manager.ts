@@ -2334,14 +2334,16 @@ export class AgentManager {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
-    if (agent.session.setModel) {
-      await agent.session.setModel(normalizedModelId);
-    }
+    const selection = await agent.session.setModel?.(normalizedModelId);
     await this.drainSessionEvents(agentId);
 
-    agent.config.model = normalizedModelId ?? undefined;
+    // A reset clears the preference even when the provider retains its active model.
+    let effectiveModelId = normalizedModelId;
+    if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
+
+    agent.config.model = effectiveModelId ?? undefined;
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
     }
     this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
