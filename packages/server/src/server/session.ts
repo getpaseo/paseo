@@ -300,6 +300,7 @@ function resolveWorkspaceArchiveOperations(
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import {
+  validateDirectoryName,
   createProjectDirectory,
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
@@ -7541,7 +7542,9 @@ export class Session {
       });
       normalizedRepo = repo.displayName;
       const targetParent = resolve(expandTilde(request.targetDirectory.trim()));
-      checkoutPath = resolve(targetParent, repo.name);
+      const folderName = request.folderName ?? repo.name;
+      validateDirectoryName(folderName);
+      checkoutPath = resolve(targetParent, folderName);
       if (!this.isPathWithinRoot(targetParent, checkoutPath)) {
         throw new Error("Resolved checkout path must stay inside the target directory");
       }
