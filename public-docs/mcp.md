@@ -155,6 +155,8 @@ Both use the same cron engine, but they have deliberately different interfaces.
 
 MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
+`create_schedule` and `update_schedule` take the agent settings the app's **Edit schedule** form has: `provider` (or `provider/model`), `model`, `mode`, `thinking`, `isolation` (`local` or `worktree`), and `cwd`. In an agent-scoped session, `create_schedule` copies your own provider, model, mode, thinking, provider options, features, system prompt, and MCP servers for anything you omit. Pass `mode` and `thinking` explicitly when the scheduled runs should not use your current settings.
+
 New-agent run workspaces are archived when each run ends by default. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
 
 ### Agent profiles

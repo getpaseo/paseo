@@ -62,6 +62,22 @@ paseo schedule create \
   "Review overnight CI failures and summarize anything urgent."
 ```
 
+在新的 worktree 中每日巡检，并显式指定模式和思考级别：
+
+```bash
+paseo schedule create \
+  --cron "0 9 * * *" \
+  --name daily-sweep \
+  --provider claude/claude-opus-5-5 \
+  --mode auto \
+  --thinking medium \
+  --new-workspace worktree \
+  --cwd ~/dev/my-app \
+  "Sweep open issues and leave a summary."
+```
+
+`--mode`、`--thinking` 和 `--new-workspace` 设置的 Agent 选项与应用中 **Edit schedule** 表单相同。模式和思考选项 ID 因 provider 而异，与 `paseo run` 接受的值一致。`--new-workspace worktree` 会在每次运行时从 `--cwd` 切出一个新的 git worktree；默认值 `local` 直接在该目录中运行。
+
 ## heartbeat {#heartbeats}
 
 在一个正在运行的 Paseo Agent 中，为同一段对话创建 heartbeat：
@@ -94,8 +110,11 @@ paseo schedule pause <id>
 paseo schedule resume <id>
 paseo schedule run-once <id>
 paseo schedule update <id> --every 10m --max-runs 6
+paseo schedule update <id> --thinking medium --new-workspace worktree
 paseo schedule delete <id>
 ```
+
+`update` 接受与 `create` 相同的 `--provider`、`--model`、`--mode`、`--thinking`、`--new-workspace` 和 `--cwd` 参数。给 `--mode` 或 `--thinking` 传入空字符串即可清除该项。
 
 ## 节奏 {#cadence}
 
