@@ -5,6 +5,7 @@ import {
   expectNewWorkspaceDraft,
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
+  selectNewWorkspaceProject,
 } from "../support/helpers/new-workspace";
 import {
   composerLocator,
@@ -107,6 +108,24 @@ test.describe("New workspace: launching a terminal", () => {
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "bare-launch-static-line");
     });
+  });
+
+  test("preserves a terminal launch and its command when changing project", async ({ page }) => {
+    const otherProject = await seedWorkspace({ repoPrefix: "terminal-project-change-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, workspace);
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await fillTerminalPrompt(page, "keep this command on the chosen project");
+      await selectNewWorkspaceProject(page, otherProject);
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
+      await expect(terminalPromptInput(page)).toHaveValue(
+        "keep this command on the chosen project",
+      );
+    } finally {
+      await otherProject.cleanup();
+    }
   });
 
   test("switching terminal profiles restores the prompt and its fullscreen affordance", async ({

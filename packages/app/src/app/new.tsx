@@ -32,16 +32,7 @@ export default function NewWorkspaceRoute() {
       projectId: placement.projectId,
     });
   }, []);
-  const screenKey = JSON.stringify([
-    serverId,
-    sourceDirectory ?? null,
-    displayName ?? null,
-    projectId ?? null,
-    draftId ?? null,
-  ]);
-
-  // The shell remounts this route when the viewport crosses the compact breakpoint;
-  // the draft's editing session (fullscreen, retained caret) lives above the shell.
+  // Placement updates keep the current draft's launch choices and command.
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const sessionTabIds = useMemo(() => [draftKey], [draftKey]);
 
@@ -53,7 +44,7 @@ export default function NewWorkspaceRoute() {
       >
         <ComposerEditingScope tabId={draftKey} targetKey={draftKey}>
           <NewWorkspaceScreen
-            key={screenKey}
+            key={draftKey}
             serverId={serverId}
             sourceDirectory={sourceDirectory}
             displayName={displayName}

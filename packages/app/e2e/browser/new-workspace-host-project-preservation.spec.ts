@@ -38,6 +38,8 @@ interface CrossHostProjectScenario {
   primarySharedWorkspaceId: string;
   secondarySharedWorkspaceId: string;
   secondarySharedProjectId: string;
+  duplicateProjectId: string;
+  duplicateProjectViewKey: string;
   selectedProjectViewKey: string;
   sharedProjectKey: string;
   secondaryHost: {
@@ -161,6 +163,11 @@ const test = base.extend<{ crossHostProject: CrossHostProjectScenario }>({
         primarySharedWorkspaceId: primarySharedProject.workspaceId,
         secondarySharedWorkspaceId: secondarySharedProject.workspaceId,
         secondarySharedProjectId: secondarySharedProject.projectId,
+        duplicateProjectId: primaryDuplicateProject.projectId,
+        duplicateProjectViewKey: projectPlacementViewKey(
+          getServerId(),
+          primaryDuplicateProject.projectId,
+        ),
         selectedProjectViewKey: projectPlacementViewKey(
           getServerId(),
           primarySharedProject.projectId,
@@ -297,5 +304,23 @@ test.describe("New workspace host project preservation", () => {
     } finally {
       await client.close();
     }
+  });
+  test("returns to the manually chosen clone after switching hosts", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openNewWorkspaceFromContextProject(page, crossHostProject);
+    await selectNewWorkspaceProject(page, {
+      projectKey: crossHostProject.sharedProjectKey,
+      projectViewKey: crossHostProject.duplicateProjectViewKey,
+      projectDisplayName: "Paseo duplicate",
+    });
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+    await selectNewWorkspaceHost(page, PRIMARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, "Paseo duplicate");
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("projectId"))
+      .toBe(crossHostProject.duplicateProjectId);
   });
 });
