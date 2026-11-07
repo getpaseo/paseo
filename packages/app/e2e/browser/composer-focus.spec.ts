@@ -151,11 +151,11 @@ test("submitting a message leaves the composer ready for the next message", asyn
 
     await typeIntoFocusedComposer(page, "Investigate: replace this. Thanks");
     await selectComposerDraftRange(page, 13, 25);
-    await pasteRichTextIntoComposer(
+    await pasteRichTextIntoComposer({
       page,
-      '<a href="https://example.com/issues/39150">this FR</a>',
-      "this FR",
-    );
+      html: '<a href="https://example.com/issues/39150">this FR</a>',
+      text: "this FR",
+    });
     await expectComposerDraft(
       page,
       "Investigate: [this FR](https://example.com/issues/39150). Thanks",
@@ -176,21 +176,21 @@ test("submitting a message leaves the composer ready for the next message", asyn
     await expect(page.getByRole("button", { name: "Copy turn", exact: true })).toBeVisible();
     await connection.drop();
     await connection.waitForBlockedConnection();
-    await pasteRichTextIntoComposer(
+    await pasteRichTextIntoComposer({
       page,
-      '<a href="https://example.com/offline">offline link</a>',
-      "offline link",
-    );
+      html: '<a href="https://example.com/offline">offline link</a>',
+      text: "offline link",
+    });
     await expectComposerDraft(
       page,
       "Investigate: [this FR](https://example.com/issues/39150) next[offline link](https://example.com/offline). Thanks",
     );
     await fillComposerDraft(page, "");
-    await pasteRichTextIntoComposer(
+    await pasteRichTextIntoComposer({
       page,
-      '<table><thead><tr><th>Resource</th><th>Status</th></tr></thead><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr></tbody></table>',
-      "Resource\tStatus\nIssue\tclosed",
-    );
+      html: '<table><thead><tr><th>Resource</th><th>Status</th></tr></thead><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr></tbody></table>',
+      text: "Resource\tStatus\nIssue\tclosed",
+    });
     await expectComposerDraft(
       page,
       "| Resource | Status |\n| --- | --- |\n| [Issue](https://example.com/issue) | closed |",

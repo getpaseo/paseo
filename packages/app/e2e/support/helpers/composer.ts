@@ -594,11 +594,15 @@ export async function roundTripComposerTabBeforePaint(
 }
 
 /** Paste both clipboard representations through the browser's normal paste command. */
-export async function pasteRichTextIntoComposer(
-  page: Page,
-  html: string,
-  text: string,
-): Promise<void> {
+export async function pasteRichTextIntoComposer({
+  page,
+  html,
+  text,
+}: {
+  page: Page;
+  html: string;
+  text: string;
+}): Promise<void> {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.evaluate(
     async ({ html: richHtml, text: plainText }) => {
