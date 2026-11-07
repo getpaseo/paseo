@@ -63,12 +63,16 @@ export interface PluginThemeColors {
   accent?: string;
   mutedForeground: string;
   ring: string;
+  sidebar?: string;
+  sidebarHover?: string;
+  sidebarSelected?: string;
 }
 
 export interface PluginThemeContribution<Text extends PluginText = string> {
   id: string;
   name: Text;
   appearance: "light" | "dark";
+  swatch?: string;
   colors: PluginThemeColors;
 }
 

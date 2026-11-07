@@ -105,6 +105,8 @@ describe("plugin theme palettes", () => {
       surface1: "#313244",
       surface2: "#45475a",
       surfaceSidebar: "#1e1e2e",
+      surfaceSidebarHover: "#313244",
+      surfaceSidebarSelected: "#45475a",
       foreground: "#cdd6f4",
       foregroundMuted: "#a6adc8",
       border: "#45475a",
@@ -149,6 +151,8 @@ describe("plugin theme palettes", () => {
       surface1: "#e6e9ef",
       surface2: "#dce0e8",
       surfaceSidebar: "#dce0e8",
+      surfaceSidebarHover: "#ccd0da",
+      surfaceSidebarSelected: "#9ca0b0",
       foreground: "#4c4f69",
       border: "#ccd0da",
       accent: "#8839ef",
@@ -161,6 +165,36 @@ describe("plugin theme palettes", () => {
     });
     expect(theme.colors.statusDanger).toBe(lightTheme.colors.statusDanger);
     expect(theme.colors.syntax).toEqual(lightTheme.colors.syntax);
+  });
+
+  it("accepts independent picker and sidebar colors", () => {
+    const contribution: PluginThemeContribution = {
+      ...LATTE,
+      swatch: "#40a02b",
+      colors: {
+        ...LATTE.colors,
+        sidebar: "#e6e9ef",
+        sidebarHover: "#dce0e8",
+        sidebarSelected: "#ccd0da",
+      },
+    };
+    const option = collectPluginThemes(
+      [installed("host-a", [contribution])],
+      new Set(["host-a"]),
+    )[0];
+
+    expect(option.swatch).toBe("#40a02b");
+    expect(option.theme.colors).toMatchObject({
+      surfaceSidebar: "#e6e9ef",
+      surfaceSidebarHover: "#dce0e8",
+      surfaceSidebarSelected: "#ccd0da",
+    });
+  });
+
+  it("uses the background as the picker swatch when no override is given", () => {
+    const option = collectPluginThemes([installed("host-a", [LATTE])], new Set(["host-a"]))[0];
+
+    expect(option.swatch).toBe("#eff1f5");
   });
 });
 

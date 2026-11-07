@@ -225,6 +225,8 @@ export interface LightThemeConfig {
   surface4: string;
   surfaceDiffEmpty: string;
   surfaceSidebar: string;
+  surfaceSidebarHover?: string;
+  surfaceSidebarSelected?: string;
   foreground: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
@@ -267,8 +269,8 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surface4: tint.surface4,
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: tint.surface3,
-    surfaceSidebarSelected: tint.surface4,
+    surfaceSidebarHover: tint.surfaceSidebarHover ?? tint.surface3,
+    surfaceSidebarSelected: tint.surfaceSidebarSelected ?? tint.surface4,
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
@@ -356,6 +358,8 @@ export interface DarkThemeConfig {
   surface4: string;
   surfaceDiffEmpty: string;
   surfaceSidebar: string;
+  surfaceSidebarHover?: string;
+  surfaceSidebarSelected?: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
   border: string;
@@ -398,8 +402,8 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surface4: tint.surface4,
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: tint.surface1,
-    surfaceSidebarSelected: tint.surface2,
+    surfaceSidebarHover: tint.surfaceSidebarHover ?? tint.surface1,
+    surfaceSidebarSelected: tint.surfaceSidebarSelected ?? tint.surface2,
     surfaceWorkspace: tint.surface1,
     interactionHighlight: "rgba(255, 255, 255, 0.08)",
 

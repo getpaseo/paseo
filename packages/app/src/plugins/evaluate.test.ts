@@ -571,6 +571,7 @@ describe("evaluatePluginClientBundle", () => {
           id: "mocha",
           name: "Catppuccin Mocha",
           appearance: "dark",
+          swatch: "#cba6f7",
           colors: {
             background: "#1e1e2e",
             foreground: "#cdd6f4",
@@ -580,6 +581,9 @@ describe("evaluatePluginClientBundle", () => {
             accent: "#cba6f7",
             mutedForeground: "#a6adc8",
             ring: "#6c7086",
+            sidebar: "#181825",
+            sidebarHover: "#313244",
+            sidebarSelected: "#45475a",
           },
         });
       `),
@@ -588,7 +592,9 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.themes.map((theme) => [theme.id, theme.name])).toEqual([
       ["mocha", "Catppuccin Mocha"],
     ]);
+    expect(plugin.themes[0]?.swatch).toBe("#cba6f7");
     expect(plugin.themes[0]?.colors.accent).toBe("#cba6f7");
+    expect(plugin.themes[0]?.colors.sidebarSelected).toBe("#45475a");
   });
 
   it("rejects a theme with a color that is not a hex value", () => {
