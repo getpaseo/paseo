@@ -1,6 +1,7 @@
 import { CodexBackgroundInventory } from "./codex/background-inventory.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
+  AgentTurnStartCanceledError,
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
   type AgentCapabilityFlags,
@@ -4492,7 +4493,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       // outlives it into the new turn.
       await this.waitForInterruptedTurnCleanup();
       if (pendingStart.cancelRequested) {
-        throw new Error("Codex turn start was interrupted before reaching Codex");
+        throw new AgentTurnStartCanceledError();
       }
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
