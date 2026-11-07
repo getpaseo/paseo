@@ -158,8 +158,8 @@ export function startDriver(options: DriverOptions): Driver {
       }
       if (reason === "close") child.stdin.end();
       else signalGroup(child, "SIGINT");
-      const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 1000);
-      const kill = setTimeout(() => signalGroup(child, "SIGKILL"), 2000);
+      const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 500);
+      const kill = setTimeout(() => signalGroup(child, "SIGKILL"), 1000);
       await exited;
       clearTimeout(terminate);
       clearTimeout(kill);
