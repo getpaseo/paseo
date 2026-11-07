@@ -30,7 +30,7 @@ export async function assertWorkspaceAutomationAllowedForWorkspace(
   workspaceId: string,
 ): Promise<void> {
   const workspace = await registry.get(workspaceId);
-  if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+  if (!workspace || workspace.archivedAt) throw new Error(`Workspace not found: ${workspaceId}`);
   assertWorkspaceAutomationAllowed(workspace.untrustedSource);
 }
 

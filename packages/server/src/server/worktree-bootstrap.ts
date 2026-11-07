@@ -3,6 +3,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
 import {
   getScriptConfigs,
+  getExplicitWorkspaceServicePorts,
   getWorktreeTerminalSpecs,
   isServiceScript,
   paseoConfigParseError,
@@ -24,10 +25,16 @@ import {
 } from "./workspace-service-env.js";
 import {
   ensureWorkspaceServicePortPlan,
+  getAllReservedWorkspaceServicePorts,
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
+import type {
+  WorkspaceRuntimeEnvironment,
+  WorkspaceRuntimeEnvironmentService,
+} from "./workspace-runtime-environment.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import { getWorkspaceServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
@@ -361,6 +368,7 @@ export interface SpawnWorkspaceScriptOptions {
   projectSlug: string;
   branchName: string | null;
   scriptName: string;
+  suppressedScriptNames?: ReadonlySet<string>;
   daemonPort?: number | null;
   daemonListenHost?: string | null;
   serviceProxyPublicBaseUrl?: string | null;
@@ -368,6 +376,8 @@ export interface SpawnWorkspaceScriptOptions {
   runtimeStore: WorkspaceScriptRuntimeStore;
   terminalManager: TerminalManager;
   globalServicePorts?: PaseoServicePortAllocation;
+  workspaceRuntimeEnvironment?: Pick<WorkspaceRuntimeEnvironmentService, "ensure"> &
+    Partial<Pick<WorkspaceRuntimeEnvironmentService, "getReservedPorts">>;
   logger?: Logger;
   onLifecycleChanged?: () => void;
 }
@@ -392,6 +402,7 @@ async function setupServiceScriptRoute(params: {
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
   serviceProxy: ServiceProxySubsystem;
   servicePortAllocation: PaseoServicePortAllocation | undefined;
+  getReservedPorts?: () => ReadonlySet<number>;
 }): Promise<ServiceScriptSetupResult> {
   const {
     scriptConfigs,
@@ -407,6 +418,7 @@ async function setupServiceScriptRoute(params: {
     existingRuntimeEntry,
     serviceProxy,
     servicePortAllocation,
+    getReservedPorts,
   } = params;
 
   const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
@@ -425,6 +437,7 @@ async function setupServiceScriptRoute(params: {
   const plannedPorts = await ensureWorkspaceServicePortPlan({
     workspaceId,
     services: serviceDeclarations,
+    getReservedPorts,
     allocatePort: ({ scriptName: serviceScriptName, reservedPorts }) =>
       allocateWorkspaceServicePort({
         allocation: servicePortAllocation,
@@ -440,6 +453,7 @@ async function setupServiceScriptRoute(params: {
       ? await refreshWorkspaceServicePort({
           workspaceId,
           service: { scriptName, port: config.port },
+          getReservedPorts,
           allocatePort: ({ scriptName: serviceScriptName, reservedPorts }) =>
             allocateWorkspaceServicePort({
               allocation: servicePortAllocation,
@@ -453,7 +467,8 @@ async function setupServiceScriptRoute(params: {
       : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
 
   const peers: WorkspaceServicePeer[] = [];
-  for (const [peerScriptName, peerPort] of plannedPorts) {
+  for (const { scriptName: peerScriptName } of serviceDeclarations) {
+    const peerPort = requirePlannedWorkspaceServicePort(plannedPorts, peerScriptName);
     peers.push({
       scriptName: peerScriptName,
       port: peerScriptName === scriptName ? port : peerPort,
@@ -489,6 +504,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   workspaceId: string;
   scriptName: string;
   env: Record<string, string> | undefined;
+  workspacePortBlock?: TerminalSession["workspacePortBlock"];
 }): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
   const {
     serviceScript,
@@ -498,10 +514,21 @@ async function acquireWorkspaceScriptTerminal(params: {
     workspaceId,
     scriptName,
     env,
+    workspacePortBlock,
   } = params;
   let reusableTerminal: TerminalSession | null = null;
   if (!serviceScript && existingRuntimeEntry?.terminalId) {
     reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
+  }
+  if (
+    reusableTerminal &&
+    (reusableTerminal.workspaceScriptName !== scriptName ||
+      reusableTerminal.workspacePortBlock?.portBase !== workspacePortBlock?.portBase ||
+      reusableTerminal.workspacePortBlock?.portCount !== workspacePortBlock?.portCount)
+  ) {
+    // Persistent shells cannot receive new create-time metadata or environment.
+    await terminalManager.killTerminalAndWait(reusableTerminal.id);
+    reusableTerminal = null;
   }
   const terminal =
     reusableTerminal ??
@@ -511,8 +538,130 @@ async function acquireWorkspaceScriptTerminal(params: {
       name: scriptName,
       title: scriptName,
       env,
+      workspacePortBlock,
+      workspaceScriptName: scriptName,
     }));
   return { terminal, reusableTerminal };
+}
+
+async function resolveWorkspaceScriptRuntimeEnvironment(params: {
+  workspaceRuntimeEnvironment: Pick<WorkspaceRuntimeEnvironmentService, "ensure"> | undefined;
+  workspaceId: string;
+  cwd: string;
+  branchName: string | null;
+  allocation: PaseoServicePortAllocation | undefined;
+  excludedPorts: ReadonlySet<number> | (() => ReadonlySet<number>);
+}): Promise<WorkspaceRuntimeEnvironment | null> {
+  // Existing servicePorts range/portScript settings allocate individual
+  // services. A block is an explicit opt-in for ordinary scripts and services;
+  // launches always request one through their own manager.
+  if (!params.workspaceRuntimeEnvironment || params.allocation?.blockSize === undefined) {
+    return null;
+  }
+  return await params.workspaceRuntimeEnvironment.ensure({
+    workspaceId: params.workspaceId,
+    cwd: params.cwd,
+    branchName: params.branchName,
+    allocation: params.allocation,
+    excludedPorts: params.excludedPorts,
+  });
+}
+
+function attachWorkspaceScriptLifecycle(params: {
+  terminal: TerminalSession;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  workspaceId: string;
+  scriptName: string;
+  scriptType: "script" | "service";
+  serviceScript: boolean;
+  hostname: string | null;
+  serviceProxy: ServiceProxySubsystem;
+  onLifecycleChanged: (() => void) | undefined;
+  logger: Logger | undefined;
+}): () => void {
+  const {
+    terminal,
+    runtimeStore,
+    workspaceId,
+    scriptName,
+    scriptType,
+    serviceScript,
+    hostname,
+    serviceProxy,
+    onLifecycleChanged,
+    logger,
+  } = params;
+  let unsubscribeExit: (() => void) | null = null;
+  let unsubscribeCommandFinished: (() => void) | null = null;
+  const dispose = () => {
+    unsubscribeExit?.();
+    unsubscribeExit = null;
+    unsubscribeCommandFinished?.();
+    unsubscribeCommandFinished = null;
+  };
+  const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
+    const current = runtimeStore.get({ workspaceId, scriptName });
+    if (current?.terminalId !== terminal.id || current.lifecycle !== "running") {
+      return;
+    }
+    dispose();
+    if (input.removeRoute && hostname) {
+      serviceProxy.removeWorkspaceService({ workspaceId, scriptName });
+    }
+    runtimeStore.set({
+      workspaceId,
+      scriptName,
+      type: scriptType,
+      lifecycle: "stopped",
+      terminalId: terminal.id,
+      exitCode: input.exitCode,
+    });
+    onLifecycleChanged?.();
+    logger?.info(
+      { scriptName, hostname, exitCode: input.exitCode, terminalId: terminal.id },
+      "Stopped worktree script",
+    );
+  };
+
+  unsubscribeExit = terminal.onExit((info) => {
+    stopRuntimeIfCurrent({ exitCode: info.exitCode, removeRoute: true });
+  });
+  if (!serviceScript) {
+    unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
+      stopRuntimeIfCurrent({ exitCode: info.exitCode, removeRoute: false });
+    });
+  }
+  return dispose;
+}
+
+async function sendWorkspaceScriptCommand(params: {
+  terminal: TerminalSession;
+  reusableTerminal: TerminalSession | null;
+  command: string;
+}): Promise<void> {
+  if (!params.reusableTerminal) {
+    await waitForTerminalBootstrapReadiness(params.terminal);
+  }
+  params.terminal.send({ type: "input", data: `${params.command}\r` });
+}
+
+function cleanupFailedWorkspaceScriptSpawn(params: {
+  disposeLifecycleListeners: (() => void) | null;
+  routeRegistered: boolean;
+  hostname: string | null;
+  serviceProxy: ServiceProxySubsystem;
+  runtimeRegistered: boolean;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  workspaceId: string;
+  scriptName: string;
+}): void {
+  params.disposeLifecycleListeners?.();
+  if (params.routeRegistered && params.hostname) {
+    params.serviceProxy.removeServiceRoutesByHostnames([params.hostname]);
+  }
+  if (params.runtimeRegistered) {
+    params.runtimeStore.remove({ workspaceId: params.workspaceId, scriptName: params.scriptName });
+  }
 }
 
 export async function spawnWorkspaceScript(
@@ -524,6 +673,7 @@ export async function spawnWorkspaceScript(
     projectSlug,
     branchName,
     scriptName,
+    suppressedScriptNames,
     daemonPort,
     daemonListenHost,
     serviceProxyPublicBaseUrl,
@@ -531,6 +681,7 @@ export async function spawnWorkspaceScript(
     runtimeStore,
     terminalManager,
     globalServicePorts,
+    workspaceRuntimeEnvironment,
     logger,
     onLifecycleChanged,
   } = options;
@@ -538,7 +689,7 @@ export async function spawnWorkspaceScript(
   if (!configResult.ok) {
     throw paseoConfigParseError(configResult);
   }
-  const scriptConfigs = getScriptConfigs(configResult.config);
+  const scriptConfigs = getScriptConfigs(configResult.config, suppressedScriptNames);
   const config = scriptConfigs.get(scriptName);
   if (!config) {
     throw new Error(`Script '${scriptName}' is not configured in paseo.json`);
@@ -558,7 +709,23 @@ export async function spawnWorkspaceScript(
     }
 
     const existingRuntimeEntry = runtimeStore.get({ workspaceId, scriptName });
-    let env: Record<string, string> | undefined;
+    const servicePortAllocation =
+      getWorkspaceServicePortAllocation(configResult.config?.worktree) ?? globalServicePorts;
+    const workspaceRuntime = await resolveWorkspaceScriptRuntimeEnvironment({
+      workspaceRuntimeEnvironment,
+      workspaceId,
+      cwd: repoRoot,
+      branchName,
+      allocation: servicePortAllocation,
+      excludedPorts: () => {
+        const ports = getExplicitWorkspaceServicePorts(configResult.config, suppressedScriptNames);
+        for (const reservedPort of getAllReservedWorkspaceServicePorts()) {
+          ports.add(reservedPort);
+        }
+        return ports;
+      },
+    });
+    let env: Record<string, string> | undefined = workspaceRuntime?.env;
     if (serviceScript) {
       const serviceSetup = await setupServiceScriptRoute({
         repoRoot,
@@ -573,11 +740,18 @@ export async function spawnWorkspaceScript(
         serviceProxyPublicBaseUrl,
         existingRuntimeEntry,
         serviceProxy,
-        servicePortAllocation: configResult.config?.worktree?.servicePorts ?? globalServicePorts,
+        servicePortAllocation,
+        getReservedPorts: () => {
+          const ports = new Set(workspaceRuntime?.reservedPorts);
+          for (const reservedPort of workspaceRuntimeEnvironment?.getReservedPorts?.() ?? []) {
+            ports.add(reservedPort);
+          }
+          return ports;
+        },
       });
       hostname = serviceSetup.hostname;
       port = serviceSetup.port;
-      env = serviceSetup.env;
+      env = { ...workspaceRuntime?.env, ...serviceSetup.env };
       routeRegistered = true;
     }
 
@@ -589,6 +763,9 @@ export async function spawnWorkspaceScript(
       workspaceId,
       scriptName,
       env,
+      workspacePortBlock: workspaceRuntime
+        ? { portBase: workspaceRuntime.portBase, portCount: workspaceRuntime.portCount }
+        : undefined,
     });
 
     runtimeStore.set({
@@ -601,60 +778,24 @@ export async function spawnWorkspaceScript(
     });
     runtimeRegistered = true;
 
-    const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
-      const current = runtimeStore.get({ workspaceId, scriptName });
-      if (current?.terminalId !== terminal.id || current.lifecycle !== "running") {
-        return;
-      }
-
-      disposeLifecycleListeners?.();
-      disposeLifecycleListeners = null;
-
-      if (input.removeRoute && hostname) {
-        serviceProxy.removeWorkspaceService({ workspaceId, scriptName });
-      }
-      runtimeStore.set({
-        workspaceId,
-        scriptName,
-        type: scriptType,
-        lifecycle: "stopped",
-        terminalId: terminal.id,
-        exitCode: input.exitCode,
-      });
-      onLifecycleChanged?.();
-      logger?.info(
-        {
-          scriptName,
-          hostname,
-          exitCode: input.exitCode,
-          terminalId: terminal.id,
-        },
-        "Stopped worktree script",
-      );
-    };
-
-    const unsubscribeExit = terminal.onExit((info) => {
-      stopRuntimeIfCurrent({
-        exitCode: info.exitCode,
-        removeRoute: true,
-      });
+    disposeLifecycleListeners = attachWorkspaceScriptLifecycle({
+      terminal,
+      runtimeStore,
+      workspaceId,
+      scriptName,
+      scriptType,
+      serviceScript,
+      hostname,
+      serviceProxy,
+      onLifecycleChanged,
+      logger,
     });
 
-    let unsubscribeCommandFinished: (() => void) | null = null;
-    if (!serviceScript) {
-      unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
-        stopRuntimeIfCurrent({ exitCode: info.exitCode, removeRoute: false });
-      });
-    }
-    disposeLifecycleListeners = () => {
-      unsubscribeExit();
-      unsubscribeCommandFinished?.();
-    };
-
-    if (!reusableTerminal) {
-      await waitForTerminalBootstrapReadiness(terminal);
-    }
-    terminal.send({ type: "input", data: `${config.command}\r` });
+    await sendWorkspaceScriptCommand({
+      terminal,
+      reusableTerminal,
+      command: config.command,
+    });
 
     logger?.info(
       {
@@ -677,13 +818,16 @@ export async function spawnWorkspaceScript(
       terminalId: terminal.id,
     };
   } catch (error) {
-    disposeLifecycleListeners?.();
-    if (routeRegistered && hostname) {
-      serviceProxy.removeServiceRoutesByHostnames([hostname]);
-    }
-    if (runtimeRegistered) {
-      runtimeStore.remove({ workspaceId, scriptName });
-    }
+    cleanupFailedWorkspaceScriptSpawn({
+      disposeLifecycleListeners,
+      routeRegistered,
+      hostname,
+      serviceProxy,
+      runtimeRegistered,
+      runtimeStore,
+      workspaceId,
+      scriptName,
+    });
     logger?.error(
       {
         err: error,

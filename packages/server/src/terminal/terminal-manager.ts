@@ -9,6 +9,8 @@ import {
   type LocalTerminalSession,
   type TerminalActivityTransition,
   type TerminalSession,
+  type WorkspaceLaunchTerminalMetadata,
+  type WorkspacePortBlockTerminalMetadata,
 } from "./terminal.js";
 import { type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -54,6 +56,28 @@ export type TerminalWorkspaceContributionChangedListener = (
   event: TerminalWorkspaceContributionChangedEvent,
 ) => void;
 
+export interface TerminalManagerCreateOptions {
+  id?: string;
+  cwd: string;
+  workspaceId: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
+  name?: string;
+  title?: string;
+  env?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  rows?: number;
+  cols?: number;
+  activityToken?: string;
+  activityUrl?: string | null;
+  baseEnv?: Record<string, string>;
+  paseoCliPath?: string | null;
+  /** Keep the completed session available for later output inspection. */
+  retainOnExit?: boolean;
+}
+
 export interface TerminalManager {
   /**
    * Set when this host's terminals cannot be served at all (a worker from a newer Paseo holds
@@ -61,22 +85,7 @@ export interface TerminalManager {
    */
   getUnavailableError?(): Error | null;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
-  createTerminal(options: {
-    id?: string;
-    cwd: string;
-    workspaceId: string;
-    name?: string;
-    title?: string;
-    env?: Record<string, string>;
-    command?: string;
-    args?: string[];
-    rows?: number;
-    cols?: number;
-    activityToken?: string;
-    activityUrl?: string | null;
-    baseEnv?: Record<string, string>;
-    paseoCliPath?: string | null;
-  }): Promise<TerminalSession>;
+  createTerminal(options: TerminalManagerCreateOptions): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
   getTerminal(id: string): TerminalSession | undefined;
@@ -91,7 +100,12 @@ export interface TerminalManager {
   killTerminal(id: string): void;
   killTerminalAndWait(
     id: string,
-    options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+    options?: {
+      gracefulTimeoutMs?: number;
+      forceTimeoutMs?: number;
+      /** Stop a retained terminal's process while keeping its completed output available. */
+      preserveSession?: boolean;
+    },
   ): Promise<void>;
   captureTerminal(
     id: string,
@@ -209,10 +223,15 @@ export function createTerminalManager(
     return bestMatchRoot ? defaultEnvByRootCwd.get(bestMatchRoot) : undefined;
   }
 
-  function registerSession(session: LocalTerminalSession): LocalTerminalSession {
+  function registerSession(
+    session: LocalTerminalSession,
+    options: { retainOnExit: boolean },
+  ): LocalTerminalSession {
     terminalsById.set(session.id, session);
     const unsubscribeExit = session.onExit(() => {
-      removeSessionById(session.id, { kill: false });
+      if (!options.retainOnExit) {
+        removeSessionById(session.id, { kill: false });
+      }
     });
     const unsubscribeTitle = session.onTitleChange(() => {
       emitTerminalsChanged({ cwd: session.cwd });
@@ -331,22 +350,7 @@ export function createTerminalManager(
       return sessions;
     },
 
-    async createTerminal(options: {
-      id?: string;
-      cwd: string;
-      workspaceId: string;
-      name?: string;
-      title?: string;
-      env?: Record<string, string>;
-      command?: string;
-      args?: string[];
-      rows?: number;
-      cols?: number;
-      activityToken?: string;
-      activityUrl?: string | null;
-      baseEnv?: Record<string, string>;
-      paseoCliPath?: string | null;
-    }): Promise<LocalTerminalSession> {
+    async createTerminal(options: TerminalManagerCreateOptions): Promise<LocalTerminalSession> {
       assertAbsolutePath(options.cwd);
 
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
@@ -373,6 +377,9 @@ export function createTerminalManager(
             id: terminalId,
             cwd: options.cwd,
             workspaceId: options.workspaceId,
+            workspaceLaunch: options.workspaceLaunch,
+            workspacePortBlock: options.workspacePortBlock,
+            workspaceScriptName: options.workspaceScriptName,
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),
@@ -384,6 +391,7 @@ export function createTerminalManager(
             ...(options.paseoCliPath === undefined ? {} : { paseoCliPath: options.paseoCliPath }),
             activityEnv,
           }),
+          { retainOnExit: options.retainOnExit === true },
         );
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);
@@ -465,7 +473,11 @@ export function createTerminalManager(
 
     async killTerminalAndWait(
       id: string,
-      options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+      options?: {
+        gracefulTimeoutMs?: number;
+        forceTimeoutMs?: number;
+        preserveSession?: boolean;
+      },
     ): Promise<void> {
       const session = terminalsById.get(id);
       if (!session) {
@@ -474,7 +486,9 @@ export function createTerminalManager(
       try {
         await session.killAndWait(options);
       } finally {
-        removeSessionById(id, { kill: false });
+        if (!options?.preserveSession) {
+          removeSessionById(id, { kill: false });
+        }
       }
     },
 

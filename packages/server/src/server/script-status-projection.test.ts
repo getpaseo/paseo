@@ -61,6 +61,7 @@ async function buildPayloads(input: {
   daemonPort: number | null;
   serviceProxyPublicBaseUrl?: string | null;
   gitMetadata?: { projectSlug: string; currentBranch: string | null };
+  suppressedScriptNames?: ReadonlySet<string>;
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }) {
   const paseoConfig =
@@ -411,6 +412,49 @@ describe("script-status-projection", () => {
     }
   });
 
+  it("hides a legacy script that a project launch supersedes", async () => {
+    const workspaceId = "workspace-superseded-service";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev" },
+        },
+      },
+    });
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "dev--repo.localhost",
+      port: 33269,
+      workspaceId,
+      projectSlug: "repo",
+      scriptName: "dev",
+    });
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-dev",
+      exitCode: null,
+    });
+
+    try {
+      expect(
+        await buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          routeStore,
+          runtimeStore,
+          daemonPort: 6767,
+          suppressedScriptNames: new Set(["dev"]),
+        }),
+      ).toEqual([]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
   it("projects orphaned plain scripts as scripts instead of services", async () => {
     const workspaceId = "workspace-orphaned-script";
     const workspace = createWorkspaceRepo();
@@ -513,7 +557,7 @@ describe("script-status-projection", () => {
     }
   });
 
-  it("createScriptStatusEmitter overlays health onto the projected workspace script list", async () => {
+  it("projects health and requests a workspace snapshot update", async () => {
     const workspaceId = "workspace-emitter";
     const workspace = createWorkspaceRepo({
       paseoConfig: {
@@ -547,13 +591,17 @@ describe("script-status-projection", () => {
         messages.push(message);
       },
     };
+    const emitWorkspaceSnapshot = vi.fn(async () => {});
     const emitUpdate = createScriptStatusEmitter({
       sessions: () => [session],
       serviceProxy: routeStore,
       runtimeStore,
       daemonPort: 6767,
-      resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
-        requestedWorkspaceId === "workspace-emitter" ? workspace.repoDir : null,
+      resolveWorkspaceConfig: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === "workspace-emitter"
+          ? { workspaceDirectory: workspace.repoDir }
+          : null,
+      emitWorkspaceSnapshot,
       logger: createTestLogger(),
     });
 
@@ -570,7 +618,6 @@ describe("script-status-projection", () => {
           health: "healthy",
         },
       ]);
-
       expect(await readPaseoConfigForProjection(workspace.repoDir, createTestLogger())).toBe(
         originalConfig,
       );
@@ -588,6 +635,8 @@ describe("script-status-projection", () => {
       expect(await readPaseoConfigForProjection(workspace.repoDir, createTestLogger())).toBe(
         originalConfig,
       );
+      expect(emitWorkspaceSnapshot).toHaveBeenCalledTimes(2);
+      expect(emitWorkspaceSnapshot).toHaveBeenLastCalledWith(workspaceId);
       expect(messages).toContainEqual({
         type: "script_status_update",
         payload: {
@@ -622,6 +671,72 @@ describe("script-status-projection", () => {
       });
     } finally {
       workspace.cleanup();
+    }
+  });
+
+  it("does not re-emit a superseded service on health changes", async () => {
+    const workspaceId = "workspace-emitter-superseded";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev" },
+        },
+      },
+    });
+    const projectDirectory = mkdtempSync(path.join(tmpdir(), "launch-project-config-"));
+    writeFileSync(
+      path.join(projectDirectory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "dev--repo.localhost",
+      port: 33269,
+      workspaceId,
+      projectSlug: "repo",
+      scriptName: "dev",
+    });
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-dev",
+      exitCode: null,
+    });
+    const session = { emit: vi.fn() };
+    const emitUpdate = createScriptStatusEmitter({
+      sessions: () => [session],
+      serviceProxy: routeStore,
+      runtimeStore,
+      daemonPort: 6767,
+      resolveWorkspaceConfig: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === workspaceId
+          ? {
+              workspaceDirectory: workspace.repoDir,
+              projectConfigDirectory: projectDirectory,
+            }
+          : null,
+      logger: createTestLogger(),
+    });
+
+    try {
+      await emitUpdate(workspaceId, [
+        {
+          scriptName: "dev",
+          hostname: "dev--repo.localhost",
+          port: 33269,
+          health: "healthy",
+        },
+      ]);
+      expect(session.emit).toHaveBeenCalledWith({
+        type: "script_status_update",
+        payload: { workspaceId, scripts: [] },
+      });
+    } finally {
+      workspace.cleanup();
+      rmSync(projectDirectory, { recursive: true, force: true });
     }
   });
 });

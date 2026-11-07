@@ -48,6 +48,7 @@ import type {
 } from "./terminal-manager.js";
 import {
   classifyTerminalWorkerProtocol,
+  TERMINAL_WORKER_PROTOCOL_VERSION,
   type TerminalWorkerProtocolFit,
 } from "./terminal-worker-protocol.js";
 import type {
@@ -110,6 +111,7 @@ export interface TerminalCreateEnvironment {
 
 interface WorkerTerminalManagerOptions {
   worker: TerminalWorkerConnection;
+  workerProtocolVersion?: number;
   /** Reconnects a surviving worker; null means it is confirmed gone or the owner stopped. */
   reconnect?: () => Promise<TerminalWorkerConnection | null>;
   requestTimeoutMs?: number;
@@ -156,6 +158,7 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    ...(info.retainOnExit ? { retainOnExit: true } : {}),
   };
 }
 
@@ -172,6 +175,7 @@ export function createWorkerTerminalManager(
   const pendingRequests = new Map<string, PendingRequest>();
   const inFlight = new Set<Promise<void>>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
+  const closingRecordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
   // Creation owns a reference to the session independently of the live-terminal
@@ -276,6 +280,15 @@ export function createWorkerTerminalManager(
       },
       get workspaceId() {
         return record.info.workspaceId;
+      },
+      get workspaceLaunch() {
+        return record.state.workspaceLaunch;
+      },
+      get workspacePortBlock() {
+        return record.state.workspacePortBlock;
+      },
+      get workspaceScriptName() {
+        return record.state.workspaceScriptName;
       },
       send(message: ClientMessage): void {
         if (message.type === "resize") {
@@ -414,6 +427,27 @@ export function createWorkerTerminalManager(
     return record;
   }
 
+  function removeRecordAndEmit(terminalId: string): WorkerTerminalRecord | undefined {
+    const record = recordsById.get(terminalId);
+    if (!record) {
+      return undefined;
+    }
+    const previousBucket = deriveTerminalActivityStatusBucket(record.activity);
+    const removedRecord = removeRecord(terminalId);
+    if (previousBucket !== null && removedRecord) {
+      emitTerminalWorkspaceContributionChanged({
+        terminalId: removedRecord.info.id,
+        cwd: removedRecord.info.cwd,
+        workspaceId: removedRecord.info.workspaceId,
+      });
+    }
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
+    return removedRecord;
+  }
+
   function handleTerminalMessageEvent(
     message: Extract<TerminalWorkerToParentMessage, { type: "terminalMessage" }>,
   ): void {
@@ -431,28 +465,31 @@ export function createWorkerTerminalManager(
   function handleTerminalExitEvent(
     message: Extract<TerminalWorkerToParentMessage, { type: "terminalExit" }>,
   ): void {
-    const record = recordsById.get(message.terminalId);
+    const record =
+      recordsById.get(message.terminalId) ?? closingRecordsById.get(message.terminalId);
     if (!record) {
       return;
     }
+    const wasExplicitlyClosed = closingRecordsById.delete(message.terminalId);
     record.exitInfo = message.info;
+    if (!wasExplicitlyClosed && record.info.retainOnExit) {
+      handleTerminalActivityChangeEvent({
+        type: "terminalActivityChange",
+        terminalId: record.info.id,
+        activity: null,
+        previous: record.activity,
+      });
+    }
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
     record.exitListeners.clear();
-    const previousBucket = deriveTerminalActivityStatusBucket(record.activity);
-    const removedRecord = removeRecord(message.terminalId);
-    if (previousBucket !== null && removedRecord) {
-      emitTerminalWorkspaceContributionChanged({
-        terminalId: removedRecord.info.id,
-        cwd: removedRecord.info.cwd,
-        workspaceId: removedRecord.info.workspaceId,
-      });
+    if (wasExplicitlyClosed) {
+      return;
     }
-    emitTerminalsChanged({
-      cwd: record.info.cwd,
-      terminals: listTerminalItemsForCwd(record.info.cwd),
-    });
+    if (!record.info.retainOnExit) {
+      removeRecordAndEmit(message.terminalId);
+    }
   }
 
   function handleTerminalTitleChangeEvent(
@@ -501,6 +538,7 @@ export function createWorkerTerminalManager(
     if (!record) {
       return;
     }
+    if (record.exitInfo && message.activity) return;
     const previousActivity = record.activity;
     record.activity = message.activity;
     const transition: TerminalActivityTransition = {
@@ -719,6 +757,7 @@ export function createWorkerTerminalManager(
     for (const terminalId of Array.from(recordsById.keys())) {
       removeRecord(terminalId);
     }
+    closingRecordsById.clear();
   }
 
   function disconnectWorker(): Promise<void> {
@@ -767,6 +806,13 @@ export function createWorkerTerminalManager(
       const record = recordsById.get(info.id);
       if (record) {
         record.replayPreamble = item.replayPreamble;
+      }
+      if (item.exitInfo) {
+        handleTerminalExitEvent({
+          type: "terminalExit",
+          terminalId: info.id,
+          info: item.exitInfo,
+        });
       }
       // The agent hooks inside each shell keep the token they were started with.
       if (item.activityToken) {
@@ -906,6 +952,10 @@ export function createWorkerTerminalManager(
     },
 
     killTerminal(id: string): void {
+      const record = removeRecordAndEmit(id);
+      if (record && !record.exitInfo) {
+        closingRecordsById.set(id, record);
+      }
       void sendRequest({ type: "killTerminal", terminalId: id }).catch(() => {
         // no-op; kill is intentionally best-effort and synchronous in the public interface.
       });
@@ -913,13 +963,44 @@ export function createWorkerTerminalManager(
 
     async killTerminalAndWait(
       id: string,
-      options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+      options?: {
+        gracefulTimeoutMs?: number;
+        forceTimeoutMs?: number;
+        preserveSession?: boolean;
+      },
     ): Promise<void> {
+      const record = recordsById.get(id);
+      // COMPAT(workspaceLaunchRetainedStop): added in v0.15.0-beta.1, remove after 2027-05-03 once protocol 5 workers drain.
+      const preserveSession =
+        options?.preserveSession === true &&
+        record?.info.retainOnExit === true &&
+        (managerOptions.workerProtocolVersion ?? TERMINAL_WORKER_PROTOCOL_VERSION) ===
+          TERMINAL_WORKER_PROTOCOL_VERSION;
+      const killOptions = {
+        ...(options?.gracefulTimeoutMs === undefined
+          ? {}
+          : { gracefulTimeoutMs: options.gracefulTimeoutMs }),
+        ...(options?.forceTimeoutMs === undefined
+          ? {}
+          : { forceTimeoutMs: options.forceTimeoutMs }),
+      };
       await sendRequest({
         type: "killTerminalAndWait",
         terminalId: id,
-        ...(options ? { options } : {}),
+        ...(Object.keys(killOptions).length > 0 || preserveSession
+          ? {
+              options: {
+                ...killOptions,
+                ...(preserveSession ? { preserveSession: true } : {}),
+              },
+            }
+          : {}),
       });
+      // Remove only after the worker confirms the kill. A timeout or IPC error must leave a live
+      // terminal visible so callers can retry Stop instead of reporting a false success.
+      if (!preserveSession) {
+        removeRecordAndEmit(id);
+      }
     },
 
     async captureTerminal(
@@ -1175,6 +1256,9 @@ export async function startWorkerTerminalManager(
     };
     const manager = createWorkerTerminalManager({
       worker: connection,
+      ...(typeof record.protocolVersion === "number"
+        ? { workerProtocolVersion: record.protocolVersion }
+        : {}),
       reconnect,
       ...(options.requestTimeoutMs === undefined
         ? {}

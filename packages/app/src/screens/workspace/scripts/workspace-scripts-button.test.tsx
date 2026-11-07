@@ -28,6 +28,7 @@ const {
     spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12 },
     borderWidth: { 1: 1 },
     borderRadius: { md: 6, lg: 8 },
+    opacity: { 50: 0.5 },
     fontSize: { xs: 11, sm: 13 },
     fontWeight: { normal: "400", medium: "500" },
     colors: {
@@ -138,6 +139,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuContent: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuSeparator: () => <div role="separator" />,
   DropdownMenuItem: ({
     children,
@@ -252,6 +254,8 @@ function ScriptsOwner({
   return (
     <WorkspaceScriptsButton
       actions={actions}
+      serverId="test-server"
+      workspaceId="workspace-1"
       scripts={scripts}
       liveTerminalIds={LIVE_TERMINAL_IDS}
       hideLabels={hideLabels}
