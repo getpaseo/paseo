@@ -8,6 +8,8 @@ import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
 const WORKER_TERMINATION_GRACE_MS = 10_000;
+const FATAL_OOM_PATTERN = /(?:^|\n)FATAL ERROR: [^\n]*JavaScript heap out of memory/;
+const FATAL_STDERR_TAIL_CHARS = 2048;
 
 interface SupervisorLogFileOptions {
   path: string;
@@ -332,6 +334,32 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     const currentChild = child;
     let reachedReady = false;
+    let fatalStderrTail = "";
+    let fatalOomExitTimer: NodeJS.Timeout | null = null;
+    // After a fatal V8 OOM the worker can stay alive for minutes while the OS
+    // collects its core dump (for example through a piped core_pattern). It no
+    // longer serves anything, and an exit-only supervisor never replaces it.
+    const observeFatalOom = (chunk: Buffer): void => {
+      const stderr = fatalStderrTail + chunk.toString();
+      fatalStderrTail = stderr.slice(-FATAL_STDERR_TAIL_CHARS);
+      if (fatalOomExitTimer || !FATAL_OOM_PATTERN.test(stderr)) {
+        return;
+      }
+      writeLifecycleLog("Worker reported a fatal V8 out-of-memory error; waiting for exit", {
+        workerPid: currentChild.pid ?? null,
+      });
+      fatalOomExitTimer = setTimeout(() => {
+        if (child !== currentChild) {
+          return;
+        }
+        // Kill only the worker, as its own abort would: provider processes keep running.
+        writeLifecycleLog("Worker did not exit after a fatal V8 out-of-memory error; killing it", {
+          workerPid: currentChild.pid ?? null,
+        });
+        currentChild.kill("SIGKILL");
+      }, WORKER_TERMINATION_GRACE_MS);
+      fatalOomExitTimer.unref();
+    };
     // Serialize endpoint writes with exit/clear before allowing another worker to spawn.
     const heartbeat = setInterval(() => {
       const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
@@ -359,6 +387,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
+      observeFatalOom(chunk);
       process.stderr.write(chunk);
       writeDurableChunk(chunk);
     });
@@ -414,6 +443,9 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("exit", (code, signal) => {
       clearInterval(heartbeat);
+      if (fatalOomExitTimer) {
+        clearTimeout(fatalOomExitTimer);
+      }
       clearForceKillTimer();
       child = null;
       publication = publication
