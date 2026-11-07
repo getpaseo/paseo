@@ -806,6 +806,57 @@ test("emits inventory only when relevant observations change it", () => {
   ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
 });
 
+test("Claude runtime safety releases a process that has not been sent a turn", () => {
+  const safety = new ClaudeRuntimeSafety();
+  // A resumed process that only answered control requests never sends init.
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.notePromptSent();
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.reset();
+  expect(safety.canStopRuntime()).toBe(true);
+  // A CLI without a roster that ran a turn may own background work.
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.220" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.retire();
+  expect(safety.canStopRuntime()).toBe(false);
+});
+
+test("Claude session started by a control request without a turn can stop its runtime", async () => {
+  let launched = 0;
+  const query = {
+    next: () => new Promise<IteratorResult<SDKMessage>>(() => {}),
+    return: async () => ({ done: true, value: undefined }),
+    close: () => {},
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    supportedModels: async () => [],
+    supportedCommands: async () => [],
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      launched++;
+      return query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  try {
+    // Reopening a chat lists its commands, which launches Claude with no prompt.
+    await session.listCommands!();
+    expect(launched).toBe(1);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
 test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
   let wake: (() => void) | undefined;
   const channel = { closed: false };
