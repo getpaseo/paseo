@@ -45,6 +45,7 @@ export interface SkillTargets {
 export const LEGACY_SKILL_NAMES = [
   "paseo-chat",
   "paseo-epic",
+  "paseo-loop",
   "paseo-orchestrate",
   "paseo-orchestrator",
 ] as const;
