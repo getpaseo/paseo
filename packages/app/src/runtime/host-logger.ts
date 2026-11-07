@@ -1,21 +1,30 @@
 import type { Logger } from "@getpaseo/client/internal/daemon-client";
 
 export function createHostLogger(
-  serverId: string | undefined,
+  readServerId: () => string | undefined,
   output: Pick<Console, "log" | "warn" | "error"> = console,
 ): Logger {
   const format = (record: object, message?: string): string => {
     const seen = new WeakSet<object>();
-    const details = JSON.stringify({ serverId, ...record }, (_key, value: unknown) => {
-      if (value && typeof value === "object") {
-        if (seen.has(value)) return "[Circular]";
-        seen.add(value);
-        if (value instanceof Error) {
-          return { ...value, name: value.name, message: value.message, stack: value.stack };
+    const details = JSON.stringify(
+      { serverId: readServerId(), ...record },
+      (_key, value: unknown) => {
+        if (value && typeof value === "object") {
+          if (seen.has(value)) return "[Circular]";
+          seen.add(value);
+          if (value instanceof Error) {
+            return {
+              ...value,
+              name: value.name,
+              message: value.message,
+              stack: value.stack,
+              cause: value.cause,
+            };
+          }
         }
-      }
-      return value;
-    });
+        return value;
+      },
+    );
     return message ? `${message} ${details}` : details;
   };
   return {

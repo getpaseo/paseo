@@ -1,6 +1,24 @@
 import { expect, it } from "vitest";
 import { createHostLogger } from "./host-logger";
 
+it("preserves the original transport cause and tolerates a cyclic cause chain", () => {
+  const lines: string[] = [];
+  const capture = (...values: unknown[]) => lines.push(values.map(String).join(" "));
+  const logger = createHostLogger(() => "test-host", {
+    log: capture,
+    warn: capture,
+    error: capture,
+  });
+  const transport = new Error("socket closed");
+  const wrapper = new Error("Subscription failed", { cause: transport });
+  Object.defineProperty(transport, "cause", { value: wrapper });
+  logger.error({ err: wrapper }, "subscription_error");
+  const record = JSON.parse(lines[0]!.slice("subscription_error ".length));
+  expect(record.err.cause.message).toBe("socket closed");
+  expect(record.err.cause.stack).toBe(transport.stack);
+  expect(record.err.cause.cause).toBe("[Circular]");
+});
+
 it("retains host and error details in the desktop's text-only console capture", () => {
   const lines: { level: string; text: string }[] = [];
   const capture =
@@ -8,7 +26,7 @@ it("retains host and error details in the desktop's text-only console capture", 
     (...values: unknown[]) => {
       lines.push({ level, text: values.map(String).join(" ") });
     };
-  const logger = createHostLogger("offline-host", {
+  const logger = createHostLogger(() => "offline-host", {
     log: capture("info"),
     warn: capture("warn"),
     error: capture("error"),
@@ -32,7 +50,7 @@ it("keeps native Error messages and severity without failing on circular diagnos
     (...values: unknown[]) => {
       lines.push({ level, text: values.map(String).join(" ") });
     };
-  const logger = createHostLogger("test-host", {
+  const logger = createHostLogger(() => "test-host", {
     log: capture("info"),
     warn: capture("warn"),
     error: capture("error"),

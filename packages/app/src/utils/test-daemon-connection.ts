@@ -30,6 +30,7 @@ export interface DaemonProbeClient {
 }
 
 export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient> {
+  createLogger: typeof createHostLogger;
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
@@ -38,6 +39,7 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
 }
 
 const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonClient> = {
+  createLogger: createHostLogger,
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createDesktopTransportFactory: createDesktopDaemonTransportFactory,
@@ -158,7 +160,6 @@ export async function buildClientConfig(
     clientType: "mobile" as const,
     appVersion: deps.resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
-    logger: createHostLogger(serverId),
     webSocketFactory: createAppWebSocketFactory(),
     reconnect: { enabled: false },
     ...resolveConnectionCredentials(connection, options),
@@ -319,5 +320,9 @@ export async function connectToDaemon(
   deps: DaemonConnectionDependencies<DaemonProbeClient> = defaultDaemonConnectionDependencies,
 ): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
   const config = await buildClientConfig(connection, options?.serverId, options, deps);
-  return connectAndProbe(config, resolveTimeout(connection, options), deps);
+  let serverId = options?.serverId;
+  config.logger = deps.createLogger(() => serverId);
+  const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
+  serverId = result.serverId;
+  return result;
 }

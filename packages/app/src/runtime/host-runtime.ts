@@ -590,7 +590,7 @@ function createDefaultDeps(
         runtimeGeneration,
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
-        logger: createHostLogger(host.serverId),
+        logger: createHostLogger(() => host.serverId),
         providerSnapshots: "wire",
         createPluginClientBundleStore: createHostPluginClientBundleStore,
         ...(host.password ? { password: host.password } : {}),
@@ -671,7 +671,7 @@ function createDefaultDeps(
             null,
           ),
           reconnect: { enabled: false },
-          logger: createHostLogger(host.serverId),
+          logger: createHostLogger(() => host.serverId),
           appVersion: resolveAppVersion() ?? undefined,
           createPluginClientBundleStore: createHostPluginClientBundleStore,
         });
