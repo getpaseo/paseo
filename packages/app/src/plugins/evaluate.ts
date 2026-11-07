@@ -40,7 +40,7 @@ import type {
 } from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
-import { parsePluginThemeContribution } from "./themes";
+import { parsePluginThemeContribution } from "./themes/palette";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
