@@ -5,6 +5,7 @@ import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
@@ -325,4 +326,28 @@ describe("VoiceSession streaming transcription", () => {
 
     await voiceSession.cleanup();
   });
+});
+
+test("voice enable reloads with resume + rehydrate, preserving history (#7212)", async () => {
+  const { voiceSession, host } = createVoiceSession();
+  const reloadOptions: unknown[] = [];
+  const innerReload = host.reloadAgentSession;
+  host.reloadAgentSession = (async (
+    agentId: string,
+    overrides: Partial<AgentSessionConfig>,
+    options?: { rehydrateFromDisk?: boolean },
+  ) => {
+    reloadOptions.push(options);
+    return innerReload(agentId, overrides);
+  }) as FakeVoiceHost["reloadAgentSession"];
+  try {
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    expect(reloadOptions).toHaveLength(1);
+    expect(reloadOptions[0]).toMatchObject({
+      rehydrateFromDisk: true,
+    });
+    expect(reloadOptions[0]).not.toHaveProperty("freshProviderSession");
+  } finally {
+    await voiceSession.cleanup();
+  }
 });
