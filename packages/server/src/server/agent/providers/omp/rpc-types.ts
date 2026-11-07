@@ -146,6 +146,33 @@ const OmpContextUsageSchema = z
   })
   .passthrough();
 
+export const OmpGoalSchema = z
+  .object({
+    id: z.string().optional(),
+    objective: z.string().optional(),
+    status: z.string().optional(),
+    tokenBudget: z.number().optional(),
+    tokensUsed: z.number().optional(),
+    timeUsedSeconds: z.number().optional(),
+    createdAt: z.union([z.number(), z.string()]).optional(),
+    updatedAt: z.union([z.number(), z.string()]).optional(),
+  })
+  .passthrough();
+export const OmpGoalModeStateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    mode: z.string().optional(),
+    reason: z.string().optional(),
+    goal: OmpGoalSchema.nullable().optional(),
+  })
+  .passthrough();
+export const OmpGoalRpcResultSchema = z
+  .object({
+    goal: OmpGoalSchema.nullable().optional(),
+    state: OmpGoalModeStateSchema.nullable().optional(),
+  })
+  .passthrough();
+
 export const OmpSessionStateSchema = z
   .object({
     model: OmpModelSchema.nullable().optional(),
@@ -164,6 +191,9 @@ export const OmpSessionStateSchema = z
     queuedMessageCount: z.number().int().nonnegative(),
     contextUsage: OmpContextUsageSchema.optional(),
     todoPhases: z.unknown().optional(),
+    goal: OmpGoalModeStateSchema.nullable().optional(),
+    isSettled: z.boolean().optional(),
+    hasPendingAsyncWork: z.boolean().optional(),
   })
   .passthrough();
 
@@ -380,31 +410,11 @@ export const OmpNoticeEventSchema = z
     source: z.string().optional(),
   })
   .passthrough();
-export const OmpGoalSchema = z
-  .object({
-    id: z.string().optional(),
-    objective: z.string().optional(),
-    status: z.string().optional(),
-    tokenBudget: z.number().optional(),
-    tokensUsed: z.number().optional(),
-    timeUsedSeconds: z.number().optional(),
-    createdAt: z.string().optional(),
-    updatedAt: z.string().optional(),
-  })
-  .passthrough();
-export const OmpGoalModeStateSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    mode: z.string().optional(),
-    reason: z.string().optional(),
-    goal: OmpGoalSchema.optional(),
-  })
-  .passthrough();
 export const OmpGoalUpdatedEventSchema = z
   .object({
     type: z.literal("goal_updated"),
     goal: OmpGoalSchema.nullable().optional(),
-    state: OmpGoalModeStateSchema.optional(),
+    state: OmpGoalModeStateSchema.nullable().optional(),
   })
   .passthrough();
 export const OmpAutoRetryStartEventSchema = z
@@ -506,6 +516,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       type: z.literal("prompt_result"),
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
+      sessionSettled: z.boolean().optional(),
       status: z.string().optional(),
       error: z.object({ message: z.string() }).passthrough().optional(),
     })
@@ -517,6 +528,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpTodoReminderEventSchema,
   OmpNoticeEventSchema,
   OmpGoalUpdatedEventSchema,
+  z.object({ type: z.literal("session_settled") }).passthrough(),
   OmpAutoRetryStartEventSchema,
   OmpAutoRetryEndEventSchema,
   OmpRetryFallbackAppliedEventSchema,
@@ -547,6 +559,13 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("goal"),
+    op: z.enum(["get", "create", "pause", "resume", "drop"]),
+    objective: z.string().optional(),
+    token_budget: z.number().int().positive().optional(),
+  }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("steer"),
@@ -592,6 +611,7 @@ export const OmpPromptAckSchema = z
   .object({ agentInvoked: z.boolean().optional() })
   .passthrough()
   .optional();
+export const OmpGoalRpcOperationSchema = z.enum(["get", "create", "pause", "resume", "drop"]);
 export const OmpMessagesResultSchema = z
   .object({ messages: z.array(OmpAgentMessageSchema).optional() })
   .passthrough();
@@ -673,6 +693,9 @@ export type OmpTodoPhase = z.infer<typeof OmpTodoPhaseSchema>;
 export type OmpTodoReminderEvent = z.infer<typeof OmpTodoReminderEventSchema>;
 export type OmpNoticeEvent = z.infer<typeof OmpNoticeEventSchema>;
 export type OmpGoal = z.infer<typeof OmpGoalSchema>;
+export type OmpGoalModeState = z.infer<typeof OmpGoalModeStateSchema>;
+export type OmpGoalRpcResult = z.infer<typeof OmpGoalRpcResultSchema>;
+export type OmpGoalRpcOperation = z.infer<typeof OmpGoalRpcOperationSchema>;
 export type OmpGoalUpdatedEvent = z.infer<typeof OmpGoalUpdatedEventSchema>;
 export type OmpAutoRetryStartEvent = z.infer<typeof OmpAutoRetryStartEventSchema>;
 export type OmpAutoRetryEndEvent = z.infer<typeof OmpAutoRetryEndEventSchema>;
