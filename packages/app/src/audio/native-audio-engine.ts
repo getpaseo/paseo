@@ -5,6 +5,7 @@ import type {
   AudioPlaybackSource,
 } from "./audio-engine-types";
 
+import { createNativeEngineLease, type NativeEngineLease } from "./native-engine-lease";
 import { createPlaybackQueue } from "./playback";
 import { playPcm16 } from "./pcm";
 
@@ -51,12 +52,27 @@ export interface NativeAudioEngineDeps {
   ): Promise<number>;
 }
 
+// Voice mode and dictation each create an engine, but the native module holds a single engine
+// per app. Every JS engine on the same module shares one lease, so one engine's teardown
+// cannot free the native engine another still uses (#4147).
+const leases = new WeakMap<TwoWayAudioModule, NativeEngineLease>();
+
+function leaseFor(native: TwoWayAudioModule): NativeEngineLease {
+  let lease = leases.get(native);
+  if (!lease) {
+    lease = createNativeEngineLease(native);
+    leases.set(native, lease);
+  }
+  return lease;
+}
+
 export function createNativeAudioEngine(
   deps: NativeAudioEngineDeps,
   callbacks: AudioEngineCallbacks,
   options?: AudioEngineOptions,
 ): AudioEngine {
   const { native } = deps;
+  const lease = leaseFor(native);
 
   const refs: {
     initialized: boolean;
@@ -112,15 +128,24 @@ export function createNativeAudioEngine(
     },
   );
 
+  let initializing: Promise<void> | null = null;
   async function ensureInitialized(): Promise<void> {
     if (refs.initialized) {
       return;
     }
-    const success = await native.initialize();
-    if (!success) {
-      throw new Error("expo-two-way-audio: native initialize() returned false");
-    }
-    refs.initialized = true;
+    initializing ??= (async () => {
+      try {
+        await lease.acquire();
+        if (refs.destroyed) {
+          lease.release();
+          return;
+        }
+        refs.initialized = true;
+      } finally {
+        initializing = null;
+      }
+    })();
+    await initializing;
   }
 
   /**
@@ -183,8 +208,8 @@ export function createNativeAudioEngine(
       refs.muted = false;
       callbacks.onVolumeLevel(0);
       if (refs.initialized) {
-        native.tearDown();
         refs.initialized = false;
+        lease.release();
       }
       microphoneSubscription.remove();
       volumeSubscription.remove();
@@ -205,7 +230,7 @@ export function createNativeAudioEngine(
             : native.toggleRecording(true);
         if (!isRecording) {
           throw new Error(
-            "Microphone capture could not start because Android audio focus is unavailable.",
+            "Microphone capture could not start. Another app may be using the microphone.",
           );
         }
         refs.captureActive = true;
