@@ -50,6 +50,11 @@ async function isDirectory(target: string): Promise<boolean> {
 let tmpDir: string;
 let gitRoots: Set<string>;
 let gitBranches: Map<string, string | null>;
+// Linked worktree root → its main checkout root, as `git worktree add` produces.
+let linkedWorktreeMainRoots: Map<string, string>;
+// Root → the path git prints for it. Git resolves symlinks, so a root opened through
+// /tmp on macOS comes back as /private/tmp.
+let gitReportedRoots: Map<string, string>;
 let checkoutFailure: Error | null;
 let restoredMergedChangeRequestUrl: string | null;
 let workspaceRegistry: FileBackedWorkspaceRegistry;
@@ -93,9 +98,9 @@ function gitService() {
         isGit: worktreeRoot !== null,
         currentBranch: worktreeRoot ? (gitBranches.get(worktreeRoot) ?? "main") : null,
         remoteUrl: null,
-        worktreeRoot,
+        worktreeRoot: worktreeRoot ? (gitReportedRoots.get(worktreeRoot) ?? worktreeRoot) : null,
         isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
+        mainRepoRoot: worktreeRoot ? (linkedWorktreeMainRoots.get(worktreeRoot) ?? null) : null,
       };
     },
   });
@@ -105,6 +110,8 @@ beforeEach(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), "workspace-provisioning-"));
   gitRoots = new Set();
   gitBranches = new Map();
+  linkedWorktreeMainRoots = new Map();
+  gitReportedRoots = new Map();
   checkoutFailure = null;
   restoredMergedChangeRequestUrl = null;
   workspaceRegistry = new FileBackedWorkspaceRegistry(
@@ -789,6 +796,70 @@ test("createWorkspaceForDirectory classifies unknown and archived explicit proje
   ).rejects.toMatchObject({
     code: "archived_project",
   } satisfies Partial<WorkspaceProvisioningError>);
+});
+
+test("opening a linked worktree root places it in the main checkout's active project", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const linked = path.join(tmpDir, "repo-linked");
+  gitRoots.add(repo);
+  gitRoots.add(linked);
+  linkedWorktreeMainRoots.set(linked, repo);
+
+  const main = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  const worktree = await provisioning.findOrCreateWorkspaceForDirectory(linked);
+
+  expect(worktree.workspaceId).not.toBe(main.workspaceId);
+  expect(worktree.cwd).toBe(linked);
+  expect(worktree.projectId).toBe(main.projectId);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("a linked worktree opened through a symlinked path joins the main checkout's project", async () => {
+  const realRoot = path.join(tmpDir, "real");
+  const linkRoot = path.join(tmpDir, "link");
+  mkdirSync(path.join(realRoot, "repo"), { recursive: true });
+  mkdirSync(path.join(realRoot, "repo-linked"), { recursive: true });
+  symlinkSync(realRoot, linkRoot, directorySymlinkType);
+  const repo = path.join(linkRoot, "repo");
+  const linked = path.join(linkRoot, "repo-linked");
+  gitRoots.add(repo);
+  gitRoots.add(linked);
+  gitReportedRoots.set(linked, path.join(realRoot, "repo-linked"));
+  linkedWorktreeMainRoots.set(linked, path.join(realRoot, "repo"));
+
+  const main = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  const worktree = await provisioning.findOrCreateWorkspaceForDirectory(linked);
+
+  expect(worktree.cwd).toBe(linked);
+  expect(worktree.projectId).toBe(main.projectId);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("a linked worktree keeps its own project when its main checkout has none", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const linked = path.join(tmpDir, "repo-linked");
+  gitRoots.add(repo);
+  gitRoots.add(linked);
+  linkedWorktreeMainRoots.set(linked, repo);
+
+  const project = await provisioning.findOrCreateProjectForDirectory(linked);
+
+  expect(project.rootPath).toBe(linked);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("a subdirectory of a linked worktree stays an independent project", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const linked = path.join(tmpDir, "repo-linked");
+  gitRoots.add(repo);
+  gitRoots.add(linked);
+  linkedWorktreeMainRoots.set(linked, repo);
+
+  const main = await provisioning.findOrCreateProjectForDirectory(repo);
+  const nested = await provisioning.findOrCreateProjectForDirectory(path.join(linked, "sub"));
+
+  expect(nested.projectId).not.toBe(main.projectId);
+  expect(nested.rootPath).toBe(path.join(linked, "sub"));
 });
 
 test("findOrCreateProjectForDirectory keeps nested selected roots independent", async () => {

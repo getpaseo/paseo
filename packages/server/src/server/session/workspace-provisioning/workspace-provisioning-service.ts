@@ -201,9 +201,38 @@ export function createWorkspaceProvisioningService(deps: {
     }
   }
 
+  // A linked worktree opened by path belongs with its main checkout, the same way worktrees
+  // Paseo creates attach to their source project. Subdirectories stay independent.
+  async function findActiveMainCheckoutProject(input: {
+    rootPath: string;
+    worktreeRoot: string | null;
+    mainRepoRoot: string | null;
+  }): Promise<PersistedProjectRecord | null> {
+    const { rootPath, worktreeRoot, mainRepoRoot } = input;
+    // Git reports real paths (/private/tmp on macOS) while callers open the path they typed.
+    if (!mainRepoRoot || !worktreeRoot || !createRealpathAwarePathMatcher(rootPath)(worktreeRoot)) {
+      return null;
+    }
+    const isMainCheckoutRoot = createRealpathAwarePathMatcher(mainRepoRoot);
+    const candidates = (await projectRegistry.list())
+      .filter((project) => !project.archivedAt && isMainCheckoutRoot(project.rootPath))
+      .sort(
+        (left, right) =>
+          Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+          left.projectId.localeCompare(right.projectId),
+      );
+    return candidates[0] ?? null;
+  }
+
   async function findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(rootPath);
+    const mainCheckoutProject = await findActiveMainCheckoutProject({
+      rootPath,
+      worktreeRoot: checkout.worktreeRoot,
+      mainRepoRoot: checkout.mainRepoRoot,
+    });
+    if (mainCheckoutProject) return mainCheckoutProject;
     const timestamp = new Date().toISOString();
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
