@@ -111,6 +111,7 @@ function createDeferredRunner(): TestRunner {
 interface FakeGitHubCliFixture {
   cwd: string;
   logPath: string;
+  createRepository: (remoteUrl: string) => string;
   dispose: () => void;
 }
 
@@ -118,6 +119,7 @@ function createFakeGitHubCliFixture(input: {
   remoteUrl: string;
   authStatusSucceeds?: boolean;
   authStatusMode?: "success" | "unauthenticated" | "transient-once";
+  sshHostname?: string;
 }): FakeGitHubCliFixture {
   const previousPath = process.env.PATH;
   const previousLog = process.env.GH_TEST_LOG;
@@ -176,11 +178,27 @@ exit 1
 `,
   );
   chmodSync(ghPath, 0o755);
+  if (input.sshHostname) {
+    const sshPath = join(binDir, "ssh");
+    writeFileSync(
+      sshPath,
+      `#!/bin/sh\nprintf 'hostname %s\\n' ${JSON.stringify(input.sshHostname)}\n`,
+    );
+    chmodSync(sshPath, 0o755);
+  }
   process.env.PATH = [binDir, previousPath].filter(Boolean).join(delimiter);
   process.env.GH_TEST_LOG = logPath;
   return {
     cwd: repoDir,
     logPath,
+    createRepository: (remoteUrl) => {
+      const cwd = mkdtempSync(join(tempDir, "repo-"));
+      execFileSync("git", ["init", cwd], { stdio: "pipe" });
+      execFileSync("git", ["-C", cwd, "remote", "add", "origin", remoteUrl], {
+        stdio: "pipe",
+      });
+      return cwd;
+    },
     dispose: () => {
       if (previousPath === undefined) {
         delete process.env.PATH;
@@ -1162,6 +1180,292 @@ describe("ForgeService", () => {
     subscriptionA?.unsubscribe();
     subscriptionB?.unsubscribe();
     service.dispose?.();
+  });
+
+  it.skipIf(isPlatform("win32")).each([
+    {
+      transport: "HTTPS",
+      remoteA: "https://code.acme.internal/acme/widgets.git",
+      remoteB: "https://code.acme.internal/acme/gadgets.git",
+      sshHostname: undefined,
+    },
+    {
+      transport: "SSH alias",
+      remoteA: "git@paseo-enterprise-batch-alias:acme/widgets.git",
+      remoteB: "ssh://git@paseo-enterprise-batch-alias/acme/gadgets.git",
+      sshHostname: "code.acme.internal",
+    },
+  ])(
+    "batches multiple $transport Enterprise targets with default repository resolvers",
+    async ({ remoteA, remoteB, sshHostname }) => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: remoteA,
+        authStatusSucceeds: true,
+        sshHostname,
+      });
+      const cwdB = fixture.createRepository(remoteB);
+      const runner = createScriptedRunner([
+        batchPollStatusJson({
+          t0: batchPollRepositoryJson([
+            batchPollPrNodeJson({
+              number: 41,
+              url: "https://code.acme.internal/acme/widgets/pull/41",
+              headRefOid: "oid-a",
+            }),
+          ]),
+          t1: batchPollRepositoryJson([
+            batchPollPrNodeJson({
+              number: 52,
+              url: "https://code.acme.internal/acme/gadgets/pull/52",
+              headRefName: "feat-b",
+              headRefOid: "oid-b",
+            }),
+          ]),
+        }),
+        batchPollStatusJson({
+          t0: batchPollChecksAliasJson([]),
+          t1: batchPollChecksAliasJson([]),
+        }),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+      const statusesA: Array<CurrentPullRequestStatus | null> = [];
+      const statusesB: Array<CurrentPullRequestStatus | null> = [];
+      let resolveStatusA!: () => void;
+      let resolveStatusB!: () => void;
+      const statusA = new Promise<void>((resolve) => {
+        resolveStatusA = resolve;
+      });
+      const statusB = new Promise<void>((resolve) => {
+        resolveStatusB = resolve;
+      });
+      try {
+        service.retainCurrentPullRequestStatusPoll?.({
+          cwd: fixture.cwd,
+          headRef: "feat-a",
+          headSha: "oid-a",
+          onStatus: (status) => {
+            statusesA.push(status);
+            resolveStatusA();
+          },
+        });
+        service.retainCurrentPullRequestStatusPoll?.({
+          cwd: cwdB,
+          headRef: "feat-b",
+          headSha: "oid-b",
+          onStatus: (status) => {
+            statusesB.push(status);
+            resolveStatusB();
+          },
+        });
+        await Promise.all([statusA, statusB]);
+
+        const batchCalls = runner.calls.filter((call) => call.args[1] === "graphql");
+        expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+        expect(batchCalls).toHaveLength(2);
+        expect(batchCalls[0]?.args[3]).toContain('repository(owner: "acme", name: "widgets")');
+        expect(batchCalls[0]?.args[3]).toContain('repository(owner: "acme", name: "gadgets")');
+        expect(batchCalls[1]?.args[3]).toContain("pullRequest(number: 41)");
+        expect(batchCalls[1]?.args[3]).toContain("pullRequest(number: 52)");
+        for (const call of batchCalls) {
+          expect(call.args.slice(-2)).toEqual(["--hostname", "code.acme.internal"]);
+        }
+        expect(statusesA).toEqual([expect.objectContaining({ number: 41 })]);
+        expect(statusesB).toEqual([expect.objectContaining({ number: 52 })]);
+        expect(readFakeGitHubCliLog(fixture.logPath)).toContain(
+          "auth status --hostname code.acme.internal|",
+        );
+      } finally {
+        service.dispose?.();
+        fixture.dispose();
+      }
+    },
+    15_000,
+  );
+
+  it.skipIf(isPlatform("win32"))(
+    "rejects unauthenticated Enterprise reads before any API call",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://enterprise.example/acme/repo.git",
+        authStatusSucceeds: false,
+      });
+      const runner = createRunner([]);
+      const service = createGitHubService({ runner: runner.runner });
+      try {
+        await expect(
+          service.getCurrentPullRequestStatus({ cwd: fixture.cwd, headRef: "feature" }),
+        ).rejects.toBeInstanceOf(GitHubAuthenticationError);
+        expect(runner.calls).toEqual([]);
+      } finally {
+        service.dispose?.();
+        fixture.dispose();
+      }
+    },
+  );
+
+  it("isolates discovery and checks batches by explicit cloud and Enterprise host", async () => {
+    const repositories = [
+      { cwd: "/ws-cloud", host: null, name: "cloud-widgets", number: 41 },
+      { cwd: "/ws-a", host: "code.a.internal", name: "a-widgets", number: 52 },
+      { cwd: "/ws-b", host: "code.b.internal", name: "b-widgets", number: 63 },
+    ];
+    const calls: RunnerCall[] = [];
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const service = createGitHubService({
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => repositories.find((repo) => repo.cwd === cwd)?.host ?? null,
+      resolveRepoSlug: async (cwd) => {
+        const repository = repositories.find((repo) => repo.cwd === cwd);
+        return repository ? `acme/${repository.name}` : null;
+      },
+      now: () => 0,
+      runner: async (args, options) => {
+        calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+        const repository = repositories.find((repo) => repo.cwd === options.cwd);
+        if (!repository) {
+          throw new Error(`Unexpected batch cwd: ${options.cwd}`);
+        }
+        if (args[3]?.includes("pullRequest(number:")) {
+          return { stdout: batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }), stderr: "" };
+        }
+        const host = repository.host ?? "github.com";
+        return {
+          stdout: batchPollStatusJson({
+            t0: batchPollRepositoryJson([
+              batchPollPrNodeJson({
+                number: repository.number,
+                url: `https://${host}/acme/${repository.name}/pull/${repository.number}`,
+              }),
+            ]),
+          }),
+          stderr: "",
+        };
+      },
+    });
+    try {
+      for (const repository of repositories) {
+        service.retainCurrentPullRequestStatusPoll?.({
+          cwd: repository.cwd,
+          headRef: "feat-a",
+          headSha: "oid-42",
+          onStatus: (status) => statuses.push(status),
+        });
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+
+      expect(currentPullRequestStatusCalls(calls)).toHaveLength(0);
+      expect(calls).toHaveLength(6);
+      expect(statuses).toHaveLength(3);
+      for (const repository of repositories) {
+        const host = repository.host ?? "github.com";
+        const hostCalls = calls.filter((call) => call.cwd === repository.cwd);
+        expect(hostCalls).toHaveLength(2);
+        for (const call of hostCalls) {
+          expect(call.args.slice(-2)).toEqual(["--hostname", host]);
+          for (const other of repositories.filter((repo) => repo !== repository)) {
+            expect(call.args[3]).not.toContain(`name: "${other.name}"`);
+          }
+        }
+        expect(hostCalls[0]?.args[3]).toContain(
+          `repository(owner: "acme", name: "${repository.name}")`,
+        );
+        expect(hostCalls[1]?.args[3]).toContain(`pullRequest(number: ${repository.number})`);
+        expect(statuses).toContainEqual(
+          expect.objectContaining({
+            number: repository.number,
+            url: `https://${host}/acme/${repository.name}/pull/${repository.number}`,
+          }),
+        );
+      }
+    } finally {
+      service.dispose?.();
+    }
+  });
+
+  it("keeps frozen checks separate for identical PR identities on different Enterprise hosts", async () => {
+    let now = 0;
+    const discoveryA = batchPollStatusJson({
+      t0: batchPollRepositoryJson([
+        batchPollPrNodeJson({ url: "https://code.a.internal/acme/widgets/pull/42" }),
+      ]),
+    });
+    const discoveryB = batchPollStatusJson({
+      t0: batchPollRepositoryJson([
+        batchPollPrNodeJson({ url: "https://code.b.internal/acme/widgets/pull/42" }),
+      ]),
+    });
+    const runner = createScriptedRunner([
+      discoveryA,
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+      discoveryB,
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "FAILURE" },
+        ]),
+      }),
+      discoveryA,
+      discoveryB,
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/ws-a" ? "code.a.internal" : "code.b.internal"),
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statusesA: Array<CurrentPullRequestStatus | null> = [];
+    const statusesB: Array<CurrentPullRequestStatus | null> = [];
+    try {
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/ws-a",
+        headRef: "feat-a",
+        headSha: "oid-42",
+        onStatus: (status) => statusesA.push(status),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/ws-b",
+        headRef: "feat-a",
+        headSha: "oid-42",
+        onStatus: (status) => statusesB.push(status),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+
+      expect(runner.calls).toHaveLength(4);
+      expect(runner.calls[3]?.args.slice(-2)).toEqual(["--hostname", "code.b.internal"]);
+      expect(statusesA).toEqual([expect.objectContaining({ checksStatus: "success" })]);
+      expect(statusesB).toEqual([expect.objectContaining({ checksStatus: "failure" })]);
+
+      now = EXPECTED_GITHUB_SLOW_POLL_MS;
+      await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+      await flushMicrotasks();
+
+      expect(runner.calls).toHaveLength(6);
+      expect(runner.calls[4]?.args[3]).not.toContain("pullRequest(number:");
+      expect(runner.calls[5]?.args[3]).not.toContain("pullRequest(number:");
+      expect(statusesA).toEqual([
+        expect.objectContaining({ checksStatus: "success" }),
+        expect.objectContaining({ checksStatus: "success" }),
+      ]);
+      expect(statusesB).toEqual([
+        expect.objectContaining({ checksStatus: "failure" }),
+        expect.objectContaining({ checksStatus: "failure" }),
+      ]);
+    } finally {
+      service.dispose?.();
+    }
   });
 
   it("batches the first PR status poll after repository identity resolves", async () => {
@@ -4765,11 +5069,42 @@ describe("ForgeService", () => {
         expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
           expect.arrayContaining([
             "auth status --hostname github.acme.internal|",
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
       } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.skipIf(isPlatform("win32"))(
+    "keeps nested Enterprise remote paths on the repository lookup fallback",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://code.acme.internal/group/acme/repo.git",
+        authStatusSucceeds: true,
+      });
+      const service = createGitHubService();
+      try {
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).resolves.toEqual({
+          url: "https://github.acme.internal/acme/repo/pull/7",
+          number: 7,
+        });
+
+        expect(readFakeGitHubCliLog(fixture.logPath).join("\n")).toMatch(
+          /repos\/acme\/repo\/pulls\b.*\|code\.acme\.internal/,
+        );
+      } finally {
+        service.dispose?.();
         fixture.dispose();
       }
     },
@@ -4810,7 +5145,6 @@ describe("ForgeService", () => {
         ).toHaveLength(2);
         expect(log).toEqual(
           expect.arrayContaining([
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
