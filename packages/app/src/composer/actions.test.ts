@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MessageReceipts } from "../../../server/src/server/message-receipts/index";
+import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { useSessionStore } from "@/stores/session-store";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -1184,4 +1189,114 @@ describe("file upload preparation", () => {
       expect(sends).toBe(0);
     },
   );
+});
+
+const directories: string[] = [];
+afterEach(async () => {
+  useSessionStore.getState().clearSession("retry-test");
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+async function reproduceQueuedRetry(canonicalBeforeTimeout: boolean) {
+  await mkdir(".artifacts", { recursive: true });
+  const directory = await mkdtemp(path.resolve(".artifacts/receipts-"));
+  directories.push(directory);
+  const receipts = new MessageReceipts(directory);
+  const store = useSessionStore.getState();
+  store.initializeSession("retry-test", null!);
+  store.updateSessionServerInfo("retry-test", {
+    serverId: "retry-test",
+    hostname: null,
+    version: "0.15.3",
+    features: { canonicalSubmittedPrompts: true },
+  });
+  let deliveries = 0;
+  const ids: string[] = [];
+  let calls = 0;
+  const client: ComposerSendClient = {
+    uploadFile: async () => ({ requestId: "unused", file: null, error: "unused" }),
+    sendAgentMessage: async (agentId, text, options) => {
+      calls++;
+      ids.push(options.messageId);
+      await receipts.send({
+        agentId,
+        messageId: options.messageId,
+        request: { text },
+        send: async () => {
+          deliveries++;
+        },
+      });
+      if (calls === 1) {
+        if (canonicalBeforeTimeout) {
+          store.setAgentStreamState("retry-test", agentId, {
+            tail: [
+              {
+                kind: "user_message",
+                id: "canonical",
+                messageId: options.messageId,
+                clientMessageId: options.messageId,
+                text,
+                timestamp: new Date(),
+              },
+            ],
+            acknowledgedClientMessageIds: [options.messageId],
+          });
+        }
+        throw new Error("Timeout waiting for message (60000ms)");
+      }
+    },
+  };
+  store.setQueuedMessages(
+    "retry-test",
+    new Map([["agent", [{ id: "queued-original", text: "run once", attachments: [] }]]]),
+  );
+  const queue = {
+    read: (agentId: string) =>
+      useSessionStore.getState().sessions["retry-test"]?.queuedMessages.get(agentId) ?? [],
+    write: (
+      update: (
+        previous: Map<string, QueuedComposerMessage[]>,
+      ) => Map<string, QueuedComposerMessage[]>,
+    ) => store.setQueuedMessages("retry-test", update),
+  };
+  const submitMessage = (item: {
+    messageId?: string;
+    text: string;
+    attachments: ComposerAttachment[];
+  }) =>
+    dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      clientMessageId: item.messageId,
+      text: item.text,
+      attachments: item.attachments,
+      encodeImages: async () => undefined,
+      submission: createMessageSubmissionWriter("retry-test"),
+    });
+  const attempt = () =>
+    sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: "queued-original",
+      queue,
+      submitMessage,
+    });
+  const first = await attempt();
+  expect(first.status).toBe("failed");
+  const second = await attempt();
+  return { first, second, deliveries, ids };
+}
+
+it("retry after accepted request and lost response executes the queued prompt once", async () => {
+  const result = await reproduceQueuedRetry(false);
+  expect(result.second.status).toBe("submitted");
+  expect(result.deliveries).toBe(1);
+  expect(result.ids).toEqual(["queued-original", "queued-original"]);
+});
+
+it("retry after canonical message and lost response succeeds without a second execution", async () => {
+  const result = await reproduceQueuedRetry(true);
+  expect(result.second).toEqual({ status: "submitted" });
+  expect(result.deliveries).toBe(1);
 });
