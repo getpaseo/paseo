@@ -619,6 +619,15 @@ describe("discovery", () => {
       },
     ]);
   });
+  // `agy models` takes ~16 s on a Raspberry Pi 5; 11 s is past the former 10 s probe limit.
+  it("waits for a slow `agy models` instead of reporting discovery timed out", async () => {
+    const h = await harness({ AGY_TEST_MODELS_DELAY_MS: "11000" });
+    await h.connection.send({ type: "catalog", requestId: "slow-catalog" });
+    const response = () =>
+      h.events.find((event) => "requestId" in event && event.requestId === "slow-catalog");
+    await expect.poll(response, { timeout: 25_000, interval: 100 }).toBeTruthy();
+    expect(response()).toMatchObject({ type: "catalog" });
+  }, 30_000);
   it("reports missing, old, unauthenticated and available launches", async () => {
     expect(await provider.status?.({})).toMatchObject({
       available: false,

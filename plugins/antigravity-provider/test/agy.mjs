@@ -23,6 +23,8 @@ if (args.includes("models")) {
     process.stderr.write(fixture("models-unauthenticated", "stderr").join("\n"));
     process.exit(1);
   }
+  const delay = Number(process.env.AGY_TEST_MODELS_DELAY_MS || 0);
+  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
   process.stdout.write(fixture("models-api-key").join("\n") + "\n");
   process.exit(0);
 }
