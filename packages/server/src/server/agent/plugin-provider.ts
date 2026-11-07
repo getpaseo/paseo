@@ -1394,7 +1394,11 @@ class PluginAgentSession implements AgentSession {
 
   describePersistence(): AgentPersistenceHandle | null {
     return this.bridge.persistence
-      ? persistenceHandle(this.provider, this.bridge.persistence, this.notices)
+      ? persistenceHandle({
+          provider: this.provider,
+          persistence: this.bridge.persistence,
+          notices: this.notices,
+        })
       : null;
   }
 
@@ -1520,7 +1524,10 @@ class PluginAgentSession implements AgentSession {
     notice: Extract<ProviderEvent, { type: "session.notice" }>["notice"],
   ): void {
     if (notice.dismissed) return;
-    const id = normalizeSessionNoticeId(notice.id, this.bridge.providerId);
+    const id = normalizeSessionNoticeId({
+      id: notice.id,
+      providerSessionId: this.bridge.providerId,
+    });
     const level = notice.severity;
     const message = [notice.title, notice.description].filter(Boolean).join("\n");
     const existing = this.notices.findLast((entry) => entry.id === id);
@@ -2001,14 +2008,7 @@ function rememberRevertToken(
   }
 }
 
-interface PersistedPluginNotice {
-  id: string;
-  level: "info" | "warning" | "error";
-  message: string;
-  timestamp: string;
-}
-
-const PersistedPluginNoticesSchema: z.ZodType<PersistedPluginNotice[]> = z.array(
+const PersistedPluginNoticesSchema = z.array(
   z.object({
     id: z.string().min(1),
     level: z.enum(["info", "warning", "error"]),
@@ -2017,11 +2017,14 @@ const PersistedPluginNoticesSchema: z.ZodType<PersistedPluginNotice[]> = z.array
   }),
 );
 
+type PersistedPluginNotice = z.infer<typeof PersistedPluginNoticesSchema>[number];
+
 function decodePluginSessionNotices(handle?: AgentPersistenceHandle): PersistedPluginNotice[] {
   return PersistedPluginNoticesSchema.parse(handle?.metadata?.pluginSessionNotices ?? []);
 }
 
-function normalizeSessionNoticeId(id: string, providerSessionId: string): string {
+function normalizeSessionNoticeId(input: { id: string; providerSessionId: string }): string {
+  const { id, providerSessionId } = input;
   const prefix = `${providerSessionId}:`;
   return id.startsWith(prefix) && id.length > prefix.length ? id.slice(prefix.length) : id;
 }
@@ -2037,11 +2040,12 @@ function toNoticeTimelineEntry(notice: PersistedPluginNotice): ImportedTimelineE
   };
 }
 
-function persistenceHandle(
-  provider: string,
-  persistence: ProviderPersistence,
-  notices: readonly PersistedPluginNotice[],
-): AgentPersistenceHandle {
+function persistenceHandle(input: {
+  provider: string;
+  persistence: ProviderPersistence;
+  notices: readonly PersistedPluginNotice[];
+}): AgentPersistenceHandle {
+  const { provider, persistence, notices } = input;
   return {
     provider,
     sessionId: encodePersistence(persistence),
