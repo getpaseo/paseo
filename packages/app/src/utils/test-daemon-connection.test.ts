@@ -76,6 +76,20 @@ describe("test-daemon-connection connectToDaemon", () => {
     probe = new FakeDaemonProbe();
   });
 
+  it("supplies the host logger to probe clients that can become the active connection", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const result = await connectToDaemon(
+      { id: "direct:test", type: "directTcp", endpoint: "localhost:6767" },
+      { serverId: "srv_probe_test" },
+      probe.deps,
+    );
+    try {
+      expect(result.client.config.logger).toBeDefined();
+    } finally {
+      await result.client.close();
+    }
+  });
+
   it.each([
     { id: "direct:lan:6767", type: "directTcp" as const, endpoint: "lan:6767" },
     {

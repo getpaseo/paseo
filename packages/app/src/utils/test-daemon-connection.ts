@@ -7,6 +7,7 @@ import {
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import type { HostConnection } from "@/types/host-connection";
 import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
+import { createHostLogger } from "@/runtime/host-logger";
 import { getOrCreateClientId } from "./client-id";
 import { resolveAppVersion } from "./app-version";
 import {
@@ -157,6 +158,7 @@ export async function buildClientConfig(
     clientType: "mobile" as const,
     appVersion: deps.resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
+    logger: createHostLogger(serverId),
     webSocketFactory: createAppWebSocketFactory(),
     reconnect: { enabled: false },
     ...resolveConnectionCredentials(connection, options),
