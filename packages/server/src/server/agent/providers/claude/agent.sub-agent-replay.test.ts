@@ -648,6 +648,23 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       );
     }
 
+    test("cancels a background child from a task-id-only stopped notification on reopen", async () => {
+      const text = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<status>stopped</status>\n<summary>Background agent didn't finish before the previous session ended</summary>\n</task-notification>`;
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          JSON.stringify({ type: "queue-operation", operation: "enqueue", content: text }),
+          JSON.stringify({ type: "user", message: { role: "user", content: text } }),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "tool_use" })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "canceled",
+      });
+    });
+
     test("prefers a stopped notification over the child's end_turn", async () => {
       writeSession({
         parentLines: [...backgroundLaunch(), taskNotification("stopped")],
