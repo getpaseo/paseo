@@ -550,6 +550,7 @@ test("loads complete long turns and preserves expansion while revealing older hi
     await page.getByTestId("scroll-to-bottom-button").click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
     history.expectNoRepeatedEntries();
+    await scrollTimelineRowIntoView(page, latest);
     await latest.click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
   } finally {

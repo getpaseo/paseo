@@ -1012,9 +1012,6 @@ function ChatAgentContent({
       effectiveAgent={effectiveAgent}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-      shouldHoldInitialFill={
-        routeBottomAnchorRequest?.reason === "initial-entry" && replicaTimelineStatus !== "painted"
-      }
       hasCachedHistory={replicaTimelineStatus === "painted"}
       toastApi={toastApi}
       toast={toastState}
@@ -1047,7 +1044,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   effectiveAgent,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
-  shouldHoldInitialFill,
   hasCachedHistory,
   toastApi,
   toast,
@@ -1077,7 +1073,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   effectiveAgent: AgentScreenAgent | null;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
-  shouldHoldInitialFill: boolean;
   hasCachedHistory: boolean;
   toastApi: ToastApi;
   toast: ToastState | null;
@@ -1206,7 +1201,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           draft={draft}
           routeBottomAnchorRequest={routeBottomAnchorRequest}
           hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-          isInitialHistoryLoading={shouldHoldInitialFill && !showHistorySyncError}
+          isInitialHistoryLoading={
+            routeBottomAnchorRequest?.reason === "initial-entry" &&
+            !hasCachedHistory &&
+            !showHistorySyncError
+          }
           revealInitialHistory={hasCachedHistory || showHistorySyncError}
           hasActiveComposer={hasActiveComposer}
           toast={toastApi}

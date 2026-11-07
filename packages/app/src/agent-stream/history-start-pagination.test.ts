@@ -204,20 +204,14 @@ it("keeps cached history visible after synchronization and subsequent pagination
   h.pagination.dispose();
 });
 
-it.each([
-  [true, 123, 0],
-  [false, 123, 0],
-  [true, 0, 123],
-  [false, 0, 123],
-])(
+it.each([true, false])(
   "handles native padding when short history has older=%s",
-  (hasOlderHistory, topOverlayInset, bottomPadding) => {
+  (hasOlderHistory) => {
     const geometry = nativeHistoryStartGeometry({
       contentHeight: 825,
       viewportHeight: 700,
       offsetY: 125,
-      topOverlayInset: topOverlayInset + bottomPadding,
-
+      topOverlayInset: 123,
     });
     let requests = 0;
     const pagination = createHistoryStartPagination({
@@ -236,3 +230,32 @@ it.each([
     pagination.dispose();
   },
 );
+
+it("uses the forward native list's top edge to request older history", () => {
+  let offsetY = 1300;
+  let requests = 0;
+  const pagination = createHistoryStartPagination({
+    initiallyVisible: true,
+    read: () => ({
+      ...initial,
+      ...nativeHistoryStartGeometry({
+        contentHeight: 2000,
+        viewportHeight: 700,
+        offsetY,
+        topOverlayInset: 123,
+      }),
+    }),
+    load: () => {
+      requests++;
+      return new Promise<boolean>(() => {});
+    },
+    changed: () => {},
+    scheduleSettle: () => {},
+  });
+  pagination.rearm();
+  expect(requests).toBe(0);
+  offsetY = 155;
+  pagination.update();
+  expect(requests).toBe(1);
+  pagination.dispose();
+});

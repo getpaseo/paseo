@@ -672,41 +672,41 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   return (
     <View style={viewportStyle}>
-    <LegendList<StreamItem>
-      ref={listRef}
-      data={rows}
-      renderItem={renderItem}
-      extraData={renderHistoryMountedRow}
-      keyExtractor={keyExtractor}
-      testID="agent-chat-scroll"
-      nativeID="agent-chat-scroll-native-virtualized"
-      ListHeaderComponent={historyStartContent}
-      ListFooterComponent={liveAuxiliaryContent ?? undefined}
-      contentContainerStyle={listContentContainerStyle}
-      automaticallyAdjustContentInsets={false}
-      automaticallyAdjustsScrollIndicatorInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
-      onLayout={handleListLayout}
-      onScroll={handleScroll}
-      onScrollBeginDrag={handleScrollBeginDrag}
-      onScrollEndDrag={handleScrollEndDrag}
-      onMomentumScrollBegin={handleMomentumScrollBegin}
-      onMomentumScrollEnd={handleMomentumScrollEnd}
-      scrollEventThrottle={16}
-      onContentSizeChange={handleContentSizeChange}
-      onItemSizeChanged={handleItemSizeChanged}
-      onReady={handleListPlaced}
-      maintainVisibleContentPosition={maintainVisibleContentPosition}
-      renderScrollComponent={renderScrollComponent}
-      recycleItems={false}
-      alignItemsAtEnd
-      initialScrollAtEnd
-      drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
-      getEstimatedItemSize={getEstimatedItemSize}
-      scrollEnabled={scrollEnabled}
-      showsVerticalScrollIndicator
-    />
+      <LegendList<StreamItem>
+        ref={listRef}
+        data={rows}
+        renderItem={renderItem}
+        extraData={renderHistoryMountedRow}
+        keyExtractor={keyExtractor}
+        testID="agent-chat-scroll"
+        nativeID="agent-chat-scroll-native-virtualized"
+        ListHeaderComponent={historyStartContent}
+        ListFooterComponent={liveAuxiliaryContent ?? undefined}
+        contentContainerStyle={listContentContainerStyle}
+        automaticallyAdjustContentInsets={false}
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
+        onLayout={handleListLayout}
+        onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollBegin={handleMomentumScrollBegin}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        scrollEventThrottle={16}
+        onContentSizeChange={handleContentSizeChange}
+        onItemSizeChanged={handleItemSizeChanged}
+        onReady={handleListPlaced}
+        maintainVisibleContentPosition={maintainVisibleContentPosition}
+        renderScrollComponent={renderScrollComponent}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
+        getEstimatedItemSize={getEstimatedItemSize}
+        scrollEnabled={scrollEnabled}
+        showsVerticalScrollIndicator
+      />
       {!historyStartPaginationState.visible ? (
         <View pointerEvents="none" testID="agent-initial-fill" style={initialFillStyle}>
           <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
