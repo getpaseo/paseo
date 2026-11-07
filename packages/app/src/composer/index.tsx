@@ -1,4 +1,5 @@
 import equal from "fast-deep-equal";
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1626,13 +1627,16 @@ function ComposerContentImpl({
         }
       } catch (error) {
         if (!explicitClientMessageId) {
-          failedDirectSendRetryRef.current = {
-            agentId: targetAgentId,
-            text,
-            attachments: sendAttachments,
-            activeTurnBehavior,
-            clientMessageId: resolvedClientMessageId,
-          };
+          failedDirectSendRetryRef.current =
+            error instanceof DaemonConnectionError && error.outcome === "unknown"
+              ? {
+                  agentId: targetAgentId,
+                  text,
+                  attachments: sendAttachments,
+                  activeTurnBehavior,
+                  clientMessageId: resolvedClientMessageId,
+                }
+              : null;
         }
         throw error;
       }
