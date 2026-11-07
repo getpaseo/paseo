@@ -90,7 +90,7 @@ export function groupPluginSidebarItems(
 }
 
 /**
- * The host a group's row uses: the current route's host, else the remembered one, else the first.
+ * The host a group's row uses: the remembered one, else the current route's host, else the first.
  * A legacy row remembers its own host; other items share the host last used with the plugin's
  * screens.
  */
@@ -103,8 +103,8 @@ export function selectPluginSidebarTarget<Group extends PluginSidebarGroup>(
   );
   const targets: Group["targets"] = group.targets;
   return (
-    targets.find((target) => target.plugin.serverId === currentHostId) ??
     targets.find((target) => target.plugin.serverId === rememberedHostId) ??
+    targets.find((target) => target.plugin.serverId === currentHostId) ??
     targets[0]
   );
 }

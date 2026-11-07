@@ -108,6 +108,24 @@ describe("selectPluginSidebarTarget", () => {
     expect(selectPluginSidebarTarget(group!, "host-b").plugin.serverId).toBe("host-b");
   });
 
+  it("reopens the last selected plugin host after visiting another host", () => {
+    const [group] = groupPluginSidebarItems(
+      [installed("host-a", "main", [], "firstmate"), installed("host-b", "main", [], "firstmate")],
+      "header",
+    );
+    rememberPluginContributionHost(pluginScreensHostKey("firstmate"), "host-b");
+    expect(selectPluginSidebarTarget(group!, "host-a").plugin.serverId).toBe("host-b");
+  });
+
+  it("falls back to the current host if the remembered installation was removed", () => {
+    const [group] = groupPluginSidebarItems(
+      [installed("host-a", "main", [], "removed-plugin")],
+      "header",
+    );
+    rememberPluginContributionHost(pluginScreensHostKey("removed-plugin"), "host-b");
+    expect(selectPluginSidebarTarget(group!, "host-a").plugin.serverId).toBe("host-a");
+  });
+
   it("carries the host picked on any of a plugin's screens to all its items, but not legacy rows", () => {
     expect(hostsOf("header", "screens")).toEqual(["host-a", "host-a"]);
     rememberPluginContributionHost(pluginScreensHostKey("screens"), "host-b");

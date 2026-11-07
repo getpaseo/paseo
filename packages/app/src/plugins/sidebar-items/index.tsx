@@ -20,7 +20,11 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
-import { pluginScreensHostKey, rememberPluginContributionHost } from "../contribution-host";
+import {
+  pluginScreensHostKey,
+  rememberPluginContributionHost,
+  usePreferredPluginContributionHost,
+} from "../contribution-host";
 import {
   PluginEnvironmentProvider,
   PluginPopoverContent,
@@ -84,6 +88,7 @@ function PluginSidebarItemHost({
   theme,
 }: PluginSidebarItemHostProps & { theme: PluginTheme }) {
   const pathname = usePathname();
+  usePreferredPluginContributionHost(pluginScreensHostKey(group.pluginId));
   const routeParams = useGlobalSearchParams();
   const { plugin, item } = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
   const client = useHostRuntimeClient(plugin.serverId);
