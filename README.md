@@ -41,6 +41,7 @@
 
 Paseo is an open source agentic development environment for desktop, mobile, web, and CLI. Open the desktop app and work: agents, editor, terminals, diffs, pull requests, and a browser in one window. Run many agents at once, each in its own worktree, on one machine or several. The mobile app is the full app, native on iOS and Android.
 
+- **Rich chat interface:** Same familiar UI from Codex or Claude Desktop, not constrained by terminal monospace font or formatting limitations.
 - **Parallel agents:** Run many agents at once, each in its own worktree.
 - **Built-in orchestration:** Agents in Paseo can create worktrees, launch other agents, and talk to them, across providers.
 - **Complete development workflow:** Edit files, review diffs, open pull requests, and run terminals, in split panes you arrange how you want.
