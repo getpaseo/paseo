@@ -117,6 +117,7 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "チャットの下に開いたままにする", collapse: "パネルを折りたたむ" },
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",

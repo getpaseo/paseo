@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RetainedPanelActivity } from "@/components/retained-panel";
+import { KeptPanelProvider, KeptPanelSlot } from "./kept-panel";
+import { page } from "vitest/browser";
 import { ComposerTrackPill, ComposerTrackRow, type ComposerTrackPillSegment } from "./tracks";
 
 const SUBAGENT_SEGMENTS: ComposerTrackPillSegment[] = [{ bucket: null, text: "3 subagents" }];
@@ -66,6 +68,85 @@ function isPanelOpen(): boolean {
 }
 
 describe("composer track panel", () => {
+  it("keeps live task content below chat while typing and collapses explicitly", async () => {
+    function Harness() {
+      const [label, setLabel] = useState("Inspect repository");
+      const update = useCallback(() => setLabel("Run focused tests"), []);
+      return (
+        <KeptPanelProvider>
+          <ComposerTrackPill keepOpen testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Tasks">
+            <ComposerTrackRow>
+              <Text>{label}</Text>
+            </ComposerTrackRow>
+          </ComposerTrackPill>
+          <KeptPanelSlot />
+          <input data-testid="composer-input" />
+          <Pressable testID="update-task" onPress={update}>
+            <Text>Update</Text>
+          </Pressable>
+        </KeptPanelProvider>
+      );
+    }
+    const container = mount(<Harness />);
+    openPanel();
+    await page.screenshot({ path: "../../../../.dev/sc-4609-before.png" });
+    click(row("pill-keep-open") as Element);
+    const kept = row("composer-kept-panel");
+    expect(kept?.textContent).toContain("Inspect repository");
+    await page.screenshot({ path: "../../../../.dev/sc-4609-after.png" });
+    const input = container.querySelector("input")!;
+    act(() => input.focus());
+    expect(row("composer-kept-panel")).not.toBeNull();
+    click(row("update-task") as Element);
+    expect(row("composer-kept-panel")?.textContent).toContain("Run focused tests");
+    click(row("composer-kept-panel-collapse") as Element);
+    expect(row("composer-kept-panel")).toBeNull();
+    openPanel();
+    click(row("pill-keep-open") as Element);
+    expect(row("composer-kept-panel")).not.toBeNull();
+    openPanel();
+    expect(row("composer-kept-panel")).toBeNull();
+    expect(isPanelOpen()).toBe(true);
+  });
+
+  it("replaces the kept panel and removes it when its contribution disappears", () => {
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      const hide = useCallback(() => setVisible(false), []);
+      return (
+        <KeptPanelProvider>
+          <ComposerTrackPill keepOpen testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Tasks">
+            <Text>Task content</Text>
+          </ComposerTrackPill>
+          {visible ? (
+            <ComposerTrackPill
+              keepOpen
+              testID="tickets"
+              segments={SUBAGENT_SEGMENTS}
+              panelTitle="Tickets"
+            >
+              <Text>Ticket content</Text>
+            </ComposerTrackPill>
+          ) : null}
+          <KeptPanelSlot />
+          <Pressable testID="hide-tickets" onPress={hide}>
+            <Text>Hide</Text>
+          </Pressable>
+        </KeptPanelProvider>
+      );
+    }
+    mount(<Harness />);
+    openPanel();
+    click(row("pill-keep-open") as Element);
+    click(row("tickets") as Element);
+    click(row("tickets-keep-open") as Element);
+    expect(document.querySelectorAll('[data-testid="composer-kept-panel"]')).toHaveLength(1);
+    expect(row("composer-kept-panel")?.textContent).toContain("Ticket content");
+    expect(row("composer-kept-panel")?.textContent).not.toContain("Task content");
+    click(row("hide-tickets") as Element);
+    expect(row("composer-kept-panel")).toBeNull();
+  });
+
   it("dismisses itself when a row is chosen", () => {
     const onPress = vi.fn();
     mount(

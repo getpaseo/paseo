@@ -24,6 +24,7 @@ import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { ComposerDock } from "@/composer/dock";
+import { KeptPanelProvider, KeptPanelSlot } from "@/composer/kept-panel";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
@@ -1217,6 +1218,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const dockContent = (
     <View style={styles.contentContainer}>
       {streamContent}
+      {hasActiveComposer && !isComposerFullscreen ? <KeptPanelSlot /> : null}
 
       {showHistorySyncError ? (
         <TimelineSyncErrorCallout isRetrying={isRetryingHistorySync} onRetry={retryTimelineSync} />
@@ -1292,7 +1294,7 @@ function wrapAgentCommandProvider({
       editingSession={editingSession}
       enabled={enabled}
     >
-      {children}
+      <KeptPanelProvider key={`${serverId}:${agentId}`}>{children}</KeptPanelProvider>
     </AgentCommandsProvider>
   );
 }

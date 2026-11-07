@@ -112,6 +112,10 @@ export const en = {
     },
   },
   composer: {
+    keptPanel: {
+      keepOpen: "Keep open below chat",
+      collapse: "Collapse panel",
+    },
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
