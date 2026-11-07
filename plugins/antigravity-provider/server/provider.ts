@@ -11,12 +11,14 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import { getCatalog, getStatus } from "./internal/catalog.js";
 import { Session } from "./internal/session.js";
+import { listSessions } from "./internal/sessions.js";
 import { AntigravityError } from "./internal/wire.js";
 
 const capabilities = [
   "prompt.message",
   "prompt.image",
   "session.configure",
+  "session.list",
   "session.persistence",
 ] as const;
 
@@ -79,6 +81,13 @@ function createConnection(
   }
   async function dispatch(input: ProviderInput): Promise<void> {
     switch (input.type) {
+      case "sessions":
+        emit({
+          type: "sessions",
+          requestId: input.requestId,
+          sessions: listSessions(launch, input),
+        });
+        return;
       case "catalog":
         discovered = await getCatalog(launch, input.cwd);
         emit({

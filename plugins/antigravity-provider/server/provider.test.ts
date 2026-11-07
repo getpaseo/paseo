@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PROVIDER_CAPABILITIES,
@@ -75,7 +76,8 @@ async function harness(env: Record<string, string> = {}) {
           (event.type === "request.completed" ||
             event.type === "request.failed" ||
             event.type === "session.ready" ||
-            event.type === "catalog"),
+            event.type === "catalog" ||
+            event.type === "sessions"),
       );
   }
   async function open(restored?: ProviderPersistence, sessionId = "s") {
@@ -162,6 +164,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
     "prompt.message",
     "prompt.image",
     "session.configure",
+    "session.list",
     "session.persistence",
   ]);
   await h.open();
@@ -789,3 +792,169 @@ it.runIf(process.platform === "win32")(
     });
   },
 );
+
+describe("session.list", () => {
+  it("lists root workspace sessions from conversation_summaries.db, filters subagents/empty rows, resolves symlinked cwd, and strips <USER_REQUEST> in fallback transcript titles", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-home-"));
+    temporary.push(homeDir);
+    const h = await harness({ HOME: homeDir });
+
+    const symlinkCwd = path.join(homeDir, "workspace-link");
+    await symlink(h.cwd, symlinkCwd);
+    const otherCwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-other-"));
+    temporary.push(otherCwd);
+
+    const cliDir = path.join(homeDir, ".gemini", "antigravity-cli");
+    await mkdir(cliDir, { recursive: true });
+    const dbPath = path.join(cliDir, "conversation_summaries.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE conversation_summaries (
+        conversation_id text PRIMARY KEY,
+        title text NOT NULL DEFAULT '',
+        preview text NOT NULL DEFAULT '',
+        step_count integer NOT NULL DEFAULT 0,
+        last_modified_time datetime NOT NULL,
+        workspace_uris text NOT NULL,
+        parent_conversation_id text NOT NULL DEFAULT '',
+        nesting_depth integer NOT NULL DEFAULT 0
+      )
+    `);
+    const insert = db.prepare(`
+      INSERT INTO conversation_summaries (
+        conversation_id, title, preview, step_count, last_modified_time, workspace_uris, parent_conversation_id, nesting_depth
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const workspaceUri = JSON.stringify([pathToFileURL(h.cwd).href]);
+    const otherWorkspaceUri = JSON.stringify([pathToFileURL(otherCwd).href]);
+
+    // 1. Root session with explicit title + preview
+    insert.run(
+      "conv-titled",
+      "Architecture Review",
+      "<USER_REQUEST>\nReview the provider architecture\n</USER_REQUEST>",
+      12,
+      "2026-11-07 09:40:03.357948757+00:00",
+      workspaceUri,
+      "",
+      0,
+    );
+
+    // 2. Root session with empty title & preview -> falls back to transcript.jsonl
+    insert.run(
+      "conv-fallback",
+      "",
+      "",
+      4,
+      "2026-11-07 08:15:00.000000000+00:00",
+      workspaceUri,
+      "",
+      0,
+    );
+    const transcriptDir = path.join(cliDir, "brain", "conv-fallback", ".system_generated", "logs");
+    await mkdir(transcriptDir, { recursive: true });
+    await writeFile(
+      path.join(transcriptDir, "transcript.jsonl"),
+      [
+        JSON.stringify({
+          step_index: 0,
+          type: "USER_INPUT",
+          source: "USER_EXPLICIT",
+          content:
+            "<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>\n<USER_REQUEST>\nFix the session import bug\n</USER_REQUEST>",
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    // 3. Subagent session (should be excluded)
+    insert.run(
+      "conv-subagent",
+      "Subagent Task",
+      "Subagent preview",
+      10,
+      "2026-11-07 10:00:00.000000000+00:00",
+      workspaceUri,
+      "conv-titled",
+      1,
+    );
+
+    // 4. Empty probe session with step_count = 0 (should be excluded)
+    insert.run("conv-empty", "", "", 0, "2026-11-07 10:05:00.000000000+00:00", workspaceUri, "", 0);
+
+    // 5. Session in another workspace
+    insert.run(
+      "conv-other-workspace",
+      "Other Workspace Session",
+      "Other preview",
+      6,
+      "2026-11-07 10:10:00.000000000+00:00",
+      otherWorkspaceUri,
+      "",
+      0,
+    );
+    db.close();
+
+    // Query using the symlinked cwd
+    await h.request({
+      type: "sessions",
+      requestId: "list-workspace",
+      cwd: symlinkCwd,
+    });
+    const workspaceListEvent = h.events.find(
+      (event) => event.type === "sessions" && event.requestId === "list-workspace",
+    );
+    expect(workspaceListEvent).toEqual({
+      type: "sessions",
+      requestId: "list-workspace",
+      sessions: [
+        {
+          cwd: symlinkCwd,
+          title: "Architecture Review",
+          description: "Review the provider architecture",
+          updatedAt: "2026-11-07T09:40:03.357Z",
+          persistence: {
+            version: 1,
+            data: { conversationId: "conv-titled" },
+          },
+        },
+        {
+          cwd: symlinkCwd,
+          title: "Fix the session import bug",
+          updatedAt: "2026-11-07T08:15:00.000Z",
+          persistence: {
+            version: 1,
+            data: { conversationId: "conv-fallback" },
+          },
+        },
+      ],
+    });
+
+    // Query with search filter and limit across all workspaces
+    await h.request({
+      type: "sessions",
+      requestId: "list-query",
+      query: "import bug",
+      limit: 1,
+    });
+    const queryListEvent = h.events.find(
+      (event) => event.type === "sessions" && event.requestId === "list-query",
+    );
+    expect(queryListEvent).toEqual({
+      type: "sessions",
+      requestId: "list-query",
+      sessions: [
+        {
+          cwd: h.cwd,
+          title: "Fix the session import bug",
+          updatedAt: "2026-11-07T08:15:00.000Z",
+          persistence: {
+            version: 1,
+            data: { conversationId: "conv-fallback" },
+          },
+        },
+      ],
+    });
+  });
+});
