@@ -14,11 +14,6 @@ const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "Use concise plain language suitable for speech output.",
 ].join(" ");
 
-const VOICE_AGENT_DISABLED_INSTRUCTION = [
-  "Paseo voice mode is now off.",
-  "Ignore any earlier Paseo voice mode instructions in this thread.",
-].join(" ");
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -39,14 +34,33 @@ export function stripVoiceModeSystemPrompt(existing?: string): string | undefine
   return stripped.length > 0 ? stripped : undefined;
 }
 
-export function buildVoiceModeSystemPrompt(existing: string | undefined, enabled: boolean): string {
+// COMPAT(voiceModeOffBlock): added in v0.14.1, remove after 2027-05-01
+const LEGACY_VOICE_MODE_OFF_INSTRUCTION =
+  "Paseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.";
+
+export function stripLegacyVoiceModeOffBlock(existing?: string): string | undefined {
+  const trimmed = existing?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const stripped = trimmed
+    .replace(makeVoicePromptBlockRegex(), (block) =>
+      block.slice(VOICE_PROMPT_BLOCK_START.length, -VOICE_PROMPT_BLOCK_END.length).trim() ===
+      LEGACY_VOICE_MODE_OFF_INSTRUCTION
+        ? ""
+        : block,
+    )
+    .trim();
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+export function buildVoiceModeSystemPrompt(existing: string | undefined): string {
   const basePrompt = stripVoiceModeSystemPrompt(existing);
-  const voiceInstruction = enabled
-    ? VOICE_AGENT_SYSTEM_INSTRUCTION
-    : VOICE_AGENT_DISABLED_INSTRUCTION;
-  const voiceBlock = [VOICE_PROMPT_BLOCK_START, voiceInstruction, VOICE_PROMPT_BLOCK_END].join(
-    "\n",
-  );
+  const voiceBlock = [
+    VOICE_PROMPT_BLOCK_START,
+    VOICE_AGENT_SYSTEM_INSTRUCTION,
+    VOICE_PROMPT_BLOCK_END,
+  ].join("\n");
 
   return [basePrompt, voiceBlock]
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)

@@ -5,6 +5,7 @@ import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
+import { OpenCodeHttpError } from "../http-error.js";
 import type { V2Api } from "./api.js";
 
 function terminalEvents(events: AgentStreamEvent[]) {
@@ -704,6 +705,77 @@ describe("OpenCode v2 session lifecycle", () => {
       client.createSession({ provider: "opencode", cwd: "/tmp/project" }),
     ).rejects.toThrow("event stream ended before connecting");
     expect(harness.releases).toBeGreaterThan(0);
+  });
+
+  test("removes the Paseo instructions when the session has no system prompt", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      expect(harness.instructionRemovals).toEqual([{ sessionID: "session", key: "paseo" }]);
+      expect(harness.instructionPuts).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("starts the session when there are no Paseo instructions to remove", async () => {
+    const harness = new V2Harness();
+    harness.api.session.instructions.entry.remove = async (input) => {
+      throw new OpenCodeHttpError(
+        `/api/experimental/session/${input.sessionID}/instructions/entries/${input.key}`,
+        404,
+        false,
+      );
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    await session.close();
+  });
+
+  test("fails session setup when removing the Paseo instructions fails", async () => {
+    const harness = new V2Harness();
+    harness.api.session.instructions.entry.remove = async (input) => {
+      throw new OpenCodeHttpError(
+        `/api/experimental/session/${input.sessionID}/instructions/entries/${input.key}`,
+        500,
+        false,
+      );
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    await expect(
+      client.createSession({ provider: "opencode", cwd: "/tmp/project" }),
+    ).rejects.toThrow("(HTTP 500)");
+  });
+
+  test("puts the system prompt as the Paseo instructions", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      systemPrompt: "Be terse.",
+    });
+    try {
+      expect(harness.instructionPuts).toEqual([
+        { sessionID: "session", key: "paseo", value: "Be terse." },
+      ]);
+      expect(harness.instructionRemovals).toEqual([]);
+    } finally {
+      await session.close();
+    }
   });
 
   test("returns only validated structured output and preserves it in history", async () => {
