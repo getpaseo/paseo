@@ -1,5 +1,5 @@
 import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
@@ -7,6 +7,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
+import { MarkdownPreviewFind } from "./markdown-preview/find";
 import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
@@ -31,10 +32,12 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
   const workspaceRoot = useWorkspace(workspaceId, (workspace) => workspace.directory);
   const [rendered, setRendered] = useState(false);
   const handleLayout = useCallback(() => setRendered(true), []);
+  const scroller = useRef<ScrollView>(null);
+  const content = useRef<View>(null);
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator>
-        <View onLayout={handleLayout}>
+      <ScrollView ref={scroller} style={styles.container} showsVerticalScrollIndicator>
+        <View ref={content} onLayout={handleLayout}>
           <FileMarkdownPreview
             source={text}
             filePath={params.path}
@@ -44,6 +47,7 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
           />
         </View>
       </ScrollView>
+      <MarkdownPreviewFind content={content} scroller={scroller} />
       {rendered ? null : <FilePanelLoading />}
     </View>
   );
