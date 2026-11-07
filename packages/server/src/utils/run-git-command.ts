@@ -12,6 +12,7 @@ import {
   submitGitCommandTrace,
 } from "./git-command-trace.js";
 import { spawnProcess } from "./spawn.js";
+import { signalProcessTree } from "./tree-kill.js";
 import {
   GitProcessScheduler,
   type GitProcessPriority,
@@ -420,7 +421,7 @@ function executeGitCommand<Output>(
 
       timer = setTimeout(() => {
         timeoutError = new Error(`Git command timed out after ${timeout}ms: ${command}`);
-        child.kill("SIGKILL");
+        void signalProcessTree(child, "SIGKILL");
         settle(() => reject(timeoutError));
         if (processExit) {
           settleTimeoutTrace(processExit.exitCode, processExit.signal);
