@@ -702,7 +702,7 @@ export default function contribute(client: PluginClientContext) {
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
-Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
+Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body and may add buttons to the header with [`ScreenHeaderActions`](#screen-header-actions).
 
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
 [display text](#runtime-translations), or a function that takes the screen's params and returns
@@ -714,6 +714,56 @@ ID instead; the screen still renders.
 Params live in the screen's URL query, so a reload, back and forward, and a link to the screen keep
 them. Any string key works; values must be strings, and anything else throws. Opening the same
 screen with other params shows the new params.
+
+### Screen header actions
+
+A screen can put its own buttons in its header, beside Paseo's: in the actions island on compact
+layouts, before **Close** on wide ones. Render `ScreenHeaderActions` anywhere in the screen and
+put `ScreenHeaderButton`s in it. They read and set the screen's state like any other child:
+
+```tsx
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
+import { ScreenHeaderActions, ScreenHeaderButton } from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+
+export function Main(props: PluginScreenProps) {
+  const [searching, setSearching] = useState(false);
+  return (
+    <>
+      <ScreenHeaderActions>
+        <ScreenHeaderButton
+          icon="Search"
+          label="Search"
+          active={searching}
+          onPress={() => setSearching((on) => !on)}
+        />
+      </ScreenHeaderActions>
+      <Results searching={searching} />
+    </>
+  );
+}
+```
+
+`ScreenHeaderActions` draws nothing where it is rendered, and nothing outside a plugin screen.
+Its children update with each render of the screen. With several mounted, the last one shows.
+The header renders them outside the screen's tree: `usePaseo`, `useRpc`, translations, the query
+client and toasts work there, but a React context the plugin provides inside the screen does not
+reach them; pass such values as props.
+
+`ScreenHeaderButton` draws an icon button with the header's own size, highlight and tooltip:
+
+| Prop       | Type         | Required | Behavior                                              |
+| ---------- | ------------ | -------- | ----------------------------------------------------- |
+| `icon`     | `PluginIcon` | Yes      | A Lucide icon name, inline SVG, or a component.       |
+| `label`    | `string`     | Yes      | Accessibility label, and the tooltip on wide layouts. |
+| `onPress`  | `() => void` | Yes      | Runs on press.                                        |
+| `active`   | `boolean`    | No       | Keeps the button highlighted, as for an open search.  |
+| `disabled` | `boolean`    | No       | Dims the button and ignores presses.                  |
+| `testID`   | `string`     | No       | Test identifier.                                      |
+
+Other children render as given; keep them to the header's height. On a host without these
+components the import is `undefined`, so check it before rendering if the plugin supports older
+versions of Paseo.
 
 ### Sidebar items
 

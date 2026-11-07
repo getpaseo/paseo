@@ -577,11 +577,53 @@ export default function contribute(client: PluginClientContext) {
 | `params`     | 打开界面时传入的参数，键和值都是字符串。没有参数时为 `{}`。                                                                                                                                                                                                                            |
 | `navigation` | 可选的客户端导航。`openAgent({ agentId, serverId? })` 和 `openWorkspace({ workspaceId, serverId? })` 在 `serverId` 上打开目标，省略时在所选主机上打开。`openBrowser({ url, workspaceId, serverId? })` 仅在 Electron 上可用；见[链接和浏览器](#external-links-and-workspace-browsers)。 |
 
-路由、标题栏、关闭操作、主机选择器、错误边界和 query client 由 Paseo 负责。界面主体由插件负责。
+路由、标题栏、关闭操作、主机选择器、错误边界和 query client 由 Paseo 负责。界面主体由插件负责，插件也可以用 [`ScreenHeaderActions`](#screen-header-actions) 往标题栏添加按钮。
 
 `addScreen({ id, title, Component })` 注册一个界面。`title` 是界面标题栏的[显示文本](#runtime-translations)，也可以是接收界面参数并返回显示文本的函数。参数或语言变化时，该函数会再次运行。无效标题和空字符串标题会被拒绝。如果标题函数抛出错误或解析为空字符串，会改为显示界面 ID；界面仍然会渲染。
 
 `openScreen({ screenId, params })` 以参数打开一个界面，例如机器人界面要显示的那个机器人。参数保存在界面 URL 的查询字符串中，因此重新加载、前进后退以及指向该界面的链接都会保留它们。任何字符串键都可以；值必须是字符串，其他类型会抛出错误。用其他参数打开同一个界面会显示新的参数。
+
+### 界面标题栏操作 {#screen-header-actions}
+
+界面可以把自己的按钮放进标题栏，排在 Paseo 自带的按钮旁边：紧凑布局中放在操作区，较宽的布局中放在 **关闭** 之前。在界面中任意位置渲染 `ScreenHeaderActions`，并在其中放入 `ScreenHeaderButton`。这些按钮和其他子组件一样读写界面的状态：
+
+```tsx
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
+import { ScreenHeaderActions, ScreenHeaderButton } from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+
+export function Main(props: PluginScreenProps) {
+  const [searching, setSearching] = useState(false);
+  return (
+    <>
+      <ScreenHeaderActions>
+        <ScreenHeaderButton
+          icon="Search"
+          label="Search"
+          active={searching}
+          onPress={() => setSearching((on) => !on)}
+        />
+      </ScreenHeaderActions>
+      <Results searching={searching} />
+    </>
+  );
+}
+```
+
+`ScreenHeaderActions` 在其渲染位置不绘制任何内容，在插件界面之外也不绘制任何内容。界面每次渲染时，它的子组件都会随之更新。同时挂载多个时，显示最后挂载的那个。标题栏在界面的组件树之外渲染这些子组件：`usePaseo`、`useRpc`、翻译、query client 和 toast 在其中都可用，但插件在界面内部提供的 React context 无法传到那里；这类值请通过 props 传入。
+
+`ScreenHeaderButton` 绘制一个与标题栏自身按钮尺寸、高亮和提示一致的图标按钮：
+
+| 属性       | 类型         | 必填 | 行为                                   |
+| ---------- | ------------ | ---- | -------------------------------------- |
+| `icon`     | `PluginIcon` | 是   | Lucide 图标名、内联 SVG 或组件。       |
+| `label`    | `string`     | 是   | 无障碍标签，在较宽的布局中也用作提示。 |
+| `onPress`  | `() => void` | 是   | 按下时运行。                           |
+| `active`   | `boolean`    | 否   | 保持按钮高亮，例如搜索已展开时。       |
+| `disabled` | `boolean`    | 否   | 按钮变暗并忽略按下操作。               |
+| `testID`   | `string`     | 否   | 测试标识。                             |
+
+其他子组件按原样渲染；请让它们不超过标题栏的高度。在不提供这些组件的宿主上，导入结果为 `undefined`；如果插件需要支持较旧版本的 Paseo，请在渲染前先检查。
 
 ### 侧边栏项 {#sidebar-items}
 
