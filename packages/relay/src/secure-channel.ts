@@ -39,6 +39,11 @@ import {
 } from "./crypto.js";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
 import {
+  decodePlaintextFrame,
+  encodePlaintextFrame,
+  PLAINTEXT_FRAME_HEADER_BYTES,
+} from "./plaintext-frame.js";
+import {
   createNoiseInitiator,
   createNoiseResponder,
   NoiseProtocolError,
@@ -115,7 +120,8 @@ const NOISE_PROLOGUE = new TextEncoder().encode("paseo-relay-e2ee/1");
 const PROTECTED_ENVELOPE_VERSION = 1;
 const PARAMS_VERSION = 0x01;
 const PARAM_FLAG_BINARY_CIPHERTEXT = 0x01;
-const PARAM_FLAGS_KNOWN = PARAM_FLAG_BINARY_CIPHERTEXT;
+const PARAM_FLAG_DEFLATE_PAYLOADS = 0x02;
+const PARAM_FLAGS_KNOWN = PARAM_FLAG_BINARY_CIPHERTEXT | PARAM_FLAG_DEFLATE_PAYLOADS;
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
 
@@ -127,18 +133,19 @@ interface ProtectedEnvelope {
 interface HelloEnvelope {
   type: "e2ee_hello";
   key: string;
-  capabilities?: { binaryCiphertext?: boolean };
+  capabilities?: { binaryCiphertext?: boolean; deflatePayloads?: boolean };
   protected?: ProtectedEnvelope;
 }
 
 interface ReadyEnvelope {
   type: "e2ee_ready";
-  capabilities?: { binaryCiphertext?: boolean };
+  capabilities?: { binaryCiphertext?: boolean; deflatePayloads?: boolean };
   protected?: ProtectedEnvelope;
 }
 
 interface NegotiatedParams {
   binaryCiphertext: boolean;
+  deflatePayloads: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,12 +170,15 @@ export async function openClientSecureChannel(
   const legacyKeyPair = generateKeyPair();
   const legacySharedKey = deriveSharedKey(legacyKeyPair.secretKey, daemonPublicKey);
   const noise = createNoiseInitiator({ remoteStatic: daemonPublicKey, prologue: NOISE_PROLOGUE });
-  const offered: NegotiatedParams = { binaryCiphertext: true };
-  const msg1 = noise.writeMessage(encodeParams(offered));
+  const offered: NegotiatedParams = { binaryCiphertext: true, deflatePayloads: true };
+  // COMPAT(protectedDeflate): added in v0.13.0; keep msg1 readable by pre-deflate
+  // protected daemons until 2027-04-23. The outer offer is a capability hint;
+  // only the authenticated msg2 can enable compression.
+  const msg1 = noise.writeMessage(encodeParams({ ...offered, deflatePayloads: false }));
   const hello: HelloEnvelope = {
     type: "e2ee_hello",
     key: exportPublicKey(legacyKeyPair.publicKey),
-    capabilities: { binaryCiphertext: true },
+    capabilities: { binaryCiphertext: true, deflatePayloads: true },
     protected: { v: PROTECTED_ENVELOPE_VERSION, message: arrayBufferToBase64(toArrayBuffer(msg1)) },
   };
   const helloText = JSON.stringify(hello);
@@ -283,7 +293,10 @@ class ClientSecureChannel implements SecureChannel {
     }
     const msg2 = new Uint8Array(base64ToArrayBuffer(envelope.message));
     const selected = decodeParams(handshake.noise.readMessage(msg2));
-    if (selected.binaryCiphertext && !handshake.offered.binaryCiphertext) {
+    if (
+      (selected.binaryCiphertext && !handshake.offered.binaryCiphertext) ||
+      (selected.deflatePayloads && !handshake.offered.deflatePayloads)
+    ) {
       throw new NoiseProtocolError("daemon selected an unoffered parameter");
     }
     const keys = handshake.noise.split();
@@ -302,6 +315,9 @@ class ClientSecureChannel implements SecureChannel {
     }
     const legacy = new EncryptedChannel(this.transport, handshake.legacySharedKey, this.events, {
       binaryCiphertext: ready.capabilities?.binaryCiphertext === true,
+      deflatePayloads:
+        ready.capabilities?.binaryCiphertext === true &&
+        ready.capabilities?.deflatePayloads === true,
     });
     legacy.setState("open");
     this.becomeOpen(new LegacyInner(legacy));
@@ -490,7 +506,10 @@ async function acceptProtectedHello(
   const noise = createNoiseResponder({ localStatic: daemonKeyPair, prologue: NOISE_PROLOGUE });
   const msg1 = new Uint8Array(base64ToArrayBuffer(envelope.message));
   const offered = decodeParams(noise.readMessage(msg1));
-  const selected: NegotiatedParams = { binaryCiphertext: offered.binaryCiphertext };
+  const selected: NegotiatedParams = {
+    binaryCiphertext: offered.binaryCiphertext,
+    deflatePayloads: offered.binaryCiphertext && hello.capabilities?.deflatePayloads === true,
+  };
   const msg2 = noise.writeMessage(encodeParams(selected));
   const ready: ReadyEnvelope = {
     type: "e2ee_ready",
@@ -522,15 +541,24 @@ async function acceptLegacyHello(
   const clientPublicKey = importPublicKey(hello.key);
   const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
   const binaryCiphertext = hello.capabilities?.binaryCiphertext === true;
+  const deflatePayloads = binaryCiphertext && hello.capabilities?.deflatePayloads === true;
   await transport.send(
     JSON.stringify({
       type: "e2ee_ready",
-      ...(binaryCiphertext ? { capabilities: { binaryCiphertext: true } } : {}),
+      ...(binaryCiphertext
+        ? {
+            capabilities: {
+              binaryCiphertext: true,
+              ...(deflatePayloads ? { deflatePayloads: true } : {}),
+            },
+          }
+        : {}),
     } satisfies ReadyEnvelope),
   );
   const legacy = new EncryptedChannel(transport, sharedKey, events, {
     daemonKeyPair,
     binaryCiphertext,
+    deflatePayloads,
   });
   legacy.setState("open");
   return new LegacyInner(legacy);
@@ -619,10 +647,17 @@ class ProtectedChannel implements InnerChannel {
         ? new Uint8Array(requireArrayBuffer(message.data))
         : new Uint8Array(base64ToArrayBuffer(decodeTransportText(message.data)));
       const frame = decodeProtectedRecord(record, this.receiver);
-      const plaintext =
-        frame.kind === "text"
-          ? new TextDecoder("utf-8", { fatal: true }).decode(frame.data)
-          : toArrayBuffer(frame.data);
+      if (this.params.deflatePayloads && frame.kind !== "binary") {
+        throw new Error("Compressed protected payload must use binary record framing");
+      }
+      let plaintext: string | ArrayBuffer;
+      if (this.params.deflatePayloads) {
+        plaintext = decodePlaintextFrame(toArrayBuffer(frame.data));
+      } else if (frame.kind === "text") {
+        plaintext = new TextDecoder("utf-8", { fatal: true }).decode(frame.data);
+      } else {
+        plaintext = toArrayBuffer(frame.data);
+      }
       this.events.onmessage?.(plaintext);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -644,8 +679,10 @@ class ProtectedChannel implements InnerChannel {
 
   async send(data: string | ArrayBuffer): Promise<void> {
     if (this.state !== "open") throw new Error("Channel not open");
-    const kind = typeof data === "string" ? "text" : "binary";
-    const frame = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
+    const payload = this.params.deflatePayloads ? encodePlaintextFrame(data) : data;
+    const kind = typeof payload === "string" ? "text" : "binary";
+    const frame =
+      typeof payload === "string" ? new TextEncoder().encode(payload) : new Uint8Array(payload);
     let wire: Uint8Array;
     try {
       // Synchronous up to here: the nonce is reserved before any await.
@@ -664,8 +701,13 @@ class ProtectedChannel implements InnerChannel {
 
   outboundWireByteLength(data: string | ArrayBuffer): number {
     const plaintextBytes = typeof data === "string" ? utf8ByteLength(data) : data.byteLength;
-    const wireBytes = protectedRecordByteLength(plaintextBytes);
-    if (this.params.binaryCiphertext && typeof data !== "string") return wireBytes;
+    // Compression is used only when smaller, so the uncompressed frame bounds
+    // the encoded size without running the compressor a second time.
+    const wireBytes = protectedRecordByteLength(
+      plaintextBytes + (this.params.deflatePayloads ? PLAINTEXT_FRAME_HEADER_BYTES : 0),
+    );
+    if (this.params.binaryCiphertext && (this.params.deflatePayloads || typeof data !== "string"))
+      return wireBytes;
     return 4 * Math.ceil(wireBytes / 3);
   }
 
@@ -731,11 +773,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isCapabilities(value: unknown): value is { binaryCiphertext?: boolean } {
+function isCapabilities(
+  value: unknown,
+): value is { binaryCiphertext?: boolean; deflatePayloads?: boolean } {
   return (
     value === undefined ||
     (isRecord(value) &&
-      (value.binaryCiphertext === undefined || typeof value.binaryCiphertext === "boolean"))
+      (value.binaryCiphertext === undefined || typeof value.binaryCiphertext === "boolean") &&
+      (value.deflatePayloads === undefined || typeof value.deflatePayloads === "boolean"))
   );
 }
 
@@ -794,7 +839,8 @@ function parseHandshakeEnvelope(
 function encodeParams(params: NegotiatedParams): Uint8Array {
   return new Uint8Array([
     PARAMS_VERSION,
-    params.binaryCiphertext ? PARAM_FLAG_BINARY_CIPHERTEXT : 0,
+    (params.binaryCiphertext ? PARAM_FLAG_BINARY_CIPHERTEXT : 0) |
+      (params.deflatePayloads ? PARAM_FLAG_DEFLATE_PAYLOADS : 0),
   ]);
 }
 
@@ -803,7 +849,11 @@ function decodeParams(payload: Uint8Array): NegotiatedParams {
   if (payload[0] !== PARAMS_VERSION) throw new NoiseProtocolError("unsupported parameter version");
   if ((payload[1] & ~PARAM_FLAGS_KNOWN) !== 0)
     throw new NoiseProtocolError("reserved parameter flag set");
-  return { binaryCiphertext: (payload[1] & PARAM_FLAG_BINARY_CIPHERTEXT) !== 0 };
+  const binaryCiphertext = (payload[1] & PARAM_FLAG_BINARY_CIPHERTEXT) !== 0;
+  const deflatePayloads = (payload[1] & PARAM_FLAG_DEFLATE_PAYLOADS) !== 0;
+  if (deflatePayloads && !binaryCiphertext)
+    throw new NoiseProtocolError("compression requires binary ciphertext");
+  return { binaryCiphertext, deflatePayloads };
 }
 
 function preview(text: string): string {
