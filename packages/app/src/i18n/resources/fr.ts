@@ -1242,6 +1242,7 @@ export const fr: TranslationResources = {
         label: "Afficher",
         branch: "Branche",
         project: "Projet",
+        repository: "Dépôt",
         host: "Hôte",
         changeRequest: "Pull request",
         checks: "Vérifications",

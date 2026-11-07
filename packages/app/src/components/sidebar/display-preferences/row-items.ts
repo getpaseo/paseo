@@ -15,6 +15,7 @@
 export const SIDEBAR_ROW_ITEMS = [
   "branch",
   "project",
+  "repository",
   "host",
   "changeRequest",
   "services",
@@ -29,6 +30,7 @@ export type SidebarRowItems = Record<SidebarRowItem, boolean>;
 export const DEFAULT_SIDEBAR_ROW_ITEMS: SidebarRowItems = {
   branch: false,
   project: false,
+  repository: false,
   host: true,
   changeRequest: true,
   services: true,

@@ -1230,6 +1230,7 @@ export const ru: TranslationResources = {
         label: "Показывать",
         branch: "Ветка",
         project: "Проект",
+        repository: "Репозиторий",
         host: "Хост",
         changeRequest: "PR",
         checks: "Проверки",
