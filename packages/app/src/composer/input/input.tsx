@@ -76,7 +76,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useHardwareKeyboardSubmit } from "@/hooks/use-hardware-keyboard-submit";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
+import type { HardwareKeyboardSubmitEvent } from "@/native/hardware-keyboard-submit.types";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -111,6 +113,7 @@ import {
   resolveAlternateSendAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
+  resolveHardwareKeyboardSubmitEnabled,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
   runAlternateSendAction,
@@ -1798,6 +1801,48 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       });
     }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
 
+    const handleHardwareKeyboardSubmit = useCallback(
+      (event: HardwareKeyboardSubmitEvent) => {
+        // An open autocomplete owns Enter first, as it does on web.
+        const handled = onKeyPressCallback?.({
+          key: "Enter",
+          hasModifier: event.shiftKey || event.ctrlKey || event.metaKey || event.altKey,
+          preventDefault: () => {},
+          input: getComposerInputSnapshot(
+            textInputRef.current,
+            valueRef.current,
+            selectionRef.current,
+          ),
+        });
+        if (handled) return;
+
+        const action = resolveMessageInputEnterAction({
+          submitOnEnter: true,
+          sendShortcut,
+          shiftKey: event.shiftKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          isAgentRunning,
+          onQueue,
+        });
+        if (action === "alternate-send") {
+          handleAlternateSendAction();
+          return;
+        }
+        if (action === "default-send") {
+          handleDefaultSendAction();
+        }
+      },
+      [
+        onKeyPressCallback,
+        sendShortcut,
+        isAgentRunning,
+        onQueue,
+        handleAlternateSendAction,
+        handleDefaultSendAction,
+      ],
+    );
+
     const alternateSendAction = resolveAlternateSendAction({
       defaultSendBehavior,
       isAgentRunning,
@@ -1888,9 +1933,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         defaultSendBehavior,
         isAgentRunning,
       });
+    // iOS keeps its existing hardware Return path. Android uses the shared
+    // source and follows the desktop width rule.
     useIosHardwareKeyboardSubmit({
-      isEnabled: isInputFocused && !isSendButtonDisabled,
+      isEnabled: Platform.OS === "ios" && isInputFocused && !isSendButtonDisabled,
       onSubmit: handleDefaultSendAction,
+    });
+    useHardwareKeyboardSubmit({
+      isEnabled:
+        Platform.OS === "android" &&
+        resolveHardwareKeyboardSubmitEnabled({
+          isInputFocused,
+          isSendButtonDisabled,
+          isDictating,
+          isRealtimeVoiceForCurrentAgent,
+          isCompact,
+        }),
+      sendShortcut,
+      onSubmit: handleHardwareKeyboardSubmit,
     });
     const submitAccessibilityLabel = resolveSubmitAccessibilityLabel({
       submitButtonAccessibilityLabel,

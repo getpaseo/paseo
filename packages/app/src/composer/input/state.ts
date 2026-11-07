@@ -175,6 +175,30 @@ export function resolveMessageInputEnterAction(
   return "default-send";
 }
 
+export interface HardwareKeyboardSubmitGateContext {
+  isInputFocused: boolean;
+  isSendButtonDisabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+  isCompact: boolean;
+}
+
+/**
+ * Android takes hardware Return only in a wide layout, like desktop. A compact
+ * Android layout keeps the touch behavior, where Return inserts a newline.
+ */
+export function resolveHardwareKeyboardSubmitEnabled(
+  ctx: HardwareKeyboardSubmitGateContext,
+): boolean {
+  return (
+    ctx.isInputFocused &&
+    !ctx.isSendButtonDisabled &&
+    !ctx.isDictating &&
+    !ctx.isRealtimeVoiceForCurrentAgent &&
+    !ctx.isCompact
+  );
+}
+
 export function runMessageInputKeyboardAction(
   action: MessageInputKeyboardActionKind,
   actions: MessageInputKeyboardActions,
