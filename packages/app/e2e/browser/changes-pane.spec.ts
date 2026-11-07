@@ -16,6 +16,7 @@ interface DirtyWorkspace {
 }
 
 interface WorkspaceFixtureOptions {
+  workspaceSubdirectory?: string;
   includeDeletedFile?: boolean;
   includeNestedFolders?: boolean;
   includeRenamedFile?: boolean;
@@ -547,6 +548,76 @@ test("changes file actions open below the right-click without a reserved kebab",
   await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
   await expect(page.getByTestId("workspace-tab-file_src/use-mounted-tab-set.ts")).toBeVisible();
 });
+
+for (const { workspaceSubdirectory, filePath, content, visibleContent } of [
+  {
+    workspaceSubdirectory: ".",
+    filePath: "src/use-mounted-tab-set.ts",
+    content: AFTER,
+    visibleContent: "interface DeriveRenderMountedTabIdsInput",
+  },
+  {
+    workspaceSubdirectory: "src",
+    filePath: "src/use-mounted-tab-set.ts",
+    content: AFTER,
+    visibleContent: "interface DeriveRenderMountedTabIdsInput",
+  },
+  {
+    workspaceSubdirectory: "src",
+    filePath: "a-root-note.txt",
+    content: "root note\n",
+    visibleContent: "root note",
+  },
+]) {
+  test(`changes file actions resolve ${filePath} from project ${workspaceSubdirectory}`, async ({
+    page,
+    context,
+  }, testInfo) => {
+    const workspace = await createWorkspaceWithMountedTabDiff({
+      workspaceSubdirectory,
+      includeRootFileSortingFirst: filePath === "a-root-note.txt",
+    });
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openWorkspaceChanges(page, workspace);
+    const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+    const header = diffHeaderForPath(panel, filePath).getByTestId(/^diff-file-\d+-toggle$/);
+    await header.click({ button: "right" });
+    await testInfo.attach("changes-file-menu", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+    await test.step("Duplicate creates a copy next to the source", async () => {
+      const file = path.parse(filePath);
+      const copyPath = path.join(workspace.repoPath, file.dir, `${file.name} copy${file.ext}`);
+      await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
+      await expect
+        .poll(() => readFileIfPresent(copyPath), { message: `Expected duplicate at ${copyPath}` })
+        .toBe(content);
+    });
+    await header.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Copy relative path", exact: true }).click();
+    await expectClipboardText(page, filePath);
+    await header.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Copy path", exact: true }).click();
+    await expectClipboardText(page, path.join(workspace.repoPath, filePath));
+
+    await header.click({ button: "right" });
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toBe(path.basename(filePath));
+    expect(await readFile((await download.path())!, "utf8")).toBe(content);
+
+    await header.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Open file", exact: true }).click();
+    const editor = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(editor.locator(".cm-content")).toContainText(visibleContent);
+    await testInfo.attach("opened-changed-file", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  });
+}
 
 test("canvas file headers select without toggling for context menu and long press", async ({
   page,
@@ -1704,7 +1775,7 @@ async function createWorkspaceWithMountedTabDiff(
     );
   }
   const createdWorkspace = await client.createWorkspace({
-    source: { kind: "directory", path: repo.path },
+    source: { kind: "directory", path: path.join(repo.path, options.workspaceSubdirectory ?? ".") },
   });
   if (!createdWorkspace.workspace) {
     throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repo.path}`);
