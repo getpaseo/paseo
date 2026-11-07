@@ -3490,7 +3490,11 @@ describe("ACPAgentSession", () => {
     const cancel = vi.fn(async () => {});
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<{ connection: unknown }>(session).connection = { prompt, cancel };
+    asInternals<{ connection: unknown }>(session).connection = {
+      prompt,
+      cancel,
+      signal: new AbortController().signal,
+    };
 
     const { turnId } = await session.startTurn("hello");
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
