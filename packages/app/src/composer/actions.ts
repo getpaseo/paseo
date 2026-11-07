@@ -24,6 +24,7 @@ export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
+  activeTurnBehavior?: ActiveTurnBehavior;
 }
 
 export interface AttachmentPersister {
@@ -236,6 +237,7 @@ export async function dispatchComposerAgentMessage(
 export interface QueueComposerMessageInput {
   agentId: string;
   id?: string;
+  activeTurnBehavior?: ActiveTurnBehavior;
   text: string;
   attachments: ComposerAttachment[];
   queue: QueueWriter;
@@ -254,6 +256,7 @@ export function queueComposerMessage(input: QueueComposerMessageInput): QueueCom
     id: input.id ?? generateMessageId(),
     text: trimmed,
     attachments: input.attachments,
+    ...(input.activeTurnBehavior ? { activeTurnBehavior: input.activeTurnBehavior } : {}),
   };
   input.queue.write((prev) => {
     const next = new Map(prev);
@@ -301,6 +304,7 @@ export interface SendQueuedComposerMessageNowInput {
     messageId: string;
     text: string;
     attachments: ComposerAttachment[];
+    activeTurnBehavior?: ActiveTurnBehavior;
   }) => Promise<void>;
   failedToSendMessage?: string;
 }
@@ -328,6 +332,7 @@ export async function sendQueuedComposerMessageNow(
       messageId: item.id,
       text: item.text,
       attachments: item.attachments,
+      ...(item.activeTurnBehavior ? { activeTurnBehavior: item.activeTurnBehavior } : {}),
     });
     return { status: "submitted" };
   } catch (error) {

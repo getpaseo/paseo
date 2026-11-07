@@ -1678,22 +1678,21 @@ function ComposerContentImpl({
   const queueMessage = useCallback(
     (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
       const pendingRetry = failedDirectSendRetryRef.current;
-      const retryMessageId =
+      const matchesPendingRetry =
         pendingRetry?.agentId === agentId &&
         pendingRetry.text === queuedMessage.trim() &&
-        equal(pendingRetry.attachments, queuedAttachments)
-          ? pendingRetry.clientMessageId
-          : undefined;
+        equal(pendingRetry.attachments, queuedAttachments);
       const result = queueComposerMessage({
         agentId,
-        id: retryMessageId,
+        id: matchesPendingRetry ? pendingRetry.clientMessageId : undefined,
+        activeTurnBehavior: matchesPendingRetry ? pendingRetry.activeTurnBehavior : undefined,
         text: queuedMessage,
         attachments: queuedAttachments,
         queue: queueWriter,
       });
       if (!result.queued) return;
 
-      if (retryMessageId) {
+      if (matchesPendingRetry) {
         failedDirectSendRetryRef.current = null;
       }
       replaceUserInput("");

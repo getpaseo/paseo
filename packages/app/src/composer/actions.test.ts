@@ -728,14 +728,16 @@ describe("queueComposerMessage", () => {
     const result = queueComposerMessage({
       agentId: "agent",
       id: "retry-msg-1",
+      activeTurnBehavior: "interrupt",
       text: "  draft  ",
       attachments: [],
       queue,
     });
 
     expect(result.queued?.id).toBe("retry-msg-1");
+    expect(result.queued?.activeTurnBehavior).toBe("interrupt");
     expect(queue.state.get("agent")).toEqual([
-      { id: "retry-msg-1", text: "draft", attachments: [] },
+      { id: "retry-msg-1", activeTurnBehavior: "interrupt", text: "draft", attachments: [] },
     ]);
   });
 
@@ -847,14 +849,28 @@ describe("sendQueuedComposerMessageNow", () => {
 
   it("preserves the queued messageId as clientMessageId across failed drain retries", async () => {
     const queue = createFakeQueue(
-      new Map([["agent", [{ id: "msg-queued-1", text: "retry me", attachments: [] }]]]),
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "msg-queued-1",
+              activeTurnBehavior: "interrupt",
+              text: "retry me",
+              attachments: [],
+            },
+          ],
+        ],
+      ]),
     );
     const stream = createFakeStream();
     const sentIds: string[] = [];
+    const sentBehaviors: Array<"interrupt" | "steer" | undefined> = [];
     let shouldFail = true;
     const client: ComposerSendClient = {
       sendAgentMessage: async (_agentId, _text, options) => {
         sentIds.push(options.messageId);
+        sentBehaviors.push(options.activeTurnBehavior);
         if (shouldFail) {
           shouldFail = false;
           throw new Error("Timeout waiting for message (60000ms)");
@@ -867,10 +883,12 @@ describe("sendQueuedComposerMessageNow", () => {
       messageId,
       text,
       attachments,
+      activeTurnBehavior,
     }: {
       messageId: string;
       text: string;
       attachments: ComposerAttachment[];
+      activeTurnBehavior?: "interrupt" | "steer";
     }) =>
       dispatchComposerAgentMessage({
         client,
@@ -880,6 +898,7 @@ describe("sendQueuedComposerMessageNow", () => {
         attachments,
         encodeImages: passthroughEncodeImages,
         submission: stream,
+        activeTurnBehavior: activeTurnBehavior ?? "steer",
       });
 
     const first = await sendQueuedComposerMessageNow({
@@ -901,6 +920,7 @@ describe("sendQueuedComposerMessageNow", () => {
     });
     expect(second).toEqual({ status: "submitted" });
     expect(sentIds).toEqual(["msg-queued-1", "msg-queued-1"]);
+    expect(sentBehaviors).toEqual(["interrupt", "interrupt"]);
   });
 
   it("restores the queued entry to the front and surfaces the error message on failure", async () => {
