@@ -210,7 +210,8 @@ function buildThinkingOptions(
     return undefined;
   }
 
-  const options: AgentSelectOption[] = [
+  // Ultracode is a feature toggle, not an effort level. See claudeModelSupportsUltracode.
+  return [
     ...(supportsThinkingDisabled ? [{ id: CLAUDE_DISABLED_THINKING_OPTION_ID, label: "Off" }] : []),
     ...effortLevels.map((id) => ({
       id,
@@ -218,12 +219,6 @@ function buildThinkingOptions(
       ...(id === defaultThinkingOptionId ? { isDefault: true } : {}),
     })),
   ];
-
-  if (effortLevels.includes("xhigh")) {
-    options.push({ id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" });
-  }
-
-  return options;
 }
 
 export function getClaudeManifestModels(
@@ -358,6 +353,22 @@ export function claudeManifestModelSupportsFastMode(modelId: string | null | und
       "supportsFastMode" in model &&
       model.supportsFastMode === true,
   );
+}
+
+/**
+ * Ultracode needs an xhigh-capable model. It is a Claude Code setting rather than an API
+ * capability, so provider-prefixed and gateway model IDs resolve through the runtime
+ * normalizer instead of the first-party-only manifest normalizer that fast mode uses.
+ */
+export function claudeModelSupportsUltracode(modelId: string | null | undefined): boolean {
+  const normalizedModelId = normalizeClaudeRuntimeModelId(modelId);
+  if (!normalizedModelId) {
+    return false;
+  }
+  const model: ClaudeModelManifestEntry | undefined = CLAUDE_MODEL_MANIFEST.find(
+    (candidate) => candidate.id === normalizedModelId,
+  );
+  return model?.effortLevels?.includes("xhigh") === true;
 }
 
 /**
