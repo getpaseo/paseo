@@ -65,11 +65,15 @@ export async function probeExecutable(
   executablePath: string,
   options: number | ExecutableResolutionOptions = PROBE_TIMEOUT_MS,
 ): Promise<boolean> {
-  const { probeTimeoutMs: timeoutMs = PROBE_TIMEOUT_MS, env } =
-    typeof options === "number" ? { probeTimeoutMs: options } : options;
+  const {
+    probeTimeoutMs: timeoutMs = PROBE_TIMEOUT_MS,
+    env,
+    envMode,
+  } = typeof options === "number" ? { probeTimeoutMs: options } : options;
   try {
     await execCommand(executablePath, ["--version"], {
       baseEnv: env,
+      envMode,
       timeout: timeoutMs,
       killSignal: "SIGKILL",
       maxBuffer: 64 * 1024,
@@ -140,14 +144,19 @@ export async function findExecutableWithoutProbing(
 export interface ExecutableResolutionOptions {
   probeTimeoutMs?: number;
   env?: ProcessEnvRecord;
+  /** Preserve an environment already finalized by the caller's launch policy. */
+  envMode?: "external" | "internal";
 }
 
 export async function findExecutable(
   name: string,
   options: number | ExecutableResolutionOptions = PROBE_TIMEOUT_MS,
 ): Promise<string | null> {
-  const { probeTimeoutMs = PROBE_TIMEOUT_MS, env } =
-    typeof options === "number" ? { probeTimeoutMs: options } : options;
+  const {
+    probeTimeoutMs = PROBE_TIMEOUT_MS,
+    env,
+    envMode,
+  } = typeof options === "number" ? { probeTimeoutMs: options } : options;
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
@@ -157,19 +166,19 @@ export async function findExecutable(
     return windowsExecutableResolution.find(trimmed, {
       enumeratePathCandidates: (command) => enumerateCandidates(command, env),
       probeExecutable: (command, timeout) =>
-        probeExecutable(command, { probeTimeoutMs: timeout, env }),
+        probeExecutable(command, { probeTimeoutMs: timeout, env, envMode }),
       exists: existsSync,
       probeTimeoutMs,
     });
   }
 
   if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed, { probeTimeoutMs, env })) ? trimmed : null;
+    return (await probeExecutable(trimmed, { probeTimeoutMs, env, envMode })) ? trimmed : null;
   }
 
   const candidates = await enumerateCandidates(trimmed, env);
   for (const candidate of candidates) {
-    if (await probeExecutable(candidate, { probeTimeoutMs, env })) {
+    if (await probeExecutable(candidate, { probeTimeoutMs, env, envMode })) {
       return candidate;
     }
   }

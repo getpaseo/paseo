@@ -5,6 +5,7 @@ import {
 } from "../../executable-resolution/executable-resolution.js";
 import {
   createExternalProcessEnv,
+  RUNTIME_CONTROL_ENV_KEYS,
   type ProcessEnvRecord,
   type ExternalProcessEnv,
 } from "../paseo-env.js";
@@ -43,7 +44,8 @@ export interface ResolvedProviderLaunch {
   command: string;
   args: string[];
   source: ProviderLaunchSource;
-  env?: ProcessEnvRecord;
+  /** Finalized provider environment from createProviderEnv(), ready for child execution. */
+  env?: ExternalProcessEnv;
 }
 
 export interface ProviderLaunchAvailability {
@@ -66,7 +68,8 @@ function normalizeLaunchDefault(
 }
 
 async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
-  const found = await findExecutable(command, { env });
+  // launch.env is finalized by the provider builder, including explicit runtime controls.
+  const found = await findExecutable(command, { env, envMode: env ? "internal" : "external" });
   if (found) {
     return found;
   }
@@ -78,10 +81,11 @@ async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promi
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  env?: ProcessEnvRecord,
 ): Promise<string | null> {
   return defaultBinary.resolvePath
     ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    : await resolveLaunchPath(defaultBinary.command, env);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -120,7 +124,7 @@ export async function checkProviderLaunchAvailable(
 ): Promise<ProviderLaunchAvailability> {
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
+      ? await resolveDefaultLaunchPath(defaultBinary, launch.env)
       : await resolveLaunchPath(launch.command, launch.env);
   return {
     available: resolvedPath !== null,
@@ -222,8 +226,8 @@ export interface ProviderEnvOptions {
 }
 
 export interface ProviderEnvSpec {
-  baseEnv?: ProcessEnvRecord;
-  envOverlay: ProcessEnvRecord;
+  env: ExternalProcessEnv;
+  envMode: "internal";
 }
 
 function collectProviderEnvOverlays(
@@ -236,20 +240,24 @@ function collectProviderEnvOverlays(
 }
 
 export function createProviderEnvSpec(options: ProviderEnvOptions = {}): ProviderEnvSpec {
-  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
-  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
-  for (const key of PARENT_SESSION_ENV_VARS) {
-    envOverlay[key] = undefined;
-  }
-  return {
-    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-    envOverlay,
-  };
+  // Provider env is finalized here so spawning cannot scrub explicit user settings again.
+  return { env: createProviderEnv(options), envMode: "internal" };
 }
 
 export function createProviderEnv(options: ProviderEnvOptions = {}): ExternalProcessEnv {
-  const spec = createProviderEnvSpec(options);
-  return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
+  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
+  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
+  const env = createExternalProcessEnv(options.baseEnv ?? process.env, envOverlay);
+  for (const key of RUNTIME_CONTROL_ENV_KEYS) {
+    const configured = options.runtimeSettings?.env?.[key];
+    if (configured !== undefined) {
+      env[key] = configured;
+    }
+  }
+  for (const key of PARENT_SESSION_ENV_VARS) {
+    delete env[key];
+  }
+  return env;
 }
 
 export async function isProviderCommandAvailable(

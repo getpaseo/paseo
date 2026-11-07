@@ -42,7 +42,13 @@ describe("Claude SDK env", () => {
       const query = claudeQuery(
         { prompt: "", options: {} },
         {
-          runtimeSettings: { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" } },
+          runtimeSettings: {
+            env: {
+              CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
+              ELECTRON_RUN_AS_NODE: "1",
+              ESBUILD_BINARY_PATH: "/configured/esbuild",
+            },
+          },
           launchEnv: entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: entrypoint },
           queryFactory: ({ options }) => {
             if (!options.spawnClaudeCodeProcess) {
@@ -52,7 +58,7 @@ describe("Claude SDK env", () => {
               command,
               args: [
                 "-e",
-                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null }))",
+                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null, electronMode: process.env.ELECTRON_RUN_AS_NODE ?? null, esbuild: process.env.ESBUILD_BINARY_PATH ?? null }))",
               ],
               cwd: process.cwd(),
               env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts", CLAUDECODE: "1" },
@@ -72,6 +78,8 @@ describe("Claude SDK env", () => {
         expect(JSON.parse(output)).toEqual({
           ...(entrypoint === undefined ? {} : { entrypoint }),
           parentSession: null,
+          electronMode: "1",
+          esbuild: "/configured/esbuild",
         });
       } finally {
         query.close();

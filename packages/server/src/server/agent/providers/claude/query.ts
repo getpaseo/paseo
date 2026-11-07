@@ -5,7 +5,7 @@ import {
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
-import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
+import { buildSelfNodeCommand } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
@@ -75,8 +75,10 @@ function applyRuntimeSettingsToClaudeOptions(
       });
       // Session-open hooks may explicitly supply a client identity. Keep inherited
       // SDK/parent identities cleared while honoring this launch-only contribution.
-      providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
-      const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
+      const providerEnv = providerEnvSpec.env;
+      if (launchEnv?.CLAUDE_CODE_ENTRYPOINT !== undefined) {
+        providerEnv.CLAUDE_CODE_ENTRYPOINT = launchEnv.CLAUDE_CODE_ENTRYPOINT;
+      }
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)
         : null;
