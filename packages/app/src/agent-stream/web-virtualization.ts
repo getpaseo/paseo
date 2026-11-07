@@ -8,6 +8,9 @@ import {
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = DEFAULT_MOUNTED_RECENT_STREAM_ITEMS;
+// Collapsed tool rows are about 40px, so this stays past a desktop viewport.
+// Opening a long run mounts that tail and virtualizes the older rows.
+export const MAX_MOUNTED_WEB_WINDOW_ITEMS = 60;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
@@ -86,6 +89,7 @@ export function splitWebVirtualizedHistory(input: {
   const startIndex = findMountedWindowStart({
     items: input.entries.map((entry) => entry.item),
     minMountedCount: input.minMountedCount,
+    maxMountedCount: MAX_MOUNTED_WEB_WINDOW_ITEMS,
   });
   return {
     virtualizedEntries: input.entries.slice(0, startIndex),
