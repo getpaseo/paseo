@@ -2033,6 +2033,12 @@ export const zhCN: TranslationResources = {
       loading: "正在加载文件...",
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",
+      image: {
+        saveToAlbum: "保存到相册",
+        savedToAlbum: "已保存到相册",
+        saveFailed: "无法保存图片",
+        photoPermissionDenied: "请在设置中允许访问照片以保存图片。",
+      },
       tooLargeToDisplay: "此文件过大，无法显示",
       documentUnsupported: "无法在此设备上显示 {{type}} 文件",
       failedToLoad: "加载文件失败",

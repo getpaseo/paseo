@@ -2082,6 +2082,12 @@ export const en = {
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
+      image: {
+        saveToAlbum: "Save to Photos",
+        savedToAlbum: "Saved to Photos",
+        saveFailed: "Couldn't save image",
+        photoPermissionDenied: "Allow photo access in Settings to save images.",
+      },
       tooLargeToDisplay: "This file is too large to display",
       documentUnsupported: "{{type}} files can't be shown on this device",
       failedToLoad: "Failed to load file",

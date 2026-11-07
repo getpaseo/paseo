@@ -1,12 +1,19 @@
 import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { useCallback, useState } from "react";
+import { ImageDown } from "lucide-react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import type { ZoomableViewportAction } from "@/components/zoomable-viewport/types";
+import { isNative } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
+import { PhotoLibraryPermissionError } from "./photo-library-permission";
+import { saveImageToAlbum } from "./save-image-to-album";
 import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
@@ -60,9 +67,55 @@ function HtmlPreview({ text }: TextFilePreviewProps) {
 
 function ImagePanel({ file }: PluginFilePanelProps) {
   const url = useFileUrl(file);
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  // Photos can't display vector images, so SVG files get the zoom controls without a save action.
+  const canSaveToAlbum = isNative && file.extension !== "svg";
+
+  const saveToAlbum = useCallback(async () => {
+    if (url.status !== "ready" || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      await saveImageToAlbum(url.url);
+      toast.show(t("panels.file.image.savedToAlbum"), { variant: "success" });
+    } catch (error) {
+      console.error("[file-panels] Failed to save image to the photo library", {
+        path: file.path,
+        error,
+      });
+      toast.error(
+        error instanceof PhotoLibraryPermissionError
+          ? t("panels.file.image.photoPermissionDenied")
+          : t("panels.file.image.saveFailed"),
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [file.path, t, toast, url]);
+
+  const actions = useMemo<ZoomableViewportAction[]>(
+    () =>
+      canSaveToAlbum
+        ? [
+            {
+              icon: ImageDown,
+              label: t("panels.file.image.saveToAlbum"),
+              onPress: saveToAlbum,
+              testID: "image-file-save-to-album",
+              disabled: saving,
+            },
+          ]
+        : [],
+    [canSaveToAlbum, saveToAlbum, saving, t],
+  );
+
   if (url.status === "loading") return <FilePanelLoading />;
   if (url.status === "error") return <FilePanelError message={url.error.message} />;
-  return <ZoomableImage uri={url.url} testID="image-file-preview" />;
+  return <ZoomableImage actions={actions} uri={url.url} testID="image-file-preview" />;
 }
 
 function FilePanelError({ message }: { message: string }) {

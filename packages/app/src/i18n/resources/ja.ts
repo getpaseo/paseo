@@ -2077,6 +2077,12 @@ export const ja: TranslationResources = {
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
+      image: {
+        saveToAlbum: "写真に保存",
+        savedToAlbum: "写真に保存しました",
+        saveFailed: "画像を保存できませんでした",
+        photoPermissionDenied: "設定で写真へのアクセスを許可すると画像を保存できます。",
+      },
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       documentUnsupported: "{{type}} ファイルはこのデバイスでは表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",

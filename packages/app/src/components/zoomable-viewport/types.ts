@@ -7,6 +7,7 @@ export interface ZoomableViewportAction {
   label: string;
   onPress: () => void;
   testID?: string;
+  disabled?: boolean;
 }
 
 export interface ZoomableViewportProps {

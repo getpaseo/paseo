@@ -2090,6 +2090,12 @@ export const ptBR: TranslationResources = {
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
+      image: {
+        saveToAlbum: "Salvar em Fotos",
+        savedToAlbum: "Salvo em Fotos",
+        saveFailed: "Não foi possível salvar a imagem",
+        photoPermissionDenied: "Permita o acesso às fotos nos Ajustes para salvar imagens.",
+      },
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       documentUnsupported: "Arquivos {{type}} não podem ser exibidos neste dispositivo",
       failedToLoad: "Falha ao carregar arquivo",

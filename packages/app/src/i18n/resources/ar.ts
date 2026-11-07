@@ -2056,6 +2056,12 @@ export const ar: TranslationResources = {
       loading: "جارٍ تحميل الملف...",
       noPreview: "لا تتوفر معاينة",
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
+      image: {
+        saveToAlbum: "حفظ في الصور",
+        savedToAlbum: "تم الحفظ في الصور",
+        saveFailed: "تعذر حفظ الصورة",
+        photoPermissionDenied: "اسمح بالوصول إلى الصور من الإعدادات لحفظ الصور.",
+      },
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
       documentUnsupported: "لا يمكن عرض ملفات {{type}} على هذا الجهاز",
       failedToLoad: "فشل تحميل الملف",

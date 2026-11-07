@@ -2090,6 +2090,12 @@ export const ru: TranslationResources = {
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
+      image: {
+        saveToAlbum: "Сохранить в Фото",
+        savedToAlbum: "Сохранено в Фото",
+        saveFailed: "Не удалось сохранить изображение",
+        photoPermissionDenied: "Разрешите доступ к фото в Настройках, чтобы сохранять изображения.",
+      },
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
       documentUnsupported: "Файлы {{type}} нельзя показать на этом устройстве",
       failedToLoad: "Не удалось загрузить файл",

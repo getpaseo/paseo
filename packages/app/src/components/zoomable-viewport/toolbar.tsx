@@ -55,7 +55,7 @@ export const ViewportToolbar = React.memo(function ViewportToolbar({
       onPress: onReset,
       disabled: scale === 1,
     },
-    ...actions.map((action) => ({ ...action, disabled: false })),
+    ...actions.map((action) => ({ ...action, disabled: action.disabled ?? false })),
   ];
 
   return (

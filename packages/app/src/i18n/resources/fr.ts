@@ -2104,6 +2104,13 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier…",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu indisponible pour un fichier binaire",
+      image: {
+        saveToAlbum: "Enregistrer dans Photos",
+        savedToAlbum: "Enregistré dans Photos",
+        saveFailed: "Impossible d’enregistrer l’image",
+        photoPermissionDenied:
+          "Autorisez l’accès aux photos dans Réglages pour enregistrer des images.",
+      },
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       documentUnsupported: "Les fichiers {{type}} ne peuvent pas être affichés sur cet appareil",
       failedToLoad: "Impossible de charger le fichier",

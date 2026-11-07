@@ -2105,6 +2105,12 @@ export const es: TranslationResources = {
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
+      image: {
+        saveToAlbum: "Guardar en Fotos",
+        savedToAlbum: "Guardado en Fotos",
+        saveFailed: "No se pudo guardar la imagen",
+        photoPermissionDenied: "Permite el acceso a las fotos en Ajustes para guardar imágenes.",
+      },
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       documentUnsupported: "Los archivos {{type}} no se pueden mostrar en este dispositivo",
       failedToLoad: "No se pudo cargar el archivo",

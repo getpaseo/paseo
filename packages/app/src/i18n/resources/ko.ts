@@ -2067,6 +2067,12 @@ export const ko: TranslationResources = {
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
+      image: {
+        saveToAlbum: "사진에 저장",
+        savedToAlbum: "사진에 저장됨",
+        saveFailed: "이미지를 저장할 수 없습니다",
+        photoPermissionDenied: "설정에서 사진 접근을 허용하면 이미지를 저장할 수 있습니다.",
+      },
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       documentUnsupported: "{{type}} 파일은 이 기기에서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
