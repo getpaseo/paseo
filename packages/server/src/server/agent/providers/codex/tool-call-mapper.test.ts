@@ -242,6 +242,26 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each(["wait", "closeAgent"])("maps persisted %s with a null prompt", (tool) => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "completed-child-observation",
+      tool,
+      status: "completed",
+      prompt: null,
+      receiverThreadIds: ["child-thread"],
+      agentsStates: { "child-thread": { status: "completed", message: null } },
+    });
+
+    expect(item).toMatchObject({
+      type: "tool_call",
+      callId: "completed-child-observation",
+      status: "completed",
+      error: null,
+      detail: { type: "sub_agent" },
+    });
+  });
+
   it.each([
     ["started", "running"],
     ["interacted", "running"],
