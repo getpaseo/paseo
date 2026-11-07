@@ -7,7 +7,7 @@ import type {
 import type { PiRuntimeEvent } from "../rpc-types.js";
 import type { PiToolResult } from "../tool-call-mapper.js";
 import type { ProviderSubagentInputEvent } from "../../../provider-subagents/store.js";
-import type { PiAgentMessage } from "../rpc-types.js";
+import type { PiAgentMessage, PiCustomEntry } from "../rpc-types.js";
 
 export interface PiExtensionToolCall {
   callId: string;
@@ -56,6 +56,9 @@ export interface PiExtensionUiReply {
 
 export interface PiExtensionSession {
   mapToolCall?(call: PiExtensionToolCall): PiExtensionToolMapping | undefined;
+  mapCustomEntry?(entry: PiCustomEntry): PiExtensionCustomMapping | undefined;
+  /** Replace branch-derived state without discarding active tool or dialog correlation. */
+  resetCustomEntries?(): void;
   /** Claims a `ctx.ui.notify` message sent by this extension's `runtimeBridge`. */
   mapRuntimeNotification?(message: string): PiExtensionCustomMapping | undefined;
   /** Called on the live follow cadence to report state Pi only writes to disk. */
