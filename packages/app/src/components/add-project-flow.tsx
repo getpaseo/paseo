@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
@@ -143,7 +145,7 @@ function FlowBackButton({ onPress }: { onPress: () => void }) {
       hitSlop={8}
       style={styles.backButton}
       accessibilityRole="button"
-      accessibilityLabel="Back"
+      accessibilityLabel={addProjectCopy("back")}
       testID="add-project-flow-back"
     >
       {({ hovered, pressed }) => (
@@ -164,22 +166,22 @@ function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
 }
 
 function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string): string | null {
-  if (option.kind === "path") return "Open this path";
+  if (option.kind === "path") return addProjectCopy("openPath");
   if (shortPath === option.path) return null;
   return option.path;
 }
 
 function progressText(page: AddProjectPage): string {
-  if (page.kind === "github-location") return "Cloning project...";
-  if (page.kind === "new-directory-name") return "Creating directory...";
-  return "Adding project...";
+  if (page.kind === "github-location") return addProjectCopy("cloning");
+  if (page.kind === "new-directory-name") return addProjectCopy("creating");
+  return addProjectCopy("adding");
 }
 
 function emptyText(page: AddProjectPage, host: AddProjectHost | null): string {
-  if (page.kind === "host") return "No connected hosts";
-  if (page.kind === "github-search") return "Enter a GitHub URL or owner/repo";
+  if (page.kind === "host") return addProjectCopy("noHosts");
+  if (page.kind === "github-search") return addProjectCopy("githubInput");
   if (page.kind === "method") return addProjectMethodEmptyText(host);
-  return "No matching options";
+  return addProjectCopy("noOptions");
 }
 
 interface QueryErrorInput {
@@ -191,10 +193,12 @@ interface QueryErrorInput {
 }
 
 function queryErrorText(input: QueryErrorInput): string | null {
-  if (input.searchesDirectories && input.directoryFailed) return "Unable to search directories";
-  if (input.githubFailed) return "Unable to search GitHub repositories";
+  if (input.searchesDirectories && input.directoryFailed)
+    return addProjectCopy("directorySearchError");
+  if (input.githubFailed) return addProjectCopy("githubSearchError");
   if (input.githubError) return input.githubError;
-  if (input.githubAvailable === false) return input.githubError ?? "GitHub search is unavailable";
+  if (input.githubAvailable === false)
+    return input.githubError ?? addProjectCopy("githubUnavailable");
   return null;
 }
 
@@ -205,19 +209,19 @@ function pageHostId(page: AddProjectPage): string | null {
 function pageTitle(page: AddProjectPage): string {
   switch (page.kind) {
     case "host":
-      return "Choose host";
+      return addProjectCopy("chooseHost");
     case "method":
-      return "Add project";
+      return addProjectCopy("addProject");
     case "directory-search":
-      return "Search for directory";
+      return addProjectCopy("searchDirectory");
     case "github-search":
-      return "Clone from GitHub";
+      return addProjectCopy("cloneGithub");
     case "github-location":
-      return "Choose destination";
+      return addProjectCopy("chooseDestination");
     case "new-directory-parent":
-      return "Choose parent directory";
+      return addProjectCopy("chooseParent");
     case "new-directory-name":
-      return "Name directory";
+      return addProjectCopy("nameDirectory");
   }
 }
 
@@ -226,16 +230,16 @@ type AddProjectInputPage = Exclude<AddProjectPage, { kind: "method" }>;
 function pagePlaceholder(page: AddProjectInputPage): string {
   switch (page.kind) {
     case "host":
-      return "Search hosts...";
+      return addProjectCopy("searchHosts");
     case "directory-search":
-      return "Search directories or enter a path...";
+      return addProjectCopy("searchDirectories");
     case "github-search":
-      return "Search or enter a GitHub repository...";
+      return addProjectCopy("searchRepositories");
     case "github-location":
     case "new-directory-parent":
-      return "Search parent directories or enter a path...";
+      return addProjectCopy("searchParents");
     case "new-directory-name":
-      return "Directory name";
+      return addProjectCopy("directoryName");
   }
 }
 
@@ -323,6 +327,7 @@ function setPageStatus(
 // The product flow is intentionally one cohesive page-stack state machine.
 // eslint-disable-next-line complexity
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
+  useTranslation("addProject");
   const addHost = useAddHost();
   const hosts = useHosts();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
@@ -493,7 +498,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         }
         const reason = getOpenProjectFailureReason(result);
         const message =
-          reason === "directory_not_found" ? "Directory not found" : "Unable to add project";
+          reason === "directory_not_found"
+            ? addProjectCopy("directoryMissing")
+            : addProjectCopy("addError");
         setState((current) =>
           setPageStatus(current, sourceKind, { isSubmitting: false, error: message }),
         );
@@ -501,7 +508,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setState((current) =>
           setPageStatus(current, sourceKind, {
             isSubmitting: false,
-            error: "Unable to add project",
+            error: addProjectCopy("addError"),
           }),
         );
       } finally {
@@ -519,7 +526,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (path) await openAddedProject(path, "method");
     } catch {
       setState((current) =>
-        setPageStatus(current, "method", { error: "Unable to browse for a directory" }),
+        setPageStatus(current, "method", { error: addProjectCopy("browseError") }),
       );
     } finally {
       browseInFlightRef.current = false;
@@ -576,14 +583,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setState((current) =>
           setPageStatus(current, "github-location", {
             isSubmitting: false,
-            error: result.error ?? "Unable to clone repository",
+            error: result.error ?? addProjectCopy("cloneError"),
           }),
         );
       } catch (error) {
         setState((current) =>
           setPageStatus(current, "github-location", {
             isSubmitting: false,
-            error: error instanceof Error ? error.message : "Unable to clone repository",
+            error: error instanceof Error ? error.message : addProjectCopy("cloneError"),
           }),
         );
       } finally {
@@ -592,7 +599,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     },
     [cloneGithubProject, openNewWorkspaceForProject],
   );
-  const rows = useMemo<FlowRowOption[]>(() => {
+  const rows: FlowRowOption[] = (() => {
     if (page.kind === "host") {
       const choices = filterAddProjectHosts(state.hosts, page.query).map<FlowRowOption>(
         (choice) => ({
@@ -607,8 +614,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (state.hosts.length === 0) {
         choices.push({
           id: "add-host",
-          title: "Add host",
-          subtitle: "No connected hosts",
+          title: addProjectCopy("addHost"),
+          subtitle: addProjectCopy("noHosts"),
           icon: Plus,
           testID: "add-project-flow-add-host",
           select: () => {
@@ -661,7 +668,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       return repositoryChoices.map((repository) => ({
         id: repository.id,
         title: repository.cloneProtocol
-          ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
+          ? addProjectCopy("repositoryVia", {
+              repository: repository.nameWithOwner,
+              protocol: repository.cloneProtocol.toUpperCase(),
+            })
           : repository.nameWithOwner,
         subtitle: repository.description,
         icon: GitHubIcon,
@@ -700,7 +710,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       return pathOptions.map((option) => ({
         id: option.path,
         title: shortenPath(option.path),
-        subtitle: option.kind === "path" ? "Use this parent" : option.path,
+        subtitle: option.kind === "path" ? addProjectCopy("useParent") : option.path,
         icon: Folder,
         testID: pathTestId(option.path),
         select: () =>
@@ -708,20 +718,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }));
     }
     return [];
-  }, [
-    cloneRepository,
-    directoryPaths,
-    githubQuery.data,
-    host,
-    addHost,
-    onClose,
-    openAddedProject,
-    page,
-    pathOptions,
-    recommendedPaths,
-    selectMethod,
-    state.hosts,
-  ]);
+  })();
 
   const activeIndex = rows.length === 0 ? 0 : Math.min(page.activeIndex, rows.length - 1);
   const rowListKey = useMemo(() => rows.map((row) => row.id).join("\u0000"), [rows]);
@@ -736,7 +733,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     const name = page.name.trim();
     if (!name || name === "." || name === ".." || /[\\/]/.test(name)) {
       setState((current) =>
-        setPageStatus(current, "new-directory-name", { error: "Enter a directory name" }),
+        setPageStatus(current, "new-directory-name", { error: addProjectCopy("enterName") }),
       );
       return;
     }
@@ -754,7 +751,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setState((current) =>
           setPageStatus(current, "new-directory-name", {
             isSubmitting: false,
-            error: payload.error ?? "Unable to create directory",
+            error: payload.error ?? addProjectCopy("createError"),
           }),
         );
         return;
@@ -770,7 +767,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       setState((current) =>
         setPageStatus(current, "new-directory-name", {
           isSubmitting: false,
-          error: "Unable to create directory",
+          error: addProjectCopy("createError"),
         }),
       );
     } finally {
@@ -862,7 +859,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           ref={setOverlayScope}
           style={styles.panel}
           testID={`add-project-flow-page-${page.kind}`}
-          accessibilityLabel={`Add project: ${page.kind}`}
+          accessibilityLabel={addProjectCopy("accessibility", { page: pageTitle(page) })}
         >
           <View style={styles.header}>
             <View style={styles.titleRow}>
@@ -927,7 +924,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               ) : null}
               {!isSubmitting && loading ? (
                 <Text style={styles.stateText} testID="add-project-flow-loading">
-                  Loading...
+                  {addProjectCopy("loading")}
                 </Text>
               ) : null}
               {!isSubmitting &&
@@ -955,9 +952,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             </View>
           </ScrollView>
           <View style={styles.footer} testID="add-project-flow-footer">
-            <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
-            <FlowHint keys={SELECT_HINT_KEYS} action="Select" />
-            <FlowHint keys={ESCAPE_HINT_KEYS} action={state.pages.length > 1 ? "Back" : "Close"} />
+            <FlowHint keys={NAVIGATION_HINT_KEYS} action={addProjectCopy("navigate")} />
+            <FlowHint keys={SELECT_HINT_KEYS} action={addProjectCopy("select")} />
+            <FlowHint
+              keys={ESCAPE_HINT_KEYS}
+              action={state.pages.length > 1 ? addProjectCopy("back") : addProjectCopy("close")}
+            />
           </View>
         </View>
       </View>

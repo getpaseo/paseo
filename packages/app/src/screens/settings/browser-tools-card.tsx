@@ -14,6 +14,7 @@ import {
 
 export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const { t: browserToolsT } = useTranslation("browserTools");
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const state = getBrowserToolsCardState({ isConnected, config });
@@ -44,11 +45,11 @@ export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-browser-tools-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>{state.title}</Text>
-          <Text style={settingsStyles.rowHint}>{state.warning}</Text>
+          <Text style={settingsStyles.rowTitle}>{browserToolsT("title")}</Text>
+          <Text style={settingsStyles.rowHint}>{browserToolsT("description")}</Text>
           {mutationView.loadingText ? (
             <Text style={settingsStyles.rowHint} testID="host-page-browser-tools-loading">
-              {mutationView.loadingText}
+              {browserToolsT("updating")}
             </Text>
           ) : null}
           {mutationView.errorText ? (
@@ -61,7 +62,7 @@ export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
           value={state.isEnabled}
           onValueChange={handleValueChange}
           disabled={mutationView.isSwitchDisabled}
-          accessibilityLabel="Enable browser tools"
+          accessibilityLabel={browserToolsT("enable")}
           testID="host-page-browser-tools-switch"
         />
       </View>
