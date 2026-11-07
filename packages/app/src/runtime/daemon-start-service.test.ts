@@ -64,6 +64,24 @@ function makeRelayOnlyHost(serverId: string): HostProfile {
 }
 
 describe("DaemonStartService", () => {
+  it("reports a daemon that stops during startup without registering an incomplete host", async () => {
+    const fake = createFakeStore();
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: async () =>
+        makeStatus({ status: "starting", serverId: "", listen: null }),
+      getDesktopDaemonStatus: async () =>
+        makeStatus({ status: "stopped", serverId: "", listen: null, pid: null }),
+    });
+
+    expect(await service.start()).toEqual({
+      ok: false,
+      error: "The local daemon stopped before startup completed.",
+    });
+    expect(service.isRunning()).toBe(false);
+    expect(fake.upserts).toEqual([]);
+  });
+
   it("keeps startup pending until a slow daemon becomes ready without restarting it", async () => {
     vi.useFakeTimers();
     try {
