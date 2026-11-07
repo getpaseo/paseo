@@ -1,7 +1,8 @@
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app } from "electron";
+import { app, autoUpdater as electronAutoUpdater } from "electron";
 import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
@@ -140,6 +141,35 @@ export function shouldInstallAppUpdateOnQuit(input: {
   return !(input.platform === "linux" && input.isAppImage);
 }
 
+// Electron's app.relaunch() starts the new instance with PR_SET_NO_NEW_PRIVS
+// (Chromium's LaunchProcess default), and every descendant inherits it. That
+// breaks setuid/file-capability binaries: pkexec for the next update, sudo in
+// agent terminals, and snap-confine, so links opened in a snap browser do
+// nothing. The deb/rpm/pacman updaters call app.relaunch(), so Paseo relaunches
+// those itself through Node's spawn, which leaves the flag alone.
+function shouldRelaunchAfterLinuxPackageInstall(isForceRunAfter: boolean): boolean {
+  return isForceRunAfter && process.platform === "linux" && !process.env.APPIMAGE;
+}
+
+/** Starts `executable` once `pid` has exited, so it doesn't lose the single-instance lock. */
+export function spawnAfterExit(pid: number, executable: string): void {
+  spawn(
+    "/bin/sh",
+    [
+      "-c",
+      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
+      "sh",
+      String(pid),
+      executable,
+    ],
+    { detached: true, stdio: "ignore" },
+  ).unref();
+}
+
+// Relaunch through the sandbox launcher script (Paseo), not the Electron binary it wraps (Paseo.bin).
+const relaunchAfterUpdateQuit = () =>
+  spawnAfterExit(process.pid, process.execPath.replace(/\.bin$/, ""));
+
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
@@ -212,12 +242,20 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
-    autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
       targetVersion,
       isSilent,
       isForceRunAfter,
     });
+    if (shouldRelaunchAfterLinuxPackageInstall(isForceRunAfter)) {
+      // Emitted only once the package installed; a failed install leaves it armed for the retry.
+      electronAutoUpdater.removeListener("before-quit-for-update", relaunchAfterUpdateQuit);
+      electronAutoUpdater.once("before-quit-for-update", relaunchAfterUpdateQuit);
+      autoUpdater.autoRunAppAfterInstall = false;
+      autoUpdater.quitAndInstall(isSilent, false);
+      return;
+    }
+    autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
   }
 }
