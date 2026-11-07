@@ -201,8 +201,8 @@ test.describe("Turn end", () => {
 
 async function expectTimingInsideFooter(page: Page): Promise<void> {
   const label = page.getByRole("button", { name: /^Worked for/ }).last();
-  const paintedLines = await label.evaluate((element) => {
-    const labelBounds = element.getBoundingClientRect();
+  const paintedLines = await label.getByTestId("turn-footer-timing-label").evaluate((element) => {
+    const labelBounds = element.parentElement!.getBoundingClientRect();
     const rowBounds = element.closest('[data-testid="turn-footer"]')!.getBoundingClientRect();
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     const lines: boolean[] = [];
@@ -241,11 +241,12 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
   );
   const footerBefore = await footer.boundingBox();
   const labelBefore = await label.boundingBox();
-  await label.hover({ position: { x: labelBefore!.width - 2, y: labelBefore!.height / 2 } });
-  await expect(label).toContainText(/\d:\d\d/);
+  await label.hover({ position: { x: labelBefore!.width - 2, y: labelBefore!.height - 2 } });
+  await expect(label.getByTestId("turn-footer-timing-label")).toContainText(/\d:\d\d/);
   expect(await label.boundingBox()).toMatchObject({
     x: labelBefore!.x,
     width: labelBefore!.width,
+    height: labelBefore!.height,
   });
   expect(
     await controls.evaluateAll((elements) =>
@@ -262,7 +263,7 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
   });
   await expectTimingInsideFooter(page);
   await page.mouse.move(0, 0);
-  await expect(label).toContainText("Worked for");
+  await expect(label.getByTestId("turn-footer-timing-label")).toContainText("Worked for");
 }
 
 test("footer timing fits the chat column and swapping labels keeps controls in place", async ({
@@ -271,6 +272,7 @@ test("footer timing fits the chat column and swapping labels keeps controls in p
 }) => {
   await openAgentRoute(page, agent);
   await expectFooterWithinWidth(page, 140);
+  await expectFooterWithinWidth(page, 150);
   await expectFooterWithinWidth(page, 300);
   await expectFooterWithinWidth(page, 880);
 });

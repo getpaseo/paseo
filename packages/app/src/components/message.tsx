@@ -580,12 +580,21 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   labelButton: {
     flex: 1,
     minHeight: 24,
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
     minWidth: 0,
   },
   label: {
+    width: "100%",
+    flexShrink: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+  },
+  overlappingLabel: {
+    marginLeft: "-100%",
+  },
+  hiddenLabel: {
+    opacity: 0,
   },
 }));
 
@@ -673,9 +682,31 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
           accessibilityRole={canSwap ? "button" : undefined}
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
         >
-          <Text style={assistantTurnFooterStylesheet.label}>
-            {showTimestamp ? timestampLabel : primaryLabel}
+          {/* Both labels participate in layout at the available width. Overlapping their
+              columns reserves the taller wrapped height without measuring text or characters. */}
+          <Text
+            testID={!showTimestamp ? "turn-footer-timing-label" : undefined}
+            aria-hidden={showTimestamp}
+            style={[
+              assistantTurnFooterStylesheet.label,
+              showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+            ]}
+          >
+            {primaryLabel}
           </Text>
+          {canSwap ? (
+            <Text
+              testID={showTimestamp ? "turn-footer-timing-label" : undefined}
+              aria-hidden={!showTimestamp}
+              style={[
+                assistantTurnFooterStylesheet.label,
+                assistantTurnFooterStylesheet.overlappingLabel,
+                !showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+              ]}
+            >
+              {timestampLabel}
+            </Text>
+          ) : null}
         </Pressable>
       ) : null}
     </View>
