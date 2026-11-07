@@ -31,6 +31,7 @@ export function createTestAttachmentFileSystem(options?: {
   return {
     files,
     directories,
+    documentDirectory: "file:///documents/",
     cacheDirectory,
     setFile(uri, bytes) {
       files.set(uri, bytes);
