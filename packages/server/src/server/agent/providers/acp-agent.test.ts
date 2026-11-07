@@ -5116,7 +5116,10 @@ async function createStdioSteeringHarness(options: SteeringHarnessOptions = {}) 
   const control = (method: string) => connection.extMethod(`_test/${method}`, {});
   onTestFinished(async () => {
     try {
-      if (!connection.signal.aborted) await control("release");
+      if (!connection.signal.aborted) {
+        await control("ack-steer");
+        await control("release");
+      }
     } finally {
       await manager.closeAgent(agent.id);
       await rm(cwd, { recursive: true, force: true });
@@ -5501,5 +5504,191 @@ describe("ACP steering permission release", () => {
       order: ["injected", "deny", "deny"],
     });
     await h.finish();
+  });
+});
+
+// Observe the real SDK promise so late-reply assertions run after the client has
+// processed the response, rather than merely after the peer released its barrier.
+async function startHeldSteering(h: Awaited<ReturnType<typeof createStdioSteeringHarness>>) {
+  const extMethod = vi.spyOn(h.connection, "extMethod");
+  onTestFinished(() => extMethod.mockRestore());
+  const settled = vi.fn();
+  const result = h.dispatch("follow up", true).then(
+    (admission) => {
+      settled(admission);
+      return admission;
+    },
+    (error: unknown) => {
+      settled(error);
+      return error;
+    },
+  );
+  await h.control("steering-started");
+  const index = extMethod.mock.calls.findIndex(([method]) => method === "_session/steering");
+  const request = extMethod.mock.results[index];
+  if (request?.type !== "return") throw new Error("Expected a pending SDK steering request");
+  const reply = request.value.then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+  return { settled, result, reply };
+}
+
+describe("ACP steering deadlines over stdio", () => {
+  test("keeps the original turn running beyond the deadline after acknowledgement", async () => {
+    const h = await createStdioSteeringHarness();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await expect(h.dispatch()).resolves.toEqual({ status: "steered" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expectSteeringTurnUnchanged(h, 1);
+      await h.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each([false, true])(
+    "expires without side effects and ignores a late reply (RPC error: %s)",
+    async (rpcError) => {
+      const h = await createStdioSteeringHarness({ holdReceipt: true, rpcError });
+      await h.control("permissions");
+      await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const held = await startHeldSteering(h);
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(held.settled).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(held.settled).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: "Active-turn steering timed out after 10000ms; delivery is unknown",
+          }),
+        );
+        expect(await held.result).toBeInstanceOf(Error);
+        expect(h.session.getPendingPermissions()).toHaveLength(2);
+        expect(h.connection.signal.aborted).toBe(false);
+        await expectSteeringTurnUnchanged(h, 1);
+        const timeline = structuredClone(h.manager.getTimeline(h.agentId));
+        expect(timeline).not.toContainEqual(
+          expect.objectContaining({ clientMessageId: "steer-client" }),
+        );
+        await expect(h.control("state")).resolves.toMatchObject({
+          order: [],
+          permissionResults: [],
+        });
+
+        await h.control("ack-steer");
+        expect(await held.reply).toMatchObject(
+          rpcError ? { error: { message: "steering failed" } } : { value: { outcome: "injected" } },
+        );
+        expect(held.settled).toHaveBeenCalledTimes(1);
+        expect(h.session.getPendingPermissions()).toHaveLength(2);
+        expect(h.manager.getTimeline(h.agentId)).toEqual(timeline);
+        await expect(h.control("state")).resolves.toMatchObject({ permissionResults: [] });
+        await expectSteeringTurnUnchanged(h, 1);
+        await h.finish();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("lets a queued Stop execute after the steering deadline", async () => {
+    const h = await createStdioSteeringHarness({ holdReceipt: true });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const held = await startHeldSteering(h);
+      const stopped = vi.fn();
+      const stop = h.manager.cancelAgentRun(h.agentId).then((result) => {
+        stopped(result);
+        return result;
+      });
+      await expectSteeringTurnUnchanged(h, 1);
+      expect(stopped).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(held.settled).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Active-turn steering timed out after 10000ms; delivery is unknown",
+        }),
+      );
+      expect(await held.result).toBeInstanceOf(Error);
+      await expect(stop).resolves.toEqual({ status: "settled" });
+      expect(h.manager.getAgent(h.agentId)).toMatchObject({
+        lifecycle: "idle",
+        activeTurnId: null,
+        activeForegroundTurnId: null,
+      });
+      const beforeReply = await h.control("state");
+      expect(beforeReply.calls).toEqual([
+        expect.objectContaining({ method: "initialize" }),
+        expect.objectContaining({ method: "session/new" }),
+        expect.objectContaining({ method: "session/prompt" }),
+        expect.objectContaining({ method: "_session/steering" }),
+        { method: "session/cancel", params: { sessionId: "session-1" } },
+      ]);
+      const timeline = structuredClone(h.manager.getTimeline(h.agentId));
+      await h.control("ack-steer");
+      await expect(held.reply).resolves.toEqual({ value: { outcome: "injected" } });
+      expect(h.manager.getTimeline(h.agentId)).toEqual(timeline);
+      expect(h.manager.getAgent(h.agentId)).toMatchObject({
+        lifecycle: "idle",
+        activeTurnId: null,
+      });
+      expect(await h.control("state")).toMatchObject({ calls: beforeReply.calls });
+      await h.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("drains an original completion buffered while steering waits", async () => {
+    const h = await createStdioSteeringHarness({ holdReceipt: true });
+    const completed = Promise.withResolvers<void>();
+    h.session.subscribe((event) => {
+      if (event.type === "turn_completed") completed.resolve();
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const held = await startHeldSteering(h);
+      await h.control("release");
+      await completed.promise;
+      expect(h.manager.getAgent(h.agentId)).toMatchObject({
+        lifecycle: "running",
+        activeForegroundTurnId: h.turnId,
+      });
+      expect(held.settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(held.settled).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Active-turn steering timed out after 10000ms; delivery is unknown",
+        }),
+      );
+      expect(await held.result).toBeInstanceOf(Error);
+      await h.finish();
+      expect(h.manager.getAgent(h.agentId)).toMatchObject({
+        lifecycle: "idle",
+        activeTurnId: null,
+        activeForegroundTurnId: null,
+      });
+      const beforeReply = await h.control("state");
+      expect(beforeReply.calls).toEqual([
+        expect.objectContaining({ method: "initialize" }),
+        expect.objectContaining({ method: "session/new" }),
+        expect.objectContaining({ method: "session/prompt" }),
+        expect.objectContaining({ method: "_session/steering" }),
+      ]);
+      const timeline = structuredClone(h.manager.getTimeline(h.agentId));
+      await h.control("ack-steer");
+      await expect(held.reply).resolves.toEqual({ value: { outcome: "injected" } });
+      expect(h.manager.getTimeline(h.agentId)).toEqual(timeline);
+      expect(h.manager.getAgent(h.agentId)).toMatchObject({
+        lifecycle: "idle",
+        activeTurnId: null,
+      });
+      expect(await h.control("state")).toMatchObject({ calls: beforeReply.calls });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

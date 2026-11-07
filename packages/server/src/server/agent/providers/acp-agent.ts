@@ -337,6 +337,9 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// Steering admission holds the manager's mutation queue and event barrier. Bound
+// the acknowledgement wait so a connected but unresponsive peer cannot block Stop.
+const ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS = 10_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
@@ -2083,8 +2086,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return { status: "unavailable" };
     }
 
-    await this.runACPRequest(() =>
-      adapter.steer({ connection, sessionId, prompt: toACPContentBlocks(prompt) }),
+    await withTimeout(
+      this.runACPRequest(() =>
+        adapter.steer({ connection, sessionId, prompt: toACPContentBlocks(prompt) }),
+      ),
+      ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS,
+      `Active-turn steering timed out after ${ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS}ms; delivery is unknown`,
     );
     // The message must be injected before denying tools that block its delivery.
     if (options.clearPendingPermissions) {
