@@ -66,6 +66,34 @@ function unescapeXml(value: string): string | null {
   });
 }
 
+// An agent-sent body reaches the receiving model as the sender wrote it. Escaping it
+// as XML hands the model `&lt;sha&gt;` and `&amp;&amp;` for `<sha>` and `&&`, and a model
+// can run the entity form as a command. Only the envelope's own tag can end or open an
+// envelope, so a raw body escapes that tag sequence alone, reversibly: `<` before the
+// tag, in any letter case, becomes `&lt;`, and an `&lt;` or `&amp;…lt;` already there
+// gains one `amp;`, so a body that already holds the escaped form round-trips byte for
+// byte. The entities match only in lower case, the case this escape writes, so any
+// other spelling (`&LT;`, `&AMP;lt;`) is never touched and opens no tag. `body="raw"`
+// tells the parser which decoding applies. The human send path (kind user-message,
+// which quotes a pasted envelope) keeps the full escape.
+const TAG = "\\/?[Pp][Aa][Ss][Ee][Oo]-[Ss][Yy][Ss][Tt][Ee][Mm]";
+const ENVELOPE_TAG = new RegExp(`(&(?:amp;)*lt;|<)(${TAG})`, "g");
+const ESCAPED_ENVELOPE_TAG = new RegExp(`&((?:amp;)*)lt;(${TAG})`, "g");
+const RAW_ENVELOPE_TAG = new RegExp(`<${TAG}`);
+
+function escapeEnvelopeTags(value: string): string {
+  return value.replace(ENVELOPE_TAG, (_, lead: string, tag: string) =>
+    lead === "<" ? `&lt;${tag}` : `&amp;${lead.slice(1)}${tag}`,
+  );
+}
+
+function unescapeEnvelopeTags(value: string): string | null {
+  if (RAW_ENVELOPE_TAG.test(value)) return null;
+  return value.replace(ESCAPED_ENVELOPE_TAG, (_, amps: string, tag: string) =>
+    amps ? `&${amps.slice(4)}lt;${tag}` : `<${tag}`,
+  );
+}
+
 export function formatAgentMessage(message: AgentMessage): string {
   const { source } = message;
   const attributes = source
@@ -74,7 +102,9 @@ export function formatAgentMessage(message: AgentMessage): string {
   const server = source?.serverId ? ` source-server-id="${escapeXml(source.serverId)}"` : "";
   const title = source?.title ? ` source-agent-title="${escapeXml(source.title)}"` : "";
   const event = source?.kind === "agent-notification" ? ` event="${source.event}"` : "";
-  return `<paseo-system version="1" ${attributes} message-id="${escapeXml(message.id)}"${server}${title}${event}>\n${escapeXml(message.text)}\n</paseo-system>`;
+  const body = source ? escapeEnvelopeTags(message.text) : escapeXml(message.text);
+  const encoding = source ? ' body="raw"' : "";
+  return `<paseo-system version="1" ${attributes} message-id="${escapeXml(message.id)}"${server}${title}${event}${encoding}>\n${body}\n</paseo-system>`;
 }
 
 export function parseAgentMessage(text: string): AgentMessage | null {
@@ -90,7 +120,11 @@ export function parseAgentMessage(text: string): AgentMessage | null {
   }
   if (attributes.get("version") !== "1") return null;
   const id = attributes.get("message-id");
-  const body = unescapeXml(envelope[2]);
+  // A raw body reverses only the envelope-tag escape. A body without `body="raw"`, the
+  // human path's and any agent body written before raw bodies, decodes as XML.
+  const encoding = attributes.get("body");
+  if (encoding !== undefined && encoding !== "raw") return null;
+  const body = encoding === "raw" ? unescapeEnvelopeTags(envelope[2]) : unescapeXml(envelope[2]);
   if (!id || body === null) return null;
   if (attributes.get("kind") === "user-message") {
     if (attributes.has("source-agent-id") || attributes.has("event")) return null;
@@ -109,7 +143,8 @@ export function parseAgentMessage(text: string): AgentMessage | null {
 
 /** Accept only a complete sequence of envelopes; prose around them stays user text. */
 export function parseAgentMessages(text: string): AgentMessage[] | null {
-  // Bodies are XML escaped, so a literal closing tag unambiguously ends an entry.
+  // Every body escapes the envelope tag (a raw body that tag alone, any other body
+  // fully), so a literal closing tag unambiguously ends an entry.
   const parts = text.split(/(?<=<\/paseo-system>)\n+(?=<paseo-system )/);
   const messages = parts.map(parseAgentMessage);
   return messages.every((message) => message !== null) ? messages : null;
