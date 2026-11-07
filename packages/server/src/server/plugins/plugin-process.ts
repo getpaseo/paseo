@@ -313,6 +313,9 @@ export function createPluginWorker(options: {
       // The runtime re-attaches a session when the daemon drops this socket.
       reconnect: { enabled: true },
       transportFactory,
+      // The channel is a pipe to the daemon (or an in-process queue for built-in plugins); its
+      // loss is reported directly, so a 10 s ping would only wake both sides.
+      livenessHeartbeat: false,
     });
     paseo = createPaseoApi(daemonClient);
     await daemonClient.connect();

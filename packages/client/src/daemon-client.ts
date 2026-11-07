@@ -469,6 +469,13 @@ export interface DaemonClientConfig {
   runtimeMetricsWindowMs?: number;
   trace?: DaemonClientTrace;
   capabilities?: Partial<Record<ClientCapability, unknown>>;
+  /**
+   * Ping the daemon every 10 s and reconnect after missed replies (default true). Turn it off
+   * only where the transport reports its own loss (a plugin's IPC channel, an in-process
+   * channel): there a ping cannot find a dead link the channel would not, and it costs both
+   * processes a wakeup per client every 10 s.
+   */
+  livenessHeartbeat?: boolean;
 }
 
 export interface DaemonClientTrace {
@@ -2720,7 +2727,11 @@ export class DaemonClient {
   }
 
   private scheduleNextLivenessHeartbeat(): void {
-    if (this.connectionState.status !== "connected" || this.livenessHeartbeatTimer) {
+    if (
+      this.config.livenessHeartbeat === false ||
+      this.connectionState.status !== "connected" ||
+      this.livenessHeartbeatTimer
+    ) {
       return;
     }
     this.livenessHeartbeatTimer = setTimeout(() => {
