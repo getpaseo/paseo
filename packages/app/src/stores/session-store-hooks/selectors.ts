@@ -5,6 +5,7 @@ import {
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import type { LocalProjectLink } from "@/projects/local-project-links";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
@@ -151,11 +152,24 @@ export function selectWorkspaceDirectoryServerIds(
   });
 }
 
+function hasPendingWorkspaceHydration(
+  session: SessionsSnapshot["sessions"][string] | undefined,
+): boolean {
+  return !session || session.hasHydratedWorkspaces === false;
+}
+
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
   workspaceSort?: WorkspaceSort,
+  localProjectLinks: Iterable<LocalProjectLink> = [],
 ): WorkspaceStructureProject[] {
+  const unhydratedProjectLinkServerIds = serverIds.filter((serverId) =>
+    hasPendingWorkspaceHydration(state.sessions[serverId]),
+  );
+  const hydratedProjectLinkServerIds = serverIds.filter(
+    (serverId) => !hasPendingWorkspaceHydration(state.sessions[serverId]),
+  );
   const sessions: Array<{
     serverId: string;
     workspaces: Iterable<WorkspaceDescriptor>;
@@ -180,14 +194,22 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ sessions, workspaceSort });
+  return buildWorkspaceStructureProjects({
+    sessions,
+    workspaceSort,
+    localProjectLinks,
+    hydratedProjectLinkServerIds,
+    unhydratedProjectLinkServerIds,
+  });
 }
 
 export function createWorkspaceStructureProjectsSelector(
   serverIds: readonly string[],
   workspaceSort?: WorkspaceSort,
+  localProjectLinks: readonly LocalProjectLink[] = [],
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
+    hasPendingWorkspaceHydration: boolean;
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
     projects: Map<string, ProjectDescriptor> | undefined;
   }> | null = null;
@@ -195,6 +217,7 @@ export function createWorkspaceStructureProjectsSelector(
 
   return (state) => {
     const inputs = serverIds.map((serverId) => ({
+      hasPendingWorkspaceHydration: hasPendingWorkspaceHydration(state.sessions[serverId]),
       workspaces: state.sessions[serverId]?.workspaces,
       projects: state.sessions[serverId]?.projects,
     }));
@@ -203,6 +226,7 @@ export function createWorkspaceStructureProjectsSelector(
       priorInputs !== null &&
       inputs.every(
         (input, index) =>
+          input.hasPendingWorkspaceHydration === priorInputs[index]?.hasPendingWorkspaceHydration &&
           input.workspaces === priorInputs[index]?.workspaces &&
           input.projects === priorInputs[index]?.projects,
       );
@@ -211,7 +235,12 @@ export function createWorkspaceStructureProjectsSelector(
     }
 
     previousInputs = inputs;
-    const next = selectWorkspaceStructureProjects(state, serverIds, workspaceSort);
+    const next = selectWorkspaceStructureProjects(
+      state,
+      serverIds,
+      workspaceSort,
+      localProjectLinks,
+    );
     const previousByKey = new Map(previousProjects?.map((project) => [project.viewKey, project]));
     previousProjects = next.map((project) => {
       const previous = previousByKey.get(project.viewKey);
