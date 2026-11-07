@@ -19,10 +19,9 @@ export function requireButtonId(value: string): string {
   return value;
 }
 
-function optionalBoolean(value: boolean | undefined, fallback: boolean): boolean {
+function optionalBoolean(value: boolean | undefined, fallback: boolean, field: string): boolean {
   if (value === undefined) return fallback;
-  if (typeof value !== "boolean")
-    throw new Error("Plugin button visibility and disabled state must be booleans");
+  if (typeof value !== "boolean") throw new Error(`Plugin button ${field} must be a boolean`);
   return value;
 }
 
@@ -70,8 +69,8 @@ function validateBehavior(
             ...item,
             icon: item.icon === undefined ? undefined : validation.parseIcon(item.icon),
             title: requireText(item.title, "menu item title", resolve),
-            visible: optionalBoolean(item.visible, true),
-            disabled: optionalBoolean(item.disabled, false),
+            visible: optionalBoolean(item.visible, true, "visibility"),
+            disabled: optionalBoolean(item.disabled, false, "disabled state"),
             behavior: validateBehavior(item.behavior, validation, resolve),
           };
         }),
@@ -96,10 +95,14 @@ export type ResolvedPluginButtonMenuEntry =
       disabled?: boolean;
       behavior: ResolvedPluginButtonBehavior;
     };
-export type ResolvedPluginButton = Omit<PluginButton, "title" | "label" | "behavior"> & {
+export type ResolvedPluginButton = Omit<
+  PluginButton,
+  "title" | "label" | "visible" | "disabled" | "selected" | "behavior"
+> & {
   title: string;
   visible: boolean;
   disabled: boolean;
+  selected: boolean | undefined;
   label: string | undefined;
   behavior: ResolvedPluginButtonBehavior;
 };
@@ -114,8 +117,12 @@ export function validateButton(
     icon: validation.parseIcon(button.icon),
     title: requireText(button.title, "title", resolve),
     label: button.label === undefined ? undefined : requireText(button.label, "label", resolve),
-    visible: optionalBoolean(button.visible, true),
-    disabled: optionalBoolean(button.disabled, false),
+    visible: optionalBoolean(button.visible, true, "visibility"),
+    disabled: optionalBoolean(button.disabled, false, "disabled state"),
+    selected:
+      button.selected === undefined
+        ? undefined
+        : optionalBoolean(button.selected, false, "selected state"),
     behavior: validateBehavior(button.behavior, validation, resolve),
   };
 }
