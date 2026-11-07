@@ -320,3 +320,43 @@ export function useReviewAttachmentSnapshot(input: {
     [comments, input.key, input.cwd, input.mode, input.baseRef, input.diffFiles],
   );
 }
+
+/** Acknowledgement removes only the versions included in that submission. */
+export function clearSentReviewDraftComments(input: {
+  key: string;
+  comments: readonly ReviewDraftComment[];
+}): void {
+  const sentById = new Map(input.comments.map((comment) => [comment.id, comment]));
+  useReviewDraftStore.setState((state) => {
+    const current = state.drafts[input.key];
+    if (!current) return state;
+    const remaining = current.filter((comment) => {
+      const sent = sentById.get(comment.id);
+      return !sent || sent.updatedAt !== comment.updatedAt || sent.body !== comment.body;
+    });
+    if (remaining.length === current.length) return state;
+    return { drafts: { ...state.drafts, [input.key]: remaining } };
+  });
+}
+
+/** Acknowledgement can remove the original while the user still has an edit open. */
+export function saveReviewDraftComment(input: {
+  key: string;
+  id: string | null;
+  comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body">;
+}): void {
+  const store = useReviewDraftStore.getState();
+  if (input.id && store.drafts[input.key]?.some((comment) => comment.id === input.id)) {
+    store.updateComment({ key: input.key, id: input.id, updates: { body: input.comment.body } });
+  } else {
+    store.addComment({
+      key: input.key,
+      comment: {
+        filePath: input.comment.filePath,
+        side: input.comment.side,
+        lineNumber: input.comment.lineNumber,
+        body: input.comment.body,
+      },
+    });
+  }
+}

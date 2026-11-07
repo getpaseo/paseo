@@ -4,6 +4,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
   buildStoredAgentPayload,
   toAgentPayload,
+  toAgentListItemPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
   type ManagedAgent,
@@ -407,6 +408,17 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("carries a stored lastError onto the payload", () => {
+    const record = toStoredAgentRecord(
+      createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
+    );
+
+    expect(buildStoredAgentPayload(record, ["codex"]).lastError).toBe("boom");
+    expect(buildStoredAgentPayload({ ...record, lastError: null }, ["codex"])).not.toHaveProperty(
+      "lastError",
+    );
+  });
+
   it("omits lastUsage when not available", () => {
     const agent = createManagedAgent({ lastUsage: undefined });
     const payload = toAgentPayload(agent);
@@ -526,5 +538,13 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
       firstPromptPreview: null,
       lastPromptPreview: null,
     });
+  });
+});
+
+it("omits unknown background work and preserves known summary in list items", () => {
+  const snapshot = toAgentPayload(createManagedAgent());
+  expect(toAgentListItemPayload(snapshot)).not.toHaveProperty("backgroundWork");
+  expect(toAgentListItemPayload({ ...snapshot, backgroundWork: { count: 2 } })).toMatchObject({
+    backgroundWork: { count: 2 },
   });
 });

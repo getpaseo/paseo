@@ -14,7 +14,16 @@ import {
   expectConflictPreservesDraft,
   discardTitle,
   returnAndReopenSettings,
+  returnToPluginsPage,
   expectSettingsUnavailable,
+  openPluginsPage,
+  expectActionsMenuWithoutSettings,
+  expectNoSettingsCogWithoutScreens,
+  openTabbedSettings,
+  selectSettingsTab,
+  openTabbedSettingsLink,
+  expectSettingsTooltip,
+  expectNamedPluginRow,
 } from "../support/helpers/plugin-settings";
 
 test("display preferences survive a reload", async ({ page }) => {
@@ -41,6 +50,37 @@ test("another client's save preserves a conflicting draft", async ({ page }) => 
   await saveTitle(page);
   await expectConflictPreservesDraft(page, "Unsaved title");
   await discardTitle(page);
+});
+
+test("Back to plugins returns from a plugin settings screen", async ({ page }) => {
+  await openDisplaySettings(page);
+  await returnToPluginsPage(page);
+});
+
+test("plugin settings open from the cog and show a tab per screen", async ({ page }) => {
+  await openPluginsPage(page);
+  await test.step("plugin rows show the display name", async () => {
+    await expectNamedPluginRow(page);
+  });
+  await test.step("the cog explains itself", async () => {
+    await expectSettingsTooltip(page);
+  });
+  await test.step("the actions menu keeps only plugin actions", async () => {
+    await expectActionsMenuWithoutSettings(page);
+  });
+  await test.step("tabs switch between the plugin's settings screens", async () => {
+    await openTabbedSettings(page);
+    await selectSettingsTab(page, "Advanced");
+    await selectSettingsTab(page, "General");
+    await returnToPluginsPage(page);
+  });
+  await test.step("a plugin without settings screens shows no cog", async () => {
+    await expectNoSettingsCogWithoutScreens(page);
+  });
+});
+
+test("a settings screen link opens its tab", async ({ page }) => {
+  await openTabbedSettingsLink(page, "Advanced");
 });
 
 test.describe("compact plugin settings", () => {

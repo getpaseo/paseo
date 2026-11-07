@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  extractTextFromToolResult,
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
-  resolveToolCallName,
+  splitPiToolResultImages,
 } from "./tool-call-mapper.js";
 
 describe("Pi tool call mapper", () => {
@@ -50,81 +51,6 @@ describe("Pi tool call mapper", () => {
     });
   });
 
-  test("maps executed xdev writes to their wrapped tool detail", () => {
-    const toolCall = parseToolArgs("write", {
-      path: "xd://browser",
-      content: "{}",
-    });
-    const result = parseToolResult({
-      content: [{ type: "text", text: "Opened Example Domain" }],
-      details: {
-        xdev: {
-          tool: "browser",
-          mode: "execute",
-          args: { action: "open", url: "https://example.com" },
-          inner: { title: "Example Domain" },
-        },
-      },
-    });
-
-    expect(mapToolDetail(toolCall, result)).toEqual({
-      type: "unknown",
-      input: { action: "open", url: "https://example.com" },
-      output: {
-        content: [{ type: "text", text: "Opened Example Domain" }],
-        details: { title: "Example Domain" },
-      },
-    });
-    expect(resolveToolCallName(toolCall, result)).toBe("browser");
-  });
-
-  test("does not treat xdev help metadata as an executed inner tool", () => {
-    const toolCall = parseToolArgs("write", {
-      path: "xd://browser",
-      content: "",
-    });
-    const result = parseToolResult({
-      details: {
-        xdev: {
-          tool: "browser",
-          mode: "help",
-          inner: "Browser help",
-        },
-      },
-    });
-
-    expect(mapToolDetail(toolCall, result)).toEqual({
-      type: "unknown",
-      input: { path: "xd://browser", content: "" },
-      output: result,
-    });
-    expect(resolveToolCallName(toolCall, result)).toBe("write");
-  });
-
-  test("does not treat malformed xdev metadata as an executed inner tool", () => {
-    const toolCall = parseToolArgs("write", {
-      path: "xd://browser",
-      content: "{}",
-    });
-    const result = parseToolResult({
-      details: {
-        xdev: {
-          tool: "",
-          mode: "execute",
-          args: { action: "open" },
-          inner: { title: "must not surface" },
-        },
-      },
-    });
-
-    expect(mapToolDetail(toolCall, result)).toEqual({
-      type: "unknown",
-      input: { path: "xd://browser", content: "{}" },
-      output: result,
-    });
-    expect(resolveToolCallName(toolCall, result)).toBe("write");
-  });
-
   test("preserves unknown tool input and parsed output", () => {
     const toolCall = parseToolArgs("custom_tool", { value: 42 });
     const result = parseToolResult({ text: "custom result" });
@@ -135,61 +61,78 @@ describe("Pi tool call mapper", () => {
       output: { text: "custom result" },
     });
   });
+});
 
-  test("maps task calls to sub-agent detail while running", () => {
-    const toolCall = parseToolArgs("task", {
-      agent: "explore",
-      task: "Trace the Pi provider tool mapper",
+describe("splitPiToolResultImages", () => {
+  test("extracts image blocks and replaces them with [image] placeholders", () => {
+    const parsed = parseToolResult({
+      content: [
+        { type: "text", text: "shot taken" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      ],
     });
+    const { images, result } = splitPiToolResultImages(parsed);
 
-    expect(mapToolDetail(toolCall, null)).toEqual({
-      type: "sub_agent",
-      subAgentType: "explore",
-      description: "Trace the Pi provider tool mapper",
-      log: "",
-    });
-  });
-
-  test("maps completed subagent calls with task input to sub-agent detail", () => {
-    const toolCall = parseToolArgs("subagent", {
-      agent: "reviewer",
-      task: "Review the Pi mapper change",
-    });
-    const result = parseToolResult({
-      content: [{ type: "text", text: "The mapper change preserves provider status." }],
-    });
-
-    expect(mapToolDetail(toolCall, result)).toEqual({
-      type: "sub_agent",
-      subAgentType: "reviewer",
-      description: "Review the Pi mapper change",
-      log: "The mapper change preserves provider status.",
+    expect(images).toEqual([{ data: "aGVsbG8=", mimeType: "image/png" }]);
+    expect(result).toEqual({
+      content: [
+        { type: "text", text: "shot taken" },
+        { type: "text", text: "[image]" },
+      ],
     });
   });
 
-  test("normalizes Pi MCP proxy calls from requested tool args while running", () => {
-    const toolCall = parseToolArgs("mcp", {
-      tool: "paseo_list_models",
-      args: '{"provider":"pi"}',
+  test("replaces image-only results with a non-empty placeholder", () => {
+    const parsed = parseToolResult({
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/jpeg" }],
     });
+    const { images, result } = splitPiToolResultImages(parsed);
 
-    expect(resolveToolCallName(toolCall, null)).toBe("paseo.list_models");
+    expect(images).toHaveLength(1);
+    expect(extractTextFromToolResult(result)).toBe("[image]");
   });
 
-  test("normalizes Pi MCP proxy calls from result details when completed", () => {
-    const toolCall = parseToolArgs("mcp", {
-      tool: "paseo_list_models",
-      args: '{"provider":"pi"}',
+  test("passes through string results and results without images", () => {
+    expect(splitPiToolResultImages("plain output")).toEqual({
+      images: [],
+      result: "plain output",
     });
-    const result = parseToolResult({
-      content: [{ type: "text", text: "(empty result)" }],
-      details: {
-        mode: "call",
-        server: "paseo",
-        tool: "list_models",
-      },
-    });
+    const textOnly = parseToolResult({ content: [{ type: "text", text: "no images" }] });
+    expect(splitPiToolResultImages(textOnly)).toEqual({ images: [], result: textOnly });
+    expect(splitPiToolResultImages(null)).toEqual({ images: [], result: null });
+  });
 
-    expect(resolveToolCallName(toolCall, result)).toBe("paseo.list_models");
+  test("keeps other fields on the result object", () => {
+    const parsed = parseToolResult({
+      exitCode: 0,
+      content: [{ type: "image", data: "aGVsbG8=" }],
+    });
+    const { result } = splitPiToolResultImages(parsed);
+    expect(result).toMatchObject({ exitCode: 0 });
+  });
+});
+
+test("tool-result images remove nested structured image data while preserving metadata", () => {
+  const data = Buffer.from("nested screenshot bytes").toString("base64");
+  const result = parseToolResult({
+    content: [{ type: "image", data, mimeType: "image/png" }],
+    structuredContent: {
+      content: [{ type: "image", data, mimeType: "image/png", width: 64 }],
+      captureId: "capture-1",
+      read: { type: "image", data, mimeType: "image/png", note: "Read image file" },
+      extra: { data: "keep ordinary data" },
+    },
+  });
+  const split = splitPiToolResultImages(result);
+  const detail = mapToolDetail(parseToolArgs("screenshot", {}), split.result);
+  expect(JSON.stringify(detail)).not.toContain(data);
+  expect(split.images).toEqual([{ data, mimeType: "image/png" }]);
+  expect(split.result).toMatchObject({
+    structuredContent: {
+      content: [{ type: "image", data: "[image]", mimeType: "image/png", width: 64 }],
+      captureId: "capture-1",
+      read: { type: "image", data: "[image]", mimeType: "image/png", note: "Read image file" },
+      extra: { data: "keep ordinary data" },
+    },
   });
 });

@@ -68,8 +68,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     await openSettingsSection(page, "appearance");
 
     const sectionTitle = page.getByText("Theme", { exact: true }).first();
-    await page.getByLabel("Theme: System", { exact: true }).click();
-    const mochaItem = page.getByText("Catppuccin Mocha", { exact: true });
+    const mochaItem = page.getByRole("radio", { name: "Catppuccin Mocha", exact: true });
     await expect(mochaItem).toBeVisible({ timeout: 30_000 });
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-picker.png"),
@@ -78,14 +77,14 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     });
 
     await test.step("a contributed light theme uses the light palette", async () => {
-      await page.getByText("Catppuccin Latte", { exact: true }).click();
-      await expect(page.getByLabel("Theme: Catppuccin Latte", { exact: true })).toBeVisible();
+      const latteItem = page.getByRole("radio", { name: "Catppuccin Latte", exact: true });
+      await latteItem.click();
+      await expect(latteItem).toBeChecked();
       await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
-      await page.getByLabel("Theme: Catppuccin Latte", { exact: true }).click();
     });
 
     await mochaItem.click();
-    await expect(page.getByLabel("Theme: Catppuccin Mocha", { exact: true })).toBeVisible();
+    await expect(mochaItem).toBeChecked();
     await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-applied.png"),
@@ -94,15 +93,13 @@ test("applies a contributed theme and falls back when its plugin is gone", async
 
     await test.step("the selection survives a reload", async () => {
       await page.reload();
-      await expect(page.getByLabel("Theme: Catppuccin Mocha", { exact: true })).toBeVisible({
-        timeout: 30_000,
-      });
+      await expect(mochaItem).toBeChecked({ timeout: 30_000 });
       await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
     });
 
     await test.step("removing the plugin falls back to the default theme", async () => {
       await client.removePlugin(PLUGIN_ID);
-      await expect(page.getByLabel("Theme: System", { exact: true })).toBeVisible({
+      await expect(page.getByRole("radio", { name: "System", exact: true })).toBeChecked({
         timeout: 30_000,
       });
       await expect(sectionTitle).not.toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
@@ -113,6 +110,71 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     });
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);
+    await client
+      .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
+      .catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const MANY_THEMES_PLUGIN_ID = "plugin-theme-many-e2e";
+const MANY_THEMES_COUNT = 40;
+const LAST_THEME_NAME = `Pack theme ${MANY_THEMES_COUNT}`;
+
+const MANY_THEMES_SOURCE = `export default function contribute(plugin) {
+  for (let index = 1; index <= ${MANY_THEMES_COUNT}; index += 1) {
+    plugin.addTheme({
+      id: "pack-" + index,
+      name: "Pack theme " + index,
+      appearance: "dark",
+      colors: {
+        background: "#1e1e2e",
+        foreground: "#cdd6f4",
+        raised: "#313244",
+        control: "#45475a",
+        border: "#45475a",
+        accent: "#cba6f7",
+        mutedForeground: "#a6adc8",
+        ring: "#6c7086",
+      },
+    });
+  }
+  return () => {};
+}`;
+
+test("reaches the last theme when a plugin contributes more themes than fit", async ({
+  page,
+}, testInfo) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-theme-many-e2e-"));
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: MANY_THEMES_PLUGIN_ID, requirements: pluginRequirements }),
+  );
+  await writeFile(path.join(directory, "index.client.ts"), MANY_THEMES_SOURCE);
+
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("/settings");
+    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+    await openSettingsSection(page, "appearance");
+
+    const lastTheme = page.getByRole("radio", { name: LAST_THEME_NAME, exact: true });
+    await expect(lastTheme).toBeAttached({ timeout: 30_000 });
+    await lastTheme.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: testInfo.outputPath("plugin-theme-picker-scrolled.png"),
+      animations: "disabled",
+    });
+
+    await lastTheme.click();
+    await expect(lastTheme).toBeChecked();
+  } finally {
+    await client.removePlugin(MANY_THEMES_PLUGIN_ID).catch(() => undefined);
     await client
       .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
       .catch(() => undefined);

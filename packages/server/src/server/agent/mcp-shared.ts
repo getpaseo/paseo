@@ -5,7 +5,7 @@ import type { AgentPermissionRequest } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent, WaitForAgentResult } from "./agent-manager.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { selectItemsByProjectedLimit } from "./timeline-projection.js";
-import type { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "@getpaseo/protocol/schedule/types";
 import type { AgentProvider } from "./agent-sdk-types.js";
@@ -86,6 +86,11 @@ export function resolveRequiredProviderModel(
   };
 }
 
+export interface AgentWaitWithTimeoutResult extends WaitForAgentResult {
+  /** The wait gave up while the agent was still working. */
+  timedOut: boolean;
+}
+
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
  * Returns a friendly message when timeout occurs, rather than letting
@@ -98,7 +103,7 @@ export async function waitForAgentWithTimeout(
     signal?: AbortSignal;
     waitForActive?: boolean;
   },
-): Promise<WaitForAgentResult> {
+): Promise<AgentWaitWithTimeoutResult> {
   const timeoutController = new AbortController();
   const combinedController = new AbortController();
 
@@ -133,7 +138,7 @@ export async function waitForAgentWithTimeout(
       signal: combinedController.signal,
       waitForActive: options?.waitForActive,
     });
-    return result;
+    return { ...result, timedOut: false };
   } catch (error) {
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
@@ -150,6 +155,7 @@ export async function waitForAgentWithTimeout(
         status: snapshot?.lifecycle ?? "idle",
         permission: null,
         lastMessage: message,
+        timedOut: true,
       };
     }
     throw error;
@@ -196,27 +202,36 @@ export function sanitizePermissionRequest(
   return sanitized;
 }
 
-export async function resolveAgentTitle(
+async function resolveAgentStorageRecord(
   agentStorage: AgentStorage,
   agentId: string,
   logger: Logger,
-): Promise<string | null> {
+): Promise<StoredAgentRecord | null> {
   try {
-    const record = await agentStorage.get(agentId);
-    return record?.title ?? null;
+    return (await agentStorage.get(agentId)) ?? null;
   } catch (error) {
-    logger.error({ err: error, agentId }, "Failed to load agent title");
+    logger.error({ err: error, agentId }, "Failed to load agent record");
     return null;
   }
 }
 
+// Storage owns the archive timestamp, and a live snapshot cannot carry it: an
+// archived agent is resumed back into memory to serve a history read (see the
+// `purpose: "history"` resume in agent-loading), so presence in the manager is
+// not evidence that the agent is active. Merge the stored record here, the same
+// way the WebSocket path does in Session.enrichAgentPayload, rather than
+// copying the value onto the managed agent, where it would be a second source
+// of truth that unarchive has to remember to clear.
 export async function serializeSnapshotWithMetadata(
   agentStorage: AgentStorage,
   snapshot: ManagedAgent,
   logger: Logger,
 ) {
-  const title = await resolveAgentTitle(agentStorage, snapshot.id, logger);
-  return serializeAgentSnapshot(snapshot, { title });
+  const record = await resolveAgentStorageRecord(agentStorage, snapshot.id, logger);
+  return serializeAgentSnapshot(snapshot, {
+    title: record?.title ?? null,
+    archivedAt: record?.archivedAt ?? null,
+  });
 }
 
 export function parseDurationString(input: string): number {

@@ -105,7 +105,14 @@ export function resolveTerminalProfileLaunch(
   return { name: profile.name, ...substitutePrompt(profile, prompt) };
 }
 
-const WELL_KNOWN_COMMAND_ICONS = new Map(KNOWN_PROVIDER_ICON_NAMES.map((name) => [name, name]));
+// CLIs whose binary is not named after their icon. Matching stays exact, so a
+// command only gets an icon when its whole base name is listed.
+const COMMAND_ICON_ALIASES: ReadonlyArray<[string, string]> = [["cursor-agent", "cursor"]];
+
+const WELL_KNOWN_COMMAND_ICONS = new Map([
+  ...KNOWN_PROVIDER_ICON_NAMES.map((name): [string, string] => [name, name]),
+  ...COMMAND_ICON_ALIASES,
+]);
 
 function getCommandBaseName(command: string): string {
   const lastSlash = command.lastIndexOf("/");

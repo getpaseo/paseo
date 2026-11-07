@@ -3,6 +3,13 @@ import path from "node:path";
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
 import { expandFolder, openFileExplorer } from "../../app/e2e/support/helpers/file-explorer";
+import {
+  connectNewWorkspaceDaemonClient,
+  createWorktreeViaDaemon,
+  archiveWorkspaceFromDaemon,
+} from "../../app/e2e/support/helpers/new-workspace";
+import type { WithWorkspace } from "../../app/e2e/support/helpers/with-workspace";
+import { selectWorkspaceInSidebar } from "../../app/e2e/support/helpers/sidebar";
 import { installDesktopRuntime } from "./support/runtime";
 import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 
@@ -38,12 +45,18 @@ async function readEditorOpenRecords(recordPath: string): Promise<EditorOpenReco
 }
 
 async function selectEditorTarget(page: Page, targetId: string): Promise<void> {
-  await expect(page.getByTestId("workspace-open-in-editor-primary")).toBeVisible({
+  await expect(page.getByRole("button", { name: /^Open workspace in / })).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByTestId("workspace-open-in-editor-caret").click();
+  await page.getByRole("button", { name: "Choose editor", exact: true }).click();
   await expect(page.getByTestId("workspace-open-in-editor-menu")).toBeVisible();
   await page.getByTestId(`workspace-open-in-editor-item-${targetId}`).click();
+}
+
+async function expectPreferredEditor(page: Page, label: string): Promise<void> {
+  await expect(
+    page.getByRole("button", { name: `Open workspace in ${label}`, exact: true }),
+  ).toBeVisible();
 }
 
 async function expectEditorOpened(input: {
@@ -67,7 +80,82 @@ async function expectEditorOpened(input: {
     .toBe(true);
 }
 
+async function createEditorPreferenceFixture(page: Page, withWorkspace: WithWorkspace) {
+  const serverId = requireE2EEnv("E2E_SERVER_ID");
+  await installDesktopRuntime(page, {
+    serverId,
+    editorTargets: [
+      {
+        id: "cursor",
+        label: "Cursor",
+        kind: "editor",
+        icon: { kind: "symbol", name: "terminal" },
+      },
+      {
+        id: "vscode",
+        label: "VS Code",
+        kind: "editor",
+        icon: { kind: "symbol", name: "terminal" },
+      },
+    ],
+  });
+  const projectA = await withWorkspace({ prefix: "editor-project-a-" });
+  const projectB = await withWorkspace({ prefix: "editor-project-b-" });
+  const client = await connectNewWorkspaceDaemonClient();
+  const worktree = await createWorktreeViaDaemon(client, {
+    cwd: projectA.repoPath,
+    slug: "editor-preference-sibling",
+  });
+  return {
+    projectA,
+    projectB,
+    worktree,
+    async close() {
+      try {
+        await archiveWorkspaceFromDaemon(client, worktree.workspaceDirectory);
+      } finally {
+        await client.close();
+      }
+    },
+  };
+}
+
 test.describe("Workspace open in editor", () => {
+  test("keeps editor choices per project across switching, reload and worktrees", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(120_000);
+    const fixture = await createEditorPreferenceFixture(page, withWorkspace);
+    const { projectA, projectB, worktree } = fixture;
+    try {
+      await projectA.navigateTo();
+      await selectEditorTarget(page, "vscode");
+      await expectPreferredEditor(page, "VS Code");
+      await projectB.navigateTo();
+      await expectPreferredEditor(page, "Cursor");
+      await selectEditorTarget(page, "cursor");
+      await projectA.navigateTo();
+      await expectPreferredEditor(page, "VS Code");
+      await selectWorkspaceInSidebar(page, worktree.workspaceId);
+      await expectPreferredEditor(page, "VS Code");
+      await selectEditorTarget(page, "cursor");
+      await projectA.navigateTo();
+      await expectPreferredEditor(page, "Cursor");
+      await selectEditorTarget(page, "vscode");
+      await page.reload();
+      await expectPreferredEditor(page, "VS Code");
+      await projectB.navigateTo();
+      await expectPreferredEditor(page, "Cursor");
+      await page.reload();
+      await expectPreferredEditor(page, "Cursor");
+      await projectA.navigateTo();
+      await expectPreferredEditor(page, "VS Code");
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("opens a nested folder in the preferred editor", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
 

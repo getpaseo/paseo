@@ -7,6 +7,8 @@ import {
   extractHostPortFromWebSocketUrl,
   normalizeRelayProtocolVersion,
   parseConnectionUri,
+  parseRelayConnectionUri,
+  serializeRelayConnectionUri,
   serializeConnectionUri,
   serializeConnectionUriForStorage,
   shouldUseTlsForDefaultHostedRelay,
@@ -209,5 +211,61 @@ describe("shouldUseTlsForDefaultHostedRelay", () => {
 
   test("returns false for malformed endpoints", () => {
     expect(shouldUseTlsForDefaultHostedRelay("not-an-endpoint")).toBe(false);
+  });
+});
+
+describe("relay connection URI", () => {
+  test("round-trips the offer and password through a direct URI and connect wrapper", () => {
+    const parts = {
+      offer: {
+        v: 2 as const,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "abc+/=",
+        relay: { endpoint: "relay.paseo.sh:443", useTls: true },
+      },
+      password: "two words",
+    };
+    const uri = serializeRelayConnectionUri(parts);
+    expect(parseRelayConnectionUri(uri)).toEqual(parts);
+    expect(
+      parseRelayConnectionUri(`https://app.paseo.sh/#connect=${encodeURIComponent(uri)}`),
+    ).toEqual(parts);
+  });
+});
+
+describe("relay connection URI security mode", () => {
+  test("round-trips a protected minimum security mode", () => {
+    const uri = serializeRelayConnectionUri({
+      offer: {
+        v: 2,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "key",
+        relay: { endpoint: "relay.example.com:443", useTls: true },
+        minimumSecurityMode: "protected",
+      },
+    });
+
+    expect(new URL(uri).searchParams.get("security")).toBe("protected");
+    expect(parseRelayConnectionUri(uri).offer.minimumSecurityMode).toBe("protected");
+  });
+
+  test("omits the security parameter when the offer has no minimum", () => {
+    const uri = serializeRelayConnectionUri({
+      offer: {
+        v: 2,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "key",
+        relay: { endpoint: "relay.example.com:443", useTls: true },
+      },
+    });
+
+    expect(new URL(uri).searchParams.has("security")).toBe(false);
+    expect(parseRelayConnectionUri(uri).offer).not.toHaveProperty("minimumSecurityMode");
+  });
+
+  test("rejects an unknown security mode instead of silently downgrading", () => {
+    expect(() =>
+      parseRelayConnectionUri("relay://relay.example.com:443/srv_test?key=k&security=legacy"),
+    ).toThrow("unsupported security mode");
   });
 });

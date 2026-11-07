@@ -1,3 +1,11 @@
+import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
+import type { AgentAddress } from "@getpaseo/protocol/addresses";
+import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
+export type { AgentAddress } from "@getpaseo/protocol/addresses";
+import { createHostActions, type PaseoHostActions } from "./hosts/index.js";
+export type { PaseoHostActions } from "./hosts/index.js";
+export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
@@ -24,7 +32,6 @@ import type {
   ProjectPlacementPayload,
   WorkspaceProjectDescriptorPayload,
   RefreshProvidersSnapshotResponseMessage,
-  SendAgentMessageRequest,
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
@@ -48,6 +55,7 @@ export type {
 } from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentBackgroundWorkItem,
   FetchAgentsEntry,
   FetchAgentsOptions,
   FetchAgentsPageInfo,
@@ -55,6 +63,7 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  SendMessageOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
 
@@ -182,6 +191,12 @@ export interface PaseoWorkspaceHandle {
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
+  setPinned(pinned: boolean): Promise<{ pinnedAt: string | null }>;
+  setLabel(name: string, options: { assigned: boolean }): Promise<{ labels: string[] }>;
+  setBaseBranch(options: {
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }>;
   archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
@@ -246,7 +261,7 @@ export interface PaseoAgentCreateOptions {
   onEvent?: (snapshot: CreationSnapshot) => void;
   config: PaseoAgentConfig;
   cwd: string;
-  parent?: string | PaseoAgentHandle;
+  parent?: string | AgentAddress | PaseoAgentHandle;
   title?: PaseoAgentSessionConfig["title"];
   env?: CreateAgentRequestMessage["env"];
   prompt?: string;
@@ -257,6 +272,12 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /**
+   * Creates a background agent: hidden from default lists, tabs, the parent's subagent track
+   * and notifications, and still addressable by id. A workspace this call creates is
+   * background too. With a parent and no value, the parent's own background applies.
+   */
+  background?: CreateAgentRequestMessage["background"];
   requestId?: string;
   labels?: Record<string, string>;
 }
@@ -276,11 +297,7 @@ export interface PaseoAgentTimelineRefetchOptions {
   requestId?: string;
 }
 
-export interface PaseoAgentSendOptions {
-  messageId?: string;
-  images?: Array<{ data: string; mimeType: string }>;
-  attachments?: SendAgentMessageRequest["attachments"];
-}
+export type PaseoAgentSendOptions = SendMessageOptions;
 
 export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
   timeoutMs?: number;
@@ -340,8 +357,39 @@ export interface PaseoAgentTimelineHandle {
   subscribe(handler: (event: PaseoAgentTimelineEvent) => void): PaseoAgentTimelineSubscription;
 }
 
+export type PaseoAgentBackgroundWorkItem = AgentBackgroundWorkItem;
+
+export interface PaseoAgentBackgroundWorkHandle {
+  /** Stop one item and wait for provider confirmation. */
+  stop(
+    item: PaseoAgentBackgroundWorkItem,
+    options?: { requestId?: string; timeout?: number },
+  ): Promise<void>;
+  /** Reads the agent's current background work once. */
+  list(options?: { requestId?: string; timeout?: number }): Promise<PaseoAgentBackgroundWorkItem[]>;
+  /**
+   * Calls `listener` with the agent's current list once the subscription is established, again
+   * after each reconnect, then with the full list each time it changes. Returns the unsubscribe
+   * function.
+   *
+   * When reading the current list fails, `options.onError` receives the error and `listener` is
+   * not called; without `onError` the error is logged. The read is not retried: the next
+   * reconnect reads the list again.
+   */
+  subscribe(
+    listener: (items: PaseoAgentBackgroundWorkItem[]) => void,
+    options?: PaseoAgentBackgroundWorkSubscribeOptions,
+  ): () => void;
+}
+
+export interface PaseoAgentBackgroundWorkSubscribeOptions {
+  /** Receives the error when reading the agent's current list fails. */
+  onError?: (error: unknown) => void;
+}
+
 export interface PaseoAgentHandle {
   readonly id: string;
+  readonly address: AgentAddress;
   /**
    * `workspaceId` through `archivedAt` mirror the last snapshot this handle
    * observed. A handle from `ref()` reads `null` for all of them until
@@ -362,8 +410,14 @@ export interface PaseoAgentHandle {
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
+  readonly backgroundWork: PaseoAgentBackgroundWorkHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
+  /**
+   * Reopens the provider session with current configuration, rerunning session-open hooks.
+   * Interrupts a running turn and returns the refreshed snapshot.
+   */
+  reload(options?: { requestId?: string }): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
@@ -486,6 +540,7 @@ export interface PaseoConfigActions {
 }
 
 export interface PaseoApi {
+  readonly hosts: PaseoHostActions;
   dispose(): Promise<void>;
   observeEvents: DaemonClient["observeEvents"];
   readonly terminals: PaseoTerminalActions;
@@ -528,10 +583,12 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
 function toDaemonAgentCreateOptions(
   options: PaseoAgentCreateOptions,
   placement?: { workspaceId: string; cwd: string },
+  serverId?: string,
 ): CreateAgentRequestOptions {
   const { config: agentConfig, cwd, parent, title, prompt, ...requestOptions } = options;
   const { provider: providerModel, options: providerOptions, ...runtimeConfig } = agentConfig;
   const { provider, model } = parseProviderModel(providerModel);
+  const relationship = parent ? encodeParent(parent, serverId) : {};
   return {
     ...requestOptions,
     config: {
@@ -543,7 +600,12 @@ function toDaemonAgentCreateOptions(
       ...(providerOptions !== undefined ? { providerOptions } : {}),
     },
     ...(placement ? { workspaceId: placement.workspaceId } : {}),
-    ...(parent ? { callerAgentId: resolveAgentId(parent) } : {}),
+    ...(parent
+      ? {
+          ...relationship,
+          labels: { ...requestOptions.labels, ...relationship.labels },
+        }
+      : {}),
     ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
   };
 }
@@ -585,12 +647,21 @@ export function createPaseoApi(
     daemonClient,
     listenAgents,
     (agentId, handler) => own(() => daemonClient.subscribeAgentTimeline(agentId, handler)),
+    () => own(() => daemonClient.observeAgentBackgroundWork()),
   );
   const createAgent = async (
     options: PaseoAgentCreateOptions,
     placement?: { workspaceId: string; cwd: string },
   ) => {
-    const agent = await daemonClient.createAgent(toDaemonAgentCreateOptions(options, placement));
+    const serverId = daemonClient.getLastServerInfoMessage()?.serverId;
+    const foreignParent =
+      options.background === undefined ? foreignParentHandle(options.parent, serverId) : null;
+    const resolved = foreignParent
+      ? await inheritParentBackground(options, foreignParent)
+      : options;
+    const agent = await daemonClient.createAgent(
+      toDaemonAgentCreateOptions(resolved, placement, serverId),
+    );
     return createAgentHandle(agent);
   };
   const terminals = createTerminalActions(daemonClient, async (workspaceId) => {
@@ -697,6 +768,7 @@ export function createPaseoApi(
 
   return {
     dispose,
+    hosts: createHostActions(daemonClient, { own, signal: lifetime.signal, api: createPaseoApi }),
     observeEvents,
     terminals,
     projects: {
@@ -714,7 +786,18 @@ export function createPaseoApi(
         openWorkspace(daemonClient, createWorkspaceHandle, input, requestId),
       create: async ({ requestId, agent, ...options }) => {
         const result = await daemonClient.createWorkspace(
-          { ...options, ...(agent ? { agent: toDaemonAgentCreateOptions(agent) } : {}) },
+          {
+            ...options,
+            ...(agent
+              ? {
+                  agent: toDaemonAgentCreateOptions(
+                    agent,
+                    undefined,
+                    daemonClient.getLastServerInfoMessage()?.serverId,
+                  ),
+                }
+              : {}),
+          },
           requestId,
         );
         if (result.error || !result.workspace) {
@@ -782,22 +865,7 @@ function createWorkspaceHandleFactory(
     let current = typeof workspace === "string" ? null : workspace;
 
     const refresh = async (options?: { requestId?: string }) => {
-      let cursor: string | undefined;
-      let requestId = options?.requestId;
-      do {
-        const result = await daemonClient.fetchWorkspaces({
-          requestId,
-          page: { limit: 200, ...(cursor ? { cursor } : {}) },
-        });
-        const match = result.entries.find((entry) => entry.id === id);
-        if (match) {
-          current = match;
-          return current;
-        }
-        cursor = result.pageInfo.nextCursor ?? undefined;
-        requestId = undefined;
-      } while (cursor);
-      current = null;
+      current = await daemonClient.findWorkspace(id, options);
       return current;
     };
 
@@ -834,6 +902,16 @@ function createWorkspaceHandleFactory(
       current: () => current,
       refresh,
       setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),
+      setPinned: (pinned) => daemonClient.setWorkspacePinned(id, pinned),
+      setLabel: (name, options) =>
+        assignWorkspaceLabel({
+          client: daemonClient,
+          workspaceId: id,
+          name,
+          assigned: options.assigned,
+        }),
+      setBaseBranch: (options) =>
+        daemonClient.setWorkspaceBaseBranch({ ...options, workspaceId: id }),
       archive: async (requestId) => {
         const result = await daemonClient.archiveWorkspace(id, requestId);
         if (current) {
@@ -859,13 +937,20 @@ function createAgentHandleFactory(
   daemonClient: DaemonClient,
   listen: (handler: PaseoAgentUpdateHandler) => () => void,
   subscribeTimeline: DaemonClient["subscribeAgentTimeline"],
+  observeBackgroundWork: () => ReturnType<DaemonClient["observeAgentBackgroundWork"]>,
 ): AgentHandleFactory {
   return (agent) => {
     const id = typeof agent === "string" ? agent : agent.id;
     let current = typeof agent === "string" ? null : agent;
 
+    let serverId = daemonClient.getLastServerInfoMessage()?.serverId;
     const handle: PaseoAgentHandle = {
       id,
+      get address() {
+        serverId ??= daemonClient.getLastServerInfoMessage()?.serverId;
+        if (!serverId) throw new Error("Connect to a host before obtaining an agent address");
+        return { serverId, agentId: id };
+      },
       timeline: {
         append: (item) => daemonClient.appendAgentTimelineItem(id, item),
         refetch: async (options) => {
@@ -898,6 +983,48 @@ function createAgentHandleFactory(
                 });
             }
           }),
+      },
+      backgroundWork: {
+        stop: (item, options) => daemonClient.stopAgentBackgroundWork(id, item, options),
+        list: (options) => daemonClient.listAgentBackgroundWork(id, options),
+        subscribe: (listener, options) => {
+          const observation = observeBackgroundWork();
+          // Bumped by every delivery so a list answered after a newer update is dropped.
+          let sequence = 0;
+          let released = false;
+          const reportError = (error: unknown) => {
+            if (released) return;
+            if (options?.onError) options.onError(error);
+            else console.error("Background work subscription failed", error);
+          };
+          observation.subscribe({
+            error: reportError,
+            snapshot: () => {
+              const listed = ++sequence;
+              void daemonClient
+                .listAgentBackgroundWork(id)
+                .then((items) => {
+                  if (!released && listed === sequence) listener(items);
+                  return undefined;
+                })
+                .catch(reportError);
+            },
+            update: (message) => {
+              if (message.type !== "agent.background_work.update") return;
+              if (message.payload.agentId !== id) return;
+              sequence++;
+              listener(message.payload.items);
+            },
+          });
+          return () => {
+            released = true;
+            void observation
+              .release()
+              .catch((error) =>
+                console.error("Background work subscription cleanup failed", error),
+              );
+          };
+        },
       },
       get workspaceId() {
         return current?.workspaceId ?? null;
@@ -938,6 +1065,12 @@ function createAgentHandleFactory(
       current: () => current,
       refresh: async (requestId) => {
         const result = await daemonClient.fetchAgent({ agentId: id, requestId });
+        current = result?.agent ?? null;
+        return result;
+      },
+      reload: async (options) => {
+        await daemonClient.refreshAgent(id, options?.requestId);
+        const result = await daemonClient.fetchAgent({ agentId: id });
         current = result?.agent ?? null;
         return result;
       },
@@ -1014,8 +1147,34 @@ function resolveWorkspaceId(workspace: string | PaseoWorkspaceHandle): string {
   return typeof workspace === "string" ? workspace : workspace.id;
 }
 
-function resolveAgentId(agent: string | PaseoAgentHandle): string {
-  return typeof agent === "string" ? agent : agent.id;
+function foreignParentHandle(
+  parent: PaseoAgentCreateOptions["parent"],
+  serverId: string | undefined,
+): PaseoAgentHandle | null {
+  if (!parent || typeof parent === "string" || !("address" in parent)) return null;
+  return parent.address.serverId === serverId ? null : parent;
+}
+
+// A host inherits background from a caller it can see. A parent on another host is invisible to
+// it, so a handle passes its own value on. A bare foreign address can't; pass background then.
+async function inheritParentBackground(
+  options: PaseoAgentCreateOptions,
+  parent: PaseoAgentHandle,
+): Promise<PaseoAgentCreateOptions> {
+  const snapshot = parent.current() ?? (await parent.refresh())?.agent;
+  return snapshot?.background ? { ...options, background: true } : options;
+}
+
+function encodeParent(
+  parent: string | AgentAddress | PaseoAgentHandle,
+  serverId?: string,
+): Pick<CreateAgentRequestOptions, "callerAgentId" | "labels"> {
+  if (typeof parent === "string") return { callerAgentId: parent };
+  const address = "address" in parent ? parent.address : parent;
+  if (!serverId) throw new Error("Connect to a host before creating a child");
+  return address.serverId === serverId
+    ? { callerAgentId: address.agentId, labels: parentAddressLabels(address) }
+    : { labels: parentAddressLabels(address) };
 }
 
 function parseProviderModel(selection: string): { provider: string; model: string } {
@@ -1033,6 +1192,7 @@ function listProviderUsage(
   daemonClient: DaemonClient,
   options?: PaseoProviderUsageOptions,
 ): Promise<PaseoProviderUsageResult> {
+  daemonClient.ensureConnected();
   // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-02-28 once daemon floor >= v0.1.98.
   if (daemonClient.getLastServerInfoMessage()?.features?.providerUsageList !== true) {
     return Promise.reject(new Error("Update the host to list provider usage."));
@@ -1050,7 +1210,7 @@ async function waitForProvidersReady(
 
   try {
     await observation.ready;
-    signal.throwIfAborted();
+    if (signal.aborted) throw new Error("Paseo API is disposed");
     return await new Promise<PaseoProviderSnapshotResult>((resolve, reject) => {
       let settled = false;
       let requestId: string | null = null;
@@ -1138,4 +1298,29 @@ function createGeneratedClientId(): string {
       ? globalThis.crypto.randomUUID()
       : Math.random().toString(36).slice(2);
   return `paseo-sdk-${randomId}`;
+}
+
+interface WorkspaceLabelAssignment {
+  client: DaemonClient;
+  workspaceId: string;
+  name: string;
+  assigned: boolean;
+}
+async function assignWorkspaceLabel(
+  input: WorkspaceLabelAssignment,
+): Promise<{ labels: string[] }> {
+  input.client.ensureConnected();
+  // COMPAT(workspaceLabels): added in v0.5.0, remove gate after 2027-08-14.
+  if (input.client.getLastServerInfoMessage()?.features?.workspaceLabels !== true)
+    throw new Error("Update the host to assign workspace labels.");
+  const catalog = await input.client.listWorkspaceLabels();
+  const key = workspaceLabelKey(input.name);
+  const existing = catalog.labels.find((label) => workspaceLabelKey(label.name) === key);
+  const label = existing ?? { name: input.name, color: "violet" as const };
+  const result = await input.client.setWorkspaceLabel({
+    workspaceId: input.workspaceId,
+    label,
+    assigned: input.assigned,
+  });
+  return { labels: result.workspaceLabels };
 }

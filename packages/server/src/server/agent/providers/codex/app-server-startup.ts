@@ -23,6 +23,11 @@ interface StartupOptions<TClient extends InitializableAppServerClient> {
   signal?: AbortSignal;
 }
 
+interface StartedAppServer<TClient> {
+  client: TClient;
+  initialized: unknown;
+}
+
 interface CoordinatorOptions {
   queueTimeoutMs?: number;
   attemptTimeoutMs?: number;
@@ -67,7 +72,7 @@ export class CodexAppServerStartupCoordinator {
 
   async start<TClient extends InitializableAppServerClient>(
     options: StartupOptions<TClient>,
-  ): Promise<TClient> {
+  ): Promise<StartedAppServer<TClient>> {
     options.signal?.throwIfAborted();
     const previous = this.tails.get(options.stateDirKey) ?? Promise.resolve();
     let release!: () => void;
@@ -122,7 +127,7 @@ export class CodexAppServerStartupCoordinator {
 
   private async startAttempt<TClient extends InitializableAppServerClient>(
     options: StartupOptions<TClient>,
-  ): Promise<TClient> {
+  ): Promise<StartedAppServer<TClient>> {
     const attemptAbort = new AbortController();
     const onAbort = () => attemptAbort.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -152,13 +157,13 @@ export class CodexAppServerStartupCoordinator {
       }
       attemptAbort.signal.throwIfAborted();
       client = options.createClient(child);
-      await waitForSignal(
+      const initialized = await waitForSignal(
         client.request("initialize", options.initializeParams, this.attemptTimeoutMs),
         attemptAbort.signal,
       );
       attemptAbort.signal.throwIfAborted();
       client.notify("initialized", {});
-      return client;
+      return { client, initialized };
     } catch (error) {
       try {
         if (client) {

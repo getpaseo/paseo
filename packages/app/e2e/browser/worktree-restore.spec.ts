@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   restoreArchivedWorkspace,
@@ -354,6 +355,88 @@ test.describe("Worktree restore", () => {
       .toBeNull();
   });
 
+  test("restores a branchless workspace so its archived agent can be used again", async ({
+    page,
+  }) => {
+    const project = await openProjectViaDaemon(worktreeClient, tempRepo.path);
+    createdProjectIds.add(project.projectKey);
+    const backingWorktree = await createWorktreeViaDaemon(worktreeClient, {
+      cwd: tempRepo.path,
+      slug: `branchless-${randomUUID().slice(0, 8)}`,
+    });
+    createdProjectIds.add(backingWorktree.projectKey);
+    createdWorktreeDirectories.add(backingWorktree.workspaceDirectory);
+
+    execFileSync("git", ["switch", "--detach", "main"], {
+      cwd: backingWorktree.workspaceDirectory,
+      stdio: "pipe",
+    });
+    const created = await worktreeClient.createWorkspace({
+      source: { kind: "directory", path: backingWorktree.workspaceDirectory },
+      title: "Sample workspace",
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? "Could not create the branchless workspace");
+    }
+    const workspaceId = created.workspace.id;
+    const agent = await createIdleAgent(client, {
+      cwd: backingWorktree.workspaceDirectory,
+      workspaceId,
+      title: "Archived agent",
+    });
+
+    await archiveWorkspaceFromDaemon(worktreeClient, backingWorktree.workspaceDirectory, {
+      scope: "worktree",
+    });
+    await expect
+      .poll(() => existsSync(backingWorktree.workspaceDirectory), { timeout: 30_000 })
+      .toBe(false);
+    await expect.poll(() => fetchAgentArchivedAt(client, agent.id)).not.toBeNull();
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openSessions(page);
+    await page.getByTestId(`agent-row-${getServerId()}-${agent.id}`).click();
+    await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Restore Sample workspace to return to its agents. A new branch will start from the saved base or the repository default.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await captureBranchlessRestoreStep(page, "01-restore-workspace.png");
+
+    await page.getByRole("button", { name: "Restore", exact: true }).click();
+    await expect
+      .poll(() => existsSync(backingWorktree.workspaceDirectory), { timeout: 30_000 })
+      .toBe(true);
+    await expect(page.getByRole("button", { name: "Unarchive", exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await captureBranchlessRestoreStep(page, "02-unarchive-agent.png");
+
+    await page.getByRole("button", { name: "Unarchive", exact: true }).click();
+    await expect.poll(() => fetchAgentArchivedAt(client, agent.id)).toBeNull();
+    await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable();
+    await captureBranchlessRestoreStep(page, "03-agent-ready.png");
+
+    const restoredHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: backingWorktree.workspaceDirectory,
+      encoding: "utf8",
+    }).trim();
+    const defaultHead = execFileSync("git", ["rev-parse", "main"], {
+      cwd: tempRepo.path,
+      encoding: "utf8",
+    }).trim();
+    expect(restoredHead).toBe(defaultHead);
+    expect(
+      execFileSync("git", ["branch", "--show-current"], {
+        cwd: backingWorktree.workspaceDirectory,
+        encoding: "utf8",
+      }).trim(),
+    ).toMatch(/^restored\//);
+  });
+
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {
     const { agent, worktree } = await openArchivedWorkspaceFromHistory(page, "restore-retry");
     const displacedProjectPath = `${tempRepo.path}-temporarily-unavailable`;
@@ -421,6 +504,12 @@ test.describe("Worktree restore", () => {
     }
   });
 });
+
+async function captureBranchlessRestoreStep(page: Page, filename: string): Promise<void> {
+  const screenshotDirectory = path.join(tmpdir(), "paseo-branchless-restore-evidence");
+  mkdirSync(screenshotDirectory, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDirectory, filename), fullPage: true });
+}
 
 function commitRestorableChange(cwd: string): void {
   writeFileSync(path.join(cwd, "restored-change.txt"), "preserved after restore\n");

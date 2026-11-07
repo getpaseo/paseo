@@ -39,7 +39,7 @@ import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -216,17 +216,19 @@ export function ModelProviderGlyph({
   provider,
   serverId,
   size,
+  strokeWidth,
   tone = "muted",
 }: {
   provider: string;
   serverId: string | null;
   size: number;
+  strokeWidth?: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = getProviderIcon(provider, serverId);
+  const Icon = useProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
-  return <Icon size={size} color={color} />;
+  return <Icon size={size} strokeWidth={strokeWidth} color={color} />;
 }
 
 function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
@@ -625,13 +627,6 @@ function ModelRowProfileAction({
 }) {
   const isCompact = useIsCompactFormFactor();
   const visible = hovered || isNative || isCompact;
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onPress();
-    },
-    [onPress],
-  );
   const pressableStyle = useCallback(
     ({ hovered: buttonHovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.rowIconButton,
@@ -645,7 +640,7 @@ function ModelRowProfileAction({
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
         <Pressable
-          onPress={handlePress}
+          onPress={onPress}
           hitSlop={8}
           style={pressableStyle}
           pointerEvents={visible ? "auto" : "none"}
@@ -778,7 +773,6 @@ function ModelRow({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
-      styles.browserModelRow,
       Boolean(hovered) && styles.browserRowHovered,
       pressed && styles.browserRowPressed,
     ],
@@ -787,7 +781,7 @@ function ModelRow({
 
   return (
     <View
-      style={styles.modelRowHoverBoundary}
+      style={[styles.modelRowHoverBoundary, styles.browserModelRow]}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
@@ -815,10 +809,17 @@ function ModelRow({
                 <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
               ) : null}
             </View>
-            {profileAction}
+            {profileAction ? <View style={styles.rowIconButton} /> : null}
           </View>
         </View>
       </ModelBrowserPressable>
+      {/* The row renders a <button> on web, so its profile action sits beside it,
+          over the slot reserved above, rather than inside it. */}
+      {profileAction ? (
+        <View style={styles.modelRowProfileActionSlot} pointerEvents="box-none">
+          {profileAction}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1236,7 +1237,7 @@ function ProviderErrorEmptyState({
       <ThemedAlertTriangle size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
       <Text style={styles.emptyStateText}>{message}</Text>
       {onRetryProvider ? (
-        <Button variant="default" size="sm" onPress={handleRetry} disabled={isRetryingProvider}>
+        <Button variant="default" onPress={handleRetry} disabled={isRetryingProvider}>
           {isRetryingProvider ? t("modelSelector.retrying") : t("modelSelector.retry")}
         </Button>
       ) : null}
@@ -1590,6 +1591,13 @@ const styles = StyleSheet.create((theme) => ({
   modelRowHoverBoundary: {
     position: "relative",
   },
+  modelRowProfileActionSlot: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: isWeb ? theme.spacing[3] : theme.spacing[6],
+    justifyContent: "center",
+  },
   browserModelRow: isWeb ? {} : { marginBottom: theme.spacing[1] },
   browserRowHovered: {
     backgroundColor: theme.colors.surface1,
@@ -1686,7 +1694,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   emptyState: {
-    paddingVertical: theme.spacing[4],
+    padding: theme.spacing[4],
     alignItems: "center",
     gap: theme.spacing[2],
   },

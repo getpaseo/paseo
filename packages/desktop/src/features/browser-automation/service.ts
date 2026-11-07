@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { Script } from "node:vm";
 
 import type {
   BrowserAutomationCommand,
@@ -17,7 +18,6 @@ import {
   dispatchTrustedHover,
   dispatchTrustedKey,
   dispatchTrustedScroll,
-  dispatchTrustedText,
   type ClickInputOptions,
   type IsolatedKeyboardInputEvent,
 } from "./trusted-input.js";
@@ -39,6 +39,9 @@ export interface TabContents {
   invalidate(): void;
   withFrameProduction<T>(capture: () => Promise<T>): Promise<T>;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  // Commits text into this tab's focused element. CDP Input.insertText would
+  // commit into whichever element has focus in the Paseo window instead.
+  insertText(text: string): Promise<void>;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -847,6 +850,11 @@ async function executeEvaluate(
       elementExpression = expression;
     }
 
+    const syntaxError = functionSyntaxError(functionSource);
+    if (syntaxError !== null) {
+      return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(syntaxError));
+    }
+
     let rawResult: unknown;
     try {
       rawResult = await target.contents.executeJavaScript(
@@ -1076,7 +1084,7 @@ async function executeType(
       }
       await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
     }
-    await dispatchTrustedText(cdpSender(target.contents), text);
+    await target.contents.insertText(text);
     return {
       requestId,
       ok: true,
@@ -1548,14 +1556,36 @@ function capEvaluateErrorMessage(message: string): string {
     : message.slice(0, MAX_EVALUATE_ERROR_MESSAGE_LENGTH);
 }
 
+/**
+ * The syntax error in the agent's function, or null. It is compiled here because a script that
+ * fails to compile in the page only reports "Script failed to execute", and a typo deserves the
+ * compiler's own message. Compiling runs nothing.
+ */
+function functionSyntaxError(functionSource: string): string | null {
+  try {
+    void new Script(`(${functionSource})`);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * The page script that runs the agent's function and returns its result as bounded JSON.
+ *
+ * The function goes into the script as code, not as a string for the page to eval(): a page whose
+ * Content Security Policy omits 'unsafe-eval' refuses eval() but still runs what the host injects.
+ * The function-producing thunk is an argument defined outside the wrapper, so its names resolve
+ * against the page's globals without capturing any wrapper parameters or locals.
+ */
 function buildEvaluateScript(
   functionSource: string,
   elementExpression: string | undefined,
 ): string {
-  return String.raw`(async () => {
+  return String.raw`(async (readFunction) => {
     const __PASEO_BROWSER_EVALUATE__ = true;
     try {
-      const userFunction = (0, eval)(${JSON.stringify(`(${functionSource})`)});
+      const userFunction = readFunction();
       if (typeof userFunction !== 'function') {
         throw new Error('browser_evaluate input must evaluate to a function.');
       }
@@ -1580,7 +1610,7 @@ function buildEvaluateScript(
 	    } catch (error) {
 	      return { error: error instanceof Error ? error.message : String(error) };
 	    }
-	  })()`;
+	  })(() => (${functionSource}))`;
 }
 
 async function focusKeypressTarget(
@@ -1626,6 +1656,8 @@ const NETWORK_PERFORMANCE_SCRIPT = String.raw`(() => {
       url: entry.name,
       method: entry.initiatorType === 'navigation' ? 'GET' : undefined,
       type: entry.initiatorType,
+      // 0 when the browser does not say (a cross-origin response without Timing-Allow-Origin).
+      status: typeof entry.responseStatus === 'number' && entry.responseStatus > 0 ? entry.responseStatus : undefined,
       startTime: entry.startTime,
       duration: entry.duration,
       transferSize: typeof entry.transferSize === 'number' ? entry.transferSize : undefined,

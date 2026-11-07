@@ -1,0 +1,23 @@
+{
+  "provenance": {
+    "package": "@juicesharp/rpiv-ask-user-question",
+    "version": "2.11.0",
+    "sourceCommit": "61904e69e1a50e12585bdf15f0310e633a62ba36",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23",
+    "model": "openrouter/google/gemini-3.6-flash",
+    "source": "isolated Paseo web QA Pi session JSONL"
+  },
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "User declined to answer questions"
+      }
+    ],
+    "details": {
+      "answers": [],
+      "cancelled": true
+    }
+  }
+}

@@ -54,6 +54,54 @@ describe("question form card core", () => {
     });
   });
 
+  test("keeps checked options and appends the other answer for multi-select", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Which fruits do you like?",
+          header: "Fruits",
+          options: [{ label: "Apple" }, { label: "Banana" }, { label: "Cherry" }],
+          multiSelect: true,
+          allowOther: true,
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([0, 2]) }, { 0: " durian " })).toEqual({
+      Fruits: "Apple, Cherry, durian",
+    });
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([0, 2]) }, {})).toEqual({
+      Fruits: "Apple, Cherry",
+    });
+    expect(buildQuestionFormAnswers(questions, { 0: new Set() }, { 0: "durian" })).toEqual({
+      Fruits: "durian",
+    });
+    expect(buildQuestionFormAnswers(questions, {}, { 0: "durian" })).toEqual({ Fruits: "durian" });
+  });
+
+  test("replaces the selected option with the other answer for single-select", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Which provider?",
+          header: "Provider",
+          options: [{ label: "Claude Code" }, { label: "Codex" }],
+          multiSelect: false,
+          allowOther: true,
+        },
+      ],
+    });
+
+    if (!questions) throw new Error("questions did not parse");
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([1]) }, { 0: "OpenCode" })).toEqual({
+      Provider: "OpenCode",
+    });
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([1]) }, {})).toEqual({
+      Provider: "Codex",
+    });
+  });
+
   test("shows text input for explicit other questions", () => {
     const questions = parseQuestionFormQuestions({
       questions: [
@@ -98,5 +146,30 @@ describe("question form card core", () => {
     expect(buildQuestionFormAnswers(questions, {}, { 0: "custom" })).toEqual({
       Response: "custom",
     });
+  });
+
+  test("keeps option previews so options can be compared", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "Which layout?",
+          header: "Layout",
+          options: [
+            {
+              label: "Tabs",
+              description: "One tab per section",
+              preview: "<Tabs>\n  <Tab />\n</Tabs>",
+            },
+            { label: "Single page" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(questions?.[0]?.options).toEqual([
+      { label: "Tabs", description: "One tab per section", preview: "<Tabs>\n  <Tab />\n</Tabs>" },
+      { label: "Single page", description: undefined, preview: undefined },
+    ]);
   });
 });

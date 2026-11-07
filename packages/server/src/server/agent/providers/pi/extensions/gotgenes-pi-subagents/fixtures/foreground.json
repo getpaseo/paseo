@@ -1,0 +1,111 @@
+{
+  "provenance": {
+    "package": "@gotgenes/pi-subagents",
+    "version": "21.7.6",
+    "sourceCommit": "1ac6bc6a36e6da5d00f1cd2482f1b971f5ea1fdf",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_502323",
+      "toolName": "subagent",
+      "args": {
+        "subagent_type": "general-purpose",
+        "description": "List workspace files",
+        "prompt": "list the files in this empty workspace."
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_502323",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent completed in 4.7s (1 tool uses, 9.0k token).\nAgent ID: 848583f5-6749-4a1\n\nThe workspace is empty."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "List workspace files",
+          "subagentType": "general-purpose",
+          "tags": ["twin"],
+          "toolUses": 1,
+          "tokens": "9.0k token",
+          "turnCount": 3,
+          "durationMs": 4723,
+          "status": "completed",
+          "agentId": "848583f5-6749-4a1"
+        }
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_502323",
+          "name": "subagent",
+          "arguments": {
+            "subagent_type": "general-purpose",
+            "description": "List workspace files",
+            "prompt": "list the files in this empty workspace."
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 6584,
+        "output": 96,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 55,
+        "totalTokens": 6680,
+        "cost": {
+          "input": 0.0049380000000000005,
+          "output": 0.00036,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.005298000000000001
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790197658835,
+      "responseId": "gen-1790197658-Jx3ylOivC0gHsP3uBU0f",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_502323",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent completed in 4.7s (1 tool uses, 9.0k token).\nAgent ID: 848583f5-6749-4a1\n\nThe workspace is empty."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "List workspace files",
+        "subagentType": "general-purpose",
+        "tags": ["twin"],
+        "toolUses": 1,
+        "tokens": "9.0k token",
+        "turnCount": 3,
+        "durationMs": 4723,
+        "status": "completed",
+        "agentId": "848583f5-6749-4a1"
+      },
+      "isError": false,
+      "timestamp": 1790197665254
+    }
+  ]
+}

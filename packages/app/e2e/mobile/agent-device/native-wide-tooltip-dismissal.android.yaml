@@ -1,0 +1,23 @@
+appId: sh.paseo.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: context-window-meter
+    timeout: 30000
+- tapOn:
+    id: context-window-meter
+- assertVisible:
+    id: context-window-meter-tooltip
+- tapOn:
+    id: tooltip-dismiss
+- assertNotVisible:
+    id: context-window-meter-tooltip
+- tapOn:
+    id: context-window-meter
+- assertVisible:
+    id: context-window-meter-tooltip
+- tapOn:
+    id: tooltip-dismiss
+- assertNotVisible:
+    id: context-window-meter-tooltip

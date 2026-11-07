@@ -8,7 +8,12 @@ import {
   useState,
 } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
-import { DEFAULT_THEME_PREFERENCE, useAppSettings, type AppSettings } from "@/hooks/use-settings";
+import {
+  DEFAULT_THEME_PREFERENCE,
+  resolveContentMaxWidth,
+  useAppSettings,
+  type AppSettings,
+} from "@/hooks/use-settings";
 import {
   rememberPluginThemeHost,
   usePluginThemeCatalog,
@@ -16,6 +21,7 @@ import {
 } from "@/plugins/themes";
 import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES } from "@/styles/theme";
 import { applyAppearance } from "./apply";
+import { AppearanceSystemBars } from "./system-bars";
 
 interface ContributedThemes {
   options: PluginThemeOption[];
@@ -68,6 +74,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       uiBaseFontSize: settings.uiBaseFontSize,
       contentFontSize: settings.contentFontSize,
       codeFontSize: settings.codeFontSize,
+      contentMaxWidth: resolveContentMaxWidth({ contentMaxWidth: settings.contentMaxWidth }),
       syntaxTheme: settings.syntaxTheme,
     });
     setHasAppliedAppearance(true);
@@ -80,6 +87,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     settings.uiBaseFontSize,
     settings.contentFontSize,
     settings.codeFontSize,
+    settings.contentMaxWidth,
     settings.syntaxTheme,
   ]);
 
@@ -100,7 +108,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   if (!hasAppliedAppearance) return null;
 
   return (
-    <ContributedThemesContext.Provider value={value}>{children}</ContributedThemesContext.Provider>
+    <ContributedThemesContext.Provider value={value}>
+      <AppearanceSystemBars />
+      {children}
+    </ContributedThemesContext.Provider>
   );
 }
 

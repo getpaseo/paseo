@@ -22,6 +22,23 @@ function deferred<T = void>() {
 }
 
 describe("Codex app-server startup coordinator", () => {
+  test("returns initialize metadata so sessions retain server capabilities", async () => {
+    const coordinator = new CodexAppServerStartupCoordinator();
+    const client = {
+      request: async () => ({ userAgent: "codex/0.164.0" }),
+      notify: () => {},
+      dispose: async () => {},
+    };
+    const started = await coordinator.start({
+      stateDirKey: "/codex/metadata",
+      spawn: createCodexAppServerChildProcess,
+      createClient: () => client,
+      initializeParams: {},
+      logger: createTestLogger(),
+    });
+    expect(started).toEqual({ client, initialized: { userAgent: "codex/0.164.0" } });
+  });
+
   test("serializes a burst through initialize but retains all initialized clients", async () => {
     const coordinator = new CodexAppServerStartupCoordinator();
     const firstEntered = deferred();
@@ -131,7 +148,7 @@ describe("Codex app-server startup coordinator", () => {
       logger: createTestLogger(),
     });
 
-    expect(client).toEqual(expect.objectContaining({ request: expect.any(Function) }));
+    expect(client.client).toEqual(expect.objectContaining({ request: expect.any(Function) }));
     expect(events).toEqual([
       "spawn 1",
       "initialize 1",
@@ -201,7 +218,9 @@ describe("Codex app-server startup coordinator", () => {
     expect(disposed).toBe(3);
     locked = false;
     await expect(start()).resolves.toEqual(
-      expect.objectContaining({ request: expect.any(Function) }),
+      expect.objectContaining({
+        client: expect.objectContaining({ request: expect.any(Function) }),
+      }),
     );
     expect(spawned).toBe(4);
     expect(disposed).toBe(3);
@@ -316,7 +335,9 @@ describe("Codex app-server startup coordinator", () => {
       await vi.advanceTimersByTimeAsync(10);
       await firstResult;
       await expect(next).resolves.toEqual(
-        expect.objectContaining({ request: expect.any(Function) }),
+        expect.objectContaining({
+          client: expect.objectContaining({ request: expect.any(Function) }),
+        }),
       );
       expect(events).toEqual(["dispose first", "spawn next"]);
     } finally {

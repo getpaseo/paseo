@@ -1,3 +1,4 @@
+import { createAgentMessageDelivery } from "../agent/agent-messages/index.js";
 import pino from "pino";
 import { randomUUID } from "node:crypto";
 import { afterEach, vi } from "vitest";
@@ -35,6 +36,8 @@ export function asAgentManager(stub: {
 }): SessionOptions["agentManager"] {
   return createStub<SessionOptions["agentManager"]>({
     listProviderSubagentActivity: () => [],
+    getRetiredInternalAgent: () => null,
+    getAgentBackgroundWorkSummary: () => undefined,
     ...stub,
   });
 }
@@ -43,6 +46,19 @@ export function asAgentStorage(stub: {
   [K in keyof SessionOptions["agentStorage"]]?: unknown;
 }): SessionOptions["agentStorage"] {
   return createStub<SessionOptions["agentStorage"]>({
+    listAll: async () => [],
+    listActive: async function (options) {
+      return (await this.listAll()).filter(
+        (record) => options?.includeArchived || !record.archivedAt,
+      );
+    },
+    listByWorkspaces: async function (ids, options) {
+      const selected = new Set(ids);
+      return (await this.listActive(options)).filter((record) =>
+        selected.has(record.workspaceId ?? ""),
+      );
+    },
+    lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
     listByProviderSession: async () => [],
     listByWorkspace: async () => [],
     ...stub,
@@ -239,6 +255,7 @@ export function createProviderSnapshotManagerStub(): {
   const off = vi.fn();
   const destroy = vi.fn<ProviderSnapshotManager["destroy"]>();
   const stub = {
+    supportsConfigRequiredProvider: () => false,
     getSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,
@@ -317,4 +334,16 @@ export function createTestCreationService(): SessionOptions["creationService"] {
   const directory = join(tmpdir(), `session-creation-${randomUUID()}`);
   creationDirectories.push(directory);
   return new CreationService(directory, pino({ level: "silent" }));
+}
+
+/** Session fixtures without agent-originated sends still own the delivery lifetime. */
+export function createAgentMessageDeliveryStub(): SessionOptions["agentMessages"] {
+  return createAgentMessageDelivery({
+    dispatch: async () => {
+      throw new Error("Unexpected agent message in session fixture");
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
 }

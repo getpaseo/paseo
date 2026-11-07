@@ -1,0 +1,28 @@
+{"t_ms": 69, "stream": "stderr", "data": "Usage: agy mcp add [flags] <name> <commandOrUrl> [args...]"}
+{"t_ms": 69, "stream": "stderr", "data": ""}
+{"t_ms": 69, "stream": "stderr", "data": "Add or update an MCP server configuration"}
+{"t_ms": 69, "stream": "stderr", "data": ""}
+{"t_ms": 69, "stream": "stderr", "data": "Flags:"}
+{"t_ms": 69, "stream": "stderr", "data": "  -H        Short alias for --header (default [])"}
+{"t_ms": 69, "stream": "stderr", "data": "  -e        Short alias for --env (default [])"}
+{"t_ms": 69, "stream": "stderr", "data": "  --env     Environment variable KEY=value (repeatable) (default [])"}
+{"t_ms": 69, "stream": "stderr", "data": "  -h        Show help"}
+{"t_ms": 69, "stream": "stderr", "data": "  --header  HTTP header Key: Value (repeatable) (default [])"}
+{"t_ms": 69, "stream": "stderr", "data": "  --help    Show help"}
+{"t_ms": 69, "stream": "stderr", "data": "  -t        Short alias for --type (default stdio)"}
+{"t_ms": 69, "stream": "stderr", "data": "  --type    Server type: 'stdio' or 'http' (default stdio)"}
+{"t_ms": 69, "stream": "stderr", "data": ""}
+{"t_ms": 69, "stream": "stderr", "data": "Arguments:"}
+{"t_ms": 69, "stream": "stderr", "data": "  <name>          Unique name for the server."}
+{"t_ms": 69, "stream": "stderr", "data": "  <commandOrUrl>  Executable for a stdio server, or the URL for an http server."}
+{"t_ms": 69, "stream": "stderr", "data": "  [args...]       Arguments passed to the stdio command."}
+{"t_ms": 69, "stream": "stderr", "data": ""}
+{"t_ms": 69, "stream": "stderr", "data": "Notes:"}
+{"t_ms": 69, "stream": "stderr", "data": "  Flags must come before <name>; a flag placed after it is rejected."}
+{"t_ms": 69, "stream": "stderr", "data": "  http/https URLs are detected automatically, so --type is usually unnecessary."}
+{"t_ms": 69, "stream": "stderr", "data": "  Use -- before the command to pass a command or args that begin with '-'."}
+{"t_ms": 69, "stream": "stderr", "data": ""}
+{"t_ms": 69, "stream": "stderr", "data": "Examples:"}
+{"t_ms": 69, "stream": "stderr", "data": "  agy mcp add fs npx -y <REDACTED_REFERENCE> /work"}
+{"t_ms": 69, "stream": "stderr", "data": "  agy mcp add --header \"<HEADER_NAME>: <HEADER_VALUE>\" api https://example.com/mcp"}
+{"t_ms": 69, "stream": "stderr", "data": "  agy mcp add --env <ENV_NAME>=<ENV_VALUE> gh -- docker run -i <REDACTED_REFERENCE>"}
