@@ -86,7 +86,7 @@ function transformSourceItem(
   assistantPhase: AssistantPhase,
 ): StreamItem[] {
   const source = sourceTimelineItem(item);
-  if (!source) return [item];
+  if (!source || item.kind === "plugin") return [item];
   const isStreamingThought = item.kind === "thought" && item.status === "loading";
   const isStreamingToolCall =
     item.kind === "tool_call" &&
@@ -113,6 +113,7 @@ function transformSourceItem(
       itemKind: pluginItem.kind,
       version: pluginItem.version,
       data: pluginItem.data,
+      sourceKind: item.kind,
     };
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
