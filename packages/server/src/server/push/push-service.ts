@@ -12,6 +12,7 @@ interface ExpoPushMessage {
   body: string;
   data?: Record<string, unknown>;
   sound?: "default";
+  priority?: "default" | "normal" | "high";
 }
 
 interface ExpoPushTicket {
@@ -42,12 +43,16 @@ export class PushService {
       return;
     }
 
+    // Expo defaults to "normal" priority on Android, which FCM holds back while
+    // the device dozes, so notifications arrive minutes late. iOS already
+    // defaults to "high".
     const messages: ExpoPushMessage[] = tokens.map((token) => ({
       to: token,
       title: payload.title,
       body: payload.body,
       data: payload.data,
       sound: "default",
+      priority: "high",
     }));
 
     // Batch tokens (max 100 per request per Expo limits)
