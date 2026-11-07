@@ -485,6 +485,43 @@ describe("toAgentPayload", () => {
   });
 });
 
+describe("buildStoredAgentPayload features", () => {
+  it.each([null, "2026-11-01T00:00:00.000Z"])(
+    "preserves saved feature definitions like live snapshots (archivedAt=%s)",
+    (archivedAt) => {
+      const features: AgentFeature[] = [
+        createFeature({ value: false }),
+        {
+          type: "select",
+          id: "service_tier",
+          label: "Service tier",
+          value: "default",
+          options: [
+            { id: "default", label: "Normal" },
+            { id: "fast", label: "Fast" },
+          ],
+        },
+      ];
+      const agent = createManagedAgent({ features });
+      const record = { ...toStoredAgentRecord(agent), archivedAt };
+
+      const payload = buildStoredAgentPayload(record, [agent.provider]);
+
+      expect(payload.features).toEqual(features);
+      expect(payload.features).toEqual(toAgentPayload(agent).features);
+      expect(payload.features).not.toBe(record.features);
+      expect(payload.features?.[0]).not.toBe(record.features?.[0]);
+    },
+  );
+
+  it("uses an empty feature list for older records without saved definitions", () => {
+    const record = toStoredAgentRecord(createManagedAgent());
+    delete record.features;
+
+    expect(buildStoredAgentPayload(record, [record.provider]).features).toEqual([]);
+  });
+});
+
 describe("toRecentProviderSessionDescriptorPayload", () => {
   it("projects provider import rows to provider-opaque public recent sessions", () => {
     const session: ImportableProviderSession & { provider: string } = {

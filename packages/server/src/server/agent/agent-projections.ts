@@ -263,6 +263,7 @@ export function buildStoredAgentPayload(
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
+    features: normalizeFeatures(record.features),
     pendingPermissions: [],
     persistence,
     title: record.title ?? null,
