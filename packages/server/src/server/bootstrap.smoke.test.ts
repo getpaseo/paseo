@@ -480,6 +480,56 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("waits for an unavailable listen address, then fails naming daemon.listen", async () => {
+    // 192.0.2.1 is TEST-NET-1 (RFC 5737): never assigned to a local interface, so listen()
+    // fails with EADDRNOTAVAIL like a Tailscale address before the interface is up.
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-listen-unavailable-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    await mkdir(paseoHome, { recursive: true });
+    const config: PaseoDaemonConfig = {
+      listen: "192.0.2.1:0",
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: false,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      relayEnabled: false,
+      appBaseUrl: "https://app.paseo.sh",
+      openai: undefined,
+      speech: undefined,
+    };
+    let now = 0;
+    const sleeps: number[] = [];
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      listenAddressRetryClock: {
+        now: () => now,
+        sleep: async (delayMs) => {
+          sleeps.push(delayMs);
+          now += delayMs;
+        },
+      },
+      listenAddressRetryPolicy: { maxWaitMs: 3_000, delay: () => 1_000 },
+    });
+
+    try {
+      await expect(daemon.start()).rejects.toMatchObject({
+        name: "ListenAddressUnavailableError",
+        code: "EADDRNOTAVAIL",
+        listen: "192.0.2.1:0",
+        message: expect.stringContaining("daemon.listen"),
+      });
+      expect(sleeps).toEqual([1_000, 1_000, 1_000]);
+    } finally {
+      await daemon.stop().catch(() => undefined);
+      await rm(paseoHomeRoot, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+    }
+  });
+
   test("local service namespace misses never reach daemon APIs", async () => {
     const daemonHandle = await createTestPaseoDaemon({
       auth: { password: hashDaemonPassword("secret") },
