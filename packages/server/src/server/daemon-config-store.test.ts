@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
+import {
+  DaemonConfigStore,
+  applyMutableProviderConfigToOverrides,
+  toWireDaemonConfig,
+} from "./daemon-config-store.js";
 import { loadConfig } from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
@@ -196,11 +200,310 @@ describe("DaemonConfigStore", () => {
         model: "claude-opus-5",
         modeId: "plan",
         thinkingOptionId: "think-hard",
-        featureValues: { webSearch: true },
+        options: { webSearch: true },
         notes: "Use for components, layout and design tokens.",
       },
     ]);
     expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("a profile written with featureValues is stored as options, and the config API answers with both", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    // The unchanged app sends back the `options` it read plus the `featureValues` it edited.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "p",
+          name: "P",
+          provider: "claude",
+          options: { fast_mode: false },
+          featureValues: { fast_mode: true },
+        },
+      ],
+    });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+    ]);
+    expect(store.get().agentProfiles).toEqual([
+      { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+    ]);
+    expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
+      {
+        id: "p",
+        name: "P",
+        provider: "claude",
+        options: { fast_mode: true },
+        featureValues: { fast_mode: true },
+      },
+    ]);
+  });
+
+  describe("a profile edited by the unchanged app", () => {
+    function storeWithProfile(): DaemonConfigStore {
+      const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+      tempDirs.push(paseoHome);
+      return new DaemonConfigStore(paseoHome, {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentProfiles: [
+          {
+            id: "p",
+            name: "P",
+            provider: "codex",
+            options: { sandbox_mode: "read-only", plan_mode: false },
+          },
+        ],
+      });
+    }
+
+    test("keeps the options its form never shows when it changes a control", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "Renamed", provider: "codex", featureValues: { plan_mode: true } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "Renamed",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", plan_mode: true },
+        },
+      ]);
+    });
+
+    test("keeps every option when it sends no featureValues at all", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({ agentProfiles: [{ id: "p", name: "Renamed", provider: "codex" }] });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "Renamed",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", plan_mode: false },
+        },
+      ]);
+    });
+
+    test("starts from no options when it moves the profile to another provider", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "P", provider: "claude", featureValues: { fast_mode: true } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+      ]);
+    });
+
+    test("drops the old provider's options when it moves the profile with no featureValues", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({ agentProfiles: [{ id: "p", name: "P", provider: "claude" }] });
+
+      expect(store.get().agentProfiles).toEqual([{ id: "p", name: "P", provider: "claude" }]);
+    });
+
+    test("folds featureValues over the options a write carries, not over the stored ones", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          {
+            id: "p",
+            name: "P",
+            provider: "codex",
+            options: { sandbox_mode: "workspace-write" },
+            featureValues: { plan_mode: true },
+          },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "P",
+          provider: "codex",
+          options: { sandbox_mode: "workspace-write", plan_mode: true },
+        },
+      ]);
+    });
+
+    test("converts a Codex profile's legacy fast_mode to service_tier", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "P", provider: "codex", featureValues: { fast_mode: true } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "P",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", plan_mode: false, service_tier: "fast" },
+        },
+      ]);
+    });
+
+    test("removes an option whose featureValues entry is null", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "P", provider: "codex", featureValues: { plan_mode: null } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "codex", options: { sandbox_mode: "read-only" } },
+      ]);
+    });
+  });
+
+  test("a profile stored with featureValues loads as options", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      agentProfiles: [
+        {
+          id: "legacy",
+          name: "Legacy",
+          provider: "codex",
+          featureValues: { service_tier: "fast" },
+        },
+      ],
+    });
+
+    expect(store.get().agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
+  });
+
+  describe("a profile holding Codex's legacy fast_mode", () => {
+    const legacyProfiles = ["codex", "my-codex"].map((provider) => ({
+      id: provider,
+      name: provider,
+      provider,
+      options: { fast_mode: true },
+    }));
+
+    function storeWithLegacyProfiles(agentProfiles: unknown[] = legacyProfiles): DaemonConfigStore {
+      const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+      tempDirs.push(paseoHome);
+      return new DaemonConfigStore(paseoHome, {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: { "my-codex": { extends: "codex" } },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentProfiles,
+      } as MutableDaemonConfig);
+    }
+
+    test("reads the same for codex and a provider that extends it", () => {
+      const store = storeWithLegacyProfiles();
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "codex", name: "codex", provider: "codex", options: { service_tier: "fast" } },
+        {
+          id: "my-codex",
+          name: "my-codex",
+          provider: "my-codex",
+          options: { service_tier: "fast" },
+        },
+      ]);
+      expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
+        expect.objectContaining({ featureValues: { service_tier: "fast" } }),
+        expect.objectContaining({ featureValues: { service_tier: "fast" } }),
+      ]);
+    });
+
+    test.each(["codex", "my-codex"])("resetting %s's speed removes what was shown", async (id) => {
+      const store = storeWithLegacyProfiles();
+
+      await store.patch({
+        agentProfiles: [{ id, name: id, provider: id, featureValues: { service_tier: null } }],
+      });
+
+      expect(store.get().agentProfiles).toEqual([{ id, name: id, provider: id, options: {} }]);
+    });
+
+    test("a provider edit in the same write does not hide which adapter a profile runs on", async () => {
+      const store = storeWithLegacyProfiles();
+
+      await store.patch({
+        providers: { "my-codex": { label: "Renamed" } },
+        agentProfiles: [
+          { id: "p", name: "P", provider: "my-codex", featureValues: { fast_mode: false } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "my-codex", options: { service_tier: "default" } },
+      ]);
+    });
+
+    test("a malformed value rejects the write and leaves config reads working", async () => {
+      const store = storeWithLegacyProfiles();
+
+      await expect(
+        store.patch({
+          agentProfiles: [
+            { id: "p", name: "P", provider: "my-codex", options: { fast_mode: "false" } },
+          ],
+        }),
+      ).rejects.toThrow(/fast_mode must be true, false or null/);
+
+      expect(toWireDaemonConfig(store.get()).agentProfiles).toHaveLength(2);
+    });
+
+    test("a malformed value in a stored profile does not stop the config from loading", () => {
+      const store = storeWithLegacyProfiles([
+        { id: "p", name: "P", provider: "codex", options: { fast_mode: "false" } },
+      ]);
+
+      expect(store.get().agentProfiles?.[0]?.options).toEqual({ fast_mode: "false" });
+    });
   });
 
   test("patch replaces the whole agent profile list rather than merging entries", async () => {
@@ -1272,6 +1575,35 @@ describe("DaemonConfigStore reload", () => {
     expect(store.get().providers).toEqual({});
     expect(store.get().terminalProfiles).toBeUndefined();
     expect(store.get().agentProfiles).toBeUndefined();
+  });
+
+  test("reload folds a profile file written with featureValues into options, and saving it persists options", async () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    writeConfig(paseoHome, {
+      ...persisted,
+      daemon: {
+        ...persisted.daemon,
+        agentProfiles: [
+          {
+            id: "legacy",
+            name: "Legacy",
+            provider: "codex",
+            featureValues: { service_tier: "fast" },
+          },
+        ],
+      },
+    });
+
+    await store.reload();
+
+    expect(store.get().agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
+    // The app reads the profile and writes the list back on its next edit.
+    await store.patch({ agentProfiles: store.get().agentProfiles });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
   });
 
   test("reports a launch-controlled edit without changing live state", async () => {

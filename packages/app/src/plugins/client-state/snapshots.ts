@@ -6,6 +6,7 @@ import type {
   PluginProjectSnapshot,
 } from "@getpaseo/plugin";
 import type { Agent, WorkspaceDescriptor, ProjectDescriptor } from "@/stores/session-store";
+import { cloneAndFreeze } from "../freeze";
 
 import { entityRefs } from "./refs";
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
@@ -97,6 +98,7 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     attentionReason: agent.attentionReason ?? null,
     parentAgentId: agent.parentAgentId,
     labels: Object.freeze({ ...agent.labels }),
+    metadata: cloneAndFreeze(agent.metadata ?? {}),
   });
   const byWorkspace = agentSnapshots.get(agent) ?? new Map<string, PluginAgentSnapshot>();
   byWorkspace.set(workspaceId, snapshot);

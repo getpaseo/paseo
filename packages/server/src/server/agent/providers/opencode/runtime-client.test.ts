@@ -100,11 +100,11 @@ test.each([
   });
   try {
     await writeFile(script, initialSource);
-    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+    expect((await client.listControls({ provider: "opencode", cwd: root }))[0]?.label).toBe(
       "Auto Accept",
     );
     await writeFile(script, 'console.log("opencode v2.0.10")');
-    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+    expect((await client.listControls({ provider: "opencode", cwd: root }))[0]?.label).toBe(
       "Auto-accept",
     );
   } finally {
@@ -202,7 +202,7 @@ test.each([
     const legacy = new OpenCodeAgentClient(logger);
     const config = { provider: "opencode", cwd: root };
     try {
-      expect(await client.listFeatures(config)).toEqual(await legacy.listFeatures(config));
+      expect(await client.listControls(config)).toEqual(await legacy.listControls(config));
     } finally {
       await client.shutdown();
       await legacy.shutdown();
@@ -221,8 +221,8 @@ test("selects v2 without probing the binary when an external server is configure
     env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
   });
   try {
-    const features = await client.listFeatures({ provider: "opencode", cwd: "/tmp/project" });
-    expect(features.map((feature) => feature.label)).toEqual(["Auto-accept"]);
+    const controls = await client.listControls({ provider: "opencode", cwd: "/tmp/project" });
+    expect(controls.map((control) => control.label)).toEqual(["Auto-accept"]);
   } finally {
     await client.shutdown();
   }

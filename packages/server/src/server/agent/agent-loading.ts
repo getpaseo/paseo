@@ -132,8 +132,15 @@ export async function ensureAgentLoaded(
       if (!config) {
         throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
       }
+      // Known gap: `record` was read before this create, and createAgent deletes the stored
+      // state outside the agent's lifecycle lane. A setMetadata that saves between the read and
+      // the delete is overwritten by this stale metadata. That window spans everything from the
+      // read to the delete, including the agent.create.before hook, which a plugin can hold
+      // open. The fix is to read and delete the stored record inside the lane
+      // (createAgentInternal), which is a lifecycle change.
       snapshot = await deps.agentManager.createAgent(config, agentId, {
         labels: record.labels,
+        metadata: record.metadata,
         workspaceId: record.workspaceId,
         owner: record.owner,
         background: record.background,

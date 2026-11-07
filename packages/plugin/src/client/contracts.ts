@@ -6,6 +6,12 @@ import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-type
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
 import type {
+  PluginComposer,
+  PluginComposerItemContribution,
+  PluginComposerSelector,
+} from "./composer.js";
+import type { PluginNewWorkspaceItemContribution } from "./new-workspace.js";
+import type {
   PluginRpcContract,
   PluginSubscribeOptions,
   PluginSubscriptionContract,
@@ -220,6 +226,8 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
     contribution: PluginComposerPillContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
+  addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
+  addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
@@ -334,6 +342,8 @@ export interface PluginCommandCapabilities {
     input: PluginWireInput<ZodInput<InputSchema>>,
   ): Promise<ZodOutput<OutputSchema>>;
   openScreen(input: PluginOpenScreenInput): void;
+  /** The composers `selector` names, whether or not their tabs are open; see `useComposers`. */
+  composers(selector: PluginComposerSelector): readonly PluginComposer[];
   /** @deprecated Use `openScreen`. */
   openSurface(id: string): void;
   openSettings(id: string): void;

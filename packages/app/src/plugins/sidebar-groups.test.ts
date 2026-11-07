@@ -38,6 +38,8 @@ function installed(
     },
     legacySidebarItems,
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
