@@ -681,11 +681,15 @@ describe("BrowserRoutingManager", () => {
       connectTimeoutMs: 1000,
     });
     const closeReasons: number[] = [];
-    manager.bridge.openStreamFor(
-      "server-a",
-      { host: "intranet.invalid", port: 80 },
-      { onConnected: () => {}, onData: () => {}, onClose: (reason) => closeReasons.push(reason) },
-    );
+    manager.bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "intranet.invalid", port: 80 },
+      sink: {
+        onConnected: () => {},
+        onData: () => {},
+        onClose: (reason) => closeReasons.push(reason),
+      },
+    });
     const eventCount = events.length;
 
     manager.handleRendererGone(9);

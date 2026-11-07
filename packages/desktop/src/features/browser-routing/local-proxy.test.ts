@@ -475,7 +475,7 @@ describe("local browser proxy: CONNECT", () => {
     ).toBe(true);
     cleanups.push(() => bridge.closeProvider("connect-upload-host", "unregistered"));
     const proxy = await startProxy((target, sink) =>
-      bridge.openStreamFor("connect-upload-host", target, sink),
+      bridge.openStreamFor({ serverId: "connect-upload-host", target, sink }),
     );
     const { socket, wire, closed } = await connectRaw(proxy.port);
     socket.write(
@@ -504,12 +504,14 @@ describe("local browser proxy: CONNECT", () => {
         0,
       );
     while (responseBytes < 16 * 1024 * 1024 && responseBytes - returnedCredit() < 256 * 1024) {
-      expect(bridge.streamData(1, opened.payload, chunk)).toEqual({ ok: true });
+      expect(bridge.streamData(1, { ...opened.payload, data: chunk })).toEqual({ ok: true });
       responseBytes += chunk.length;
       await new Promise((resolve) => setImmediate(resolve));
     }
     expect(responseBytes - returnedCredit()).toBe(256 * 1024);
-    expect(bridge.streamClose(1, opened.payload, TunnelCloseReason.Ok)).toEqual({ ok: true });
+    expect(bridge.streamClose(1, { ...opened.payload, reason: TunnelCloseReason.Ok })).toEqual({
+      ok: true,
+    });
     socket.resume();
     await waitFor(closed);
     expect(wire().length).toBe(
@@ -959,7 +961,7 @@ describe("local browser proxy: inbound credit", () => {
     expect(registration.ok).toBe(true);
     cleanups.push(() => bridge.closeProvider("upload-host", "unregistered"));
     const proxy = await startProxy((target, sink) =>
-      bridge.openStreamFor("upload-host", target, sink),
+      bridge.openStreamFor({ serverId: "upload-host", target, sink }),
     );
     const { socket, wire, closed } = await connectRaw(proxy.port);
     const upload = "x".repeat(128 * 1024);
@@ -984,9 +986,13 @@ describe("local browser proxy: inbound credit", () => {
       "upload ",
       "rejected!",
     ]) {
-      expect(bridge.streamData(1, opened.payload, Buffer.from(chunk))).toEqual({ ok: true });
+      expect(bridge.streamData(1, { ...opened.payload, data: Buffer.from(chunk) })).toEqual({
+        ok: true,
+      });
     }
-    expect(bridge.streamClose(1, opened.payload, TunnelCloseReason.Ok)).toEqual({ ok: true });
+    expect(bridge.streamClose(1, { ...opened.payload, reason: TunnelCloseReason.Ok })).toEqual({
+      ok: true,
+    });
     await waitFor(closed);
     expect(wire()).toContain("HTTP/1.1 413 Payload Too Large");
     expect(wire()).toContain("upload rejected!");

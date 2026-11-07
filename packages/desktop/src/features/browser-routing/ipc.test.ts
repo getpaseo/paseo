@@ -219,10 +219,10 @@ describe("browser routing IPC", () => {
     ).toMatchObject({ ok: false, error: { code: "provider_exists" } });
 
     const received: Uint8Array[] = [];
-    const handle = manager.bridge.openStreamFor(
-      "server-a",
-      { host: "intranet.invalid", port: 80 },
-      {
+    const handle = manager.bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "intranet.invalid", port: 80 },
+      sink: {
         onConnected: () => {},
         onData: (data, consumed) => {
           received.push(data);
@@ -230,7 +230,7 @@ describe("browser routing IPC", () => {
         },
         onClose: () => {},
       },
-    )!;
+    })!;
     const open = events.find((event) => event.event === "network_tunnel_stream_open")!;
     const { streamId } = open.payload as { streamId: string };
     expect(open.payload).toEqual({
