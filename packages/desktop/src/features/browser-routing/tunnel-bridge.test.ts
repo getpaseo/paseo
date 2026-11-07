@@ -114,7 +114,11 @@ describe("TunnelBridge providers", () => {
 
     const sinks = Array.from({ length: TUNNEL_MAX_STREAMS + 1 }, () => new FakeSink());
     const handles = sinks.map((sink) =>
-      bridge.openStreamFor("server-a", { host: "intranet.invalid", port: 80 }, sink),
+      bridge.openStreamFor({
+        serverId: "server-a",
+        target: { host: "intranet.invalid", port: 80 },
+        sink,
+      }),
     );
     await flushMicrotasks();
     expect(eventsNamed("network_tunnel_stream_open")).toHaveLength(TUNNEL_MAX_STREAMS);
@@ -138,7 +142,11 @@ describe("TunnelBridge providers", () => {
   test("returns null without a provider so the proxy answers 503", () => {
     const { bridge, emitted } = createHarness();
     expect(
-      bridge.openStreamFor("server-a", { host: "intranet", port: 80 }, new FakeSink()),
+      bridge.openStreamFor({
+        serverId: "server-a",
+        target: { host: "intranet", port: 80 },
+        sink: new FakeSink(),
+      }),
     ).toBeNull();
     expect(emitted).toEqual([]);
   });
@@ -150,7 +158,11 @@ describe("TunnelBridge streams", () => {
     const providerId = register(bridge);
     const sink = new FakeSink();
 
-    const handle = bridge.openStreamFor("server-a", { host: "intranet.invalid", port: 8080 }, sink);
+    const handle = bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "intranet.invalid", port: 8080 },
+      sink,
+    });
     expect(handle).not.toBeNull();
     expect(eventsNamed("network_tunnel_stream_open")).toEqual([
       { serverId: "server-a", providerId, streamId: "id-2", host: "intranet.invalid", port: 8080 },
@@ -175,7 +187,7 @@ describe("TunnelBridge streams", () => {
     expect(frames.map((frame) => frame.data.byteLength)).toEqual([256, 256, 256, 256]);
     expect(firstWriteDone).toBe(false);
 
-    expect(bridge.streamCredit(1, ref, 476)).toEqual({ ok: true });
+    expect(bridge.streamCredit(1, { ...ref, credit: 476 })).toEqual({ ok: true });
     expect(eventsNamed("network_tunnel_stream_data").map((frame) => frame.data.byteLength)).toEqual(
       [256, 256, 256, 256, 256, 220],
     );
@@ -186,12 +198,16 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "intranet.invalid", port: 80 }, sink);
+    bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "intranet.invalid", port: 80 },
+      sink,
+    });
     const ref = { serverId: "server-a", providerId, streamId: "id-2" };
     bridge.streamConnected(1, ref);
 
-    expect(bridge.streamData(1, ref, new Uint8Array(100))).toEqual({ ok: true });
-    expect(bridge.streamData(1, ref, new Uint8Array(50))).toEqual({ ok: true });
+    expect(bridge.streamData(1, { ...ref, data: new Uint8Array(100) })).toEqual({ ok: true });
+    expect(bridge.streamData(1, { ...ref, data: new Uint8Array(50) })).toEqual({ ok: true });
     await flushMicrotasks();
     expect(eventsNamed("network_tunnel_stream_credit")).toEqual([]);
 
@@ -206,11 +222,18 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "intranet.invalid", port: 80 }, sink);
+    bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "intranet.invalid", port: 80 },
+      sink,
+    });
     const ref = { serverId: "server-a", providerId, streamId: "id-2" };
     bridge.streamConnected(1, ref);
 
-    const oversized = bridge.streamData(1, ref, new Uint8Array(LIMITS.maxDataBytes + 1));
+    const oversized = bridge.streamData(1, {
+      ...ref,
+      data: new Uint8Array(LIMITS.maxDataBytes + 1),
+    });
     expect(!oversized.ok && oversized.error.code).toBe("protocol_error");
     expect(sink.closeReasons).toEqual([TunnelCloseReason.ProtocolError]);
     expect(eventsNamed("network_tunnel_provider_closed")).toEqual([
@@ -224,16 +247,16 @@ describe("TunnelBridge streams", () => {
       const { bridge } = createHarness();
       const providerId = register(bridge);
       const sink = new FakeSink();
-      bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink);
+      bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
       const ref = { serverId: "server-a", providerId, streamId: "id-2" };
       bridge.streamConnected(1, ref);
       for (let index = 0; index < 4; index += 1) {
-        expect(bridge.streamData(1, ref, new Uint8Array(256))).toEqual({ ok: true });
+        expect(bridge.streamData(1, { ...ref, data: new Uint8Array(256) })).toEqual({ ok: true });
       }
       const result =
         violation === "data"
-          ? bridge.streamData(1, ref, new Uint8Array(1))
-          : bridge.streamCredit(1, ref, 1);
+          ? bridge.streamData(1, { ...ref, data: new Uint8Array(1) })
+          : bridge.streamCredit(1, { ...ref, credit: 1 });
       expect(!result.ok && result.error.code).toBe("protocol_error");
       expect(bridge.hasProvider("server-a")).toBe(false);
     }
@@ -243,17 +266,23 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    const handle = bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink)!;
+    const handle = bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "h", port: 80 },
+      sink,
+    })!;
     const ref = { serverId: "server-a", providerId, streamId: "id-2" };
     const writeErrors: unknown[] = [];
     handle.write(new Uint8Array(10), (error) => writeErrors.push(error));
 
-    expect(bridge.streamClose(1, ref, TunnelCloseReason.ConnectionRefused)).toEqual({ ok: true });
+    expect(bridge.streamClose(1, { ...ref, reason: TunnelCloseReason.ConnectionRefused })).toEqual({
+      ok: true,
+    });
     expect(sink.closeReasons).toEqual([TunnelCloseReason.ConnectionRefused]);
     expect(writeErrors).toHaveLength(1);
     expect(eventsNamed("network_tunnel_stream_close")).toEqual([]);
 
-    const late = bridge.streamData(1, ref, new Uint8Array(1));
+    const late = bridge.streamData(1, { ...ref, data: new Uint8Array(1) });
     expect(!late.ok && late.error.code).toBe("unknown_stream");
     handle.close();
     expect(eventsNamed("network_tunnel_stream_close")).toEqual([]);
@@ -263,7 +292,11 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    const handle = bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink)!;
+    const handle = bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "h", port: 80 },
+      sink,
+    })!;
     const ref = { serverId: "server-a", providerId, streamId: "id-2" };
     bridge.streamConnected(1, ref);
 
@@ -273,7 +306,7 @@ describe("TunnelBridge streams", () => {
       { ...ref, reason: TunnelCloseReason.Ok },
     ]);
     expect(sink.closeReasons).toEqual([]);
-    const result = bridge.streamClose(1, ref, TunnelCloseReason.Ok);
+    const result = bridge.streamClose(1, { ...ref, reason: TunnelCloseReason.Ok });
     expect(!result.ok && result.error.code).toBe("unknown_stream");
   });
 
@@ -281,7 +314,7 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed, timers } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink);
+    bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
 
     timers[0].callback();
 
@@ -296,7 +329,9 @@ describe("TunnelBridge streams", () => {
     register(bridge);
     const sinks = [new FakeSink(), new FakeSink(), new FakeSink()];
     for (const sink of sinks) {
-      expect(bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink)).not.toBeNull();
+      expect(
+        bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink }),
+      ).not.toBeNull();
     }
     await flushMicrotasks();
     expect(sinks.map((sink) => sink.closeReasons)).toEqual([
@@ -310,10 +345,10 @@ describe("TunnelBridge streams", () => {
     const { bridge, eventsNamed, timers } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink);
+    bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
     const ref = { serverId: "server-a", providerId, streamId: "id-2" };
 
-    const early = bridge.streamData(1, ref, new Uint8Array(1));
+    const early = bridge.streamData(1, { ...ref, data: new Uint8Array(1) });
     expect(!early.ok && early.error.code).toBe("protocol_error");
     expect(bridge.hasProvider("server-a")).toBe(true);
     // The proxy learns about the close too, so Chromium's socket is answered.
@@ -324,7 +359,7 @@ describe("TunnelBridge streams", () => {
     expect(timers[0].cleared).toBe(true);
 
     const other = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "h", port: 80 }, other);
+    bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink: other });
     const otherRef = { ...ref, streamId: "id-3" };
     bridge.streamConnected(1, otherRef);
     const twice = bridge.streamConnected(1, otherRef);
@@ -332,8 +367,8 @@ describe("TunnelBridge streams", () => {
     expect(other.closeReasons).toEqual([TunnelCloseReason.ProtocolError]);
 
     const third = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "h", port: 80 }, third);
-    const earlyCredit = bridge.streamCredit(1, { ...ref, streamId: "id-4" }, 1);
+    bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink: third });
+    const earlyCredit = bridge.streamCredit(1, { ...ref, streamId: "id-4", credit: 1 });
     expect(!earlyCredit.ok && earlyCredit.error.code).toBe("protocol_error");
     expect(third.closeReasons).toEqual([TunnelCloseReason.ProtocolError]);
   });
@@ -344,7 +379,8 @@ describe("TunnelBridge cleanup", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge, 7);
     const sinks = [new FakeSink(), new FakeSink()];
-    for (const sink of sinks) bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink);
+    for (const sink of sinks)
+      bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
     bridge.streamConnected(7, { serverId: "server-a", providerId, streamId: "id-2" });
 
     bridge.closeProvidersForSender(7, "disconnected");
@@ -365,7 +401,11 @@ describe("TunnelBridge cleanup", () => {
     register(bridge, 3);
     deadSenders.add(3);
 
-    const handle = bridge.openStreamFor("server-a", { host: "h", port: 80 }, new FakeSink());
+    const handle = bridge.openStreamFor({
+      serverId: "server-a",
+      target: { host: "h", port: 80 },
+      sink: new FakeSink(),
+    });
 
     expect(handle).toBeNull();
     expect(bridge.hasProvider("server-a")).toBe(false);
@@ -378,7 +418,7 @@ describe("TunnelBridge cleanup", () => {
     const { bridge, eventsNamed } = createHarness();
     const providerId = register(bridge);
     const sink = new FakeSink();
-    bridge.openStreamFor("server-a", { host: "h", port: 80 }, sink);
+    bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
 
     bridge.unregister(1, { serverId: "server-a", providerId });
 

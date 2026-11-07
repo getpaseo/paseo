@@ -92,18 +92,15 @@ export function createBrowserRoutingCommandHandlers(
     ),
     network_tunnel_stream_data: guarded(
       StreamDataSchema,
-      (senderId, input): TunnelInvokeResult =>
-        manager.bridge.streamData(senderId, input, input.data),
+      (senderId, input): TunnelInvokeResult => manager.bridge.streamData(senderId, input),
     ),
     network_tunnel_stream_credit: guarded(
       StreamCreditSchema,
-      (senderId, input): TunnelInvokeResult =>
-        manager.bridge.streamCredit(senderId, input, input.credit),
+      (senderId, input): TunnelInvokeResult => manager.bridge.streamCredit(senderId, input),
     ),
     network_tunnel_stream_close: guarded(
       StreamCloseSchema,
-      (senderId, input): TunnelInvokeResult =>
-        manager.bridge.streamClose(senderId, input, input.reason),
+      (senderId, input): TunnelInvokeResult => manager.bridge.streamClose(senderId, input),
     ),
   };
 }

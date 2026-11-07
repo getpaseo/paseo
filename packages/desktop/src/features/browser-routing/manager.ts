@@ -443,7 +443,7 @@ export class BrowserRoutingManager {
         // A disabled host has no streams: the proxy answers 503 to everything.
         openStream: (target, sink) =>
           this.hosts[route.serverId]?.enabled === true
-            ? this.bridge.openStreamFor(route.serverId, target, sink)
+            ? this.bridge.openStreamFor({ serverId: route.serverId, target, sink })
             : null,
         log: (event, details) =>
           this.log("info", `proxy.${event}`, { serverId: route.serverId, ...details }),

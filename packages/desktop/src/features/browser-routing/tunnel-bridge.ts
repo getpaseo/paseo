@@ -42,11 +42,22 @@ export interface TunnelProviderRegistration extends NetworkTunnelLimits {
   subscriptionId: string;
 }
 
+export type TunnelStreamOpenPayload = TunnelStreamRef & ProxyTarget;
+export type TunnelStreamDataPayload = TunnelStreamRef & { data: Uint8Array };
+export type TunnelStreamCreditPayload = TunnelStreamRef & { credit: number };
+export type TunnelStreamClosePayload = TunnelStreamRef & { reason: number };
+
+export interface TunnelStreamOpenRequest {
+  serverId: string;
+  target: ProxyTarget;
+  sink: TunnelStreamSink;
+}
+
 export type TunnelBridgeEvent =
-  | { name: "network_tunnel_stream_open"; payload: TunnelStreamRef & ProxyTarget }
-  | { name: "network_tunnel_stream_data"; payload: TunnelStreamRef & { data: Uint8Array } }
-  | { name: "network_tunnel_stream_credit"; payload: TunnelStreamRef & { credit: number } }
-  | { name: "network_tunnel_stream_close"; payload: TunnelStreamRef & { reason: number } }
+  | { name: "network_tunnel_stream_open"; payload: TunnelStreamOpenPayload }
+  | { name: "network_tunnel_stream_data"; payload: TunnelStreamDataPayload }
+  | { name: "network_tunnel_stream_credit"; payload: TunnelStreamCreditPayload }
+  | { name: "network_tunnel_stream_close"; payload: TunnelStreamClosePayload }
   | {
       name: "network_tunnel_provider_closed";
       payload: { serverId: string; providerId: string; reason: TunnelProviderClosedReason };
@@ -190,10 +201,11 @@ export class TunnelBridge {
     return { ok: true };
   }
 
-  public streamData(senderId: number, ref: TunnelStreamRef, data: Uint8Array): TunnelInvokeResult {
-    const stream = this.resolveStream(senderId, ref);
+  public streamData(senderId: number, payload: TunnelStreamDataPayload): TunnelInvokeResult {
+    const stream = this.resolveStream(senderId, payload);
     if (!stream.ok) return stream;
     const state = stream.value;
+    const { data } = payload;
     const limits = state.provider.limits;
     if (state.phase !== "open") {
       this.closeStreamFromMain(state, TunnelCloseReason.ProtocolError, { notifySink: true });
@@ -219,10 +231,11 @@ export class TunnelBridge {
     return { ok: true };
   }
 
-  public streamCredit(senderId: number, ref: TunnelStreamRef, credit: number): TunnelInvokeResult {
-    const stream = this.resolveStream(senderId, ref);
+  public streamCredit(senderId: number, payload: TunnelStreamCreditPayload): TunnelInvokeResult {
+    const stream = this.resolveStream(senderId, payload);
     if (!stream.ok) return stream;
     const state = stream.value;
+    const { credit } = payload;
     if (state.phase !== "open") {
       this.closeStreamFromMain(state, TunnelCloseReason.ProtocolError, { notifySink: true });
       return failure("protocol_error", "Credit arrived before the stream connected.");
@@ -236,19 +249,16 @@ export class TunnelBridge {
     return { ok: true };
   }
 
-  public streamClose(senderId: number, ref: TunnelStreamRef, reason: number): TunnelInvokeResult {
-    const stream = this.resolveStream(senderId, ref);
+  public streamClose(senderId: number, payload: TunnelStreamClosePayload): TunnelInvokeResult {
+    const stream = this.resolveStream(senderId, payload);
     if (!stream.ok) return stream;
     const state = stream.value;
-    this.detachStream(state, new TunnelStreamError(reason), { notifySink: true });
+    this.detachStream(state, new TunnelStreamError(payload.reason), { notifySink: true });
     return { ok: true };
   }
 
-  public openStreamFor(
-    serverId: string,
-    target: ProxyTarget,
-    sink: TunnelStreamSink,
-  ): TunnelStreamHandle | null {
+  public openStreamFor(request: TunnelStreamOpenRequest): TunnelStreamHandle | null {
+    const { serverId, target, sink } = request;
     const provider = this.providersByServerId.get(serverId);
     if (!provider) {
       return null;
