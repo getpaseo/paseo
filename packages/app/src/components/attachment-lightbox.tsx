@@ -5,7 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
-import { X } from "lucide-react-native";
+import { Download, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
@@ -15,6 +15,7 @@ import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
 import { useGlobalOverlayLayer } from "@/lib/overlay-root";
+import { useSaveImage } from "@/hooks/use-save-image";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -36,6 +37,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
   const modalLayer = useGlobalOverlayLayer("modal", source !== null);
+  const saveImage = useSaveImage();
 
   useEffect(() => {
     setErrored(false);
@@ -57,6 +59,20 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     layer: modalLayer,
     onKeyDown: handleOverlayKeyDown,
   });
+
+  const leadingActions = useMemo(
+    () => [
+      {
+        icon: Download,
+        label: t("message.attachments.downloadImage"),
+        onPress: () => {
+          if (url) void saveImage(url);
+        },
+        testID: "attachment-lightbox-download",
+      },
+    ],
+    [saveImage, t, url],
+  );
 
   const actions = useMemo(
     () => [
@@ -102,6 +118,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                     actions={actions}
                     contentSize={contentSize}
                     fit={LIGHTBOX_FIT}
+                    leadingActions={leadingActions}
                     onError={handleImageError}
                     onPressOutsideContent={onClose}
                     style={styles.imageViewport}

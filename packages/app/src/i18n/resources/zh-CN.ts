@@ -345,6 +345,7 @@ export const zhCN: TranslationResources = {
     attachments: {
       dismissImage: "关闭图片",
       closeImage: "关闭图片",
+      downloadImage: "下载图片",
       imageLoadFailed: "无法加载图片",
       imageUnavailable: "图片不可用",
       imagePreviewUnavailable: "图片预览不可用。",

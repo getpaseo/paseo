@@ -66,6 +66,7 @@ vi.mock("react-i18next", () => ({
       ({
         "message.attachments.closeImage": "Close image",
         "message.attachments.dismissImage": "Dismiss image",
+        "message.attachments.downloadImage": "Download image",
         "message.attachments.imageLoadFailed": "Couldn't load image",
       })[key] ?? key,
   }),
@@ -85,6 +86,7 @@ vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {
+    Download: createIcon("Download"),
     X: createIcon("X"),
   };
 });
@@ -130,6 +132,10 @@ vi.mock("react-native", async () => {
 vi.mock("@/attachments/use-attachment-preview-url", () => ({
   useAttachmentPreviewUrl: (metadata: AttachmentMetadata | null) =>
     useAttachmentPreviewUrlMock(metadata),
+}));
+
+vi.mock("@/hooks/use-save-image", () => ({
+  useSaveImage: () => vi.fn(),
 }));
 
 let root: Root | null = null;
@@ -245,5 +251,14 @@ describe("AttachmentLightbox", () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a download button as a leading action", () => {
+    render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} />);
+
+    const downloadButton = document.querySelector(
+      '[aria-label="Download image"][data-testid="attachment-lightbox-download"]',
+    );
+    expect(downloadButton).not.toBeNull();
   });
 });

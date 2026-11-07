@@ -21,6 +21,7 @@ export function ZoomableViewport({
   contentSize,
   children,
   actions = [],
+  leadingActions,
   accessibilityLabel,
   fit,
   maxScale = DEFAULT_MAX_SCALE,
@@ -227,6 +228,7 @@ export function ZoomableViewport({
       </GestureDetector>
       <ViewportToolbar
         actions={actions}
+        leadingActions={leadingActions}
         maxScale={maxScale}
         minScale={minScale}
         onReset={reset}
