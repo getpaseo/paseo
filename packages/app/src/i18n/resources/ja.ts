@@ -1232,6 +1232,7 @@ export const ja: TranslationResources = {
       },
       show: {
         label: "表示項目",
+        agent: "エージェント",
         branch: "ブランチ",
         project: "プロジェクト",
         host: "ホスト",
