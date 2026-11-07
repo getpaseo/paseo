@@ -64,7 +64,7 @@ test("explicit route reads Codex auth and preserves the usage request", async ()
     );
     expect(report).toMatchObject({
       status: "available",
-      planLabel: "plus",
+      planLabel: "Plus",
       windows: [{ id: "five_hour", usedPct: 30 }],
     });
   } finally {
