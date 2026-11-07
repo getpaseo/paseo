@@ -155,14 +155,22 @@ class ProviderRuntime {
   ) {}
 
   private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
-    const command = this.registration.command;
+    const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
+    const override = this.runtimeSettings?.command;
+    if (override?.mode === "replace") {
+      const launch = await resolveProviderLaunch({ commandConfig: override });
+      launch.env = env;
+      const availability = await checkProviderLaunchAvailable(launch);
+      if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
+      return { command: resolvePath(availability.resolvedPath), args: launch.args, env };
+    }
+    const command = this.registration.command ?? (await this.registration.resolveCommand?.());
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
-      commandConfig: this.runtimeSettings?.command,
+      commandConfig: override,
       defaultBinary: command[0],
     });
     if (launch.source !== "override") launch.args.unshift(...command.slice(1));
-    const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
     const availability = await checkProviderLaunchAvailable(launch);
     if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
@@ -174,7 +182,10 @@ class ProviderRuntime {
       const launch = await this.resolveLaunch();
       if (this.registration.status)
         return ProviderStatusSchema.parse(await this.registration.status({ launch }));
-      if (!this.registration.command) await this.getConnection();
+      // No resolved launch means the plugin owns its own executable, so it has
+      // to report its own availability. A resolved launch already proves the
+      // executable exists.
+      if (!launch) await this.getConnection();
       return { available: true };
     } catch (error) {
       return {
