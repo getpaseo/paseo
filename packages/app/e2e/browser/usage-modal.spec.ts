@@ -114,15 +114,15 @@ async function openUsageSummaryAtWidth(page: Page, width: number) {
   await page.setViewportSize({ width, height: 900 });
   await gotoAppShell(page);
   if (width === 390) await openCompactSidebar(page);
-  await expectPinnedUsage(page, ["31% Weekly", "12% Weekly"]);
+  await expectPinnedUsage(page, ["12% Weekly", "31% Weekly"]);
   await openUsageFromItem(page);
 }
 
 async function expectUsageProviderOrder(page: Page, summary: string[]) {
   const group = page.getByTestId(`usage-host-${getServerId()}`);
   await expect(group.getByText(/^(opencode|openai) plan$/)).toHaveText([
-    "opencode plan",
     "openai plan",
+    "opencode plan",
   ]);
   await expectPinnedUsage(page, summary);
 }
@@ -189,16 +189,16 @@ test.describe("usage modal", () => {
   });
 
   for (const width of [1440, 390]) {
-    test(`keeps sidebar and modal provider order across a reversed refresh at width ${width}`, async ({
+    test(`keeps sidebar and modal providers alphabetical across a reversed refresh at width ${width}`, async ({
       page,
     }) => {
       const usage = await installReversedUsageRefresh(page);
       await openUsageSummaryAtWidth(page, width);
-      await expectUsageProviderOrder(page, ["31% Weekly", "12% Weekly"]);
+      await expectUsageProviderOrder(page, ["12% Weekly", "31% Weekly"]);
       await qaScreenshot(page, `usage-order-${width}-before-refresh`);
 
       await refreshUsageAndWaitForReports(page, usage);
-      await expectUsageProviderOrder(page, ["41% Weekly", "22% Weekly"]);
+      await expectUsageProviderOrder(page, ["22% Weekly", "41% Weekly"]);
       await qaScreenshot(page, `usage-order-${width}-after-refresh`);
     });
   }
