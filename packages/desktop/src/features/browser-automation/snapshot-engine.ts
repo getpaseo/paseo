@@ -317,8 +317,12 @@ function buildFillScript(metadata: BrowserRefMetadata, value: string): string {
     const nextValue = ${JSON.stringify(value)};
     if ('value' in element) {
       const view = element.ownerDocument.defaultView;
-      const prototype = element.tagName === 'INPUT' ? view.HTMLInputElement.prototype
-        : element.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype : null;
+      let prototype = null;
+      if (element.tagName === 'INPUT') {
+        prototype = view.HTMLInputElement.prototype;
+      } else if (element.tagName === 'TEXTAREA') {
+        prototype = view.HTMLTextAreaElement.prototype;
+      }
       // Bypass instance setters so framework value trackers observe the input event as a change.
       if (prototype) Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, nextValue);
       else element.value = nextValue;
