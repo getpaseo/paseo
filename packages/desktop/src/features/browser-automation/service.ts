@@ -1628,6 +1628,8 @@ const NETWORK_PERFORMANCE_SCRIPT = String.raw`(() => {
       url: entry.name,
       method: entry.initiatorType === 'navigation' ? 'GET' : undefined,
       type: entry.initiatorType,
+      // 0 when the browser does not say (a cross-origin response without Timing-Allow-Origin).
+      status: typeof entry.responseStatus === 'number' && entry.responseStatus > 0 ? entry.responseStatus : undefined,
       startTime: entry.startTime,
       duration: entry.duration,
       transferSize: typeof entry.transferSize === 'number' ? entry.transferSize : undefined,

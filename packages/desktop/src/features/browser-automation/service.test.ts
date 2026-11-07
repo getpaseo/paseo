@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import { createContext, runInContext } from "node:vm";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -432,6 +433,26 @@ function snapshotResult(nodes: FakeTab["snapshotNodes"]) {
 
 function containsScript(tab: FakeTab, ...parts: string[]): boolean {
   return tab.scripts.some((script) => parts.every((part) => script.includes(part)));
+}
+
+/**
+ * A browser whose tab runs the network script the host injects against `performance`, the way a
+ * page runs it, so the test sees what the script reads from Chromium's timing entries.
+ */
+function browserWithTimingEntries(entries: { resource: unknown[]; navigation: unknown[] }) {
+  const browser = new BrowserAutomationHarness();
+  const fakeAnswer = browser.tab.executeJavaScript.bind(browser.tab);
+  const page = createContext({
+    performance: {
+      getEntriesByType: (type: string) =>
+        type === "navigation" ? entries.navigation : entries.resource,
+    },
+  });
+  browser.tab.executeJavaScript = async (script: string) =>
+    script.includes("performance.getEntriesByType")
+      ? runInContext(script, page)
+      : fakeAnswer(script);
+  return browser;
 }
 
 function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness["snapshot"]>>) {
@@ -1400,6 +1421,72 @@ describe("executeAutomationCommand", () => {
             startTime: 3,
             duration: 4,
             transferSize: 123,
+          },
+        ],
+      },
+    });
+  });
+
+  test("logs reports the HTTP status the browser recorded, and none it did not", async () => {
+    const timing = (name: string, initiatorType: string, responseStatus?: number) => ({
+      name,
+      initiatorType,
+      startTime: 1,
+      duration: 2,
+      transferSize: 3,
+      ...(responseStatus === undefined ? {} : { responseStatus }),
+    });
+    const browser = browserWithTimingEntries({
+      resource: [
+        timing("https://a.test/api/orders", "fetch", 404),
+        // Chromium reports 0 for a cross-origin response that sends no Timing-Allow-Origin.
+        timing("https://cdn.test/lib.js", "script", 0),
+        // A browser without the field.
+        timing("https://a.test/old.css", "css"),
+      ],
+      navigation: [timing("https://a.test/form", "navigation", 200)],
+    });
+
+    const result = await browser.execute({ command: "logs", args: { browserId: BROWSER_A } });
+
+    expect(result).toEqual({
+      requestId: "req-logs",
+      ok: true,
+      result: {
+        command: "logs",
+        browserId: BROWSER_A,
+        console: [],
+        network: [
+          {
+            url: "https://a.test/api/orders",
+            type: "fetch",
+            status: 404,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://cdn.test/lib.js",
+            type: "script",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/old.css",
+            type: "css",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/form",
+            method: "GET",
+            type: "navigation",
+            status: 200,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
           },
         ],
       },
