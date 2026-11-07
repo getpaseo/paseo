@@ -53,6 +53,10 @@ export type {
   PluginComposerPillContribution,
   PluginHeaderButtonContribution,
 } from "./buttons.js";
+export type {
+  PluginComposerPlaceholderContribution,
+  PluginComposerPlaceholderRegistration,
+} from "./composer-placeholder.js";
 export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
 export type {
   PluginFile,

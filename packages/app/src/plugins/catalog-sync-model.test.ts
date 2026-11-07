@@ -152,6 +152,7 @@ function harness() {
         async playAudio() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),
+        setComposerPlaceholder: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
         subscribe: () => {
           throw new Error("Subscriptions are not used here");

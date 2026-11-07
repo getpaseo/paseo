@@ -28,6 +28,7 @@ vi.mock("../client-runtime", () => ({
     openSurface: () => undefined,
     openPanel: () => undefined,
     addComposerPill: () => ({ update() {}, remove() {} }),
+    setComposerPlaceholder: () => ({ update() {}, remove() {} }),
     addHeaderButton: () => ({ update() {}, remove() {} }),
   }),
 }));
