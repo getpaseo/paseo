@@ -240,8 +240,13 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
     }),
   );
   const footerBefore = await footer.boundingBox();
-  await label.hover();
+  const labelBefore = await label.boundingBox();
+  await label.hover({ position: { x: labelBefore!.width - 2, y: labelBefore!.height / 2 } });
   await expect(label).toContainText(/\d:\d\d/);
+  expect(await label.boundingBox()).toMatchObject({
+    x: labelBefore!.x,
+    width: labelBefore!.width,
+  });
   expect(
     await controls.evaluateAll((elements) =>
       elements.map((element) => {

@@ -578,9 +578,9 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     marginLeft: -theme.spacing[1],
   },
   labelButton: {
+    flex: 1,
     minHeight: 24,
     justifyContent: "center",
-    flexShrink: 1,
     minWidth: 0,
   },
   label: {
