@@ -1205,6 +1205,14 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Não foi possível carregar a visualização da barra lateral.",
+      useDefault: "Usar visualização padrão",
+      readFailed: "Não foi possível carregar sua preferência de visualização da barra lateral.",
+      agentUnavailable: "O agente não está mais disponível",
+      terminalUnavailable: "O terminal não está mais disponível",
+      projectUnavailable: "O projeto não está mais disponível",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Precisa de resposta",
@@ -2609,6 +2617,13 @@ export const ptBR: TranslationResources = {
         description: "Mostrar uma estrutura para navegar entre prompts",
       },
       sidebar: {
+        view: {
+          title: "Visualização da barra lateral",
+          label: "Visualização",
+          default: "Visualização padrão",
+          unavailable:
+            "A visualização selecionada está indisponível ou desativada. Exibindo a visualização padrão.",
+        },
         header: {
           title: "Cabeçalho",
           description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",

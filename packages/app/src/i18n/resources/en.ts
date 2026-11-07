@@ -1187,6 +1187,14 @@ export const en = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Sidebar view failed to load.",
+      useDefault: "Use default view",
+      readFailed: "Could not load your sidebar view preference.",
+      agentUnavailable: "Agent is no longer available",
+      terminalUnavailable: "Terminal is no longer available",
+      projectUnavailable: "Project is no longer available",
+    },
     statusGroupAccessibility: "{{label}} group",
     statusBucket: {
       needsInput: "Needs input",
@@ -2698,6 +2706,12 @@ export const en = {
         description: "Show an outline for jumping between prompts",
       },
       sidebar: {
+        view: {
+          title: "Sidebar view",
+          label: "View",
+          default: "Default view",
+          unavailable: "The selected view is unavailable or disabled. Showing Default view.",
+        },
         header: {
           title: "Header",
           description: "Choose which items appear at the top of the sidebar and in what order",

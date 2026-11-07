@@ -2281,16 +2281,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     };
   }
 
-  async setModel(modelId: string | null): Promise<void> {
+  async setModel(modelId: string | null): Promise<{ model: string | null }> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
     if (!modelId) {
       this.currentModel = null;
-      return;
+      return { model: this.currentModel };
     }
 
     await this.setModelWithSelection({ modelId, selection: this.resolveModelSelection(modelId) });
+    return { model: this.currentModel };
   }
 
   private resolveModelSelection(modelId: string): ACPModelSelection {

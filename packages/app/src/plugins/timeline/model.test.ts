@@ -24,6 +24,7 @@ function plugin(input: {
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],

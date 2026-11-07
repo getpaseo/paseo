@@ -520,7 +520,7 @@ test("ACP setModel only uses config-option fallback when the matching select cho
 
   setSessionConfigOption.mockClear();
 
-  await expect(session.setModel("new-provider-model")).resolves.toBeUndefined();
+  await expect(session.setModel("new-provider-model")).resolves.toEqual({ model: "sonnet" });
   expect(childLogger.warn).toHaveBeenCalledWith(
     { value: "new-provider-model" },
     expect.stringContaining("is not a valid claude-acp model config option"),

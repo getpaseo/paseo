@@ -88,6 +88,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { pasteLinkedClipboardText } from "@/composer/pasted-text";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
   EditingTextInput,
@@ -513,7 +514,7 @@ function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTM
   return native instanceof HTMLElement ? native : null;
 }
 
-interface PasteImagesEffectArgs {
+interface PasteEffectArgs {
   textarea: HTMLElement | null;
   isConnected: boolean;
   disabled: boolean;
@@ -522,7 +523,7 @@ interface PasteImagesEffectArgs {
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
 }
 
-function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
+function usePasteEffect(args: PasteEffectArgs): void {
   const {
     textarea,
     isConnected,
@@ -533,16 +534,20 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
   } = args;
 
   useEffect(() => {
-    if (!isWeb || !onAddImages) return;
+    if (!isWeb) return;
 
     if (!textarea) return;
 
     let disposed = false;
     const handlePaste = (event: ClipboardEvent) => {
-      if (!isConnected || disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
+      if (disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
-      if (imageFiles.length === 0) return;
+      if (imageFiles.length === 0) {
+        if (pasteLinkedClipboardText(textarea, event.clipboardData)) event.preventDefault();
+        return;
+      }
+      if (!isConnected || !onAddImages) return;
 
       event.preventDefault();
 
@@ -1786,6 +1791,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         handleSendMessage,
         handleQueueMessage,
       });
+      if (hasFinePointer()) {
+        textInputRef.current?.focus();
+      }
     }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
 
     const handleAlternateSendAction = useCallback(() => {
@@ -1811,7 +1819,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       handleAlternateSendAction();
     }, [alternateSendAction, handleAlternateSendAction]);
 
-    usePasteImagesEffect({
+    usePasteEffect({
       textarea: webTextArea,
       isConnected,
       disabled,

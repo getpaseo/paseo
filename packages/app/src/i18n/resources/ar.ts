@@ -1179,6 +1179,14 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "تعذر تحميل عرض الشريط الجانبي.",
+      useDefault: "استخدام العرض الافتراضي",
+      readFailed: "تعذر تحميل تفضيل عرض الشريط الجانبي.",
+      agentUnavailable: "لم يعد الوكيل متاحًا",
+      terminalUnavailable: "لم تعد الطرفية متاحة",
+      projectUnavailable: "لم يعد المشروع متاحًا",
+    },
     statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
       needsInput: "تحتاج إدخالاً",
@@ -2607,6 +2615,12 @@ export const ar: TranslationResources = {
         description: "عرض مخطط للتنقل بين المطالبات",
       },
       sidebar: {
+        view: {
+          title: "عرض الشريط الجانبي",
+          label: "العرض",
+          default: "العرض الافتراضي",
+          unavailable: "العرض المحدد غير متاح أو معطل. يتم عرض العرض الافتراضي.",
+        },
         header: {
           title: "الرأس",
           description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
