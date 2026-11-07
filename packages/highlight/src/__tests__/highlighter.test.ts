@@ -110,6 +110,7 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+<<<<<<< HEAD
   it.each(["changes.diff", "bug.patch", "diff", "patch"])(
     "highlights unified diffs for %s without trailing-whitespace warnings",
     (target) => {
@@ -162,6 +163,33 @@ describe("highlightCode", () => {
 
     const stringToken = result[1].find((t) => t.text.includes("hello"));
     expect(stringToken?.style).toBe("string");
+  });
+
+  it("highlights TOML code", () => {
+    const code = [
+      "[server]",
+      'host = "localhost"',
+      "port = 8080",
+      "enabled = true",
+      "born = 1979-05-27T07:32:00Z",
+    ].join("\n");
+    const result = highlightCode(code, "config.toml");
+
+    expect(result).toHaveLength(5);
+
+    expect(result[0].find((t) => t.text === "[server]")?.style).toBe("keyword");
+
+    expect(result[1].find((t) => t.text === "host")?.style).toBe("property");
+    expect(result[1].find((t) => t.text === '"localhost"')?.style).toBe("string");
+
+    expect(result[2].find((t) => t.text === "port")?.style).toBe("property");
+    expect(result[2].find((t) => t.text === "8080")?.style).toBe("number");
+
+    expect(result[3].find((t) => t.text === "enabled")?.style).toBe("property");
+    expect(result[3].find((t) => t.text === "true")?.style).toBe("keyword");
+
+    expect(result[4].find((t) => t.text === "born")?.style).toBe("property");
+    expect(result[4].find((t) => t.text === "1979-05-27T07:32:00Z")?.style).toBe("keyword");
   });
 
   it("highlights C# code", () => {

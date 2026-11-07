@@ -5,6 +5,7 @@ import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { ruby } from "@codemirror/legacy-modes/mode/ruby";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
 import { parser as cssParser } from "@lezer/css";
@@ -118,6 +119,8 @@ const languagesByExtension: Record<string, Language> = {
   // Kotlin
   kt: StreamLanguage.define(kotlin),
   kts: StreamLanguage.define(kotlin),
+  // TOML
+  toml: StreamLanguage.define(toml),
   // C#
   cs: csharpLanguage,
   // Nix

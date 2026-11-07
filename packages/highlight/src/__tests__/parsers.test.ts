@@ -26,6 +26,7 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("patch")).toBe(true);
     expect(isLanguageSupported("test.kt")).toBe(true);
     expect(isLanguageSupported("test.kts")).toBe(true);
+    expect(isLanguageSupported("test.toml")).toBe(true);
     expect(isLanguageSupported("test.cs")).toBe(true);
     expect(isLanguageSupported("test.nix")).toBe(true);
     expect(isLanguageSupported("main.tf")).toBe(true);
@@ -94,6 +95,7 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("patch");
     expect(extensions).toContain("kt");
     expect(extensions).toContain("kts");
+    expect(extensions).toContain("toml");
     expect(extensions).toContain("cs");
     expect(extensions).toContain("nix");
     expect(extensions).toContain("tf");
