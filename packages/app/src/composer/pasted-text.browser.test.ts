@@ -21,13 +21,32 @@ function clipboard(html: string, text: string): DataTransfer {
 }
 
 describe("pasted prompt links", () => {
-  it("keeps complete Markdown from Copy without reconverting its linked table or strikethrough", () => {
-    const source =
-      "| Resource | Status |\n| --- | --- |\n| [issue](https://example.com/1) | ~~closed~~ |";
+  it.each([
+    "https://example.com/1",
+    "https://example.com/日本語",
+    "<https://example.com/a b>",
+    "https://例え.テスト/issue",
+  ])("keeps complete Markdown from Copy with destination %s", (destination) => {
+    const source = `| Resource | Status |\n| --- | --- |\n| [issue](${destination}) | ~~closed~~ |`;
     const content = createMarkdownClipboardContent(source);
     const input = editor();
     expect(pasteLinkedClipboardText(input, clipboard(content.html, content.plainText))).toBe(false);
     expect(input.value).toBe("");
+  });
+  it("converts external links when plain text names the resource but omits a destination", () => {
+    const input = editor();
+    expect(
+      pasteLinkedClipboardText(
+        input,
+        clipboard(
+          '<a href="https://example.com/%E6%97%A5%E6%9C%AC%E8%AA%9E">日本語</a> and <a href="https://example.com/missing">another</a>',
+          "[日本語](https://example.com/日本語) and another",
+        ),
+      ),
+    ).toBe(true);
+    expect(input.value).toBe(
+      "[日本語](https://example.com/%E6%97%A5%E6%9C%AC%E8%AA%9E) and [another](https://example.com/missing)",
+    );
   });
   it("preserves a labeled resource URL as Markdown", () => {
     const data = clipboard(
