@@ -1,6 +1,11 @@
 import type { DesktopSettingsStore } from "./desktop-settings.js";
 
-export type DesktopCommandHandler = (args?: Record<string, unknown>) => unknown;
+import type { WebContents } from "electron";
+
+export type DesktopCommandHandler = (
+  args?: Record<string, unknown>,
+  context?: { sender: WebContents },
+) => unknown;
 
 export function createDesktopSettingsCommandHandlers({
   settingsStore,
