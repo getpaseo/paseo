@@ -26,6 +26,12 @@ if (-not $env:PASEO_HOME) {
     }
 }
 
+# A dev home defaults to skill selection mode "all", which makes its daemon write the bundled
+# skills into the real ~/.agents/skills, ~/.claude/skills and ~/.codex/skills. Pin an empty one,
+# as dev-home.sh does for the bash dev scripts.
+node "$ScriptDir\dev-home-config.mjs" "$env:PASEO_HOME\config.json"
+if ($LASTEXITCODE -ne 0) { throw "could not pin the dev skill selection in $env:PASEO_HOME\config.json" }
+
 # Share speech models with the main install to avoid duplicate downloads
 if (-not $env:PASEO_LOCAL_MODELS_DIR) {
     $env:PASEO_LOCAL_MODELS_DIR = "$env:USERPROFILE\.paseo\models\local-speech"
