@@ -16,6 +16,7 @@ interface DriverOptions {
   launch: ProviderLaunch;
   config: ProviderSessionConfig;
   conversationId: string | null;
+  slashCommands: boolean;
   onFrame(frame: Frame): void;
   onExit(error: AntigravityError): void;
 }
@@ -23,6 +24,7 @@ interface DriverOptions {
 export interface Driver {
   ready: Promise<Init>;
   selection: string;
+  slashCommands: boolean;
   prompt(text: string): Promise<void>;
   stop(reason: "interrupt" | "close"): Promise<void>;
 }
@@ -41,7 +43,7 @@ function driverArgs(options: DriverOptions): string[] {
     "stream-json",
     "--add-dir",
     config.cwd,
-    "--disable-slash-commands",
+    ...(options.slashCommands ? [] : ["--disable-slash-commands"]),
     "--dangerously-skip-permissions",
   ];
   if (config.model) args.push("--model", config.model);
@@ -133,6 +135,7 @@ export function startDriver(options: DriverOptions): Driver {
   return {
     ready,
     selection: selection(options.config),
+    slashCommands: options.slashCommands,
     prompt(text) {
       if (state !== "ready")
         return Promise.reject(new AntigravityError("Antigravity is not ready"));
