@@ -12249,7 +12249,7 @@ test("forced cancellation keeps the existing session when no replacement can be 
   await manager.waitForAgentRunStart(snapshot.id);
 
   const cancelResult = await manager.cancelAgentRun(snapshot.id);
-  expect(cancelResult.status).toBe("settled");
+  expect(cancelResult.status).toBe("refused");
   await firstRunDrain;
 
   // The swap was attempted but no replacement could be built. The agent must
@@ -12320,7 +12320,7 @@ test("forced-cancel reconcile keeps the existing session when the old close hang
   await manager.waitForAgentRunStart(snapshot.id);
 
   const cancelResult = await manager.cancelAgentRun(snapshot.id);
-  expect(cancelResult.status).toBe("settled");
+  expect(cancelResult.status).toBe("refused");
   await firstRunDrain;
 
   const live = manager.getAgent(snapshot.id);
@@ -12395,7 +12395,7 @@ test("forced-cancel reconcile keeps the existing session when the old close reje
   await manager.waitForAgentRunStart(snapshot.id);
 
   const cancelResult = await manager.cancelAgentRun(snapshot.id);
-  expect(cancelResult.status).toBe("settled");
+  expect(cancelResult.status).toBe("refused");
   await firstRunDrain;
 
   const live = manager.getAgent(snapshot.id);
@@ -12665,7 +12665,7 @@ test("forced-cancel reconcile keeps the existing session when closed-snapshot pe
 
   storage.failClosedSnapshots = true;
   const cancelResult = await manager.cancelAgentRun(snapshot.id);
-  expect(cancelResult.status).toBe("settled");
+  expect(cancelResult.status).toBe("refused");
   await firstRunDrain;
 
   const live = manager.getAgent(snapshot.id);

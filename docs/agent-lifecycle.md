@@ -121,7 +121,8 @@ re-register under the same agent id with timeline and identity intact. Reload it
 close-first because a persisted thread can have only one writer. The provider-side turn is never
 cleared without replacing the runtime that owns it. If the replacement cannot be completed safely —
 resume, persist, or close — the existing session stays registered: when the provider was actually
-idle it still works, and when it was wedged the agent is no worse off than before the swap attempt.
+idle it still works, and when it was wedged the agent is no worse off than before the swap attempt. The cancellation is
+then reported as `refused`, not `settled`, because the provider may still own its turn.
 Prompt admission waits until foreground and lifecycle mutation tails have
 drained, then starts on the registered runtime. It does not attach a
 follow-up to the suspect runtime.

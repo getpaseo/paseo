@@ -3731,8 +3731,12 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
-    if (providerRuntimeSuspect) {
-      await this.reconcileProviderRuntimeAfterForcedCancel(agentId);
+    if (
+      providerRuntimeSuspect &&
+      !(await this.reconcileProviderRuntimeAfterForcedCancel(agentId))
+    ) {
+      // The provider may still own its foreground turn; report that truthfully.
+      return { status: "refused" };
     }
     return { status: "settled" };
   }
@@ -3751,14 +3755,16 @@ export class AgentManager {
    * built, keep the existing runtime registered — when the provider side was
    * actually idle (rather than wedged) the old session still works, and when
    * it was wedged the agent is no worse off than before the swap attempt.
+   * Returns false in that case so the cancellation is reported as refused
+   * rather than settled.
    */
-  private async reconcileProviderRuntimeAfterForcedCancel(agentId: string): Promise<void> {
+  private async reconcileProviderRuntimeAfterForcedCancel(agentId: string): Promise<boolean> {
     if (this.runs.hasRun(agentId)) {
       // A new run raced in behind the settlement; its owner drives the session now.
-      return;
+      return true;
     }
     if (!this.agents.get(agentId)?.session) {
-      return;
+      return true;
     }
     try {
       await this.trackAgentRegistrationOperation(
@@ -3768,6 +3774,7 @@ export class AgentManager {
         { agentId },
         "cancelAgentRun: reloaded provider session after forced cancellation",
       );
+      return true;
     } catch (error) {
       if (!(error instanceof Error) || error instanceof AgentManagerShuttingDownError) {
         throw error;
@@ -3776,6 +3783,7 @@ export class AgentManager {
         { err: error, agentId },
         "cancelAgentRun: failed to swap provider session after forced cancellation",
       );
+      return false;
     }
   }
 
