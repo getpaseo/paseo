@@ -7,7 +7,6 @@ import type {
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import type { AssistantForkTarget } from "@/components/assistant-fork-menu";
 import type { ToastApi } from "@/components/toast-host";
-import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostFeature } from "@/runtime/host-features";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -21,24 +20,15 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 import { toErrorMessage } from "@/utils/error-messages";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import {
+  buildForkDraftSetup,
+  buildUnavailableProviderForkContext,
+  isUnavailableProviderError,
+  resolveSelectableProviders,
+  type ForkAgentSource,
+} from "@/hooks/fork-draft-setup";
 
-/**
- * The subset of an agent record that a fork needs in order to seed the new
- * draft. Kept structural so both `AgentScreenAgent` (the agent-stream view's
- * live context) and the session store's `Agent` record satisfy it without a
- * projection step.
- */
-export type ForkAgentSource = Pick<
-  AgentScreenAgent,
-  | "provider"
-  | "cwd"
-  | "currentModeId"
-  | "model"
-  | "thinkingOptionId"
-  | "runtimeInfo"
-  | "features"
-  | "projectPlacement"
->;
+export type { ForkAgentSource };
 
 /**
  * Boundary marking where the forked context should stop. Omit it entirely to
@@ -90,26 +80,6 @@ function buildChatHistoryAttachment(input: {
   };
 }
 
-function buildForkDraftSetup(agent: ForkAgentSource): WorkspaceDraftTabSetup | undefined {
-  if (!agent.provider) {
-    return undefined;
-  }
-
-  const featureValues: Record<string, unknown> = {};
-  for (const feature of agent.features ?? []) {
-    featureValues[feature.id] = feature.value;
-  }
-
-  return {
-    provider: agent.provider,
-    cwd: agent.cwd,
-    modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,
-    model: agent.model ?? agent.runtimeInfo?.model ?? null,
-    thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,
-    featureValues,
-  };
-}
-
 function buildForkDraftTabTarget(
   setup: WorkspaceDraftTabSetup | undefined,
   draftId: string,
@@ -141,10 +111,14 @@ export function useForkAgent(
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const draftSetup = buildForkDraftSetup(agent);
+      const selectableProviders = await resolveSelectableProviders(client, agent.cwd?.trim() ?? "");
+      const draftSetup = buildForkDraftSetup(agent, selectableProviders);
       const prepareForkDraft = async () => {
         const draftId = generateDraftId();
-        const payload = await client.buildAgentForkContext(agentId, boundary);
+        const payload = await client.buildAgentForkContext(agentId, boundary).catch((error) => {
+          if (!isUnavailableProviderError(error)) throw error;
+          return buildUnavailableProviderForkContext(agentId);
+        });
         const attachment = buildChatHistoryAttachment({
           draftId,
           serverId,
