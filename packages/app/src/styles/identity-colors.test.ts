@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   IDENTITY_COLOR_NAMES,
+  deriveProjectColors,
   deriveIdentityColorName,
   identityColor,
 } from "@/styles/identity-colors";
@@ -34,6 +35,28 @@ describe("identity colors", () => {
     for (const color of IDENTITY_COLOR_NAMES) {
       expect(contrastRatio(identityColor(color), "#ffffff")).toBeGreaterThanOrEqual(4.2);
       expect(contrastRatio(identityColor(color), "#ffffff")).toBeLessThanOrEqual(4.8);
+    }
+  });
+});
+
+describe("project colors", () => {
+  it("keeps project initials legible across the seven-color rainbow", () => {
+    const colors = Array.from({ length: 100 }, (_, index) =>
+      deriveProjectColors(`project-${index}`, index),
+    );
+    expect(colors.slice(0, 8).map((entry) => entry.backgroundColor)).toEqual([
+      "#BE6C6B",
+      "#CA925A",
+      "#D5BD75",
+      "#6F9C79",
+      "#60A3AE",
+      "#628AB9",
+      "#947BB5",
+      "#BE6C6B",
+    ]);
+    expect(new Set(colors.map((entry) => entry.backgroundColor)).size).toBe(7);
+    for (const entry of colors) {
+      expect(contrastRatio(entry.color, entry.backgroundColor)).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
