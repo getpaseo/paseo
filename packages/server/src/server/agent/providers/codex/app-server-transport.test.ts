@@ -8,6 +8,28 @@ import {
 import { CodexAppServerClient, CodexAppServerExitError } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test("classifies startup diagnostics delivered after the child exits", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const request = client.request("initialize", {});
+    const result = expect(request).rejects.toMatchObject({
+      name: "CodexAppServerExitError",
+      reason: "sqlite_state_initialization",
+      stderr: "failed to initialize sqlite state runtime",
+    });
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+    child.stderr.write("failed to initialize sqlite state runtime");
+    child.emit("close", 1, null);
+    try {
+      await result;
+    } finally {
+      child.stdout.end();
+      child.stderr.end();
+      child.stdin.end();
+    }
+  });
+
   test.each([
     {
       stderr: "Error: failed to initialize sqlite state runtime under /isolated/.codex",

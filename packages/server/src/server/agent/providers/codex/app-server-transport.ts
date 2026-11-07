@@ -267,14 +267,24 @@ export class CodexAppServerClient {
       this.handleUnexpectedTermination(err);
     });
 
+    const reportExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      this.handleUnexpectedTermination(
+        new CodexAppServerExitError({
+          exitCode: code,
+          exitSignal: signal,
+          stderr: this.stderrBuffer,
+        }),
+      );
+    };
     child.on("exit", (code, signal) => {
-      const error = new CodexAppServerExitError({
-        exitCode: code,
-        exitSignal: signal,
-        stderr: this.stderrBuffer,
-      });
-      this.handleUnexpectedTermination(error);
+      // Startup retries need complete diagnostics. Node drains the child's
+      // stdio before close, but exit can precede the final stderr data.
+      const initializing = Array.from(this.pending.values()).some(
+        (request) => request.method === "initialize",
+      );
+      if (!initializing) reportExit(code, signal);
     });
+    child.on("close", reportExit);
   }
 
   setUnexpectedTerminationHandler(handler: UnexpectedTerminationHandler): void {
