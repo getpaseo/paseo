@@ -57,6 +57,11 @@ describe("composer placeholders", () => {
 
     first.update("Older suggestion");
     expect(store.textFor("host-a", "agent")).toBe("Open the diff");
+    second.update("   ");
+    expect(store.textFor("host-a", "agent")).toBeNull();
+    second.update("Open the diff");
+    expect(store.textFor("host-a", "agent")).toBe("Open the diff");
+
     second.remove();
     expect(store.textFor("host-a", "agent")).toBe("Older suggestion");
 

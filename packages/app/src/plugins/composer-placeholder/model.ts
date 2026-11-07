@@ -42,10 +42,9 @@ export class ComposerPlaceholderStore {
       if (
         entry.serverId === serverId &&
         entry.agentId === agentId &&
-        entry.text &&
         !entry.installation.lifetime.signal.aborted
       ) {
-        return entry.text;
+        return entry.text || null;
       }
     }
     return null;
