@@ -142,6 +142,24 @@ test("reports enterprise individual spend limit percentage and reset", async () 
   });
 });
 
+test.each([
+  [{ used_percent: 5 }, 5, 95],
+  [{ remaining_percent: 95 }, 5, 95],
+  [{ used_percent: 5, remaining_percent: 90 }, 5, 90],
+  [{ used_percent: 110 }, 110, 0],
+])(
+  "completes individual spending percentages for %j",
+  async (individual_limit, usedPct, remainingPct) => {
+    const report = await fetchUsage(authInput(fixtureHome), async () =>
+      Response.json({ spend_control: { individual_limit } }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [expect.objectContaining({ id: "individual_limit", usedPct, remainingPct })],
+    });
+  },
+);
+
 test("omits individual spend limit without a percentage", async () => {
   const report = await fetchUsage(authInput(fixtureHome), async () =>
     Response.json({ spend_control: { individual_limit: { reset_at: 1795996800 } } }),

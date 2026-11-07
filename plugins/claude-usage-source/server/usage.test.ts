@@ -162,7 +162,7 @@ describe("claude usage source", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
-  it("reports USD extra usage monthly limit and used credits in dollars", async () => {
+  it.each([false, true])("reports USD extra usage with rolling windows %j", async (hasWindows) => {
     writeClaudeCredentials(claudeHome, "at_valid");
     fetchApi = mockFetch(
       new Map([
@@ -170,7 +170,7 @@ describe("claude usage source", () => {
           "https://api.anthropic.com/api/oauth/usage",
           () =>
             jsonResponse({
-              ...makeClaudeResponse(),
+              ...(hasWindows ? makeClaudeResponse() : {}),
               extra_usage: {
                 is_enabled: true,
                 monthly_limit: 5000,
@@ -198,25 +198,28 @@ describe("claude usage source", () => {
     );
   });
 
-  it("does not report extra usage balances without explicit USD currency", async () => {
-    writeClaudeCredentials(claudeHome, "at_valid");
-    fetchApi = mockFetch(
-      new Map([
-        [
-          "https://api.anthropic.com/api/oauth/usage",
-          () =>
-            jsonResponse({
-              ...makeClaudeResponse(),
-              extra_usage: { monthly_limit: 5000, used_credits: 1250, currency: "EUR" },
-            }),
-        ],
-      ]),
-    );
+  it.each(["EUR", null, undefined])(
+    "does not report extra usage balances for currency %j",
+    async (currency) => {
+      writeClaudeCredentials(claudeHome, "at_valid");
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                ...makeClaudeResponse(),
+                extra_usage: { monthly_limit: 5000, used_credits: 1250, currency },
+              }),
+          ],
+        ]),
+      );
 
-    const claude = findProvider(await service().listUsage(), "claude");
+      const claude = findProvider(await service().listUsage(), "claude");
 
-    expect(claude.balances).toEqual([]);
-  });
+      expect(claude.balances).toEqual([]);
+    },
+  );
 
   it("accepts a null Claude resets_at when a window has no scheduled reset", async () => {
     writeClaudeCredentials(claudeHome, "at_valid");

@@ -243,14 +243,14 @@ export async function fetchUsage(
           const usedPct =
             limit.used_percent ??
             (limit.remaining_percent != null ? 100 - limit.remaining_percent : undefined);
-          if (usedPct === undefined && limit.remaining_percent == null) return [];
+          if (usedPct === undefined) return [];
           return [
             {
               id: "individual_limit",
               label: "Individual spend limit",
               summary: true,
               usedPct,
-              remainingPct: limit.remaining_percent,
+              remainingPct: limit.remaining_percent ?? Math.max(0, 100 - usedPct),
               resetsAt:
                 limit.reset_at != null ? new Date(limit.reset_at * 1000).toISOString() : null,
               tone: toneFromUsedPct(usedPct),
