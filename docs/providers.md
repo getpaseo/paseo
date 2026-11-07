@@ -195,6 +195,9 @@ See the [public usage source reference](../public-docs/plugins/reference.md#usag
 contract, account and window identity, provider-derived period names, login fallback, and
 read-only credential rules. Usage adapters own the interpretation of provider fields; the app
 renders their names and resolves pins without provider-specific duration guesses.
+Claude's OAuth usage endpoint is undocumented. Extra-usage amounts are reported in minor currency
+units and displayed only for USD; the balance contract does not represent other currencies.
+Codex individual spending limits provide percentages, not dollar amounts.
 
 ---
 
