@@ -798,11 +798,15 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         deps.engine.stop();
         deps.engine.clearQueue();
         activeSession?.adapter.setAssistantAudioPlaying(false);
-        if (activeSession) {
-          await activeSession.adapter.setVoiceMode(false);
+        try {
+          if (activeSession) {
+            await activeSession.adapter.setVoiceMode(false);
+          }
+        } finally {
+          // An unreachable daemon must not keep the microphone or the screen wake lock held.
+          await deps.engine.stopCapture().catch(() => undefined);
+          await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
         }
-        await deps.engine.stopCapture();
-        await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       } finally {
         if (state.generation === generation) {
           resetToDisabledState();
