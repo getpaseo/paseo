@@ -17,6 +17,7 @@ import { useToast } from "@/contexts/toast-api-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { RecentDictationsSection } from "./recent-dictations-section";
 import { SpeechProviderSheet } from "./speech-provider-sheet";
 import { useLocalSpeechModels } from "./use-local-speech-models";
 import {
@@ -130,6 +131,7 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
           {siteRow("dictation.stt", t("settings.voice.sites.dictationStt"))}
         </SettingsCard>
       </SettingsSection>
+      <RecentDictationsSection serverId={serverId} />
       <SettingsSection
         title={t("settings.voice.voiceMode.title")}
         info={t("settings.voice.voiceMode.info")}
