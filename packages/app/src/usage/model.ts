@@ -65,37 +65,51 @@ function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): Usag
   return Date.parse(shown.fetchedAt) > Date.parse(arriving.fetchedAt) ? shown : arriving;
 }
 
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
 /**
- * A report list with one streamed report in place of its previous copy, or appended if new. A
- * copy fetched after the streamed one stays.
+ * The order usage lists reports in: by source name, then account. Reports stream in and finish in
+ * fetch-completion order, which changes on every load, so the list never follows arrival.
+ */
+export function compareReports(left: UsageReportEntry, right: UsageReportEntry): number {
+  return (
+    compareText(left.sourceLabel, right.sourceLabel) ||
+    compareText(left.sourceId, right.sourceId) ||
+    compareText(left.account.label ?? "", right.account.label ?? "") ||
+    compareText(left.id, right.id)
+  );
+}
+
+/**
+ * A report list with one streamed report in place of its previous copy, or added in order if new.
+ * A copy fetched after the streamed one stays.
  */
 export function upsertReport(
   reports: readonly UsageReportEntry[] | undefined,
   report: UsageReportEntry,
 ): UsageReportEntry[] {
-  if (!reports?.some((entry) => entry.id === report.id)) return [...(reports ?? []), report];
+  if (!reports?.some((entry) => entry.id === report.id))
+    return [...(reports ?? []), report].sort(compareReports);
   return reports.map((entry) => (entry.id === report.id ? laterFetched(entry, report) : entry));
 }
 
 /**
- * Keep displayed reports in place: the finished list is in fetch-completion order, which can
- * change on every refresh. Drop missing reports, append new ones, and keep newer fetched copies.
+ * The finished list in report order, without missing reports, keeping copies fetched after the
+ * list's own.
  */
 export function settleReports(
   shown: readonly UsageReportEntry[] | undefined,
   finished: readonly UsageReportEntry[],
 ): UsageReportEntry[] {
-  const remaining = new Map(finished.map((report) => [report.id, report]));
-  const settled: UsageReportEntry[] = [];
-  for (const report of shown ?? []) {
-    const arriving = remaining.get(report.id);
-    if (!arriving) {
-      continue;
-    }
-    settled.push(laterFetched(report, arriving));
-    remaining.delete(report.id);
-  }
-  return [...settled, ...remaining.values()];
+  const current = new Map((shown ?? []).map((report) => [report.id, report]));
+  return finished
+    .map((report) => {
+      const previous = current.get(report.id);
+      return previous ? laterFetched(previous, report) : report;
+    })
+    .sort(compareReports);
 }
 
 export interface UsageQueryState {
