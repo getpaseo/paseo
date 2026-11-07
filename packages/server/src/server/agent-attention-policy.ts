@@ -26,6 +26,19 @@ interface ComputeNotificationPlanInput {
   nowMs: number;
 }
 
+export interface CompletionAlertSuppressionInput {
+  // true = explicitly muted, false = explicitly unmuted, null = use workspace default.
+  explicitMute: boolean | null;
+  background: boolean;
+}
+
+export function shouldSuppressCompletionAlerts({
+  explicitMute,
+  background,
+}: CompletionAlertSuppressionInput): boolean {
+  return explicitMute ?? background;
+}
+
 function isFocusedOnTarget(
   state: ClientPresenceState,
   target: AttentionFocusTarget | null,
