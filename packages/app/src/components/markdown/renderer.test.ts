@@ -579,6 +579,24 @@ it("requires workspace context for relative inline paths and escapes literal reg
   expect(pattern.test("src/ab.ts")).toBe(false);
 });
 
+it("does not link an extensionless slash phrase or swallow CJK punctuation", () => {
+  const source = "Amazon 侧（PB/YP/Blue）反而占多数，独立站侧 ChineseAN。Read 说明.md，下一句。";
+  const prepared = prepareMarkdownSource(source);
+  expect([...source.matchAll(prepared.linkRecognition.text)].map(([text]) => text)).toEqual([
+    "说明.md",
+  ]);
+});
+
+it("keeps an ideographic iteration mark inside a Unicode filename", () => {
+  const source = "Open 日々の記録.md and docs/日々の記録.md. 见（日々の記録.md）这里。";
+  const prepared = prepareMarkdownSource(source);
+  expect([...source.matchAll(prepared.linkRecognition.text)].map(([text]) => text)).toEqual([
+    "日々の記録.md",
+    "docs/日々の記録.md",
+    "日々の記録.md",
+  ]);
+});
+
 it("recognizes bare Unicode filenames and preserves inline-code URLs", () => {
   const prepared = prepareMarkdownSource("Read 说明.md, or `https://example.com`.");
   expect([..."说明.md,".matchAll(prepared.linkRecognition.text)].map(([text]) => text)).toEqual([
@@ -946,6 +964,8 @@ it.each([
   "123/456.789",
   "×/÷",
   "２０２４/１０/１６",
+  "a/b/c",
+  "PB/YP/Blue",
 ])("leaves non-path tokens unlinked in prose and inline code: %s", (token) => {
   const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then \`${token}\`.`, "/repo");
   expect([...`Value ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
@@ -959,7 +979,6 @@ it.each([
   "./x/y",
   "../x/y",
   "/x/y",
-  "a/b/c",
   String.raw`C:\Users\x`,
   "src/index.ts:12:3",
   "src/run:12",
