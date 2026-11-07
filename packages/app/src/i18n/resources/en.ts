@@ -2384,6 +2384,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      notifications: "Notifications",
       metadata: "Metadata",
       voice: "Voice",
       workspaces: "Workspaces",
@@ -2978,6 +2979,16 @@ export const en = {
           title: "Release idle agents",
           hint: "Free up memory after an hour of inactivity.",
           info: "Stops the agent's process while keeping its conversation. Send a message to resume.\n\nActive work, pending notifications, and provider safety checks prevent cleanup.",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notify when an agent finishes",
+          hint: "Turn off to notify only when an agent needs permission or input",
+          accessibilityLabel: "Notify when an agent finishes",
+          updateFailed: "Unable to update notifications",
+          saving: "Saving…",
+          loadFailed: "Couldn't load this host's notification setting",
         },
       },
       workspaces: {

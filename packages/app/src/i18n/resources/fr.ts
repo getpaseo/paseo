@@ -2370,6 +2370,7 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Connexions",
       agents: "Agents",
+      notifications: "Notifications",
       metadata: "Métadonnées",
       voice: "Voix",
       workspaces: "Espaces de travail",
@@ -2912,6 +2913,16 @@ export const fr: TranslationResources = {
           title: "Libérer les agents inactifs",
           hint: "Libère de la mémoire après une heure d’inactivité.",
           info: "Arrête le processus de l’agent tout en conservant sa conversation. Envoyez un message pour la reprendre.\n\nLe travail en cours, les notifications en attente et les vérifications de sécurité du fournisseur empêchent le nettoyage.",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notifier quand un agent termine",
+          hint: "Désactivez pour être notifié uniquement quand un agent a besoin d'une autorisation ou d'une réponse",
+          accessibilityLabel: "Notifier quand un agent termine",
+          updateFailed: "Impossible de mettre à jour les notifications",
+          saving: "Enregistrement…",
+          loadFailed: "Impossible de charger le réglage des notifications de cet hôte",
         },
       },
       workspaces: {

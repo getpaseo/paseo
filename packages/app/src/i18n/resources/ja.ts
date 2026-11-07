@@ -2343,6 +2343,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      notifications: "通知",
       metadata: "メタデータ",
       voice: "音声",
       workspaces: "ワークスペース",
@@ -2876,6 +2877,16 @@ export const ja: TranslationResources = {
           title: "アイドル状態のエージェントを解放",
           hint: "1 時間のアイドル状態の後にメモリを解放します。",
           info: "会話を保持したままエージェントのプロセスを停止します。メッセージを送信すると再開します。\n\n実行中の作業、保留中の通知、プロバイダーの安全性チェックがある場合は解放しません。",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "エージェントの完了時に通知",
+          hint: "オフにすると、エージェントが許可や入力を必要とするときだけ通知します",
+          accessibilityLabel: "エージェントの完了時に通知",
+          updateFailed: "通知を更新できません",
+          saving: "保存中…",
+          loadFailed: "このホストの通知設定を読み込めません",
         },
       },
       workspaces: {

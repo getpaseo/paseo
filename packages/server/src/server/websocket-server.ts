@@ -92,7 +92,9 @@ import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-run
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeNotificationPlan,
+  isAttentionReasonMuted,
   isPushEligibleAttentionReason,
+  SILENT_NOTIFICATION_PLAN,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
 import {
@@ -2042,6 +2044,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceSetupRun: true,
         workspaceSetupObservation: true,
         workspaceSortTimes: true,
+        // COMPAT(agentFinishedNotifications): added in v0.15.1, remove gate after 2027-10-14.
+        agentFinishedNotifications: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -2925,12 +2929,14 @@ export class VoiceAssistantWebSocketServer {
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
-      nowMs,
-    });
+    const plan = isAttentionReasonMuted(params.reason, this.daemonConfigStore.get())
+      ? SILENT_NOTIFICATION_PLAN
+      : computeNotificationPlan({
+          allStates,
+          focusTarget: { kind: "agent", id: params.agentId },
+          pushEligible: isPushEligibleAttentionReason(params.reason),
+          nowMs,
+        });
 
     if (plan.shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
@@ -3020,12 +3026,14 @@ export class VoiceAssistantWebSocketServer {
     const nowMs = Date.now();
     const workspaceId = params.workspaceId;
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "terminal", id: params.terminalId },
-      pushEligible: true,
-      nowMs,
-    });
+    const plan = isAttentionReasonMuted(params.reason, this.daemonConfigStore.get())
+      ? SILENT_NOTIFICATION_PLAN
+      : computeNotificationPlan({
+          allStates,
+          focusTarget: { kind: "terminal", id: params.terminalId },
+          pushEligible: true,
+          nowMs,
+        });
 
     const title = terminalAttentionTitle(params.reason);
     const body = params.terminalName;

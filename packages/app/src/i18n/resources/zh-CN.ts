@@ -2297,6 +2297,7 @@ export const zhCN: TranslationResources = {
       projects: "项目",
       connections: "连接",
       agents: "Agents",
+      notifications: "通知",
       metadata: "元数据",
       voice: "语音",
       workspaces: "Workspaces",
@@ -2818,6 +2819,16 @@ export const zhCN: TranslationResources = {
           title: "释放空闲 Agent",
           hint: "空闲一小时后释放内存。",
           info: "停止 Agent 进程，但保留对话。发送消息即可继续。\n\n进行中的工作、待处理的通知和 Provider 安全检查会阻止清理。",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "代理完成时通知",
+          hint: "关闭后，仅在代理需要权限或输入时通知",
+          accessibilityLabel: "代理完成时通知",
+          updateFailed: "无法更新通知",
+          saving: "正在保存…",
+          loadFailed: "无法加载此主机的通知设置",
         },
       },
       workspaces: {

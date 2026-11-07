@@ -34,6 +34,7 @@ function reloadableConfig(
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: agents.idleRuntimeCleanup !== false,
+    agentFinishedNotifications: daemon.agentFinishedNotifications !== false,
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
     terminalProfiles: daemon.terminalProfiles,
     agentProfiles: daemon.agentProfiles,
@@ -831,6 +832,34 @@ describe("DaemonConfigStore", () => {
 
     const persisted = loadPersistedConfig(paseoHome);
     expect(persisted.daemon?.enableTerminalAgentHooks).toBe(true);
+  });
+
+  test("patch persists finished notifications off into config.json and emits the change", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        agentFinishedNotifications: true,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+    const changes: unknown[] = [];
+    store.onFieldChange("agentFinishedNotifications", (value) => changes.push(value));
+
+    await store.patch({ agentFinishedNotifications: false });
+
+    expect(store.get().agentFinishedNotifications).toBe(false);
+    expect(changes).toEqual([false]);
+    expect(loadPersistedConfig(paseoHome).daemon?.agentFinishedNotifications).toBe(false);
   });
 
   test("patch persists metadata generation providers into config.json", async () => {

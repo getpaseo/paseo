@@ -43,6 +43,7 @@ const daemonConfig: MutableDaemonConfig = {
   metadataGeneration: { providers: [] },
   autoArchiveAfterMerge: false,
   enableTerminalAgentHooks: false,
+  agentFinishedNotifications: true,
   appendSystemPrompt: "",
 };
 

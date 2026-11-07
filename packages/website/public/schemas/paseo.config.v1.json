@@ -109,6 +109,9 @@
         "enableTerminalAgentHooks": {
           "type": "boolean"
         },
+        "agentFinishedNotifications": {
+          "type": "boolean"
+        },
         "appendSystemPrompt": {
           "type": "string"
         },
