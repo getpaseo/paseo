@@ -1,12 +1,16 @@
-import { readFile } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { z } from "zod";
 import type {
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
 import type { Step } from "./wire.js";
+
+const MAX_REPLAY_TOOL_OUTPUT_CHARS = 64 * 1024;
+const RELEVANT_STEP_TYPES = new Set(["USER_INPUT", "PLANNER_RESPONSE", "GENERIC"]);
 
 const transcriptToolCallSchema = z.object({
   name: z.string(),
@@ -115,17 +119,18 @@ export async function readTranscriptHistory(options: {
     ".system_generated",
     "logs",
   );
-  const raw = await readTranscriptFile(logsDir);
-  if (raw === null) return [];
+  const handle = await openTranscriptFile(logsDir);
+  if (handle === null) return [];
 
-  const stepsByIndex = parseTranscriptSteps(raw);
-  const ordered = [...stepsByIndex.values()].sort(
-    (left, right) => left.step_index - right.step_index,
-  );
+  const stepsByIndex = await streamTranscriptSteps(handle);
+  const orderedIndices = [...stepsByIndex.keys()].sort((left, right) => left - right);
   const entries: ReplayedTimelineEntry[] = [];
   let firstUserMessage = true;
 
-  for (const step of ordered) {
+  for (const stepIndex of orderedIndices) {
+    const step = stepsByIndex.get(stepIndex);
+    if (!step) continue;
+    stepsByIndex.delete(stepIndex);
     if (step.type === "USER_INPUT" && typeof step.content === "string") {
       entries.push(toUserEntry(step, step.content, firstUserMessage ? systemPrompt : undefined));
       firstUserMessage = false;
@@ -148,10 +153,10 @@ function isSafeConversationId(conversationId: string): boolean {
   );
 }
 
-async function readTranscriptFile(logsDir: string): Promise<string | null> {
+async function openTranscriptFile(logsDir: string): Promise<FileHandle | null> {
   for (const name of ["transcript_full.jsonl", "transcript.jsonl"]) {
     try {
-      return await readFile(path.join(logsDir, name), "utf8");
+      return await open(path.join(logsDir, name), "r");
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
       throw error;
@@ -160,31 +165,93 @@ async function readTranscriptFile(logsDir: string): Promise<string | null> {
   return null;
 }
 
-function parseTranscriptSteps(raw: string): Map<number, TranscriptStep> {
+async function streamTranscriptSteps(handle: FileHandle): Promise<Map<number, TranscriptStep>> {
   const stepsByIndex = new Map<number, TranscriptStep>();
-  const lines = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const stream = handle.createReadStream({ encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let pendingInvalidJson: unknown = null;
 
-  for (const [index, line] of lines.entries()) {
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(line);
-    } catch (error) {
-      if (index === lines.length - 1) break;
-      throw error;
-    }
-    const step = transcriptStepSchema.parse(parsedJson);
-    if (stepsByIndex.has(step.step_index) && step.type === "USER_INPUT") {
-      for (const existingIndex of stepsByIndex.keys()) {
-        if (existingIndex > step.step_index) stepsByIndex.delete(existingIndex);
+  try {
+    for await (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (pendingInvalidJson !== null) throw pendingInvalidJson;
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(line);
+      } catch (error) {
+        pendingInvalidJson = error;
+        continue;
       }
+      const step = compactTranscriptStep(transcriptStepSchema.parse(parsedJson));
+      recordTranscriptStep(stepsByIndex, step);
     }
-    stepsByIndex.set(step.step_index, step);
+  } finally {
+    lines.close();
+    await handle.close().catch(() => undefined);
   }
 
   return stepsByIndex;
+}
+
+function recordTranscriptStep(
+  stepsByIndex: Map<number, TranscriptStep>,
+  step: TranscriptStep,
+): void {
+  if (!RELEVANT_STEP_TYPES.has(step.type)) return;
+  if (stepsByIndex.has(step.step_index) && step.type === "USER_INPUT") {
+    for (const existingIndex of stepsByIndex.keys()) {
+      if (existingIndex > step.step_index) stepsByIndex.delete(existingIndex);
+    }
+  }
+  stepsByIndex.set(step.step_index, step);
+}
+
+function compactTranscriptStep(step: TranscriptStep): TranscriptStep {
+  if (step.type === "GENERIC") {
+    return {
+      step_index: step.step_index,
+      type: step.type,
+      status: step.status,
+      created_at: step.created_at,
+      content: step.content
+        ? boundText(stripGenericHeader(step.content), MAX_REPLAY_TOOL_OUTPUT_CHARS)
+        : undefined,
+      error: step.error ? boundText(step.error, MAX_REPLAY_TOOL_OUTPUT_CHARS) : undefined,
+    };
+  }
+  if (step.type === "PLANNER_RESPONSE" && step.tool_calls) {
+    return {
+      ...step,
+      tool_calls: step.tool_calls.map((call) => ({
+        name: call.name,
+        args: boundToolArgs(call.args),
+      })),
+    };
+  }
+  return step;
+}
+
+type JsonValue = TranscriptToolCall["args"][string];
+
+function boundToolArgs(args: Record<string, JsonValue>): Record<string, JsonValue> {
+  return Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [key, boundJsonValue(value)]),
+  );
+}
+
+function boundJsonValue(value: JsonValue): JsonValue {
+  if (typeof value === "string") return boundText(value, MAX_REPLAY_TOOL_OUTPUT_CHARS);
+  if (Array.isArray(value)) return value.map(boundJsonValue);
+  if (typeof value === "object" && value !== null) {
+    return boundToolArgs(value as Record<string, JsonValue>);
+  }
+  return value;
+}
+
+function boundText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return Buffer.from(text.slice(0, maxChars), "utf16le").toString("utf16le");
 }
 
 function toUserEntry(
@@ -210,7 +277,7 @@ function appendPlannerEntries(
   entries: ReplayedTimelineEntry[],
   conversationId: string,
   step: TranscriptStep,
-  stepsByIndex: ReadonlyMap<number, TranscriptStep>,
+  stepsByIndex: Map<number, TranscriptStep>,
 ): void {
   const thinking = step.thinking?.trim();
   if (thinking) {
@@ -236,6 +303,7 @@ function appendPlannerEntries(
     const toolStepIndex = step.step_index + 1 + offset;
     const candidate = stepsByIndex.get(toolStepIndex);
     const generic = candidate?.type === "GENERIC" ? candidate : undefined;
+    if (generic) stepsByIndex.delete(toolStepIndex);
     const id = `history:${toolStepIndex}`;
     entries.push({
       item: replayedToolItem(conversationId, toolStepIndex, call, generic, id),
@@ -273,14 +341,7 @@ function replayedToolItem(
 ): Extract<ProviderTimelineItem, { type: "tool_call" }> {
   const item = toolItem(toToolStep(conversationId, stepIndex, call, generic), id);
   if (!generic) return { ...item, status: "canceled", error: null };
-  if (
-    generic.status !== "DONE" &&
-    generic.status !== "ERROR" &&
-    generic.status !== "INVALID" &&
-    generic.status !== "RUNNING" &&
-    generic.status !== "ACTIVE" &&
-    generic.status !== "PENDING"
-  ) {
+  if (generic.status !== "DONE" && generic.status !== "ERROR" && generic.status !== "INVALID") {
     return { ...item, status: "canceled", error: null };
   }
   return item;
@@ -293,9 +354,9 @@ function toToolStep(
   generic: TranscriptStep | undefined,
 ): Step {
   const name = call.name.trim();
-  const output = generic?.content ? stripGenericHeader(generic.content) : "";
-  const state = toToolStepState(generic?.status);
-  const failed = state === "ERROR";
+  const output = generic?.content ?? "";
+  const failed = generic?.status === "ERROR" || generic?.status === "INVALID";
+  const state: Step["state"] = failed ? "ERROR" : "DONE";
 
   if (name === "invoke_subagent" && !failed) {
     const subagents = parseSubagents(call.args, output);
@@ -338,12 +399,6 @@ function toToolStep(
     subagent_info: null,
     usage: null,
   };
-}
-
-function toToolStepState(status: string | undefined): Step["state"] {
-  if (status === "ERROR" || status === "INVALID") return "ERROR";
-  if (status === "RUNNING" || status === "ACTIVE" || status === "PENDING") return "ACTIVE";
-  return "DONE";
 }
 
 function parseSubagents(

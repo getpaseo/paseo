@@ -602,8 +602,13 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
         { name: "run_command", args: { CommandLine: "git status" } },
         {
           name: "invoke_subagent",
-          args: { TypeName: "research", Role: "Reviewer", Prompt: "Audit changes" },
+          args: {
+            Subagents: [
+              { TypeName: "research", Role: "Reviewer", Prompt: `Audit ${"y".repeat(70_000)}` },
+            ],
+          },
         },
+        { name: "run_command", args: { CommandLine: "sleep 30" } },
         { name: "run_command", args: { CommandLine: "sleep 60" } },
       ],
     },
@@ -613,8 +618,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
       type: "GENERIC",
       status: "DONE",
       created_at: "2026-11-02T16:27:02Z",
-      content:
-        "Created At: 2026-11-02T16:27:02Z\nCompleted At: 2026-11-02T16:27:02Z\nShowing lines 1-2 of 2\n1: # Context",
+      content: `Created At: 2026-11-02T16:27:02Z\nCompleted At: 2026-11-02T16:27:02Z\n${"x".repeat(70_000)}`,
     },
     {
       step_index: 3,
@@ -636,7 +640,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
       step_index: 5,
       source: "MODEL",
       type: "GENERIC",
-      status: "ERROR",
+      status: "INVALID",
       error: "permission denied",
       created_at: "2026-11-02T16:27:03Z",
       content:
@@ -652,7 +656,15 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
         'Created At: 2026-11-02T16:27:04Z\nCompleted At: 2026-11-02T16:27:04Z\nCreated the following subagent:\n{\n  "conversationId": "b6f02329-7415-49a7-a9a9-1cd09e898d26",\n  "logAbsoluteUri": "file:///tmp/subagent/transcript.jsonl",\n  "workspaceUris": ["file:///repo"]\n}\n',
     },
     {
-      step_index: 8,
+      step_index: 7,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "RUNNING",
+      created_at: "2026-11-02T16:27:04Z",
+      content: "Created At: 2026-11-02T16:27:04Z\npartial output",
+    },
+    {
+      step_index: 9,
       source: "MODEL",
       type: "PLANNER_RESPONSE",
       status: "DONE",
@@ -663,7 +675,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
   await writeFile(
     path.join(logsDir, "transcript.jsonl"),
     transcriptLines.map((line) => JSON.stringify(line)).join("\n") +
-      '\n{"step_index": 9, "type": "PLANNER_RES',
+      '\n{"step_index": 10, "type": "PLANNER_RES',
   );
   await h.open({
     version: 1,
@@ -697,7 +709,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
       detail: {
         type: "read",
         filePath: "/repo/CONTEXT.md",
-        content: "Showing lines 1-2 of 2\n1: # Context",
+        content: "x".repeat(64 * 1024),
       },
       metadata: undefined,
     },
@@ -754,7 +766,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
       detail: {
         type: "sub_agent",
         subAgentType: "research",
-        description: "Audit changes",
+        description: `Audit ${"y".repeat(64 * 1024 - 6)}`,
         childSessionId: "b6f02329-7415-49a7-a9a9-1cd09e898d26",
         log: "file:///tmp/subagent/transcript.jsonl",
       },
@@ -763,7 +775,7 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
           {
             type_name: "research",
             role: "Reviewer",
-            initial_prompt: "Audit changes",
+            initial_prompt: `Audit ${"y".repeat(64 * 1024 - 6)}`,
             conversation_id: "b6f02329-7415-49a7-a9a9-1cd09e898d26",
             log_uri: "file:///tmp/subagent/transcript.jsonl",
             workspace_uris: ["file:///repo"],
@@ -780,6 +792,20 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
       error: null,
       detail: {
         type: "shell",
+        command: "sleep 30",
+        output: "partial output",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "tool_call",
+      id: "history:8",
+      callId: "history:8",
+      name: "run_command",
+      status: "canceled",
+      error: null,
+      detail: {
+        type: "shell",
         command: "sleep 60",
         output: "",
       },
@@ -787,8 +813,8 @@ it("replays reasoning, tool calls, subagents, and compact transcript fallback on
     },
     {
       type: "assistant_message",
-      id: "history:8",
-      messageId: "history:8",
+      id: "history:9",
+      messageId: "history:9",
       text: "Inspection complete.",
     },
   ]);
