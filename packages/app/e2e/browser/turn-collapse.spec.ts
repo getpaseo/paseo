@@ -742,7 +742,9 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await expect(summaries).toHaveCount(2);
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
-    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(2);
+    await expect(
+      page.getByTestId("turn-footer-timing-label").filter({ hasText: /^Worked for/ }),
+    ).toHaveCount(2);
     await page.screenshot({ path: "/tmp/heartbeat-turn-footer.png" });
   } finally {
     if (scheduleId) await schedules.scheduleDelete({ id: scheduleId });
