@@ -13045,7 +13045,20 @@ function idleCleanupHarness() {
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const commands: AgentPromptInput[] = [];
   const prompts: AgentPromptInput[] = [];
+  const sessions: AgentSession[] = [];
+  const probes: Array<(() => Promise<boolean>) | undefined> = [];
+  const closeEntered = deferred<void>();
+  let closeGate: Promise<void> | undefined;
+  let closes = 0;
   const recordPrompts = (session: AgentSession) => {
+    const index = sessions.length;
+    session.canStopRuntime = async () => probes[index]?.() ?? false;
+    session.close = async () => {
+      closes++;
+      closeEntered.resolve();
+      await closeGate;
+    };
+    sessions.push(session);
     session.tryHandleOutOfBand = (prompt) =>
       prompt === "/maintenance"
         ? {
@@ -13061,11 +13074,6 @@ function idleCleanupHarness() {
     };
     return session;
   };
-  const sessions: AgentSession[] = [];
-  const probes: Array<(() => Promise<boolean>) | undefined> = [];
-  const closeEntered = deferred<void>();
-  let closeGate: Promise<void> | undefined;
-  let closes = 0;
   const client = new (class extends TestAgentClient {
     override async resumeSession(
       handle: AgentPersistenceHandle,
@@ -13076,15 +13084,7 @@ function idleCleanupHarness() {
       return recordPrompts(session);
     }
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const index = sessions.length;
       const session: AgentSession = await super.createSession(config);
-      session.canStopRuntime = async () => probes[index]?.() ?? false;
-      session.close = async () => {
-        closes++;
-        closeEntered.resolve();
-        await closeGate;
-      };
-      sessions.push(session);
       return recordPrompts(session);
     }
   })();
@@ -13361,4 +13361,40 @@ test("stops only a currently owned public background item with its current token
   ).rejects.toThrow();
   expect(stopped).toEqual(["one"]);
   await manager.closeAgent(agent.id);
+});
+
+test("idle cleanup gives a newly restored runtime a fresh idle window while keeping historical updatedAt", async () => {
+  const h = idleCleanupHarness();
+  const created = await h.create();
+  h.probes[0] = async () => true;
+  h.probes[1] = async () => true;
+  await h.manager.closeAgent(created.id);
+  await h.storage.flush();
+  const historicalUpdatedAt = new Date(Date.now() - 180 * 60_000);
+  const existingRecord = await h.storage.get(created.id);
+  expect(existingRecord).not.toBeNull();
+  const staleRecord: StoredAgentRecord = {
+    ...existingRecord!,
+    updatedAt: historicalUpdatedAt.toISOString(),
+    lastActivityAt: historicalUpdatedAt.toISOString(),
+  };
+  await h.storage.upsert(staleRecord);
+  await h.storage.flush();
+
+  const closesBeforeRestore = h.closes;
+  const restored = await h.manager.resumeAgentFromPersistence(
+    created.persistence!,
+    { cwd: created.cwd },
+    created.id,
+    { updatedAt: historicalUpdatedAt },
+  );
+  expect(restored.updatedAt.getTime()).toBe(historicalUpdatedAt.getTime());
+
+  // Sweeping 1 minute after restoring an old agent must NOT immediately kill the newly opened runtime.
+  expect((await h.sweep({ now: h.later(1) })).collected).toEqual([]);
+  expect(h.closes).toBe(closesBeforeRestore);
+
+  // Sweeping 61 minutes after restoration collects the runtime as expected.
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  expect(h.closes).toBe(closesBeforeRestore + 1);
 });
