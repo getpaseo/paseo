@@ -22,13 +22,16 @@ export default defineConfig({
     {
       name: "markdown-wasm-commonjs-export",
       transform(source, id) {
-        // The ESM package contains a CommonJS WASM factory. Metro handles the
-        // interop; Vite needs an ESM export instead of the CommonJS trailer.
-        // Vite can request the file with a version query (`md4c.js?v=<hash>`), so match the
-        // path without it.
-        if (!id.split("?")[0].endsWith("/lib/module/web/wasm/md4c.js")) return;
-        const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
-        if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
+        // The ESM package ships the WASM factory as CommonJS. Metro handles the
+        // interop; Vite needs an ESM default export instead. Find the CommonJS
+        // export trailer tolerantly (its formatting depends on the Emscripten
+        // version that produced the artifact), strip it, and append the export.
+        if (!id.split("?")[0].endsWith("/web/wasm/md4c.js")) return;
+        if (!source.includes("createMd4cModule")) return;
+        const tail = source.slice(-400);
+        const match = tail.match(/if\s*\(\s*typeof\s+exports\s*===\s*["']object["']/);
+        if (!match || match.index === undefined) return;
+        const trailer = source.length - tail.length + match.index;
         return {
           code: `${source.slice(0, trailer)}\nexport default createMd4cModule;`,
           map: null,
