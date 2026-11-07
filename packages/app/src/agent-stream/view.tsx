@@ -358,6 +358,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
+    const chatCopyOnSelect = useSettings((settings) => settings.chatCopyOnSelect);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const pendingClientMessageIds = useMemo(
@@ -1220,6 +1221,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   baseListContentContainerStyle: stylesheet.listContentContainer,
                   forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
                   contentMaxWidth,
+                  copyOnSelect: chatCopyOnSelect,
                 })}
               </ToolCallExpansionContext.Provider>
             </MessageOuterSpacingProvider>
