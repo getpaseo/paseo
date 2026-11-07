@@ -2,6 +2,17 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  sharedOrdering: {
+    permissionLost:
+      "Cet hôte est désormais en lecture seule. Les modifications d’ordre en attente ont été annulées.",
+    removed: "Les éléments indisponibles ont été retirés de l’ordre en attente.",
+    unsupported:
+      "Mettez à jour cet hôte pour synchroniser l’ordre des espaces de travail et des onglets entre appareils.",
+    failed:
+      "L’ordre attend la synchronisation. Reconnectez-vous ou déplacez un élément pour réessayer.",
+    conflict:
+      "L’ordre reste en attente après des modifications concurrentes. Reconnectez-vous ou déplacez un élément pour réessayer.",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",

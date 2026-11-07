@@ -1,4 +1,12 @@
 export const en = {
+  sharedOrdering: {
+    permissionLost: "This host is now read-only. Pending order changes were cancelled.",
+    removed: "Unavailable items were removed from the pending order.",
+    unsupported: "Update this host to sync workspace and tab order across devices.",
+    failed: "Order is still pending. Reconnect or move an item to retry.",
+    conflict:
+      "Order is still pending after conflicting changes. Reconnect or move an item to retry.",
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

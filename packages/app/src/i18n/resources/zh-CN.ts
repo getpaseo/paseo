@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  sharedOrdering: {
+    permissionLost: "此主机现为只读。待同步的排序修改已取消。",
+    removed: "已从待同步顺序中移除不可用项。",
+    unsupported: "请更新此主机，以跨设备同步 workspace 和 tab 排序。",
+    failed: "排序仍待同步。请重新连接或移动条目以重试。",
+    conflict: "排序因并发修改仍待同步。请重新连接或移动条目以重试。",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

@@ -1,3 +1,4 @@
+import type { PaneTabOrderInput } from "@/workspace-tabs/model";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { useWorkspaceTabDrag } from "@/components/workspace-tab-drag-context";
@@ -41,7 +42,7 @@ interface ExplorerSidebarDockProps extends Pick<
   closingTabIds: Set<string>;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
-  onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
+  onReorderTabsInPane: (input: PaneTabOrderInput) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -95,11 +96,12 @@ export function ExplorerSidebarDock({
     [onSelectTab, pane.id],
   );
   const handleReorderTabs = useCallback(
-    (nextTabs: WorkspaceTabDescriptor[]) => {
-      onReorderTabsInPane(
-        pane.id,
-        nextTabs.map((tab) => tab.tabId),
-      );
+    (nextTabs: WorkspaceTabDescriptor[], movedTabId: string) => {
+      onReorderTabsInPane({
+        paneId: pane.id,
+        tabIds: nextTabs.map((tab) => tab.tabId),
+        movedTabId,
+      });
     },
     [onReorderTabsInPane, pane.id],
   );

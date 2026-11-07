@@ -2,6 +2,16 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  sharedOrdering: {
+    permissionLost:
+      "このホストは読み取り専用になりました。同期待ちの並び順の変更をキャンセルしました。",
+    removed: "保留中の並び順から、利用できない項目を削除しました。",
+    unsupported:
+      "ワークスペースとタブの順序をデバイス間で同期するには、このホストを更新してください。",
+    failed: "順序は同期待ちです。再接続するか、項目を移動して再試行してください。",
+    conflict:
+      "変更が競合したため順序は同期待ちです。再接続するか、項目を移動して再試行してください。",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",

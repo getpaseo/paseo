@@ -32,7 +32,7 @@ import {
   type WorkspaceLayout,
   type SplitPane,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab } from "@/workspace-tabs/model";
+import type { PaneTabOrderInput, WorkspaceTab } from "@/workspace-tabs/model";
 import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 import { acceptsWorkspaceTabDrop } from "./workspace-tab-drag-policy";
 import { WorkspaceTabDragContext } from "./workspace-tab-drag-context";
@@ -173,7 +173,7 @@ interface WorkspaceTabDragScopeProps {
   normalizedWorkspaceId: string;
   uiTabs: WorkspaceTab[];
   onMoveTabToPane: (tabId: string, paneId: string) => void;
-  onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
+  onReorderTabsInPane: (input: PaneTabOrderInput) => void;
   onSplitPane: (input: {
     tabId: string;
     targetPaneId: string;
@@ -313,10 +313,11 @@ export function WorkspaceTabDragScope({
             sourceIndex,
             resolvedTabDropPreview.insertionIndex,
           );
-          onReorderTabsInPane(
-            activeData.paneId,
-            nextTabs.map((tab) => tab.tabId),
-          );
+          onReorderTabsInPane({
+            paneId: activeData.paneId,
+            tabIds: nextTabs.map((tab) => tab.tabId),
+            movedTabId: activeData.tabId,
+          });
         }
         return;
       }
@@ -324,7 +325,11 @@ export function WorkspaceTabDragScope({
       const nextTargetTabIds = targetTabs.map((tab) => tab.tabId);
       nextTargetTabIds.splice(resolvedTabDropPreview.insertionIndex, 0, activeData.tabId);
       onMoveTabToPane(activeData.tabId, overData.paneId);
-      onReorderTabsInPane(overData.paneId, nextTargetTabIds);
+      onReorderTabsInPane({
+        paneId: overData.paneId,
+        tabIds: nextTargetTabIds,
+        movedTabId: activeData.tabId,
+      });
     },
     [onMoveTabToPane, onReorderTabsInPane, panesById, tabDropPreview, uiTabs],
   );

@@ -1,3 +1,8 @@
+import {
+  OrderingSession,
+  createOrderingSession,
+  type OrderingSessionDependency,
+} from "./ordering/session.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
@@ -503,6 +508,7 @@ export interface SessionOptions {
   workspaceBaseBranch?: WorkspaceBaseBranchService;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  ordering?: OrderingSessionDependency;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -831,6 +837,7 @@ export class Session {
     WorkspaceUpdatesSubscriptionState
   >();
   private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private readonly orderingSession: OrderingSession | null;
   private readonly eventSubscriptions = new Map<
     string,
     { owner: OwnedSubscription; events: Set<SessionEventSubscription>; notifications: boolean }
@@ -980,6 +987,12 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
+    this.orderingSession = createOrderingSession({
+      ordering: options.ordering,
+      delivery: this.delivery,
+      emit: (message) => this.emit(message),
+      clientId: options.clientId,
+    });
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -1361,6 +1374,7 @@ export class Session {
     this.clientCapabilities = parseClientCapabilities(capabilities);
     if (source) {
       this.delivery.attach(source, capabilities?.[CLIENT_CAPS.ownedSubscriptions] === true);
+      this.orderingSession?.attach(source);
       this.clientSources.set(source, {
         capabilities: this.clientCapabilities,
         appVersion,
@@ -2577,6 +2591,7 @@ export class Session {
 
   private dispatchWorkspaceLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     return (
+      this.orderingSession?.dispatch(msg) ??
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??

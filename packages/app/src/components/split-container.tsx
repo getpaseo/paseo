@@ -1,3 +1,4 @@
+import type { PaneTabOrderInput } from "@/workspace-tabs/model";
 import {
   AdaptiveWorkspaceChrome,
   type WorkspaceCompactHeaderActions,
@@ -109,7 +110,7 @@ interface SplitContainerProps {
   onMoveTabToPane: (tabId: string, toPaneId: string) => void;
   onSelectTabInPane: (paneId: string, tabId: string) => void;
   onResizeSplit: (groupId: string, sizes: number[]) => void;
-  onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
+  onReorderTabsInPane: (input: PaneTabOrderInput) => void;
   focusModeEnabled?: boolean;
   onExitFocusMode: () => void;
 }
@@ -713,11 +714,8 @@ const SplitPaneView = memo(function SplitPaneView({
     [onCloseOtherTabs, paneTabs],
   );
   const handleReorderTabs = useCallback(
-    (nextTabs: WorkspaceTabDescriptor[]) => {
-      onReorderTabsInPane(
-        paneId,
-        nextTabs.map((tab) => tab.tabId),
-      );
+    (nextTabs: WorkspaceTabDescriptor[], movedTabId: string) => {
+      onReorderTabsInPane({ paneId, tabIds: nextTabs.map((tab) => tab.tabId), movedTabId });
     },
     [onReorderTabsInPane, paneId],
   );

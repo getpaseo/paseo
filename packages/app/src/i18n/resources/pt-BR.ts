@@ -2,6 +2,16 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  sharedOrdering: {
+    permissionLost:
+      "Este host agora é somente leitura. As alterações de ordem pendentes foram canceladas.",
+    removed: "Os itens indisponíveis foram removidos da ordem pendente.",
+    unsupported:
+      "Atualize este host para sincronizar a ordem dos espaços de trabalho e das abas entre dispositivos.",
+    failed: "A ordem está pendente. Reconecte ou mova um item para tentar novamente.",
+    conflict:
+      "A ordem continua pendente após alterações conflitantes. Reconecte ou mova um item para tentar novamente.",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
