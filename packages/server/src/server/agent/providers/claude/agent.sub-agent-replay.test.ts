@@ -1217,8 +1217,59 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
           type: "sub_agent",
           subAgentType: "general-purpose",
           description: "Count files here",
+          prompt: "Run ls and reply with the number of entries.",
         },
       });
+    },
+  );
+
+  test.each(["Task", "Agent"])(
+    "replays the original nonempty %s prompt whitespace and omits whitespace-only prompts",
+    async (toolName) => {
+      const prompt = "  keep leading space\n";
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: { subagent_type: "general-purpose", prompt },
+            },
+          ]),
+          taskToolResult(),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      });
+      const card = (await replayEvents()).find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === TOOL_USE_ID,
+      );
+      expect(card).toMatchObject({ item: { detail: { prompt } } });
+
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: { subagent_type: "general-purpose", prompt: " \n " },
+            },
+          ]),
+          taskToolResult(),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      });
+      const emptyCard = (await replayEvents()).find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === TOOL_USE_ID,
+      );
+      expect(emptyCard).not.toMatchObject({ item: { detail: { prompt: expect.anything() } } });
     },
   );
 
