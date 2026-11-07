@@ -213,8 +213,18 @@ async function settleDesktopStartup(page) {
   }
 }
 
+const CSP_PAGE_PATH = "/csp-no-eval";
+
 async function startTargetPage() {
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (request.url === CSP_PAGE_PATH) {
+      response.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'self'; script-src 'self'",
+      });
+      response.end("<!doctype html><title>CSP page</title><h1>CSP page heading</h1>");
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
@@ -349,6 +359,42 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
     await delay(50);
   }
   return false;
+}
+
+// A page whose Content Security Policy omits 'unsafe-eval' refuses eval(); the tools must still work.
+async function verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl) {
+  const created = await callBrowserTool(client, "browser_new_tab", {
+    url: new URL(CSP_PAGE_PATH, targetUrl).href,
+  });
+  const browserId = created.browserId;
+  assert(typeof browserId === "string", "browser_new_tab returned no browserId for the CSP page");
+  try {
+    await callBrowserTool(client, "browser_wait", {
+      browserId,
+      text: "CSP page heading",
+      timeoutMs: 15_000,
+    });
+    const title = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => document.title",
+    });
+    assert(
+      JSON.parse(title.resultJson) === "CSP page",
+      `browser_evaluate on a page without 'unsafe-eval' returned ${title.resultJson}`,
+    );
+    // The control: the page itself really does refuse eval().
+    const probe = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function:
+        '() => { try { (0, eval)("1"); return "eval allowed"; } catch (error) { return error.message; } }',
+    });
+    assert(
+      /Content Security Policy/.test(JSON.parse(probe.resultJson)),
+      `The CSP page did not refuse eval(): ${probe.resultJson}`,
+    );
+  } finally {
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  }
 }
 
 async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
@@ -735,6 +781,8 @@ async function runRegression({
     overlayRoot.style.pointerEvents = "none";
     document.body.appendChild(overlayRoot);
   });
+
+  await verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl);
 
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
@@ -1168,6 +1216,7 @@ async function runRegression({
     snapshot: "passed",
     click: "passed",
     localPageSelectors: "passed",
+    evaluateWithoutUnsafeEval: "passed",
   };
 }
 

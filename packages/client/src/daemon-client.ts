@@ -6578,10 +6578,16 @@ export class DaemonClient {
   // ============================================================================
 
   observeTerminals(input: {
-    cwd: string;
+    cwd?: string;
     workspaceId?: string;
     signal?: AbortSignal;
   }): OwnedSubscription<CorrelatedResponsePayload<"terminals_changed">> {
+    // COMPAT(terminalCollection): added in v0.16, remove after 2027-06.
+    if (
+      input.cwd === undefined &&
+      this.getLastServerInfoMessage()?.features?.terminalCollection !== true
+    )
+      throw new Error("Update the host to list terminals across workspaces.");
     const { signal, ...query } = input;
     return this.observe(
       "terminals_changed",

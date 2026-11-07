@@ -112,6 +112,7 @@ test.describe("Workspace archive undo", () => {
 
     await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible({ timeout: 30_000 });
     await expectDirectoryPresence(worktree.workspaceDirectory, true);
+    await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
   });
 
   test("hovering Undo keeps the toast open past its deadline, and its close ends the undo", async ({

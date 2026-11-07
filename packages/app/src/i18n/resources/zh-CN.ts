@@ -1171,6 +1171,14 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "无法加载侧边栏视图。",
+      useDefault: "使用默认视图",
+      readFailed: "无法加载侧边栏视图偏好设置。",
+      agentUnavailable: "此智能体已不可用",
+      terminalUnavailable: "此终端已不可用",
+      projectUnavailable: "此项目已不可用",
+    },
     statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
       needsInput: "需要输入",
@@ -2544,6 +2552,12 @@ export const zhCN: TranslationResources = {
         description: "显示用于在提示词之间跳转的大纲",
       },
       sidebar: {
+        view: {
+          title: "侧边栏视图",
+          label: "视图",
+          default: "默认视图",
+          unavailable: "所选视图不可用或已禁用。正在显示默认视图。",
+        },
         header: {
           title: "顶部",
           description: "选择侧边栏顶部显示的项目及其顺序",

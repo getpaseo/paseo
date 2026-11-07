@@ -55,8 +55,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
-  subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
-  unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
+  subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
+  unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
 } {
   const handlers: Record<RouterMessageType, RouterHandler[]> = {
     providers_snapshot_update: [],
@@ -71,8 +71,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
-  const subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
-  const unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
+  const subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
+  const unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
 
   function on<K extends RouterMessageType>(
     type: K,
