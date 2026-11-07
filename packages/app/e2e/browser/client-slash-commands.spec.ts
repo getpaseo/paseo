@@ -59,6 +59,28 @@ async function selectClientSlashCommand(page: Page, query: string, label: string
   await input.press("Enter");
 }
 
+// Types and presses Tab in one task, so the key lands before the cursor reaches the menu.
+async function typeThenTabBeforeMenuFilters(page: Page, text: string): Promise<void> {
+  await composerLocator(page).evaluate(async (element, value) => {
+    if (!(element instanceof HTMLTextAreaElement)) {
+      throw new Error("Composer input is not a textarea");
+    }
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    if (!valueSetter) throw new Error("Textarea value setter is unavailable");
+    valueSetter.call(element, value);
+    element.setSelectionRange(value.length, value.length);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    await Promise.resolve();
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+    );
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  }, text);
+}
+
 async function expectAgentArchivedInSessions(page: Page, title: string): Promise<void> {
   await openSessions(page);
   await expectSessionRowArchived(page, title);
@@ -129,6 +151,22 @@ test.describe("Client slash commands", () => {
         await expectAgentArchivedInSessions(page, title);
       },
     );
+  });
+
+  test("tab before the menu filters does not run the highlighted exit", async ({ page }) => {
+    await withOpenReadyMockAgent(page, { title: "Slash stale menu e2e" }, async ({ agentId }) => {
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/");
+      await expect(page.getByText("/exit", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await typeThenTabBeforeMenuFilters(page, "/co");
+
+      await expect(input).toHaveValue("/co");
+      await expectWorkspaceTabVisible(page, agentId);
+    });
   });
 
   test("slash clear replaces the active agent with a matching draft", async ({ page }) => {
