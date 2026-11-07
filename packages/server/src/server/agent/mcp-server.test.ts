@@ -8,7 +8,7 @@ import {
 } from "./finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "./agent-messages/index.js";
 import { createTestAgentMessages } from "../test-utils/agent-messages.js";
-import { type PromptDispatchDisposition } from "./agent-prompt.js";
+import { startAgentRun, type PromptDispatchDisposition } from "./agent-prompt.js";
 import { parseAgentMessage, parseAgentMessages } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -6823,6 +6823,71 @@ it("rejects hidden agent-worktree placement and directs callers to workspace cre
 describe("local durable finish subscription MCP wiring", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
+  it("restricts remote pending permission queries before resolving hosts and keeps local queries available", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-restricted-permission-query-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+    });
+    let mcp: Client | undefined;
+    let hostCalls = 0;
+    try {
+      const caller = await manager.createAgent(
+        { provider: "claude", model: "claude-test", cwd: existingCwd, modeId: "default" },
+        undefined,
+        { workspaceId: "wks_permission_query" },
+      );
+      await startAgentRun(manager, caller.id, "Run rm -f permission.txt", logger);
+      const pending = await vi.waitFor(() => {
+        expect(manager.getAgent(caller.id)!.pendingPermissions.size).toBe(1);
+        const requests = caller.session.getPendingPermissions();
+        expect(requests).toHaveLength(1);
+        return requests;
+      });
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        callerAgentId: caller.id,
+        serverId: "srv_origin",
+        resolveCallerContext: () => ({ lockedCwd: existingCwd }),
+        hosts: () => {
+          hostCalls++;
+          throw new Error("Restricted caller must not resolve hosts");
+        },
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+      const denied = await mcp.callTool({
+        name: "list_pending_permissions",
+        arguments: { serverId: "srv_remote" },
+      });
+      expect(denied.isError).toBe(true);
+      expect(denied.structuredContent).toEqual({
+        serverId: "srv_remote",
+        error: "This caller is restricted to its local working directory",
+      });
+      expect(hostCalls).toBe(0);
+      for (const arguments_ of [{}, { serverId: "srv_origin" }]) {
+        const response = await mcp.callTool({
+          name: "list_pending_permissions",
+          arguments: arguments_,
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(response.structuredContent).toEqual({
+          serverId: "srv_origin",
+          permissions: [{ agentId: caller.id, status: "running", request: pending[0] }],
+        });
+      }
+      expect(caller.session.getPendingPermissions()).toEqual(pending);
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+
   it.each(["concurrent", "repeated"] as const)(
     "reports %s permission requests and final completion",
     async (sequence) => {

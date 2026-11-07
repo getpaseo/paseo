@@ -13,7 +13,7 @@ import type { DaemonTransportFactory } from "@getpaseo/client/internal/daemon-cl
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
 import { OWNER_PERMISSIONS } from "../../authorization/index.js";
 import type { ConnectedHosts } from "../../connected-hosts/index.js";
-import { resolveRequiredProviderModel } from "../mcp-shared.js";
+import { resolveRequiredProviderModel, sanitizePermissionRequest } from "../mcp-shared.js";
 import { selectAgentListItems } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
 import {
@@ -48,6 +48,7 @@ export interface HostOperations {
   getStatus: HostOperation;
   getActivity: HostOperation;
   listAgents: HostOperation;
+  listPendingPermissions: HostOperation;
 }
 /** Connection authority at the host boundary, independent of child lifecycle. */
 export class HostObservationError extends Error {
@@ -340,6 +341,30 @@ export function createHostResolver(input: {
                 },
               ),
             });
+          },
+          async listPendingPermissions() {
+            const permissions = [];
+            let cursor: string | undefined;
+            do {
+              const page = await client.fetchAgents({
+                includeBackground: true,
+                filter: { includeArchived: true },
+                // Activity updates must not move agents across the pagination boundary.
+                sort: [{ key: "created_at", direction: "asc" }],
+                page: { limit: 200, cursor },
+              });
+              permissions.push(
+                ...page.entries.flatMap(({ agent }) =>
+                  agent.pendingPermissions.map((request) => ({
+                    agentId: agent.id,
+                    status: agent.status,
+                    request: sanitizePermissionRequest(request),
+                  })),
+                ),
+              );
+              cursor = page.pageInfo.nextCursor ?? undefined;
+            } while (cursor);
+            return result({ permissions });
           },
           async listWorkspaces(args) {
             const { entries } = await client.fetchWorkspaces({
