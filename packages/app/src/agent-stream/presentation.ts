@@ -50,7 +50,7 @@ const NO_COLLAPSED_TURNS: StreamPresentation["turns"] = collapseTurns({
   isLatestTurnOpen: false,
   expandedHostIds: new Set(),
   getGroupedCalls: () => undefined,
-  previousTurnsByHostId: new Map(),
+  previousSummaryRowsByHostId: new Map(),
 });
 
 /** Source messages reach plugins before display projection. */
@@ -135,7 +135,8 @@ export function createStreamPresentation() {
         isLatestTurnOpen,
         expandedHostIds: input.expandedTurnHostIds,
         getGroupedCalls: (itemId) => projection.groupsByHostId.get(itemId)?.run.calls,
-        previousTurnsByHostId: collapsed?.turnsByHostId ?? NO_COLLAPSED_TURNS.turnsByHostId,
+        previousSummaryRowsByHostId:
+          collapsed?.summaryRowsByHostId ?? NO_COLLAPSED_TURNS.summaryRowsByHostId,
       });
       collapsedSource = projection.tail;
       collapsedIsLatestTurnOpen = isLatestTurnOpen;
@@ -209,8 +210,8 @@ export function createStreamPresentation() {
           if (result.turns.nestedItemIds.has(id)) return undefined;
           const groupHost = liveGroupHosts.get(id) ?? retainedGroupHosts.get(id) ?? id;
           return (
-            result.turns.hostIdByHiddenRowId.get(id) ??
-            result.turns.hostIdByHiddenRowId.get(groupHost) ??
+            result.turns.summaryIdByHiddenRowId.get(id) ??
+            result.turns.summaryIdByHiddenRowId.get(groupHost) ??
             (groupHost === id ? undefined : groupHost)
           );
         },

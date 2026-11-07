@@ -63,6 +63,26 @@ async function rowsBetweenLatestSummaryAndReply(
   }, replyTestId);
 }
 
+/** The latest turn's summary line is a chat row of its own, sitting apart from its prompt. */
+async function expectSummaryLineSitsApartFromPrompt(page: Page) {
+  const summaryRow = () =>
+    page.evaluate(() => {
+      const latest = (testId: string) =>
+        [...document.querySelectorAll(`[data-testid="${testId}"]`)].at(-1)!;
+      const summary = latest("turn-summary");
+      const row = summary.closest("[data-message-id]")!;
+      return {
+        sharesRowWithPrompt: row.querySelector("[data-testid=user-message]") !== null,
+        gapBelowPrompt: Math.round(
+          summary.getBoundingClientRect().top -
+            latest("user-message").getBoundingClientRect().bottom,
+        ),
+      };
+    });
+  await expect.poll(summaryRow).toMatchObject({ sharesRowWithPrompt: false });
+  expect((await summaryRow()).gapBelowPrompt).toBeGreaterThan(0);
+}
+
 async function groupedToolsInsideLatestTurn(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const rows = [...document.querySelectorAll("[data-message-id]")];
@@ -208,6 +228,7 @@ export default function contribute(client) {
         /\(end of synthetic stream\)$/,
       );
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+      await expectSummaryLineSitsApartFromPrompt(page);
 
       await summary.click();
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBeGreaterThan(0);

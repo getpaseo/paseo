@@ -689,26 +689,23 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }
       return revealLoadedHistory(messageId);
     });
-    // Read through stable events so a collapse rerun does not change the renderer identity;
-    // rows whose turn state changed are revised through `historyRowRevision`.
-    const getCollapsedTurn = useStableEvent((hostId: string) =>
-      presentation.turns.turnsByHostId.get(hostId),
-    );
+    // Read through a stable event so a collapse rerun does not change the renderer identity;
+    // nested rows are revised through `historyRowRevision`.
     const getTurnIndent = useStableEvent((layoutItem: StreamLayoutItem): TurnIndent => {
       const { nestedItemIds } = presentation.turns;
-      if (nestedItemIds.has(layoutItem.item.id)) {
+      const { item } = layoutItem;
+      if (nestedItemIds.has(item.id)) {
         const below = layoutItem.belowItem;
         return below && nestedItemIds.has(below.id) ? "nested" : "lastNested";
       }
-      return getCollapsedTurn(layoutItem.item.id)?.expanded ? "openedHost" : "none";
+      return item.kind === "turn_summary" && item.expanded ? "openedHost" : "none";
     });
 
     const setToolCallGroupExpanded = toolCallExpansion.setGroupExpanded;
 
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
-        const collapsedTurn = getCollapsedTurn(item.id);
-        const message = (
+        return (
           <UserMessage
             serverId={resolvedServerId}
             agentId={agentId}
@@ -728,25 +725,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             }
           />
         );
-        if (!collapsedTurn) {
-          return message;
-        }
-        return (
-          <>
-            {message}
-            <TurnSummaryLine turn={collapsedTurn} onExpandedChange={setTurnExpanded} />
-          </>
-        );
       },
-      [
-        context.capabilities,
-        agentId,
-        client,
-        getCollapsedTurn,
-        pendingClientMessageIds,
-        resolvedServerId,
-        setTurnExpanded,
-      ],
+      [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -931,17 +911,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return renderToolCallItem(layoutItem, item);
 
           case "tool_call":
-            return (
-              <>
-                {renderToolCallItem(layoutItem, item)}
-                {getCollapsedTurn(item.id) ? (
-                  <TurnSummaryLine
-                    turn={getCollapsedTurn(item.id)!}
-                    onExpandedChange={setTurnExpanded}
-                  />
-                ) : null}
-              </>
-            );
+            return renderToolCallItem(layoutItem, item);
+
+          case "turn_summary":
+            return <TurnSummaryLine item={item} onExpandedChange={setTurnExpanded} />;
 
           case "notification":
             return <Notification level={item.level} message={item.message} />;
@@ -972,7 +945,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderToolCallItem,
-        getCollapsedTurn,
         setTurnExpanded,
         resolvedServerId,
       ],
@@ -1151,19 +1123,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
-    const { nestedItemIds, updatedHostIds: updatedTurnHostIds } = presentation.turns;
+    const { nestedItemIds } = presentation.turns;
     const historyRowRevision = useMemo(
       () => ({
         contentById: {
-          has: (id: string) =>
-            presentation.historyGroupUpdatesByHostId.has(id) || updatedTurnHostIds.has(id),
+          has: (id: string) => presentation.historyGroupUpdatesByHostId.has(id),
         },
         displayStateById: {
           // An opened lone call also marks its future group open; that row stays unrevised
           // until a group actually forms there.
           has: (id: string) =>
             (expandedToolCallGroups.has(id) && getToolCallGroup(id) !== undefined) ||
-            expandedTurnHostIds.has(id) ||
             nestedItemIds.has(id),
         },
         globalDisplayState: isMobile,
@@ -1171,11 +1141,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         expandedToolCallGroups,
         getToolCallGroup,
-        expandedTurnHostIds,
         isMobile,
         nestedItemIds,
         presentation.historyGroupUpdatesByHostId,
-        updatedTurnHostIds,
       ],
     );
 
