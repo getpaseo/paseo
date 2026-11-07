@@ -4,12 +4,14 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
 import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import {
   type ClientActivityTracker,
   createClientActivityTracker,
   DESKTOP_IDLE_POLL_INTERVAL_MS,
   HEARTBEAT_INTERVAL_MS,
 } from "./client-activity-tracker";
+import { bindWebWindowActivity, createBrowserWindowPort } from "./web-window-activity";
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -40,7 +42,7 @@ export function useClientActivity({
       deviceType: isWeb ? "web" : "mobile",
       initialFocusedAgentId: focusedAgentId,
       initialFocusedTerminalId: focusedTerminalId,
-      initialAppVisible: AppState.currentState === "active",
+      initialAppVisible: getIsAppActivelyVisible(),
       now: () => Date.now(),
       onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
     });
@@ -50,8 +52,8 @@ export function useClientActivity({
   // Track app visibility via AppState (native).
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      tracker.notifyAppVisibility(nextState === "active");
-      tracker.sendHeartbeat();
+      const { changed } = tracker.notifyAppVisibility(getIsAppActivelyVisible(nextState));
+      if (!changed) tracker.sendHeartbeat();
     });
     return () => subscription.remove();
   }, [tracker]);
@@ -60,35 +62,7 @@ export function useClientActivity({
   useEffect(() => {
     if (isNative) return;
     if (typeof document === "undefined") return;
-
-    const handleUserActivity = () => {
-      tracker.recordUserActivity();
-      tracker.maybeSendImmediateHeartbeat();
-    };
-
-    const handleVisibilityChange = () => {
-      const visible = document.visibilityState === "visible";
-      const { changed } = tracker.notifyAppVisibility(visible);
-      if (changed && visible) {
-        tracker.maybeSendImmediateHeartbeat();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleUserActivity);
-    window.addEventListener("pointerdown", handleUserActivity, { passive: true });
-    window.addEventListener("keydown", handleUserActivity);
-    window.addEventListener("wheel", handleUserActivity, { passive: true });
-    window.addEventListener("touchstart", handleUserActivity, { passive: true });
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleUserActivity);
-      window.removeEventListener("pointerdown", handleUserActivity);
-      window.removeEventListener("keydown", handleUserActivity);
-      window.removeEventListener("wheel", handleUserActivity);
-      window.removeEventListener("touchstart", handleUserActivity);
-    };
+    return bindWebWindowActivity(tracker, createBrowserWindowPort());
   }, [tracker]);
 
   // Track OS-wide activity in Electron so backgrounded desktop windows still report presence.
