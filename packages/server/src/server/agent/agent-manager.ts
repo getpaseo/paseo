@@ -4029,9 +4029,11 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
-            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
-          }
+          await this.recordInitialTimelineIfMissing(
+            managed,
+            session.initialTimeline,
+            durableTimelineHasRows,
+          );
         }
         this.refreshSessionPersistence(managed);
       }
@@ -4222,6 +4224,33 @@ export class AgentManager {
       nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
       timestamp: now.toISOString(),
     };
+  }
+
+  private async recordInitialTimelineIfMissing(
+    agent: ActiveManagedAgent,
+    initialTimeline: NonNullable<AgentSession["initialTimeline"]>,
+    durableTimelineHasRows: boolean,
+  ): Promise<void> {
+    const existingItems: AgentTimelineItem[] = [...this.timelineStore.getItems(agent.id)];
+    if (existingItems.length === 0 && durableTimelineHasRows && this.durableTimelineStore) {
+      for (const row of await this.durableTimelineStore.getCommittedRows(agent.id)) {
+        existingItems.push(row.item);
+      }
+    }
+    for (const entry of buildImportedTimelineRows(initialTimeline)) {
+      const alreadyRecorded = existingItems.some(
+        (item) =>
+          item.type === "notification" &&
+          entry.item.type === "notification" &&
+          item.level === entry.item.level &&
+          item.message === entry.item.message,
+      );
+      if (alreadyRecorded) {
+        continue;
+      }
+      this.recordTimeline(agent.id, entry.item, { timestamp: entry.timestamp });
+      existingItems.push(entry.item);
+    }
   }
 
   private prepareAgentForClosure(

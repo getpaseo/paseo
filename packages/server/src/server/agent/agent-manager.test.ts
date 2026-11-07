@@ -12687,6 +12687,19 @@ test("commits startup notices once on create and after restored history", async 
     const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
     ids.push(created.id);
     expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    await manager.reloadAgentSession(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    await manager.closeAgent(created.id);
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "existing-created",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      created.id,
+    );
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
     const resumed = await manager.resumeAgentFromPersistence({
       provider: "codex",
       sessionId: "existing",
