@@ -2542,6 +2542,13 @@ export const en = {
         description: "Walk through appearance, providers, projects and phone pairing again",
         action: "Show setup again",
       },
+      browserHomePage: {
+        title: "Home page",
+        label: "New tab page",
+        description: "Blank browser tabs open this URL. Leave empty to use the default page.",
+        accessibilityLabel: "Browser home page URL",
+        invalid: "Enter a valid http or https URL.",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

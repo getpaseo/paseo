@@ -19,6 +19,7 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
+import { parseBrowserHomeUrl } from "@/desktop/browser/store/state";
 import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
@@ -111,6 +112,8 @@ export interface AppSettings {
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
+  /** URL a new blank browser tab opens; "" = the built-in default page. */
+  browserHomeUrl: string;
 }
 
 export type AppSettingsUpdate =
@@ -167,6 +170,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
+  browserHomeUrl: "",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -293,6 +297,7 @@ const StoredAppSettingsSchema = z
         legacyPullRequestsInSidePane: undefined,
       }),
     pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
+    browserHomeUrl: z.string().transform(parseBrowserHomeUrl).pipe(z.string()).catch(""),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.

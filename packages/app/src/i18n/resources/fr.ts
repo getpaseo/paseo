@@ -2466,6 +2466,14 @@ export const fr: TranslationResources = {
           "Reprendre l'apparence, les fournisseurs, les projets et l'appairage du téléphone",
         action: "Afficher la configuration",
       },
+      browserHomePage: {
+        title: "Page d’accueil",
+        label: "Page du nouvel onglet",
+        description:
+          "Les onglets de navigateur vides ouvrent cette URL. Laissez vide pour utiliser la page par défaut.",
+        accessibilityLabel: "URL de la page d’accueil du navigateur",
+        invalid: "Saisissez une URL http ou https valide.",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",

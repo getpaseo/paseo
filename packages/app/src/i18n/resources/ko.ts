@@ -2426,6 +2426,13 @@ export const ko: TranslationResources = {
         description: "모양, 제공자, 프로젝트, 휴대폰 페어링을 다시 진행합니다",
         action: "설정 다시 보기",
       },
+      browserHomePage: {
+        title: "홈페이지",
+        label: "새 탭 페이지",
+        description: "빈 브라우저 탭이 이 URL을 엽니다. 비워 두면 기본 페이지를 사용합니다.",
+        accessibilityLabel: "브라우저 홈페이지 URL",
+        invalid: "올바른 http 또는 https URL을 입력하세요.",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",

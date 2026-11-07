@@ -2449,6 +2449,14 @@ export const ptBR: TranslationResources = {
         description: "Rever aparência, provedores, projetos e pareamento do celular",
         action: "Mostrar configuração novamente",
       },
+      browserHomePage: {
+        title: "Página inicial",
+        label: "Página de nova aba",
+        description:
+          "Abas vazias do navegador abrem esta URL. Deixe em branco para usar a página padrão.",
+        accessibilityLabel: "URL da página inicial do navegador",
+        invalid: "Digite uma URL http ou https válida.",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",

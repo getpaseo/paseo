@@ -85,7 +85,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
-import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
+import { BrowserSettingsSection } from "@/desktop/browser/settings/browser-settings-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
@@ -187,7 +187,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     labelKey: "settings.sections.browser",
     icon: Globe,
     desktopOnly: true,
-    Content: BrowserDataSection,
+    Content: BrowserSettingsSection,
   },
   {
     id: "editor",

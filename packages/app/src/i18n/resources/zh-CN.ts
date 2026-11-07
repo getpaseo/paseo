@@ -2391,6 +2391,13 @@ export const zhCN: TranslationResources = {
         description: "重新设置外观、提供方、项目和手机配对",
         action: "再次显示设置",
       },
+      browserHomePage: {
+        title: "主页",
+        label: "新标签页",
+        description: "空白浏览器标签页会打开此 URL。留空则使用默认页面。",
+        accessibilityLabel: "浏览器主页 URL",
+        invalid: "请输入有效的 http 或 https URL。",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",

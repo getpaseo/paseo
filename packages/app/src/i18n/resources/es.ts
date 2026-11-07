@@ -2465,6 +2465,14 @@ export const es: TranslationResources = {
           "Vuelve a recorrer apariencia, proveedores, proyectos y emparejamiento del teléfono",
         action: "Mostrar configuración de nuevo",
       },
+      browserHomePage: {
+        title: "Página de inicio",
+        label: "Página de nueva pestaña",
+        description:
+          "Las pestañas vacías del navegador abren esta URL. Déjala vacía para usar la página predeterminada.",
+        accessibilityLabel: "URL de la página de inicio del navegador",
+        invalid: "Introduce una URL http o https válida.",
+      },
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",
