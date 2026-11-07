@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb } from "@/constants/platform";
 import { i18n } from "@/i18n/i18next";
+import type { FileDelivery } from "@/downloads/cached-download";
+import { deliverCachedDownload } from "@/downloads/deliver";
 
 interface DownloadProgress {
   percent: number;
@@ -58,7 +59,10 @@ interface DownloadState {
     }>;
     /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
     readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
+    /** Ignored on web, where every file goes to the browser's download manager. */
+    delivery: FileDelivery;
     saveFile?: typeof saveDownloadedBytes;
+    deliverFile?: typeof deliverCachedDownload;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -85,7 +89,9 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     activeConnectionId,
     requestFileDownloadToken,
     readFile,
+    delivery,
     saveFile = saveDownloadedBytes,
+    deliverFile = deliverCachedDownload,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -134,10 +140,13 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
           fileName: resolvedFileName,
           mimeType: tokenResponse.mimeType,
         });
-        get().completeDownload(id);
         if (savedUri !== null) {
-          await shareSavedFile(savedUri, tokenResponse.mimeType, resolvedFileName);
+          await deliverFile(
+            { uri: savedUri, fileName: resolvedFileName, mimeType: tokenResponse.mimeType },
+            delivery,
+          );
         }
+        get().completeDownload(id);
         return;
       }
       if (!downloadTarget.baseUrl) {
@@ -193,9 +202,11 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         throw new Error(i18n.t("downloads.cancelled"));
       }
 
+      await deliverFile(
+        { uri: result.uri, fileName: resolvedFileName, mimeType: tokenResponse.mimeType },
+        delivery,
+      );
       get().completeDownload(id);
-
-      await shareSavedFile(result.uri, tokenResponse.mimeType, resolvedFileName);
     } catch (error) {
       const message = error instanceof Error ? error.message : i18n.t("downloads.failed");
       if (isWeb) {
@@ -351,7 +362,7 @@ function buildDownloadUrl(
 
 /**
  * Saves bytes read over the session. Web and Electron hand them to the browser's download
- * manager and return `null`; native writes the file and returns its URI for the share sheet.
+ * manager and return `null`; native writes the file to the app cache and returns its URI.
  */
 async function saveDownloadedBytes({
   bytes,
@@ -373,21 +384,6 @@ async function saveDownloadedBytes({
   const targetFile = resolveDownloadTargetFile(fileName);
   targetFile.write(bytes);
   return targetFile.uri;
-}
-
-async function shareSavedFile(
-  uri: string,
-  mimeType: string | null,
-  fileName: string,
-): Promise<void> {
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, {
-      mimeType: mimeType ?? undefined,
-      dialogTitle: fileName
-        ? i18n.t("downloads.shareFileNamed", { fileName })
-        : i18n.t("downloads.shareFile"),
-    });
-  }
 }
 
 function triggerBrowserDownload(url: string, fileName: string) {

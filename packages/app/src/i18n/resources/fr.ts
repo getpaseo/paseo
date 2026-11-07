@@ -500,6 +500,8 @@ export const fr: TranslationResources = {
       copyRelativePath: "Copier le chemin relatif",
       revealIn: "Afficher dans {{target}}",
       download: "Télécharger",
+      share: "Partager",
+      openWith: "Ouvrir avec…",
       addToChat: "Ajouter à la conversation",
       moreActions: "Plus d’actions",
       newFile: "Nouveau fichier",
@@ -2043,6 +2045,8 @@ export const fr: TranslationResources = {
     failed: "Impossible de télécharger le fichier.",
     shareFile: "Partager le fichier",
     shareFileNamed: "Partager {{fileName}}",
+    noAppToOpen: "Aucune app de cet appareil ne peut ouvrir {{fileName}}.",
+    notificationChannel: "Téléchargements",
   },
   menu: {
     backdrop: "Arrière-plan du menu",

@@ -13,6 +13,8 @@ import {
   FolderPlus,
   MessageSquarePlus,
   Pencil,
+  Share2,
+  SquareArrowOutUpRight,
   Trash2,
   Undo2,
   type LucideIcon,
@@ -24,6 +26,8 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
+import type { FileDelivery } from "@/downloads/cached-download";
+import { FILE_DELIVERIES } from "@/downloads/deliver";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
@@ -39,6 +43,16 @@ interface FileAction {
   separatorBefore?: boolean;
   testID?: string;
 }
+
+const DELIVERY_ACTIONS = {
+  download: { key: "download", icon: Download, labelKey: "workspace.fileActions.download" },
+  share: { key: "share", icon: Share2, labelKey: "workspace.fileActions.share" },
+  openWith: {
+    key: "open-with",
+    icon: SquareArrowOutUpRight,
+    labelKey: "workspace.fileActions.openWith",
+  },
+} as const satisfies Record<FileDelivery, { key: string; icon: LucideIcon; labelKey: string }>;
 
 function optionalFileAction(
   available: boolean,
@@ -59,7 +73,7 @@ interface FileActionsContextMenuContentProps {
   onCopyRelativePath?: () => void;
   onReveal?: () => void;
   revealTargetName?: string;
-  onDownload?: () => void;
+  onDownload?: (delivery: FileDelivery) => void;
   onAddToChat?: () => void;
   onNewFile?: () => void;
   onNewFolder?: () => void;
@@ -113,6 +127,19 @@ export function FileActionsContextMenuContent({
   );
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
+    const deliveryActions: FileAction[] =
+      availableFile && onDownload
+        ? FILE_DELIVERIES.map((delivery) => {
+            const { key, icon, labelKey } = DELIVERY_ACTIONS[delivery];
+            return {
+              key,
+              group: "reference",
+              label: t(labelKey),
+              icon,
+              onSelect: () => onDownload(delivery),
+            };
+          })
+        : [];
     const specs: Array<FileAction | null> = [
       onNewFile
         ? {
@@ -184,15 +211,7 @@ export function FileActionsContextMenuContent({
             onSelect: onReveal,
           }
         : null,
-      availableFile && onDownload
-        ? {
-            key: "download",
-            group: "reference",
-            label: t("workspace.fileActions.download"),
-            icon: Download,
-            onSelect: onDownload,
-          }
-        : null,
+      ...deliveryActions,
       availableFile && onAddToChat
         ? {
             key: "add-to-chat",
