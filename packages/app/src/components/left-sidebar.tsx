@@ -30,7 +30,7 @@ import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { useWindowLayout, resolveDesktopDivisionLayout, useTopBandRow } from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -58,6 +58,7 @@ import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-heade
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { isNative as platformIsNative } from "@/constants/platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
@@ -580,6 +581,14 @@ function MobileSidebar({
     closeSidebar();
   }, [closeSidebar]);
 
+  // The first nav row carries the close button; the panel slides in, so re-measure once settled.
+  const navBand = useTopBandRow({
+    offset: theme.spacing[2],
+    height: TOUCH_TARGET,
+    minimumWidth: TOUCH_TARGET * 2,
+    settled: active,
+  });
+  const navBandStyle = useMemo(() => ({ paddingTop: navBand.top }), [navBand.top]);
   const closeButton = useMemo(
     () => (
       <SidebarCloseButton
@@ -587,10 +596,10 @@ function MobileSidebar({
         onPress={closeSidebar}
         testID="sidebar-close"
         nativeID="sidebar-close"
-        style={styles.mobileCloseButton(insets.right)}
+        style={styles.mobileCloseButton(insets.right, navBand.trailing)}
       />
     ),
-    [labels.closeSidebar, closeSidebar, insets.right],
+    [labels.closeSidebar, closeSidebar, insets.right, navBand.trailing],
   );
 
   const mobileSidebarInsetStyle = useMemo(
@@ -603,11 +612,13 @@ function MobileSidebar({
   );
 
   const navRows = (
-    <SidebarNavRows
-      style={styles.mobileNavRowsGroup}
-      onBeforeNavigate={closeSidebar}
-      firstRowTrailing={closeButton}
-    />
+    <View ref={navBand.ref} onLayout={navBand.onLayout} style={navBandStyle}>
+      <SidebarNavRows
+        style={styles.mobileNavRowsGroup}
+        onBeforeNavigate={closeSidebar}
+        firstRowTrailing={closeButton}
+      />
+    </View>
   );
 
   return (
@@ -947,8 +958,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  mobileCloseButton: (rightInset: number) => ({
-    marginRight: theme.spacing[2] + rightInset,
+  mobileCloseButton: (rightInset: number, topBandTrailing: number) => ({
+    marginRight: Math.max(theme.spacing[2] + rightInset, topBandTrailing),
   }),
   desktopSidebarBorder: (hasDivision: boolean) => ({
     borderRightWidth: hasDivision ? 0 : 1,

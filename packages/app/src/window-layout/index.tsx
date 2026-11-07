@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 export { useWindowLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
+export { useTopBandRow, type TopBandRow } from "./top-band";
 export {
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,

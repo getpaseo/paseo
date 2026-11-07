@@ -16,6 +16,8 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import type { SplitPane } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { TOUCH_TARGET } from "@/components/ui/control-sizing";
+import { useTopBandRow } from "@/window-layout";
 
 interface ExplorerSidebarDockProps extends Pick<
   WorkspaceDesktopTabsRowProps,
@@ -117,48 +119,61 @@ export function ExplorerSidebarDock({
     [onCloseOtherTabs, tabs],
   );
 
+  const topBand = useTopBandRow({
+    offset: 0,
+    height: TOUCH_TARGET,
+    // Trimming the rail beside the status region truncates its tab labels; start below instead.
+    minimumWidth: Number.POSITIVE_INFINITY,
+  });
+  const railBandStyle = useMemo(
+    () => ({ paddingTop: topBand.top, paddingRight: topBand.trailing }),
+    [topBand.top, topBand.trailing],
+  );
+
   return (
     <RetainedPanel active>
       <WindowChromeRegion corners="top-right">
         <View style={styles.dock} testID="workspace-explorer-sidebar">
-          <WindowChromeSafeArea placement="inline" style={styles.tabRail}>
-            <TitlebarDragRegion />
-            <View style={styles.tabRow}>
-              <WorkspaceDesktopTabsRow
-                host="explorer"
-                launchPurpose="supporting"
-                isFocused={isWorkspaceFocused}
-                ownsKeyboardShortcuts={false}
-                setHoveredCloseTabKey={setHoveredCloseTabKey}
-                onCopyResumeCommand={onCopyResumeCommand}
-                onCopyAgentId={onCopyAgentId}
-                onCopyTerminalId={onCopyTerminalId}
-                onCopyFilePath={onCopyFilePath}
-                onReloadAgent={onReloadAgent}
-                onRenameTab={onRenameTab}
-                onCloseTabsToLeft={handleCloseTabsToLeft}
-                onCloseTabsToRight={handleCloseTabsToRight}
-                onCloseOtherTabs={handleCloseOtherTabs}
-                focusModeEnabled={false}
-                onExitFocusMode={onExitFocusMode}
-                externalDndContext={externalDndContext}
-                paneId={pane.id}
-                tabs={tabItems}
-                normalizedServerId={normalizedServerId}
-                normalizedWorkspaceId={normalizedWorkspaceId}
-                activeDragTabId={activeDragTabId}
-                tabDropPreviewIndex={
-                  tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
-                }
-                onNavigateTab={handleSelectTab}
-                onCloseTab={onCloseTab}
-                onCreateNewTab={onCreateNewTab}
-                onReorderTabs={handleReorderTabs}
-              />
-            </View>
-            {headerAction ? <View style={styles.headerAction}>{headerAction}</View> : null}
-            <View pointerEvents="none" style={styles.tabRailDivider} />
-          </WindowChromeSafeArea>
+          <View ref={topBand.ref} onLayout={topBand.onLayout} style={railBandStyle}>
+            <WindowChromeSafeArea placement="inline" style={styles.tabRail}>
+              <TitlebarDragRegion />
+              <View style={styles.tabRow}>
+                <WorkspaceDesktopTabsRow
+                  host="explorer"
+                  launchPurpose="supporting"
+                  isFocused={isWorkspaceFocused}
+                  ownsKeyboardShortcuts={false}
+                  setHoveredCloseTabKey={setHoveredCloseTabKey}
+                  onCopyResumeCommand={onCopyResumeCommand}
+                  onCopyAgentId={onCopyAgentId}
+                  onCopyTerminalId={onCopyTerminalId}
+                  onCopyFilePath={onCopyFilePath}
+                  onReloadAgent={onReloadAgent}
+                  onRenameTab={onRenameTab}
+                  onCloseTabsToLeft={handleCloseTabsToLeft}
+                  onCloseTabsToRight={handleCloseTabsToRight}
+                  onCloseOtherTabs={handleCloseOtherTabs}
+                  focusModeEnabled={false}
+                  onExitFocusMode={onExitFocusMode}
+                  externalDndContext={externalDndContext}
+                  paneId={pane.id}
+                  tabs={tabItems}
+                  normalizedServerId={normalizedServerId}
+                  normalizedWorkspaceId={normalizedWorkspaceId}
+                  activeDragTabId={activeDragTabId}
+                  tabDropPreviewIndex={
+                    tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
+                  }
+                  onNavigateTab={handleSelectTab}
+                  onCloseTab={onCloseTab}
+                  onCreateNewTab={onCreateNewTab}
+                  onReorderTabs={handleReorderTabs}
+                />
+              </View>
+              {headerAction ? <View style={styles.headerAction}>{headerAction}</View> : null}
+              <View pointerEvents="none" style={styles.tabRailDivider} />
+            </WindowChromeSafeArea>
+          </View>
           <View style={styles.content}>
             <WorkspacePanelHost
               paneId={pane.id}

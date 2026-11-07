@@ -13,11 +13,14 @@ import {
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
 import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import { SPACING } from "@/styles/theme";
+import { useTopBandRow } from "@/window-layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
 const NO_SHORTCUT: ShortcutKey[] = [];
+const ROW_PADDING = SPACING[3];
 
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
@@ -51,21 +54,29 @@ export function CompactHeader({
   actions,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
+  // The trailing side gives way to the occlusion, so it needs no padding of its own.
+  const topBand = useTopBandRow({
+    offset: insets.top + HEADER_TOP_PADDING_MOBILE,
+    height: HEADER_INNER_HEIGHT_MOBILE,
+    // The header stays in the band in every sidebar state; the title gives up width instead.
+    minimumWidth: 0,
+  });
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE + topBand.top,
+        paddingRight: Math.max(ROW_PADDING, topBand.trailing),
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [insets.top, insets.left, insets.right],
+    [insets.top, insets.left, insets.right, topBand.top, topBand.trailing],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
-      <View style={rootStyle}>
+      <View ref={topBand.ref} onLayout={topBand.onLayout} style={rootStyle}>
         <View style={styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
@@ -140,7 +151,7 @@ function BackButton({ onBack }: { onBack?: () => void }) {
 
 const styles = StyleSheet.create((theme) => ({
   root: {
-    paddingHorizontal: theme.spacing[3],
+    paddingLeft: ROW_PADDING,
   },
   row: {
     height: HEADER_INNER_HEIGHT_MOBILE,
