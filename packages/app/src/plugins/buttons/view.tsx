@@ -48,6 +48,7 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
+import { pluginButtonTestId } from "./test-id";
 import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
@@ -136,19 +137,20 @@ function ButtonMenuItem({
   pageId: string;
 }) {
   const select = useCallback(() => pressButton(view, path), [view, path]);
+  const testID = pluginButtonTestId(view.entry.installation.id, view.entry.id);
   const leading = useMemo(
     () => (icon ? <ButtonIcon view={view} icon={icon} /> : null),
     [icon, view],
   );
   if (behavior.kind !== "action") {
     return (
-      <MenuSubTrigger id={pageId} leading={leading} disabled={disabled}>
+      <MenuSubTrigger id={pageId} testID={testID} leading={leading} disabled={disabled}>
         {title}
       </MenuSubTrigger>
     );
   }
   return (
-    <MenuItem onSelect={select} leading={leading} disabled={disabled}>
+    <MenuItem testID={testID} onSelect={select} leading={leading} disabled={disabled}>
       {title}
     </MenuItem>
   );
@@ -297,8 +299,11 @@ function ButtonControl({ view }: { view: ButtonView }) {
     () => ({ busy: entry.pending, disabled }),
     [entry.pending, disabled],
   );
+  // Stable semantic hook for app-wide styling plugins; action and menu buttons share it.
+  const testID = pluginButtonTestId(entry.installation.id, entry.id);
   const trigger = expanded ? (
     <MenuTrigger
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
@@ -309,6 +314,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
     </MenuTrigger>
   ) : (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
