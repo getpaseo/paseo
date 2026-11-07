@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, type ReactNode } from "react";
-import { View, type LayoutChangeEvent, type ViewStyle } from "react-native";
+import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -8,36 +8,49 @@ import { EdgeFade } from "@/components/ui/edge-fade";
 import { useProviderIcon } from "@/components/provider-icons";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { isNative } from "@/constants/platform";
 
 const PREVIEW_HEIGHT = 240;
-// Native View still clips with "scroll", but Yoga measures its children without
-// the height cap. "hidden" caps the measured body too, hiding the expand control.
+// A plain View's overflow does not cap its layout height on web, so the bubble
+// paints only part of the text and the last line sits outside the background.
+// ScrollView reports the capped height to its parent while its content keeps
+// its full height for the overflow measurement. The fade stays on the sized
+// wrapper, so bottom: 0 is the visible edge rather than the full content.
 const previewStyle: ViewStyle = {
   maxHeight: PREVIEW_HEIGHT,
-  overflow: isNative ? "scroll" : "hidden",
 };
 
 export function MessagePreview({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
-  const measure = useCallback(
-    (event: LayoutChangeEvent) => setOverflowing(event.nativeEvent.layout.height > PREVIEW_HEIGHT),
-    [],
-  );
+  const measure = useCallback((event: LayoutChangeEvent) => {
+    setOverflowing(event.nativeEvent.layout.height > PREVIEW_HEIGHT);
+  }, []);
   const toggle = useCallback(() => setExpanded((value) => !value), []);
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   return (
     <>
-      <View style={!expanded && previewStyle}>
-        <View style={styles.body} onLayout={measure}>
-          {children}
+      {expanded ? (
+        <View>
+          <View style={styles.body}>{children}</View>
         </View>
-        {overflowing && !expanded ? (
-          <EdgeFade edge="bottom" solidFraction={0} backdrop="surface3" style={styles.fade} />
-        ) : null}
-      </View>
+      ) : (
+        <View>
+          <ScrollView
+            style={previewStyle}
+            scrollEnabled={false}
+            showsVerticalScrollIndicator={false}
+            testID="user-message-preview"
+          >
+            <View style={styles.body} onLayout={measure}>
+              {children}
+            </View>
+          </ScrollView>
+          {overflowing ? (
+            <EdgeFade edge="bottom" solidFraction={0} backdrop="surface3" style={styles.fade} />
+          ) : null}
+        </View>
+      )}
       {overflowing ? (
         <Button
           variant="ghost"
