@@ -806,12 +806,16 @@ describe("sendQueuedComposerMessageNow", () => {
     expect(submitted).toEqual([]);
   });
 
-  it("removes the queued entry and submits its text + attachments", async () => {
+  it("removes the queued entry and submits its messageId + text + attachments", async () => {
     const review = reviewWorkspaceAttachment("Queued for send.");
     const queue = createFakeQueue(
       new Map([["agent", [{ id: "msg-1", text: "send me", attachments: [review] }]]]),
     );
-    const submitted: Array<{ text: string; attachments: ComposerAttachment[] }> = [];
+    const submitted: Array<{
+      messageId: string;
+      text: string;
+      attachments: ComposerAttachment[];
+    }> = [];
     const result = await sendQueuedComposerMessageNow({
       agentId: "agent",
       messageId: "msg-1",
@@ -822,7 +826,65 @@ describe("sendQueuedComposerMessageNow", () => {
     });
     expect(result).toEqual({ status: "submitted" });
     expect(queue.state.get("agent")).toEqual([]);
-    expect(submitted).toEqual([{ text: "send me", attachments: [review] }]);
+    expect(submitted).toEqual([{ messageId: "msg-1", text: "send me", attachments: [review] }]);
+  });
+
+  it("preserves the queued messageId as clientMessageId across failed drain retries", async () => {
+    const queue = createFakeQueue(
+      new Map([["agent", [{ id: "msg-queued-1", text: "retry me", attachments: [] }]]]),
+    );
+    const stream = createFakeStream();
+    const sentIds: string[] = [];
+    let shouldFail = true;
+    const client: ComposerSendClient = {
+      sendAgentMessage: async (_agentId, _text, options) => {
+        sentIds.push(options.messageId);
+        if (shouldFail) {
+          shouldFail = false;
+          throw new Error("Timeout waiting for message (60000ms)");
+        }
+      },
+      uploadFile: async () => ({ requestId: "req", file: null, error: "unused" }),
+    };
+
+    const submitMessage = ({
+      messageId,
+      text,
+      attachments,
+    }: {
+      messageId: string;
+      text: string;
+      attachments: ComposerAttachment[];
+    }) =>
+      dispatchComposerAgentMessage({
+        client,
+        agentId: "agent",
+        clientMessageId: messageId,
+        text,
+        attachments,
+        encodeImages: passthroughEncodeImages,
+        submission: stream,
+      });
+
+    const first = await sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: "msg-queued-1",
+      queue,
+      submitMessage,
+    });
+    expect(first).toEqual({
+      status: "failed",
+      errorMessage: "Timeout waiting for message (60000ms)",
+    });
+
+    const second = await sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: "msg-queued-1",
+      queue,
+      submitMessage,
+    });
+    expect(second).toEqual({ status: "submitted" });
+    expect(sentIds).toEqual(["msg-queued-1", "msg-queued-1"]);
   });
 
   it("restores the queued entry to the front and surfaces the error message on failure", async () => {

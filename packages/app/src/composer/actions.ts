@@ -188,6 +188,7 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
 export interface DispatchComposerAgentMessageInput {
   client: ComposerSendClient;
   agentId: string;
+  clientMessageId?: string;
   text: string;
   attachments: ComposerAttachment[];
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
@@ -205,7 +206,7 @@ export async function dispatchComposerAgentMessage(
   const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
     format: input.attachmentSubmitFormat,
   });
-  const clientMessageId = generateMessageId();
+  const clientMessageId = input.clientMessageId ?? generateMessageId();
   const userMessage = createUserMessage({
     clientMessageId,
     text: input.text,
@@ -295,7 +296,11 @@ export interface SendQueuedComposerMessageNowInput {
   agentId: string;
   messageId: string;
   queue: QueueWriter;
-  submitMessage: (input: { text: string; attachments: ComposerAttachment[] }) => Promise<void>;
+  submitMessage: (input: {
+    messageId: string;
+    text: string;
+    attachments: ComposerAttachment[];
+  }) => Promise<void>;
   failedToSendMessage?: string;
 }
 
@@ -318,7 +323,11 @@ export async function sendQueuedComposerMessageNow(
     return next;
   });
   try {
-    await input.submitMessage({ text: item.text, attachments: item.attachments });
+    await input.submitMessage({
+      messageId: item.id,
+      text: item.text,
+      attachments: item.attachments,
+    });
     return { status: "submitted" };
   } catch (error) {
     input.queue.write((prev) => {

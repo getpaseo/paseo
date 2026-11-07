@@ -1589,7 +1589,12 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
+  await expect(responsePromise).rejects.toMatchObject({
+    message: "Timeout waiting for message (60000ms)",
+    code: "DAEMON_REQUEST_TIMEOUT",
+    outcome: "unknown",
+    serverId: "srv_test_1",
+  });
 });
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {

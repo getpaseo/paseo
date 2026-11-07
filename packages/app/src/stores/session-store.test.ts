@@ -849,3 +849,42 @@ describe("removeWorkspace", () => {
     expect(after.workspaces).toBe(before.workspaces);
   });
 });
+
+describe("acknowledgedClientMessageIds pruning", () => {
+  it("prunes acknowledged queued messages in setAgentStreamState and applyAgentTimelineResponseState", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setQueuedMessages(
+      "test-server",
+      new Map([
+        [
+          "agent-1",
+          [
+            { id: "cmsg-1", text: "first", attachments: [] },
+            { id: "cmsg-2", text: "second", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+
+    store.setAgentStreamState("test-server", "agent-1", {
+      acknowledgedClientMessageIds: ["cmsg-1"],
+    });
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.queuedMessages.get("agent-1"),
+    ).toEqual([{ id: "cmsg-2", text: "second", attachments: [] }]);
+
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [],
+      head: [],
+      range: null,
+      older: "unchanged",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: ["cmsg-2"],
+    });
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.queuedMessages.get("agent-1"),
+    ).toBeUndefined();
+  });
+});

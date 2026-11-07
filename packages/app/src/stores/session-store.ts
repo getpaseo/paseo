@@ -732,6 +732,29 @@ function isSessionServerInfoUnchanged(input: {
   );
 }
 
+function pruneAcknowledgedQueuedMessages(
+  queuedMessages: Map<
+    string,
+    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
+  >,
+  agentId: string,
+  acknowledgedIds: readonly string[],
+): Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>> {
+  if (acknowledgedIds.length === 0) return queuedMessages;
+  const current = queuedMessages.get(agentId);
+  if (!current?.length) return queuedMessages;
+  const acknowledgedSet = new Set(acknowledgedIds);
+  const filtered = current.filter((item) => !acknowledgedSet.has(item.id));
+  if (filtered.length === current.length) return queuedMessages;
+  const next = new Map(queuedMessages);
+  if (filtered.length > 0) {
+    next.set(agentId, filtered);
+  } else {
+    next.delete(agentId);
+  }
+  return next;
+}
+
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => {
     const commitActivityUpdates: AgentLastActivityCommitter = (updates) => {
@@ -1041,16 +1064,29 @@ export const useSessionStore = create<SessionStore>()(
             }
           }
 
+          const acknowledgedIds = state.acknowledgedClientMessageIds ?? [];
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const observedSubmissions = observeMessageSubmissionCanonical(
             currentSubmissions,
-            state.acknowledgedClientMessageIds ?? [],
+            acknowledgedIds,
           );
           const changedSubmissions = observedSubmissions !== currentSubmissions;
+          const queuedMessages = pruneAcknowledgedQueuedMessages(
+            session.queuedMessages,
+            agentId,
+            acknowledgedIds,
+          );
+          const changedQueuedMessages = queuedMessages !== session.queuedMessages;
           const agentTasks = updateAgentTasks(session.agentTasks, agentId, state.taskSnapshot);
           const changedTasks = agentTasks !== session.agentTasks;
 
-          if (!changedTail && !changedHead && !changedSubmissions && !changedTasks) {
+          if (
+            !changedTail &&
+            !changedHead &&
+            !changedSubmissions &&
+            !changedQueuedMessages &&
+            !changedTasks
+          ) {
             return prev;
           }
 
@@ -1074,6 +1110,7 @@ export const useSessionStore = create<SessionStore>()(
                 agentStreamHead: nextHead,
                 agentTasks,
                 messageSubmissions,
+                queuedMessages,
               },
             },
           };
@@ -1447,6 +1484,11 @@ export const useSessionStore = create<SessionStore>()(
               messageSubmissions.delete(agentId);
             }
           }
+          const queuedMessages = pruneAcknowledgedQueuedMessages(
+            session.queuedMessages,
+            agentId,
+            state.acknowledgedClientMessageIds,
+          );
           if (state.synchronized) {
             nextAuthoritative.set(agentId, true);
             nextSyncGeneration.set(agentId, session.historySyncGeneration);
@@ -1471,6 +1513,7 @@ export const useSessionStore = create<SessionStore>()(
                 agentAuthoritativeHistoryApplied: nextAuthoritative,
                 agentHistorySyncGeneration: nextSyncGeneration,
                 messageSubmissions,
+                queuedMessages,
               },
             },
           };

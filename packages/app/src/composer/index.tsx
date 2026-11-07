@@ -82,6 +82,7 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
+import { generateMessageId } from "@/types/stream";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/agent-commands";
 import { encodeImages } from "@/utils/encode-images";
@@ -1487,12 +1488,18 @@ function ComposerContentImpl({
   const { pickImages } = useImageAttachmentPicker();
   const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
+  const failedDirectSendRetryRef = useRef<{
+    agentId: string;
+    text: string;
+    clientMessageId: string;
+  } | null>(null);
   const sendAgentMessageRef = useRef<
     | ((
         agentId: string,
         text: string,
         attachments: ComposerAttachment[],
         activeTurnBehavior: "interrupt" | "steer",
+        clientMessageId?: string,
       ) => Promise<void>)
     | null
   >(null);
@@ -1546,7 +1553,7 @@ function ComposerContentImpl({
   }, [focusInput, onFocusInput]);
 
   const submitMessage = useCallback(
-    async (text: string, submitAttachments: ComposerAttachment[]) => {
+    async (text: string, submitAttachments: ComposerAttachment[], messageId?: string) => {
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
@@ -1560,6 +1567,7 @@ function ComposerContentImpl({
         text,
         submitAttachments,
         appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+        messageId,
       );
     },
     [appSettings.sendBehavior, cwd, onMessageSent, t],
@@ -1575,29 +1583,51 @@ function ComposerContentImpl({
       text: string,
       sendAttachments: ComposerAttachment[],
       activeTurnBehavior: "interrupt" | "steer",
+      explicitClientMessageId?: string,
     ) => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await dispatchComposerAgentMessage({
-        client,
-        agentId: targetAgentId,
-        text,
-        attachments: sendAttachments,
-        attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
-        }),
-        encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
-        activeTurnBehavior,
-        activeTurnId:
-          activeTurnBehavior === "steer"
-            ? (selectAgentTurnPresentation(
-                useSessionStore.getState().sessions[serverId],
-                targetAgentId,
-              ).turnId ?? undefined)
-            : undefined,
-      });
+      const pendingRetry = failedDirectSendRetryRef.current;
+      const resolvedClientMessageId =
+        explicitClientMessageId ??
+        (pendingRetry?.agentId === targetAgentId && pendingRetry.text === text
+          ? pendingRetry.clientMessageId
+          : generateMessageId());
+      try {
+        await dispatchComposerAgentMessage({
+          client,
+          agentId: targetAgentId,
+          clientMessageId: resolvedClientMessageId,
+          text,
+          attachments: sendAttachments,
+          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+          encodeImages,
+          submission: createMessageSubmissionWriter(serverId),
+          activeTurnBehavior,
+          activeTurnId:
+            activeTurnBehavior === "steer"
+              ? (selectAgentTurnPresentation(
+                  useSessionStore.getState().sessions[serverId],
+                  targetAgentId,
+                ).turnId ?? undefined)
+              : undefined,
+        });
+        if (!explicitClientMessageId) {
+          failedDirectSendRetryRef.current = null;
+        }
+      } catch (error) {
+        if (!explicitClientMessageId) {
+          failedDirectSendRetryRef.current = {
+            agentId: targetAgentId,
+            text,
+            clientMessageId: resolvedClientMessageId,
+          };
+        }
+        throw error;
+      }
       onAttentionPromptSend?.();
     };
   }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
@@ -1963,8 +1993,8 @@ function ComposerContentImpl({
         agentId,
         messageId: id,
         queue: queueWriter,
-        submitMessage: ({ text, attachments: queuedAttachments }) =>
-          submitMessage(text, queuedAttachments),
+        submitMessage: ({ messageId: queuedMessageId, text, attachments: queuedAttachments }) =>
+          submitMessage(text, queuedAttachments, queuedMessageId),
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
