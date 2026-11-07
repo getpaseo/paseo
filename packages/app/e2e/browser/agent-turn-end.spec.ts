@@ -198,3 +198,74 @@ test.describe("Turn end", () => {
     expectSteadyTurnEnd(await recordTurnEnd(page, agent, input), input);
   });
 });
+
+async function expectTimingInsideFooter(page: Page): Promise<void> {
+  const label = page.getByRole("button", { name: /^Worked for/ }).last();
+  const paintedLines = await label.evaluate((element) => {
+    const labelBounds = element.getBoundingClientRect();
+    const rowBounds = element.closest('[data-testid="turn-footer"]')!.getBoundingClientRect();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const lines: boolean[] = [];
+    while (walker.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(walker.currentNode);
+      for (const rect of range.getClientRects()) {
+        lines.push(
+          rect.left >= Math.max(rowBounds.left, labelBounds.left) - 0.5 &&
+            rect.right <= Math.min(rowBounds.right, labelBounds.right) + 0.5 &&
+            rect.top >= Math.max(rowBounds.top, labelBounds.top) - 0.5 &&
+            rect.bottom <= Math.min(rowBounds.bottom, labelBounds.bottom) + 0.5,
+        );
+      }
+    }
+    return lines;
+  });
+  expect(paintedLines.length).toBeGreaterThan(0);
+  expect(paintedLines.every(Boolean)).toBe(true);
+}
+
+async function expectFooterWithinWidth(page: Page, width: number): Promise<void> {
+  const footer = page.getByTestId("turn-footer").last();
+  await footer.evaluate((element, availableWidth) => {
+    element.style.width = `${availableWidth}px`;
+  }, width);
+  const label = page.getByRole("button", { name: /^Worked for/ }).last();
+  await expect(label).toBeVisible();
+  await expectTimingInsideFooter(page);
+  const controls = footer.getByRole("button", { name: /Copy turn|Fork chat/ });
+  const before = await controls.evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y };
+    }),
+  );
+  const footerBefore = await footer.boundingBox();
+  await label.hover();
+  await expect(label).toContainText(/\d:\d\d/);
+  expect(
+    await controls.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y };
+      }),
+    ),
+  ).toEqual(before);
+  expect(await footer.boundingBox()).toMatchObject({
+    x: footerBefore!.x,
+    y: footerBefore!.y,
+    width: footerBefore!.width,
+  });
+  await expectTimingInsideFooter(page);
+  await page.mouse.move(0, 0);
+  await expect(label).toContainText("Worked for");
+}
+
+test("footer timing fits the chat column and swapping labels keeps controls in place", async ({
+  page,
+  agent,
+}) => {
+  await openAgentRoute(page, agent);
+  await expectFooterWithinWidth(page, 140);
+  await expectFooterWithinWidth(page, 300);
+  await expectFooterWithinWidth(page, 880);
+});
