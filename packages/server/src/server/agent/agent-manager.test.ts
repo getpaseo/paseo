@@ -12768,6 +12768,34 @@ test("commits startup notices once on create and after restored history", async 
   }
 });
 
+test("commits distinct new startup rows even when notification text matches", async () => {
+  const notice = { type: "notification", level: "warning", message: "Runtime warning" } as const;
+  const initialTimeline = [
+    { item: notice, timestamp: "2026-11-07T00:00:00.000Z" },
+    { item: notice, timestamp: "2026-11-07T00:01:00.000Z" },
+  ];
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new (class extends TestAgentSession {
+        readonly initialTimeline = initialTimeline;
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { [client.provider]: client }, logger });
+  const agent = await manager.createAgent(
+    { provider: client.provider, cwd: tmpdir() },
+    undefined,
+    {},
+  );
+  try {
+    expect(
+      (await manager.getTimelineRows(agent.id)).map(({ item, timestamp }) => ({ item, timestamp })),
+    ).toEqual(initialTimeline);
+  } finally {
+    await manager.closeAgent(agent.id);
+  }
+});
+
 test("failed startup history closes the session without registering an agent", async () => {
   let closed = false;
   class FailingHistorySession extends TestAgentSession {
