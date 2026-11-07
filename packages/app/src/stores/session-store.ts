@@ -7,6 +7,7 @@ import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
   handoffCreatedAgentUserMessageToStream,
+  isUnreconciledLocalUserMessage,
   removeSubmittedUserMessage,
   type StreamItem,
   type TodoEntry,
@@ -21,8 +22,8 @@ import {
   type MessageSubmissionRecord,
   type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
+import type { QueuedComposerMessage } from "@/composer/actions";
 import type { PendingPermission } from "@/types/shared";
-import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
@@ -450,10 +451,7 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Queued messages
-  queuedMessages: Map<
-    string,
-    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
-  >;
+  queuedMessages: Map<string, QueuedComposerMessage[]>;
 }
 
 // Global store state
@@ -628,10 +626,8 @@ interface SessionStoreActions {
   setQueuedMessages: (
     serverId: string,
     value:
-      | Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>
-      | ((
-          prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
-        ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
+      | Map<string, QueuedComposerMessage[]>
+      | ((prev: Map<string, QueuedComposerMessage[]>) => Map<string, QueuedComposerMessage[]>),
   ) => void;
 
   // Hydration
@@ -733,13 +729,10 @@ function isSessionServerInfoUnchanged(input: {
 }
 
 function pruneAcknowledgedQueuedMessages(
-  queuedMessages: Map<
-    string,
-    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
-  >,
+  queuedMessages: Map<string, QueuedComposerMessage[]>,
   agentId: string,
   acknowledgedIds: readonly string[],
-): Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>> {
+): Map<string, QueuedComposerMessage[]> {
   if (acknowledgedIds.length === 0) return queuedMessages;
   const current = queuedMessages.get(agentId);
   if (!current?.length) return queuedMessages;
@@ -1126,15 +1119,27 @@ export const useSessionStore = create<SessionStore>()(
           }
           const currentTail = session.agentStreamTail.get(agentId) ?? [];
           const currentHead = session.agentStreamHead.get(agentId) ?? [];
+          const existingMessage = [...currentTail, ...currentHead].find(
+            (item): item is UserMessageItem =>
+              item.kind === "user_message" && item.clientMessageId === message.clientMessageId,
+          );
           const stream = appendSubmittedUserMessage({
             tail: currentTail,
             head: currentHead,
             message,
           });
-          const submissions = beginMessageSubmission(
-            session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId },
-          );
+          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
+          const openedSubmissions = currentSubmissions.some(
+            (submission) => submission.clientMessageId === message.clientMessageId,
+          )
+            ? currentSubmissions
+            : beginMessageSubmission(currentSubmissions, {
+                clientMessageId: message.clientMessageId,
+              });
+          const submissions =
+            existingMessage && !isUnreconciledLocalUserMessage(existingMessage)
+              ? observeMessageSubmissionCanonical(openedSubmissions, [message.clientMessageId])
+              : openedSubmissions;
           const messageSubmissions = new Map(session.messageSubmissions);
           messageSubmissions.set(agentId, submissions);
           return {

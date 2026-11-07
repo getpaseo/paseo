@@ -1,3 +1,4 @@
+import equal from "fast-deep-equal";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1491,6 +1492,8 @@ function ComposerContentImpl({
   const failedDirectSendRetryRef = useRef<{
     agentId: string;
     text: string;
+    attachments: ComposerAttachment[];
+    activeTurnBehavior: "interrupt" | "steer";
     clientMessageId: string;
   } | null>(null);
   const sendAgentMessageRef = useRef<
@@ -1591,7 +1594,10 @@ function ComposerContentImpl({
       const pendingRetry = failedDirectSendRetryRef.current;
       const resolvedClientMessageId =
         explicitClientMessageId ??
-        (pendingRetry?.agentId === targetAgentId && pendingRetry.text === text
+        (pendingRetry?.agentId === targetAgentId &&
+        pendingRetry.text === text &&
+        pendingRetry.activeTurnBehavior === activeTurnBehavior &&
+        equal(pendingRetry.attachments, sendAttachments)
           ? pendingRetry.clientMessageId
           : generateMessageId());
       try {
@@ -1623,6 +1629,8 @@ function ComposerContentImpl({
           failedDirectSendRetryRef.current = {
             agentId: targetAgentId,
             text,
+            attachments: sendAttachments,
+            activeTurnBehavior,
             clientMessageId: resolvedClientMessageId,
           };
         }
@@ -1669,14 +1677,25 @@ function ComposerContentImpl({
 
   const queueMessage = useCallback(
     (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      const pendingRetry = failedDirectSendRetryRef.current;
+      const retryMessageId =
+        pendingRetry?.agentId === agentId &&
+        pendingRetry.text === queuedMessage.trim() &&
+        equal(pendingRetry.attachments, queuedAttachments)
+          ? pendingRetry.clientMessageId
+          : undefined;
       const result = queueComposerMessage({
         agentId,
+        id: retryMessageId,
         text: queuedMessage,
         attachments: queuedAttachments,
         queue: queueWriter,
       });
       if (!result.queued) return;
 
+      if (retryMessageId) {
+        failedDirectSendRetryRef.current = null;
+      }
       replaceUserInput("");
       setSelectedAttachments([]);
       resetSuppression();

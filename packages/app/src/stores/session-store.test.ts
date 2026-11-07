@@ -887,4 +887,36 @@ describe("acknowledgedClientMessageIds pruning", () => {
       useSessionStore.getState().sessions["test-server"]?.queuedMessages.get("agent-1"),
     ).toBeUndefined();
   });
+
+  it("allows retrying a message submission after its canonical user message is already in the stream", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    const message = submittedMessage("cmsg-retry-1");
+
+    store.beginAgentMessageSubmission("test-server", "agent-1", message);
+    store.setAgentStreamState("test-server", "agent-1", {
+      tail: [
+        {
+          ...message,
+          messageId: "server-msg-1",
+          timelineCursor: { epoch: "epoch-1", seq: 1 },
+        },
+      ],
+      acknowledgedClientMessageIds: ["cmsg-retry-1"],
+    });
+    expect(store.rejectAgentMessageSubmission("test-server", "agent-1", "cmsg-retry-1")).toBe(
+      "accepted",
+    );
+
+    expect(() =>
+      store.beginAgentMessageSubmission("test-server", "agent-1", message),
+    ).not.toThrow();
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.agentStreamTail.get("agent-1"),
+    ).toHaveLength(1);
+    store.acceptAgentMessageSubmission("test-server", "agent-1", "cmsg-retry-1");
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.messageSubmissions.get("agent-1"),
+    ).toBeUndefined();
+  });
 });

@@ -235,6 +235,7 @@ export async function dispatchComposerAgentMessage(
 
 export interface QueueComposerMessageInput {
   agentId: string;
+  id?: string;
   text: string;
   attachments: ComposerAttachment[];
   queue: QueueWriter;
@@ -250,7 +251,7 @@ export function queueComposerMessage(input: QueueComposerMessageInput): QueueCom
     return { queued: null };
   }
   const item: QueuedComposerMessage = {
-    id: generateMessageId(),
+    id: input.id ?? generateMessageId(),
     text: trimmed,
     attachments: input.attachments,
   };

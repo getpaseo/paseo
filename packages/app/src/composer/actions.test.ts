@@ -723,6 +723,22 @@ describe("queueComposerMessage", () => {
     ]);
   });
 
+  it("preserves an explicit retry id when queueing a failed direct send", () => {
+    const queue = createFakeQueue();
+    const result = queueComposerMessage({
+      agentId: "agent",
+      id: "retry-msg-1",
+      text: "  draft  ",
+      attachments: [],
+      queue,
+    });
+
+    expect(result.queued?.id).toBe("retry-msg-1");
+    expect(queue.state.get("agent")).toEqual([
+      { id: "retry-msg-1", text: "draft", attachments: [] },
+    ]);
+  });
+
   it("does not queue an empty message with no attachments", () => {
     const queue = createFakeQueue();
     const result = queueComposerMessage({
