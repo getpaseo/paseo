@@ -88,6 +88,7 @@ import {
   OpenCodeEventConsumer,
   type OpenCodeEventStreamDiagnostics,
   type OpenCodeEventSource,
+  type OpenCodeEventSourceHandle,
   type OpenCodeEventSourceInput,
 } from "./opencode/event-consumer.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
@@ -139,6 +140,16 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindFiles: false,
   supportsRewindBoth: true,
 };
+
+export function createOpenCodeEventSource(
+  createClient: (baseUrl: string) => OpencodeClient,
+  options: ConstructorParameters<typeof OpenCodeEventConsumer>[0],
+  Consumer: new (
+    options: ConstructorParameters<typeof OpenCodeEventConsumer>[0],
+  ) => OpenCodeEventSourceHandle = OpenCodeEventConsumer,
+): OpenCodeEventSourceHandle {
+  return new Consumer({ ...options, createClient });
+}
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
@@ -1433,14 +1444,11 @@ export class OpenCodeAgentClient implements AgentClient {
       OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
         managedProcesses: deps.managedProcesses,
         resolveHomeDir: deps.resolveHomeDir,
-        createEventSource: ({ serverUrl, processExit, listening, logger: eventLogger }) =>
-          new OpenCodeEventConsumer({
-            serverUrl,
-            processExit,
-            listening,
-            logger: eventLogger,
-            createClient: (baseUrl) => this.createOpenCodeClient({ baseUrl, directory: "" }),
-          }),
+        createEventSource: (options) =>
+          createOpenCodeEventSource(
+            (baseUrl) => this.createOpenCodeClient({ baseUrl, directory: "" }),
+            options,
+          ),
         decorateServerEnv: this.bridge
           ? (env) => this.bridge?.decorateServerEnv(env) ?? env
           : undefined,
@@ -3526,8 +3534,12 @@ class OpenCodeAgentSession implements AgentSession {
    * so the session does not keep calling a port nothing listens on.
    */
   private async reconnectIfServerExited(): Promise<void> {
+    if (this.reconnection) {
+      await this.reconnection;
+      return;
+    }
     if (!this.serverExited || !this.connectServer) return;
-    this.reconnection ??= this.reconnect(this.connectServer).finally(() => {
+    this.reconnection = this.reconnect(this.connectServer).finally(() => {
       this.reconnection = null;
     });
     await this.reconnection;
@@ -3535,6 +3547,9 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async reconnect(connectServer: () => Promise<OpenCodeServerConnection>): Promise<void> {
     const exited = this.server;
+    await exited.release();
+    if (this.closed) return;
+
     const next = await connectServer();
     if (this.closed) {
       await next.release();
@@ -3550,15 +3565,15 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.server = next;
-    this.serverExited = false;
     this.recoveryAbortController = new AbortController();
     this.mcpSetup = null;
     this.subscribeServerEvents();
+    // Do not clear an exit from the replacement: this reset happens before any further await.
+    this.serverExited = false;
     this.logger.info(
       { sessionId: this.sessionId, previousUrl: exited.url, url: next.url },
       "OpenCode session moved to the current server after its server exited",
     );
-    await exited.release();
   }
 
   get id(): string | null {

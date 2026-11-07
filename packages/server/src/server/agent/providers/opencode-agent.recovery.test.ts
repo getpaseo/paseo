@@ -6,12 +6,40 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import { OpenCodeAgentClient } from "./opencode-agent.js";
+import { createOpenCodeEventSource, OpenCodeAgentClient } from "./opencode-agent.js";
 import {
   OpenCodeEventConsumer,
   type OpenCodeEventConsumerTiming,
 } from "./opencode/event-consumer.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
+
+test("production event-source factory forwards the sustained-failure callback", () => {
+  class CapturingConsumer {
+    static lastOptions: Record<string, unknown> | undefined;
+    constructor(options: Record<string, unknown>) {
+      CapturingConsumer.lastOptions = options;
+    }
+    ready = async () => undefined;
+    subscribe = () => () => undefined;
+    diagnostics = () => ({ attempt: 0, phase: "first-record" as const, elapsedMs: 0 });
+    close = async () => undefined;
+  }
+
+  const onSustainedFailure = vi.fn(async () => undefined);
+  createOpenCodeEventSource(
+    () => ({}) as never,
+    {
+      serverUrl: "http://127.0.0.1:1",
+      processExit: new Promise<Error>(() => undefined),
+      logger: createTestLogger(),
+      listening: Promise.resolve(),
+      onSustainedFailure,
+    },
+    CapturingConsumer as never,
+  );
+
+  expect(CapturingConsumer.lastOptions?.onSustainedFailure).toBe(onSustainedFailure);
+});
 
 test("dispatches ascending OpenCode message identifiers through the public provider path", async () => {
   const upstream = await createRecoveryUpstream();

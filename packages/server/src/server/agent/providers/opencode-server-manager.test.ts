@@ -23,6 +23,10 @@ import {
   type OpenCodePortAllocator,
   type OpenCodeServerProcessSpawner,
 } from "./opencode/server-manager.js";
+import type {
+  OpenCodeEventConsumerFactory,
+  OpenCodeEventSourceHandle,
+} from "./opencode/event-consumer.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -49,6 +53,196 @@ describe("OpenCodeServerManager generations", () => {
       ]),
     );
   });
+  test("invalidates an unresponsive generation and starts a replacement", async () => {
+    const sources: FakeEventSource[] = [];
+    const { manager, runtime } = createTestManager([4_501, 4_502], {
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const first = await manager.acquireCurrent();
+    expect(first.server.port).toBe(4_501);
+    await sources[0]?.trigger(new Error("event stream stalled"));
+    expect(manager.acquireExisting("http://127.0.0.1:4501")).toBeNull();
+    await vi.waitFor(() => expect(runtime.terminatedPorts).toContain(4_501));
+    expect(sources[0]?.terminalPublished).toBe(true);
+    expect(sources[0]?.timeline.slice(0, 2)).toEqual(["terminal", "close-after-terminal"]);
+
+    const replacement = await manager.acquireCurrent();
+    expect(replacement.server.port).toBe(4_502);
+
+    await replacement.release();
+    await first.release();
+    await manager.shutdown();
+  });
+
+  test("release waits for termination of an unresponsive shared generation", async () => {
+    const sources: FakeEventSource[] = [];
+    let finishTermination!: () => void;
+    const terminationGate = new Promise<void>((resolve) => {
+      finishTermination = resolve;
+    });
+    const { manager } = createTestManager([4_541], {
+      terminateProcess: async (serverProcess) => {
+        await terminationGate;
+        (serverProcess as unknown as { exitBySignal(signal: NodeJS.Signals): void }).exitBySignal(
+          "SIGTERM",
+        );
+        return "terminated";
+      },
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const first = await manager.acquireCurrent();
+    const second = await manager.acquireCurrent();
+    await sources[0]?.trigger(new Error("event stream stalled"));
+
+    let released = false;
+    const releasing = (async () => {
+      await first.release();
+      released = true;
+    })();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(released).toBe(false);
+
+    finishTermination();
+    await releasing;
+    expect(released).toBe(true);
+
+    await second.release();
+    await manager.shutdown();
+  });
+
+  test("fails closed when termination cannot establish child exit", async () => {
+    const sources: FakeEventSource[] = [];
+    const terminated: number[] = [];
+    const { manager, runtime } = createTestManager([4_551], {
+      terminateProcess: async (serverProcess) => {
+        terminated.push((serverProcess as unknown as { pid: number }).pid);
+        return "kill-timeout";
+      },
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const acquisition = await manager.acquireCurrent();
+    await sources[0]?.trigger(new Error("event stream stalled"));
+    await vi.waitFor(() => expect(terminated).toHaveLength(1));
+    await expect(acquisition.release()).rejects.toThrow("did not report exit");
+    expect(await runtime.managedProcesses.list()).toHaveLength(1);
+
+    await expect(manager.shutdown()).rejects.toThrow("did not report exit");
+  });
+
+  test("invalidates a retired generation without touching its replacement", async () => {
+    const sources: FakeEventSource[] = [];
+    const { manager, runtime } = createTestManager([4_521, 4_522], {
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const old = await manager.acquireCurrent();
+    const current = await manager.acquireNew();
+    await sources[0]?.trigger(new Error("late failure"));
+    await vi.waitFor(() => expect(runtime.terminatedPorts).toContain(4_521));
+    expect(runtime.terminatedPorts).not.toContain(4_522);
+    expect(manager.acquireExisting("http://127.0.0.1:4521")).toBeNull();
+    const next = await manager.acquireCurrent();
+    expect(next.server.port).toBe(4_522);
+
+    await next.release();
+    await current.release();
+    await old.release();
+    await manager.shutdown();
+  });
+
+  test("a later child exit unblocks a release that timed out", async () => {
+    const { manager, runtime } = createTestManager([4_561], {
+      terminateProcess: async () => "kill-timeout",
+    });
+
+    const acquisition = await manager.acquireCurrent();
+    await expect(acquisition.release()).rejects.toThrow("did not report exit");
+    expect(await runtime.managedProcesses.list()).toHaveLength(1);
+
+    runtime.processForPort(4_561).exitNormally();
+
+    await acquisition.release();
+    await manager.shutdown();
+    expect(await runtime.managedProcesses.list()).toHaveLength(0);
+  });
+
+  test("shutdown keeps a kill-timeout generation unavailable for acquisition", async () => {
+    const { manager } = createTestManager([4_581], {
+      terminateProcess: async () => "kill-timeout",
+    });
+
+    const acquisition = await manager.acquireCurrent();
+    await expect(manager.shutdown()).rejects.toThrow("did not report exit");
+    expect(manager.acquireExisting("http://127.0.0.1:4581")).toBeNull();
+    await expect(manager.acquireCurrent()).rejects.toThrow("terminating");
+
+    await acquisition.release().catch(() => undefined);
+  });
+
+  test("does not reacquire a dedicated generation while it is terminating", async () => {
+    let finishTermination!: () => void;
+    const terminationGate = new Promise<void>((resolve) => {
+      finishTermination = resolve;
+    });
+    const { manager } = createTestManager([4_571], {
+      terminateProcess: async (serverProcess) => {
+        await terminationGate;
+        (serverProcess as unknown as { exitBySignal(signal: NodeJS.Signals): void }).exitBySignal(
+          "SIGTERM",
+        );
+        return "terminated";
+      },
+    });
+
+    const dedicated = await manager.acquireDedicated({ PASEO_TEST: "1" });
+    const releasing = dedicated.release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(manager.acquireExisting("http://127.0.0.1:4571")).toBeNull();
+
+    finishTermination();
+    await releasing;
+    await manager.shutdown();
+  });
+
+  test("invalidates an unresponsive dedicated generation", async () => {
+    const sources: FakeEventSource[] = [];
+    const { manager, runtime } = createTestManager([4_531], {
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const dedicated = await manager.acquireDedicated({ PASEO_TEST: "1" });
+    expect(dedicated.server.port).toBe(4_531);
+    await sources[0]?.trigger(new Error("event stream stalled"));
+    expect(manager.acquireExisting("http://127.0.0.1:4531")).toBeNull();
+    await vi.waitFor(() => expect(runtime.terminatedPorts).toContain(4_531));
+
+    await dedicated.release();
+    await manager.shutdown();
+  });
+
   test("shares one real SDK event stream across acquisitions until generation shutdown", async () => {
     const responses: ServerResponse[] = [];
     let requestCount = 0;
@@ -408,6 +602,43 @@ describe.runIf(process.platform === "win32")(
   },
 );
 
+class FakeEventSource implements OpenCodeEventSourceHandle {
+  private readonly listeners = new Set<Parameters<OpenCodeEventSourceHandle["subscribe"]>[0]>();
+  readonly timeline: string[] = [];
+  terminalPublished = false;
+
+  constructor(
+    private readonly onSustainedFailure: ((error: Error) => void | Promise<void>) | undefined,
+  ) {}
+
+  ready(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  subscribe(listener: Parameters<OpenCodeEventSourceHandle["subscribe"]>[0]): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  diagnostics() {
+    return { attempt: 0, phase: "first-record" as const, elapsedMs: 0 };
+  }
+
+  async close(): Promise<void> {
+    this.timeline.push(this.terminalPublished ? "close-after-terminal" : "close-before-terminal");
+    this.listeners.clear();
+  }
+
+  async trigger(error: Error): Promise<void> {
+    await this.onSustainedFailure?.(error);
+    this.terminalPublished = true;
+    this.timeline.push("terminal");
+    for (const listener of this.listeners) {
+      listener({ type: "server-exited", error });
+    }
+  }
+}
+
 function createTestManager(
   ports: number[],
   options: {
@@ -415,6 +646,8 @@ function createTestManager(
     baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
     logger?: Logger;
+    createEventSource?: OpenCodeEventConsumerFactory;
+    terminateProcess?: ProcessTerminator;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -433,7 +666,8 @@ function createTestManager(
       resolveCommandPrefix: runtime.resolveCommandPrefix,
       ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
-      terminateProcess: runtime.terminateProcess,
+      terminateProcess: options.terminateProcess ?? runtime.terminateProcess,
+      ...(options.createEventSource ? { createEventSource: options.createEventSource } : {}),
     }),
     runtime,
   };

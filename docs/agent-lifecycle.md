@@ -104,6 +104,13 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
+An OpenCode helper server can also stay alive while its HTTP server stops answering. After 60 seconds
+without an event and at least two consecutive failures, the event consumer marks that generation
+unresponsive: it publishes `server-exited`, the manager discards and kills it, and the next operation
+recreates a server from the durable session. If termination cannot be confirmed, recovery fails
+instead of dispatching on the old process. Retry warnings are rate-limited. Replacement happens on
+the next acquisition, not in an automatic restart loop.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior
