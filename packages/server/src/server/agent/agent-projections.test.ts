@@ -499,6 +499,7 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
 
     const payload = toRecentProviderSessionDescriptorPayload(session, {
       providerLabel: "Custom Codex",
+      cwdMissing: false,
     });
 
     expect(payload).toEqual({
@@ -510,6 +511,7 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
       firstPromptPreview: "First prompt with spacing",
       lastPromptPreview: "Second prompt",
       lastActivityAt: "2026-04-30T12:34:56.000Z",
+      cwdMissing: false,
     });
     expect(payload).not.toHaveProperty("providerKind");
     expect(payload).not.toHaveProperty("sessionId");
@@ -530,6 +532,7 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
     expect(
       toRecentProviderSessionDescriptorPayload(session, {
         providerLabel: "Custom Claude",
+        cwdMissing: false,
       }),
     ).toMatchObject({
       providerId: "claude-custom",
