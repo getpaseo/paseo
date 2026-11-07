@@ -28,6 +28,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
 import { Composer } from "@/composer";
+import { useComposerPlaceholder } from "@/plugins";
 import { AgentCommandsProvider } from "@/agent-commands";
 import {
   useComposerEditingSession,
@@ -1624,6 +1625,8 @@ function ActiveAgentComposer({
     [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
+  const composerPlaceholder = useComposerPlaceholder(serverId, agentId) ?? undefined;
+
   const handleClientSlashCommand = useCallback(
     async (command: ClientSlashCommand) => {
       const agent = resolveChatAgentFromSession(useSessionStore.getState(), serverId, agentId);
@@ -1688,6 +1691,7 @@ function ActiveAgentComposer({
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
+        placeholder={composerPlaceholder}
         isCompactLayout={isCompactComposerLayout}
       />
     </View>
