@@ -190,6 +190,63 @@ describe("claude usage source", () => {
     });
   });
 
+  async function claudeFor(body: unknown) {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(body)]]),
+    );
+    return findProvider(await service().listUsage(), "claude");
+  }
+  const usd = (cents: number) => ({ amount_minor: cents, currency: "USD", exponent: 2 });
+
+  it("spend-metered Enterprise: shows the monthly dollar meter when the rolling windows are null", async () => {
+    const claude = await claudeFor({
+      five_hour: null,
+      seven_day: null,
+      spend: { used: usd(1802), limit: usd(30000), percent: 100 },
+    });
+    expect(claude.windows).toEqual([
+      expect.objectContaining({ id: "spend", label: "Monthly spend" }),
+    ]);
+    expect(claude.windows?.[0]?.usedPct).toBeCloseTo(6.0067, 3);
+    expect(claude.balances).toEqual([
+      expect.objectContaining({ id: "spend", used: 18.02, limit: 300, unit: "usd" }),
+    ]);
+    expect(claude.balances?.[0]?.remaining).toBeCloseTo(281.98, 5);
+  });
+
+  it("spend-metered Enterprise: keeps Pro/Max windows even when a spend block is present", async () => {
+    const claude = await claudeFor({
+      five_hour: { utilization: 10, resets_at: null },
+      seven_day: { utilization: 20, resets_at: null },
+      spend: { used: usd(100), limit: usd(1000) },
+    });
+    expect(claude.windows?.map((w) => w.id)).toEqual(["five_hour", "weekly"]);
+    expect(claude.balances).toEqual([]);
+  });
+
+  it("spend-metered Enterprise: skips spend in an unsupported currency instead of labelling it USD", async () => {
+    const claude = await claudeFor({
+      five_hour: null,
+      seven_day: null,
+      spend: {
+        used: { amount_minor: 100, currency: "EUR", exponent: 2 },
+        limit: { amount_minor: 1000, currency: "EUR", exponent: 2 },
+      },
+    });
+    expect(claude.windows).toEqual([]);
+    expect(claude.balances).toEqual([]);
+  });
+
+  it("spend-metered Enterprise: treats a null limit as unlimited, never exhausted", async () => {
+    const claude = await claudeFor({
+      five_hour: null,
+      seven_day: null,
+      spend: { used: usd(500), limit: null },
+    });
+    expect(claude.windows?.[0]?.usedPct).toBe(0);
+  });
+
   it.each(["empty home", "unrelated files"])(
     "discovers no Claude logins in %s",
     async (scenario) => {
