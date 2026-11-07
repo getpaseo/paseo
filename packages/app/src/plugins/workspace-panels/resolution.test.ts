@@ -21,6 +21,7 @@ function installed(): InstalledPlugin {
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
