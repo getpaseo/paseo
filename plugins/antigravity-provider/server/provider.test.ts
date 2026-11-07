@@ -800,7 +800,7 @@ describe("session.list", () => {
     const h = await harness({ HOME: homeDir });
 
     const symlinkCwd = path.join(homeDir, "workspace-link");
-    await symlink(h.cwd, symlinkCwd);
+    await symlink(h.cwd, symlinkCwd, process.platform === "win32" ? "junction" : "dir");
     const otherCwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-other-"));
     temporary.push(otherCwd);
 
@@ -883,11 +883,12 @@ describe("session.list", () => {
     // 4. Empty probe session with step_count = 0 (should be excluded)
     insert.run("conv-empty", "", "", 0, "2026-11-07 10:05:00.000000000+00:00", workspaceUri, "", 0);
 
-    // 5. Session in another workspace
+    // 5. Session in another workspace with >120 char preview containing a late search token
+    const longPreview = `${"prefix ".repeat(25)}late-token-after-truncation`;
     insert.run(
       "conv-other-workspace",
       "Other Workspace Session",
-      "Other preview",
+      longPreview,
       6,
       "2026-11-07 10:10:00.000000000+00:00",
       otherWorkspaceUri,
@@ -956,5 +957,52 @@ describe("session.list", () => {
         },
       ],
     });
+
+    // Query matching text past the 120-character truncation boundary
+    await h.request({
+      type: "sessions",
+      requestId: "list-long-preview-query",
+      query: "late-token-after-truncation",
+    });
+    const longPreviewEvent = h.events.find(
+      (event) => event.type === "sessions" && event.requestId === "list-long-preview-query",
+    );
+    expect(longPreviewEvent).toMatchObject({
+      type: "sessions",
+      requestId: "list-long-preview-query",
+      sessions: [
+        {
+          cwd: otherCwd,
+          title: "Other Workspace Session",
+          persistence: {
+            version: 1,
+            data: { conversationId: "conv-other-workspace" },
+          },
+        },
+      ],
+    });
+  });
+
+  it("emits request.failed when conversation_summaries.db is corrupt", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-corrupt-home-"));
+    temporary.push(homeDir);
+    const h = await harness({ HOME: homeDir });
+    const cliDir = path.join(homeDir, ".gemini", "antigravity-cli");
+    await mkdir(cliDir, { recursive: true });
+    await writeFile(
+      path.join(cliDir, "conversation_summaries.db"),
+      "not a sqlite database",
+      "utf8",
+    );
+
+    await h.request({
+      type: "sessions",
+      requestId: "list-corrupt",
+    });
+    expect(
+      h.events.find(
+        (event) => event.type === "request.failed" && event.requestId === "list-corrupt",
+      ),
+    ).toBeDefined();
   });
 });

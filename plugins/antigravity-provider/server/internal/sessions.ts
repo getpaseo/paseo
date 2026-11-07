@@ -29,6 +29,7 @@ function builtinSqlite(): SqliteModule | undefined {
 
 const DEFAULT_SESSION_LIMIT = 50;
 const MAX_TITLE_LENGTH = 120;
+const MAX_TRANSCRIPT_HEADER_BYTES = 64 * 1024;
 const ANTIGRAVITY_ROOTS = ["antigravity-cli", "antigravity"] as const;
 
 const workspaceUrisSchema = z.array(z.string());
@@ -70,7 +71,12 @@ export function listSessions(
       : DEFAULT_SESSION_LIMIT;
 
   const seenConversationIds = new Set<string>();
-  const collected: Array<{ summary: ProviderSessionSummary; sortTimeMs: number }> = [];
+  const candidates: Array<{
+    row: RawSummaryRow;
+    matchedCwd: string;
+    updatedAt: string | undefined;
+    sortTimeMs: number;
+  }> = [];
 
   for (const root of ANTIGRAVITY_ROOTS) {
     const dbPath = path.join(context.homeDir, ".gemini", root, "conversation_summaries.db");
@@ -78,46 +84,59 @@ export function listSessions(
 
     for (const row of readSummaryRows(dbPath)) {
       if (seenConversationIds.has(row.conversationId)) continue;
-      const entry = toSessionEntry(row, context);
-      if (!entry) continue;
+      if (!isSafeConversationId(row.conversationId)) continue;
+      const matchedCwd = matchWorkspaceCwd(
+        row.workspaceUrisRaw,
+        context.filterCwd,
+        context.inputCwd,
+      );
+      if (!matchedCwd) continue;
       seenConversationIds.add(row.conversationId);
-      collected.push(entry);
+      const updatedAt = normalizeTimestamp(row.updatedAtRaw);
+      candidates.push({
+        row,
+        matchedCwd,
+        updatedAt,
+        sortTimeMs: updatedAt ? Date.parse(updatedAt) : 0,
+      });
     }
   }
 
-  collected.sort((left, right) => right.sortTimeMs - left.sortTimeMs);
-  return collected.slice(0, limit).map((entry) => entry.summary);
+  candidates.sort((left, right) => right.sortTimeMs - left.sortTimeMs);
+
+  const summaries: ProviderSessionSummary[] = [];
+  for (const candidate of candidates) {
+    const summary = toSessionSummary(candidate, context);
+    if (!summary) continue;
+    summaries.push(summary);
+    if (summaries.length >= limit) break;
+  }
+  return summaries;
 }
 
-function toSessionEntry(
-  row: RawSummaryRow,
+function toSessionSummary(
+  candidate: {
+    row: RawSummaryRow;
+    matchedCwd: string;
+    updatedAt: string | undefined;
+  },
   context: SessionFilterContext,
-): { summary: ProviderSessionSummary; sortTimeMs: number } | null {
-  if (!isSafeConversationId(row.conversationId)) return null;
-  const matchedCwd = matchWorkspaceCwd(row.workspaceUrisRaw, context.filterCwd, context.inputCwd);
-  if (!matchedCwd) return null;
-
-  const { title, description } = resolveTitleAndDescription(row, context.homeDir);
-  if (
-    context.query &&
-    !matchesQuery(context.query, title, description, matchedCwd, row.conversationId)
-  ) {
+): ProviderSessionSummary | null {
+  const { row, matchedCwd, updatedAt } = candidate;
+  const { title, description, searchText } = resolveTitleAndDescription(row, context.homeDir);
+  if (context.query && !matchesQuery(context.query, searchText, matchedCwd, row.conversationId)) {
     return null;
   }
 
-  const updatedAt = normalizeTimestamp(row.updatedAtRaw);
   return {
-    summary: {
-      cwd: matchedCwd,
-      ...(title ? { title } : {}),
-      ...(description ? { description } : {}),
-      ...(updatedAt ? { updatedAt } : {}),
-      persistence: {
-        version: 1,
-        data: { conversationId: row.conversationId },
-      },
+    cwd: matchedCwd,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    persistence: {
+      version: 1,
+      data: { conversationId: row.conversationId },
     },
-    sortTimeMs: updatedAt ? Date.parse(updatedAt) : 0,
   };
 }
 
@@ -135,34 +154,34 @@ function matchWorkspaceCwd(
 function resolveTitleAndDescription(
   row: RawSummaryRow,
   homeDir: string,
-): { title: string; description?: string } {
+): { title: string; description?: string; searchText: string } {
   const rawTitle = collapseWhitespace(extractUserRequestText(row.title));
   const rawPreview = collapseWhitespace(extractUserRequestText(row.preview));
   const fallbackTitle =
     !rawTitle && !rawPreview ? readFirstTranscriptPrompt(homeDir, row.conversationId) : undefined;
-  const title = truncateTitle(rawTitle || rawPreview || fallbackTitle || "");
+  const fullTitle = rawTitle || rawPreview || fallbackTitle || "";
+  const title = truncateTitle(fullTitle);
   const description =
     rawPreview && rawTitle && rawPreview !== rawTitle ? truncateTitle(rawPreview) : undefined;
-  return { title, description };
+  const searchText = [fullTitle, rawPreview].filter(Boolean).join("\n");
+  return { title, description, searchText };
 }
 
 function matchesQuery(
   query: string,
-  title: string,
-  description: string | undefined,
+  searchText: string,
   cwd: string,
   conversationId: string,
 ): boolean {
-  const haystack = [title, description ?? "", cwd, conversationId].join("\n").toLowerCase();
+  const haystack = [searchText, cwd, conversationId].join("\n").toLowerCase();
   return haystack.includes(query);
 }
 
 function readSummaryRows(dbPath: string): RawSummaryRow[] {
   const sqlite = builtinSqlite();
   if (!sqlite) return [];
-  let db: SqliteDatabase | null = null;
+  const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
   try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
     const tables = listMatchingSummaryTables(db);
     if (tables.has("conversation_summaries")) {
       return queryConversationSummariesTable(db);
@@ -171,11 +190,9 @@ function readSummaryRows(dbPath: string): RawSummaryRow[] {
       return queryLegacySummariesTable(db);
     }
     return [];
-  } catch {
-    return [];
   } finally {
     try {
-      db?.close();
+      db.close();
     } catch {
       // Ignore close errors on read-only SQLite handles.
     }
@@ -353,14 +370,31 @@ function candidateTranscriptPaths(homeDir: string, conversationId: string): stri
 }
 
 function extractFirstPromptFromFile(filePath: string): string | undefined {
+  let fd: number | null = null;
   try {
-    const content = fs.readFileSync(filePath, "utf8");
-    for (const line of content.split("\n")) {
+    fd = fs.openSync(filePath, "r");
+    const buffer = Buffer.allocUnsafe(MAX_TRANSCRIPT_HEADER_BYTES);
+    const bytesRead = fs.readSync(fd, buffer, 0, MAX_TRANSCRIPT_HEADER_BYTES, 0);
+    if (bytesRead <= 0) return undefined;
+    const chunk = buffer.subarray(0, bytesRead).toString("utf8");
+    const lines = chunk.split("\n");
+    if (bytesRead === MAX_TRANSCRIPT_HEADER_BYTES && lines.length > 1) {
+      lines.pop();
+    }
+    for (const line of lines) {
       const prompt = parseExplicitUserInputLine(line);
       if (prompt) return prompt;
     }
   } catch {
     // Ignore unreadable transcript files during session listing.
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore close errors on read-only transcript handles.
+      }
+    }
   }
   return undefined;
 }
