@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -85,7 +85,6 @@ export function AgentModeControl({
   surface = "toolbar",
   onClose,
 }: AgentModeControlValue & { surface?: "toolbar" | "sheet"; onClose?: () => void }) {
-  const { theme } = useUnistyles();
   const { presentation } = useComposerControlLayout();
   const { t } = useTranslation();
   const { isActiveComposer } = useComposerKeyboardScope();
@@ -102,7 +101,6 @@ export function AgentModeControl({
   }, [modeOptions, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
-  const iconColor = theme.colors.foregroundMuted;
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
@@ -197,7 +195,6 @@ export function AgentModeControl({
           <AgentControlTrigger
             ref={anchorRef}
             icon={Icon}
-            iconColor={iconColor}
             surface={surface}
             label={t("agentControls.mode.title")}
             value={selectedModeLabel}

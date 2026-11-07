@@ -21,12 +21,14 @@ import {
 } from "@/utils/agent-initialization";
 import {
   createSessionAgentStreamReducerQueue,
+  deriveAgentStreamTurnLiveness,
   type AgentStreamReducerEvent,
   type ProcessTimelineResponseOutput,
   processTimelineResponse,
 } from "./session-stream-reducers";
 import { isTimelineResumeSnapshotAuthoritative } from "./timeline-sync-plan";
 import { replaceWithCanonicalStream } from "@/types/stream";
+import type { TurnLivenessTransition } from "./turn-liveness";
 
 export interface TimelineReplicaStorage {
   readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined>;
@@ -361,7 +363,12 @@ export type ViewedTimelineOwnerPorts = Omit<
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
   applyTimelineResponse(payload: TimelineResponsePayload): void;
-  enqueueStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
+  /**
+   * Accepts one live stream event. Content is coalesced to the next frame; a turn boundary
+   * commits the turn's queued content before its liveness changes, so the view never shows
+   * a finished turn without its final reply.
+   */
+  applyStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
   flushStreamAgent(agentId: string): void;
 }
 
@@ -370,6 +377,7 @@ export function createViewedTimelineOwner(input: {
   replica: TimelineReplica;
   replaceDemandedAgentIds: (agentIds: string[]) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
+  applyTurnLiveness: (agentId: string, transitions: readonly TurnLivenessTransition[]) => void;
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
   const forcedTailReplacements = new Set<string>();
@@ -409,8 +417,12 @@ export function createViewedTimelineOwner(input: {
       });
       if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
-    enqueueStreamEvent(agentId, event) {
+    applyStreamEvent(agentId, event) {
       streamQueue.enqueue(agentId, event);
+      const turnLiveness = deriveAgentStreamTurnLiveness([event]);
+      if (turnLiveness.length === 0) return;
+      streamQueue.flushAgent(agentId);
+      input.applyTurnLiveness(agentId, turnLiveness);
     },
     flushStreamAgent(agentId) {
       streamQueue.flushAgent(agentId);

@@ -29,6 +29,7 @@ import type { KeyboardFocusScope } from "@/keyboard/actions";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import {
   computePosition,
+  fitSurfaceWidth,
   getTransformOrigin,
   measureElement,
   type Alignment,
@@ -283,11 +284,7 @@ export function AnchoredSurface({
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
-      : {
-          ...(typeof width === "number" ? { width } : null),
-          ...(typeof minWidth === "number" ? { minWidth } : null),
-          ...(typeof maxWidth === "number" ? { maxWidth } : null),
-        };
+      : fitSurfaceWidth({ width, minWidth, maxWidth }, screenWidth);
     return [
       resolvedWidthStyle,
       {

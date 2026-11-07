@@ -3,6 +3,12 @@ import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
+import {
+  createWorkspaceBaseBranchService,
+  type WorkspaceBaseBranchService,
+} from "./session/workspace-base-branch/service.js";
+import type { WorkspaceBaseBranchSetRequest } from "@getpaseo/protocol/messages";
+
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -16,6 +22,7 @@ import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
+import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
@@ -278,6 +285,10 @@ import {
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
+import {
+  WorkspaceArchiveOperations,
+  type WorkspaceArchiveUndoInput,
+} from "./workspace-archive-operations.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
 
@@ -285,6 +296,12 @@ function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
 ): WorkspaceSetupRuntime {
   return runtime ?? new WorkspaceSetupRuntime();
+}
+
+function resolveWorkspaceArchiveOperations(
+  operations: WorkspaceArchiveOperations | undefined,
+): WorkspaceArchiveOperations {
+  return operations ?? new WorkspaceArchiveOperations();
 }
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -490,6 +507,7 @@ export interface SessionOptions {
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceBaseBranch?: WorkspaceBaseBranchService;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
@@ -568,6 +586,8 @@ export interface SessionOptions {
   workspaceLaunchManager?: WorkspaceLaunchService;
   workspaceSetupObservation?: WorkspaceSetupObservation;
   workspaceSetupRuntime?: WorkspaceSetupRuntime;
+  /** Shared by every session so an undo from any connection reaches the archive it cancels. */
+  workspaceArchiveOperations?: WorkspaceArchiveOperations;
   onBranchChanged?: (
     workspaceId: string,
     oldBranch: string | null,
@@ -788,6 +808,7 @@ export class Session {
   private readonly gitMutation: GitMutationService;
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
   private readonly workspaceRecovery: WorkspaceRecoveryService;
+  private workspaceBaseBranch: WorkspaceBaseBranchService | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
@@ -840,6 +861,7 @@ export class Session {
   private readonly workspaceSetupObservation: WorkspaceSetupObservation;
   private readonly unsubscribeSetupObservation: () => void;
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
+  private readonly workspaceArchiveOperations: WorkspaceArchiveOperations;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSessions: VoiceSessions;
@@ -905,6 +927,7 @@ export class Session {
       scriptRuntimeStore,
       workspaceSetupObservation,
       workspaceSetupRuntime,
+      workspaceArchiveOperations,
       onBranchChanged,
       getDaemonTcpPort,
       getDaemonTcpHost,
@@ -973,12 +996,22 @@ export class Session {
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.workspaceGitService = workspaceGitService;
     this.workspaceRuntimeStore = workspaceRuntimeStore;
+    this.workspaceBaseBranch =
+      options.workspaceBaseBranch ??
+      createWorkspaceBaseBranchService({
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+        workspaceRegistry: this.workspaceRegistry,
+        workspaceGitService: this.workspaceGitService,
+      });
+
     this.gitMutation = createGitMutationService({
       workspaceGitService: this.workspaceGitService,
       logger: this.sessionLogger,
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
       workspaceRegistry: this.workspaceRegistry,
@@ -1175,6 +1208,12 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
+      isScriptTerminal: (terminal) =>
+        this.scriptRuntimeStore
+          ?.listForWorkspace(terminal.workspaceId)
+          .some((script) => script.terminalId === terminal.id) ?? false,
+      subscribeTerminalMetadata: (listener) =>
+        this.scriptRuntimeStore?.subscribe(listener) ?? (() => {}),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({
@@ -1253,6 +1292,7 @@ export class Session {
       },
     );
     this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
+    this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
@@ -1770,7 +1810,8 @@ export class Session {
       this.wantsEvent("agent_attention_required") ||
       this.wantsEvent("agent_permission_request") ||
       this.wantsEvent("agent_permission_resolved") ||
-      this.wantsEvent("agent.provider_subagents.update");
+      this.wantsEvent("agent.provider_subagents.update") ||
+      this.wantsEvent("agent.background_work.update");
     if (agents && !this.unsubscribeAgentEvents) this.subscribeToAgentEvents();
     if (!agents) {
       this.unsubscribeAgentEvents?.();
@@ -2088,14 +2129,12 @@ export class Session {
         }
 
         if (event.type === "provider_subagent") {
-          // The subagents track of an internal parent stays hidden.
-          const parentAgentId =
-            event.event.type === "upsert"
-              ? event.event.subagent.parentAgentId
-              : event.event.parentAgentId;
-          if (this.agentManager.getAgent(parentAgentId)?.internal) return;
-          this.emitProviderSubagentWorkspaceUpdate(event.event);
-          this.forwardProviderSubagentUpdate(event.event);
+          this.forwardProviderSubagent(event.event);
+          return;
+        }
+
+        if (event.type === "background_work") {
+          this.forwardBackgroundWork(event);
           return;
         }
 
@@ -2170,6 +2209,26 @@ export class Session {
     );
   }
 
+  private forwardProviderSubagent(event: ProviderSubagentManagerEvent): void {
+    const parentAgentId =
+      event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
+    if (this.agentManager.getAgent(parentAgentId)?.internal) return;
+    this.emitProviderSubagentWorkspaceUpdate(event);
+    this.forwardProviderSubagentUpdate(event);
+  }
+
+  private forwardBackgroundWork(
+    event: Extract<AgentManagerEvent, { type: "background_work" }>,
+  ): void {
+    const agent = this.agentManager.getAgent(event.agentId);
+    if (agent?.internal) return;
+    this.emit({
+      type: "agent.background_work.update",
+      payload: { agentId: event.agentId, items: event.items },
+    });
+    if (agent) void this.agentUpdates.forwardLiveAgent(agent);
+  }
+
   private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {
     if (event.type === "timeline") {
       return;
@@ -2202,6 +2261,7 @@ export class Session {
   }
 
   private async enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload> {
+    payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
@@ -2966,6 +3026,10 @@ export class Session {
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
+      case "agent.background_work.list.request":
+        return this.handleAgentBackgroundWorkListRequest(msg);
+      case "agent.background_work.stop.request":
+        return this.handleAgentBackgroundWorkStopRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
       case "session.events.set_subscription.request": {
@@ -3245,6 +3309,8 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      case "workspace.base_branch.set.request":
+        return this.handleWorkspaceBaseBranchSetRequest(msg);
       default:
         return undefined;
     }
@@ -3318,6 +3384,8 @@ export class Session {
         return this.handleWorkspaceRecoveryInspectRequest(msg);
       case "workspace.recovery.restore.request":
         return this.handleWorkspaceRecoveryRestoreRequest(msg);
+      case "workspace.archive.undo.request":
+        return this.handleWorkspaceArchiveUndoRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
@@ -4114,6 +4182,41 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceBaseBranchSetRequest(
+    msg: WorkspaceBaseBranchSetRequest,
+  ): Promise<void> {
+    try {
+      this.workspaceBaseBranch ??= createWorkspaceBaseBranchService({
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+        workspaceRegistry: this.workspaceRegistry,
+        workspaceGitService: this.workspaceGitService,
+      });
+      const baseRef = await this.workspaceBaseBranch.setBaseBranch(msg);
+      this.emit({
+        type: "workspace.base_branch.set.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: true,
+          baseRef,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.base_branch.set.response",
+        payload: {
+          requestId: msg.requestId,
+          workspaceId: msg.workspaceId,
+          accepted: false,
+          baseRef: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
   private async handleWorkspacePinSetRequest(
     workspaceId: string,
     pinned: boolean,
@@ -4797,7 +4900,12 @@ export class Session {
         : overrides;
       let snapshot: ManagedAgent;
       try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        snapshot = await this.agentManager.resumeAgentFromPersistence(
+          handle,
+          effectiveOverrides,
+          undefined,
+          { workspaceId: matched?.record.workspaceId },
+        );
       } catch (error) {
         if (matched?.didUnarchive && matched.originalArchivedAt) {
           await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
@@ -5824,6 +5932,7 @@ export class Session {
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
+            backgroundWork: agent.backgroundWork,
           });
         case "created_at":
           return Date.parse(agent.createdAt);
@@ -5883,6 +5992,7 @@ export class Session {
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       background: workspace.background,
+      parentWorkspaceId: workspace.parentWorkspaceId,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -5972,6 +6082,7 @@ export class Session {
       projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
       background: result.workspace.background,
+      parentWorkspaceId: result.workspace.parentWorkspaceId,
       name: resolveWorkspaceName({
         title: result.workspace.title,
         derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
@@ -6163,6 +6274,10 @@ export class Session {
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
     await this.workspaceRecovery.restore(workspaceId);
+    await this.publishRecoveredWorkspace(workspaceId);
+  }
+
+  private async publishRecoveredWorkspace(workspaceId: string): Promise<void> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
@@ -7910,40 +8025,61 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "archive_workspace_request" }>,
   ): Promise<void> {
     try {
-      const existing = await this.workspaceRegistry.get(request.workspaceId);
-      if (!existing) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
-
-      await archiveByScope(
-        {
-          paseoHome: this.paseoHome,
-          paseoWorktreesBaseRoot: this.worktreesRoot,
-          github: this.github,
-          workspaceGitService: this.workspaceGitService,
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
-          getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
-          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-          emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-            this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
-          markWorkspaceArchiving: (workspaceIds, archivingAt) =>
-            this.markWorkspaceArchiving(workspaceIds, archivingAt),
-          clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-          assertWorkspaceAutomationAllowed: (workspaceId) =>
-            assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
-          killTerminalsForWorkspace: (workspaceId) =>
-            this.terminalController.killTerminalsForWorkspace(workspaceId),
-          stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
-          sessionLogger: this.sessionLogger,
-        },
-        {
-          scope: { kind: "workspace", workspaceId: existing.workspaceId },
-          requestId: request.requestId,
+      // Claim the archive queue before any await, so an undo sent right behind this request
+      // queues after it and cancels it instead of running first.
+      const outcome = await this.workspaceArchiveOperations.archive(
+        request.workspaceId,
+        async (signal) => {
+          const existing = await this.workspaceRegistry.get(request.workspaceId);
+          if (!existing) {
+            throw new Error(`Workspace not found: ${request.workspaceId}`);
+          }
+          return archiveByScope(
+            {
+              paseoHome: this.paseoHome,
+              paseoWorktreesBaseRoot: this.worktreesRoot,
+              github: this.github,
+              workspaceGitService: this.workspaceGitService,
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+              getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+              listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+                this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+              markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+                this.markWorkspaceArchiving(workspaceIds, archivingAt),
+              clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+              assertWorkspaceAutomationAllowed: (workspaceId) =>
+                assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
+              killTerminalsForWorkspace: (workspaceId) =>
+                this.terminalController.killTerminalsForWorkspace(workspaceId),
+              stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+              sessionLogger: this.sessionLogger,
+            },
+            {
+              scope: { kind: "workspace", workspaceId: existing.workspaceId },
+              requestId: request.requestId,
+              signal,
+            },
+          );
         },
       );
+
+      if (outcome.kind === "canceled") {
+        this.emit({
+          type: "archive_workspace_response",
+          payload: {
+            requestId: request.requestId,
+            workspaceId: request.workspaceId,
+            archivedAt: null,
+            error: "Workspace archive was undone",
+            canceled: true,
+          },
+        });
+        return;
+      }
 
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
       const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
@@ -7972,6 +8108,69 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleWorkspaceArchiveUndoRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.archive.undo.request" }>,
+  ): Promise<void> {
+    try {
+      await this.workspaceArchiveOperations.undo(request.workspaceId, (input) =>
+        this.restoreArchivedWorkspaceAndAgents(request.workspaceId, input),
+      );
+      this.emit({
+        type: "workspace.archive.undo.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: request.workspaceId, requestId: request.requestId },
+        "session: workspace.archive.undo.request rejected",
+      );
+      this.emit({
+        type: "workspace.archive.undo.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to undo the workspace archive"),
+        },
+      });
+    }
+  }
+
+  // Runs on the archive lane after any in-flight archive has stopped, so the record reflects how
+  // far it got: still active when it was canceled early, archived (directory kept or removed)
+  // otherwise.
+  private async restoreArchivedWorkspaceAndAgents(
+    workspaceId: string,
+    input: WorkspaceArchiveUndoInput,
+  ): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
+    }
+    if (workspace.archivedAt) {
+      await this.workspaceRecovery.restore(workspaceId);
+    }
+    const results = await Promise.allSettled(
+      input.agentIds.map((agentId) =>
+        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
+      ),
+    );
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        this.sessionLogger.warn(
+          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
+          "Failed to unarchive agent while undoing workspace archive",
+        );
+      }
+    }
+    await this.publishRecoveredWorkspace(workspaceId);
   }
 
   private async handleWorkspaceClearAttentionRequest(
@@ -8136,7 +8335,10 @@ export class Session {
         .filter((agent) => !agent.archivedAt && !agent.background)
         .filter((agent) => agent.workspaceId === workspace.workspaceId)
         .filter((agent) => resolveWorkspaceRootAgent(agent, agentsById)?.id === agent.id)
-        .filter((agent) => agent.status === "idle" || agent.status === "closed")
+        .filter(
+          (agent) =>
+            agent.status === "idle" || agent.status === "closed" || agent.status === "error",
+        )
         .filter((agent) => agent.requiresAttention !== true)
         .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
         .sort(
@@ -8145,7 +8347,7 @@ export class Session {
         );
       const candidate = candidates[0];
       if (!candidate) {
-        throw new Error(`Workspace has no finished agent to mark unread: ${workspaceId}`);
+        throw new Error(`Workspace has no read agent to mark unread: ${workspaceId}`);
       }
 
       await this.agentManager.markAgentUnread(candidate.id);
@@ -8482,6 +8684,75 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleAgentBackgroundWorkStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_work.stop.request" }>,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await this.agentManager.stopAgentBackgroundWork({
+        agentId: msg.agentId,
+        itemId: msg.itemId,
+        stopToken: msg.stopToken,
+      });
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type: "agent.background_work.stop.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        itemId: msg.itemId,
+        error,
+      },
+    });
+  }
+
+  private async handleAgentBackgroundWorkListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_work.list.request" }>,
+  ): Promise<void> {
+    try {
+      this.emit({
+        type: "agent.background_work.list.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          items: await this.readAgentBackgroundWork(msg.agentId),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.background_work.list.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          items: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  // Background work lives only in memory, so an agent that is not loaded has none.
+  // Answering from storage keeps a read from resuming a dormant agent.
+  private async readAgentBackgroundWork(agentId: string): Promise<AgentBackgroundWorkItem[]> {
+    if (this.agentManager.getAgent(agentId)) {
+      if (!this.agentManager.getAgentBackgroundWorkSummary(agentId)) {
+        throw new Error("Background work inventory is unavailable");
+      }
+      return this.agentManager.listAgentBackgroundWork(agentId);
+    }
+    const record = await this.agentStorage.get(agentId);
+    if (!record || record.internal) {
+      throw new Error(`Unknown agent '${agentId}'`);
+    }
+    if (record.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`);
+    }
+    throw new Error("Background work inventory is unavailable");
   }
 
   private async handleProviderSubagentTimelineRequest(
@@ -9205,6 +9476,7 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "script_status_update":
     case "workspace_setup_progress":
     case "agent.provider_subagents.update":
+    case "agent.background_work.update":
     case "terminal_attention_required":
     case "activity_log":
     case "hub.execution.agent.update":
@@ -9243,6 +9515,9 @@ function legacyWantsEvent(
       return !capabilities.has(CLIENT_CAPS.explicitEventSubscriptions);
     case "agent.provider_subagents.update":
       return capabilities.has(CLIENT_CAPS.providerSubagents);
+    // Old apps parse outbound messages strictly and do not know this type.
+    case "agent.background_work.update":
+      return false;
     default:
       return true;
   }

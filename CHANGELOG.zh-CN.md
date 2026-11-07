@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.15.3 - 2026-11-06
+
+### 修复
+
+- 修复了 iOS 26 及更高版本中打开或收起键盘时聊天内容变模糊的问题 ([#8918](https://github.com/getpaseo/paseo/pull/8918)，贡献者：[@dgreensp](https://github.com/dgreensp))
+
+## 0.15.2 - 2026-11-05
+
+### 新增
+
+- 在 Paseo 桌面版和网页版新增首次运行引导，依次带新用户设置主题、提供商、项目、Agent 编排和移动端应用，并可通过“设置 → 通用 → Show setup again”重新打开 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- 在引导的“项目”步骤中，根据你运行过 Claude Code、Codex、OpenCode 或 Pi 的文件夹推荐项目 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+### 改进
+
+- 将主题选择器改为带各主题预览的图块网格 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- 将“提供商”设置中的“Loading…”文字替换为骨架占位行 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- 将控件统一为两种尺寸：默认控件在桌面端高 32px、在手机上高 44px，紧凑控件高 28px ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- 将首次启动改为从加载界面直接进入引导，不再先显示空白的主页 ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- 将桌面端和网页版的对话框改为约 160 毫秒的淡入 ([#8824](https://github.com/getpaseo/paseo/pull/8824))
+- 将弹窗和面板的背景改为与屏幕背景一致 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+- 将“设置”各分区的文档链接改为分区标题旁的 `Label ↗` 链接 ([#8363](https://github.com/getpaseo/paseo/pull/8363))
+
+## 0.15.1 - 2026-11-05
+
+### 修复
+
+- 修复终端工作进程无法读取自身进程标识时 daemon 无法启动的问题；此前在 Windows PowerShell 5.1 无法运行 `Get-CimInstance` 的 Windows 机器上，Paseo 桌面版因此没有可用的 daemon ([#8810](https://github.com/getpaseo/paseo/pull/8810))
+
 ## 0.15.0 - 2026-11-03
 
 daemon 重启后，终端中的程序继续运行。开启 Agent 恢复后，被中断的 Agent 会在原有会话中恢复工作。

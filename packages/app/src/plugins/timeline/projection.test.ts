@@ -98,6 +98,8 @@ describe("plugin timeline projection", () => {
       {
         kind: "plugin",
         id: "inline-thinking/thought-1/0",
+        sourceId: "thought-1",
+        sourceKind: "thought",
         data: { text: "First", phase: "streaming" },
       },
     ]);

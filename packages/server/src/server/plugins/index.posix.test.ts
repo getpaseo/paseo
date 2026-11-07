@@ -672,15 +672,26 @@ describe("PluginService", () => {
     await service.stopAllPlugins();
   }, 20_000);
 
-  it.each([true, false])(
-    "updates the shipped legacy Git layout with enabled=%s",
-    async (enabled) => {
-      const home = await mkdtemp(path.join(tmpdir(), "paseo-legacy-layout-"));
+  describe("legacy Git migration", () => {
+    const id = "legacy-review";
+    const pluginPath = "plugins/review";
+    let home: string;
+    let repository: string;
+    let initial: string;
+    let remote: string;
+    let legacyRoot: string;
+    let directory: string;
+    let settingsDirectory: string;
+    let settingsFile: string;
+    let savedSettings: string;
+
+    // Build the legacy installation before the migration workflow deadline starts.
+    // These seven real Git launches have their own fixture setup budget.
+    beforeEach(async () => {
+      home = await mkdtemp(path.join(tmpdir(), "paseo-legacy-layout-"));
       roots.push(home);
-      const repository = await mkdtemp(path.join(tmpdir(), "paseo-legacy-remote-"));
+      repository = await mkdtemp(path.join(tmpdir(), "paseo-legacy-remote-"));
       roots.push(repository);
-      const id = "legacy-review";
-      const pluginPath = "plugins/review";
       await mkdir(path.join(repository, pluginPath), { recursive: true });
       await writeFile(
         path.join(repository, pluginPath, "paseo-plugin.json"),
@@ -703,13 +714,11 @@ export default function contribute(server: PluginServerContext) {
         ["tag", "v1"],
       ])
         await runGitCommand(args, { cwd: repository });
-      const initial = (
-        await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })
-      ).stdout.trim();
-      const remote = pathToFileURL(repository).href;
-      const legacyRoot = path.join(home, "plugins", id, `${initial.slice(0, 12)}-${randomUUID()}`);
+      initial = (await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })).stdout.trim();
+      remote = pathToFileURL(repository).href;
+      legacyRoot = path.join(home, "plugins", id, `${initial.slice(0, 12)}-${randomUUID()}`);
       const checkoutRoot = path.join(legacyRoot, "checkout");
-      const directory = path.join(checkoutRoot, pluginPath);
+      directory = path.join(checkoutRoot, pluginPath);
       await mkdir(legacyRoot, { recursive: true });
       await runGitCommand(["clone", remote, checkoutRoot], { cwd: home });
       await runGitCommand(["checkout", "--detach", "v1"], { cwd: checkoutRoot });
@@ -726,95 +735,111 @@ export default function contribute(server: PluginServerContext) {
           },
         }),
       );
-      const settingsDirectory = path.join(home, "plugin-settings");
+      settingsDirectory = path.join(home, "plugin-settings");
       await mkdir(path.join(settingsDirectory, id), { recursive: true });
-      const settingsFile = path.join(settingsDirectory, id, "preferences.json");
-      const savedSettings = JSON.stringify({ version: 1, values: { message: "keep my settings" } });
+      settingsFile = path.join(settingsDirectory, id, "preferences.json");
+      savedSettings = JSON.stringify({ version: 1, values: { message: "keep my settings" } });
       await writeFile(settingsFile, savedSettings);
-      const store = createStore(home, { [id]: { source: "directory", path: directory, enabled } });
-      const open = () =>
-        bindTestSessionHost(
-          new PluginService(pino({ level: "silent" }), store, "0.8.0", {
-            managedSources: new ManagedPluginSources(home),
-            settingsDirectory,
-          }),
-        );
-      let service = open();
-      try {
-        await service.start();
-        const expected = {
-          identity: { kind: "git", remote, pluginPath },
-          currentRevision: initial,
-        };
-        await rename(repository, `${repository}-offline`);
-        try {
-          expect(await new ManagedPluginSources(home).describe(id, directory)).toEqual(expected);
-          expect(await service.listPlugins()).toMatchObject([
-            { id, enabled, status: enabled ? "running" : "disabled", installation: expected },
-          ]);
-        } finally {
-          await rename(`${repository}-offline`, repository);
-        }
-        await service.stopAllPlugins();
-        service = open();
-        await service.start();
-        await runGitCommand(["checkout", "-b", "new-default"], { cwd: repository });
-        await writeFile(path.join(repository, pluginPath, "revision.txt"), "new default");
-        for (const args of [
-          ["add", "."],
-          ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "update"],
-        ])
-          await runGitCommand(args, { cwd: repository });
-        const latest = (
-          await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })
-        ).stdout.trim();
-        const [preview] = await service.previewUpdates({ pluginId: id });
-        expect(preview).toMatchObject({
-          outcome: "update",
-          current: expected,
-          target: { kind: "git", commit: latest },
+    });
+
+    it.each([true, false])(
+      "updates the shipped legacy Git layout with enabled=%s",
+      async (enabled) => {
+        const store = createStore(home, {
+          [id]: { source: "directory", path: directory, enabled },
         });
-        const [updated] = await service.applyUpdates([preview!.proposal!]);
-        expect(updated).toMatchObject({
-          outcome: "updated",
-          plugin: {
-            id,
-            enabled,
-            status: enabled ? "running" : "disabled",
-            installation: { identity: expected.identity, currentRevision: latest },
-          },
-        });
-        await expect(stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
-        expect(await readFile(settingsFile, "utf8")).toBe(savedSettings);
-        await service.disablePlugin(id);
-        await service.enablePlugin(id);
-        expect(await service.reloadPlugin(id)).toMatchObject({ status: "running" });
-        expect(await service.invokePluginRpc(id, "settings.preferences.read", {})).toMatchObject({
-          status: "ready",
-          values: { message: "keep my settings" },
-        });
-        await service.removePlugin(id);
-        await expect(stat(path.join(home, "plugins", id))).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-        expect(await stat(repository)).toBeDefined();
-        const sources = new ManagedPluginSources(home);
-        // A record cannot confer ownership on another plugin's tree or a malformed version name.
-        sources.commit(id, { kind: "git", remote });
-        for (const outside of [
-          path.join(home, "plugins", "other", path.basename(legacyRoot), "checkout"),
-          path.join(home, "plugins", id, "f".repeat(36), "checkout"),
-          path.join(home, "plugins", id, `${initial.slice(0, 12)}-invalid`, "checkout"),
-        ])
-          await expect(sources.describe(id, outside)).rejects.toThrow(
-            "outside its managed installation",
+        const open = () =>
+          bindTestSessionHost(
+            new PluginService(pino({ level: "silent" }), store, "0.8.0", {
+              managedSources: new ManagedPluginSources(home),
+              settingsDirectory,
+            }),
           );
-      } finally {
-        await service.stopAllPlugins();
-      }
-    },
-    60_000,
-  );
+        let service = open();
+        try {
+          await service.start();
+          const expected = {
+            identity: { kind: "git", remote, pluginPath },
+            currentRevision: initial,
+          };
+          await rename(repository, `${repository}-offline`);
+          try {
+            expect(await new ManagedPluginSources(home).describe(id, directory)).toEqual(expected);
+            expect(await service.listPlugins()).toMatchObject([
+              { id, enabled, status: enabled ? "running" : "disabled", installation: expected },
+            ]);
+          } finally {
+            await rename(`${repository}-offline`, repository);
+          }
+          await service.stopAllPlugins();
+          service = open();
+          await service.start();
+          await runGitCommand(["checkout", "-b", "new-default"], { cwd: repository });
+          await writeFile(path.join(repository, pluginPath, "revision.txt"), "new default");
+          for (const args of [
+            ["add", "."],
+            [
+              "-c",
+              "user.name=Test",
+              "-c",
+              "user.email=test@example.test",
+              "commit",
+              "-m",
+              "update",
+            ],
+          ])
+            await runGitCommand(args, { cwd: repository });
+          const latest = (
+            await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })
+          ).stdout.trim();
+          const [preview] = await service.previewUpdates({ pluginId: id });
+          expect(preview).toMatchObject({
+            outcome: "update",
+            current: expected,
+            target: { kind: "git", commit: latest },
+          });
+          const [updated] = await service.applyUpdates([preview!.proposal!]);
+          expect(updated).toMatchObject({
+            outcome: "updated",
+            plugin: {
+              id,
+              enabled,
+              status: enabled ? "running" : "disabled",
+              installation: { identity: expected.identity, currentRevision: latest },
+            },
+          });
+          await expect(stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+          expect(await readFile(settingsFile, "utf8")).toBe(savedSettings);
+          await service.disablePlugin(id);
+          await service.enablePlugin(id);
+          expect(await service.reloadPlugin(id)).toMatchObject({ status: "running" });
+          expect(await service.invokePluginRpc(id, "settings.preferences.read", {})).toMatchObject({
+            status: "ready",
+            values: { message: "keep my settings" },
+          });
+          await service.removePlugin(id);
+          await expect(stat(path.join(home, "plugins", id))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(await stat(repository)).toBeDefined();
+          const sources = new ManagedPluginSources(home);
+          // A record cannot confer ownership on another plugin's tree or a malformed version name.
+          sources.commit(id, { kind: "git", remote });
+          for (const outside of [
+            path.join(home, "plugins", "other", path.basename(legacyRoot), "checkout"),
+            path.join(home, "plugins", id, "f".repeat(36), "checkout"),
+            path.join(home, "plugins", id, `${initial.slice(0, 12)}-invalid`, "checkout"),
+          ])
+            await expect(sources.describe(id, outside)).rejects.toThrow(
+              "outside its managed installation",
+            );
+        } finally {
+          await service.stopAllPlugins();
+        }
+      },
+      60_000,
+    );
+  });
 
   it("keeps the running commit when a Git update build command fails", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));

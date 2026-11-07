@@ -273,6 +273,7 @@ interface AgentState {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
+  backgroundWork?: AgentSnapshotPayload["backgroundWork"];
   background?: boolean;
 }
 
@@ -293,6 +294,7 @@ function createAgent(
     updatedAt: NOW,
     lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status,
+    backgroundWork: input.backgroundWork,
     capabilities: {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -324,6 +326,17 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("treats background work as running without changing foreground status", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({
+      id: "root-agent",
+      status: "idle",
+      backgroundWork: { count: 1 },
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -341,6 +354,21 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("an errored root agent shows failed only until its error is read", async () => {
+    const unread = new WorkspaceStatus();
+    unread.hasRootAgent({
+      id: "root-agent",
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    await expect(unread.workspaceStatus()).resolves.toBe("failed");
+
+    const read = new WorkspaceStatus();
+    read.hasRootAgent({ id: "root-agent", status: "error", requiresAttention: false });
+    await expect(read.workspaceStatus()).resolves.toBe("done");
   });
 
   test("a running background agent does not make its workspace running", async () => {

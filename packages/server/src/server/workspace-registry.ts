@@ -49,6 +49,7 @@ const PersistedProjectRecordSchema = z.object({
 });
 
 const PersistedWorkspaceRecordSchema = z.object({
+  parentWorkspaceId: z.string().optional(),
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),
@@ -75,9 +76,9 @@ const PersistedWorkspaceRecordSchema = z.object({
   // archive and recovery do not need the directory to still exist in order to
   // recover placement.
   worktreeRoot: z.string().nullable().default(null),
-  // Comparison base preserved across worktree deletion and restore. New branch-off
+  // Current base preserved across worktree deletion and restore. New branch-off
   // workspaces store the resolved ref (e.g. refs/remotes/upstream/main); legacy and
-  // PR checkout records may contain a bare branch name. Ordinary checkouts use null.
+  // PR checkout records may contain a bare branch name. Null means no recorded base.
   baseBranch: z
     .string()
     .nullable()
@@ -679,6 +680,7 @@ export function resolveProjectDisplayName(record: PersistedProjectRecord): strin
 }
 
 export function createPersistedWorkspaceRecord(input: {
+  parentWorkspaceId?: string;
   workspaceId: string;
   projectId: string;
   cwd: string;

@@ -202,6 +202,8 @@ paseo workspace rename <workspace-id> --reset   # back to the branch or director
 paseo workspace archive <workspace-id>
 ```
 
+在 Agent 会话中，`PASEO_WORKSPACE_ID` 保存该 Agent 自己的工作区 ID。即使其他工作区共享同一个目录，Agent 也可以运行 `paseo workspace rename "$PASEO_WORKSPACE_ID" "Auth rework"` 或 `paseo workspace archive "$PASEO_WORKSPACE_ID"`。
+
 当 Paseo 无法从源检出推断代码托管平台时，为 PR 检出添加 `--forge <name>`。setup 钩子和服务见 [Git worktree](/docs/worktrees)。
 
 ## 终端 {#terminals}

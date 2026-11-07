@@ -160,6 +160,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
     baseRef: string | null;
+    baseRefExact?: string | null;
     aheadBehind: { ahead: number; behind: number } | null;
     upstreamRef: string | null;
     aheadOfOrigin: number | null;
@@ -297,6 +298,7 @@ export type WorkspaceGitReadOptions =
 export interface WorkspaceGitBranchSuggestionsOptions {
   query?: string;
   limit?: number;
+  refMode?: "exact";
 }
 
 export interface WorkspaceGitStashListOptions {
@@ -911,7 +913,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const normalizedCwd = resolve(cwd);
     const query = options?.query ?? "";
     const limit = options?.limit;
-    const key = JSON.stringify(["branch-suggestions", normalizedCwd, query, limit ?? null]);
+    const key = JSON.stringify([
+      "branch-suggestions",
+      normalizedCwd,
+      query,
+      limit ?? null,
+      options?.refMode,
+    ]);
     return this.readAuxiliaryCache(this.branchSuggestionsCache, key, readOptions, () =>
       this.deps.listBranchSuggestions(normalizedCwd, options),
     );
@@ -3579,6 +3587,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const cwd = target.cwd;
     const previousForgePrStatusPollKey = this.getForgePrStatusPollKey(target);
+    const previousBaseRef = target.latestFacts?.isGit ? target.latestFacts.resolvedBaseRef : null;
     const baseContext: CheckoutContext = {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
@@ -3586,6 +3595,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       runGitCommand: runRefreshGitCommand,
     };
     const facts = await this.loadCheckoutFacts(target, baseContext);
+    if (facts.isGit && facts.resolvedBaseRef !== previousBaseRef) {
+      this.invalidateCheckoutDiffCache(cwd, "base");
+      this.invalidateCheckoutDiffCache(facts.worktreeRoot, "base");
+    }
     const context: CheckoutContext = { ...baseContext, facts };
     const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
     if (!checkoutStatus.isGit) {
@@ -3618,6 +3631,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         ? checkoutStatus.isDirty
         : (target.latestGit?.isDirty ?? checkoutStatus.isDirty),
       baseRef: checkoutStatus.baseRef,
+      baseRefExact: checkoutStatus.baseRefExact,
       aheadBehind: checkoutStatus.aheadBehind,
       upstreamRef: checkoutStatus.upstreamRef,
       aheadOfOrigin: checkoutStatus.aheadOfOrigin,
