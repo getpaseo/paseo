@@ -4,12 +4,12 @@ const COMMANDS = ["clion", "clion64"] as const;
 
 export const clionTarget: EditorTarget = {
   id: "clion",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "CLion",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("clion.png"),
     };
   },
   async isInstalled(runtime) {
