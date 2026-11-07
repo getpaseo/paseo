@@ -89,11 +89,13 @@ const BOTS = [
   { id: "bot-2", name: "Bot 2" },
 ];
 
-function BotScreen({ theme, params }) {
+function BotScreen({ theme, params, setTitle }) {
   return (
     <View style={{ flex: 1, padding: 24, gap: 8 }}>
       <Text style={{ color: theme.colors.foreground }}>{"Bot screen: " + params.botId}</Text>
       <Text style={{ color: theme.colors.foregroundMuted }}>{"serverId param: " + (params.serverId ?? "none")}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Change screen title" onPress={() => setTitle("Updated bot")}><Text>Change title</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Reset screen title" onPress={() => setTitle(null)}><Text>Reset title</Text></Pressable>
     </View>
   );
 }
