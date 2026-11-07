@@ -6,14 +6,19 @@ import {
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
 import {
+  assertNewWorkspaceSidebarAndHeader,
+  connectNewWorkspaceDaemonClient,
+  submitNewWorkspacePrompt,
   expectNewWorkspaceProjectSelected,
+  fillNewWorkspaceDraft,
+  expectNewWorkspaceDraft,
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceHost,
   selectNewWorkspaceProject,
 } from "../support/helpers/new-workspace";
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { addConnectedHostsAndReload } from "../support/helpers/hosts";
+import { reloadPreservingHostRegistry, addConnectedHostsAndReload } from "../support/helpers/hosts";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
@@ -31,6 +36,8 @@ interface CreatedProject {
 interface CrossHostProjectScenario {
   contextWorkspaceId: string;
   primarySharedWorkspaceId: string;
+  secondarySharedWorkspaceId: string;
+  secondarySharedProjectId: string;
   selectedProjectViewKey: string;
   sharedProjectKey: string;
   secondaryHost: {
@@ -152,6 +159,8 @@ const test = base.extend<{ crossHostProject: CrossHostProjectScenario }>({
       await provide({
         contextWorkspaceId: contextProject.workspaceId,
         primarySharedWorkspaceId: primarySharedProject.workspaceId,
+        secondarySharedWorkspaceId: secondarySharedProject.workspaceId,
+        secondarySharedProjectId: secondarySharedProject.projectId,
         selectedProjectViewKey: projectPlacementViewKey(
           getServerId(),
           primarySharedProject.projectId,
@@ -227,5 +236,66 @@ test.describe("New workspace host project preservation", () => {
     await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
 
     await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+  });
+  test("keeps the selected host and project when switching between wide and compact layouts", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openNewWorkspaceFromContextProject(page, crossHostProject);
+    await selectNewWorkspaceProject(page, {
+      projectKey: crossHostProject.sharedProjectKey,
+      projectViewKey: crossHostProject.selectedProjectViewKey,
+      projectDisplayName: SHARED_PROJECT_NAME,
+    });
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    await fillNewWorkspaceDraft(page, "Keep this task on the selected remote host.");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await expectNewWorkspaceDraft(page, "Keep this task on the selected remote host.");
+    await expect(page.getByTestId("host-picker-trigger")).toContainText(SECONDARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+  });
+  test("keeps the selected host and project when the draft page reloads", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openNewWorkspaceFromContextProject(page, crossHostProject);
+    await selectNewWorkspaceProject(page, {
+      projectKey: crossHostProject.sharedProjectKey,
+      projectViewKey: crossHostProject.selectedProjectViewKey,
+      projectDisplayName: SHARED_PROJECT_NAME,
+    });
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    await fillNewWorkspaceDraft(page, "Keep this task on the selected remote host.");
+
+    await reloadPreservingHostRegistry(page);
+
+    await expectNewWorkspaceDraft(page, "Keep this task on the selected remote host.");
+    await expect(page.getByTestId("host-picker-trigger")).toContainText(SECONDARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+    const client = await connectNewWorkspaceDaemonClient({
+      port: crossHostProject.secondaryHost.port,
+      ownProjects: false,
+    });
+    try {
+      await submitNewWorkspacePrompt(page, "Run this task on the selected remote host.");
+      const created = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: crossHostProject.secondaryHost.serverId,
+        client,
+        previousWorkspaceId: crossHostProject.secondarySharedWorkspaceId,
+        projectDisplayName: SHARED_PROJECT_NAME,
+        assertSidebarRow: false,
+        assertHeader: false,
+      });
+      const result = await client.fetchWorkspaces();
+      const workspace = result.entries.find((entry) => entry.id === created.workspaceId);
+      expect(workspace?.projectId).toBe(crossHostProject.secondarySharedProjectId);
+      expect(workspace?.workspaceDirectory).toBe(created.workspaceDirectory);
+    } finally {
+      await client.close();
+    }
   });
 });

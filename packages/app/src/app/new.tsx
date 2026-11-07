@@ -1,11 +1,11 @@
-import { useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import { useCallback, useMemo } from "react";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import {
   ComposerEditingScope,
   WorkspaceComposerEditingSessionsProvider,
 } from "@/composer/editing-session";
-import { NewWorkspaceScreen } from "@/screens/new-workspace-screen";
+import { NewWorkspaceScreen, type NewWorkspacePlacement } from "@/screens/new-workspace-screen";
 import { buildNewWorkspaceDraftKey } from "@/stores/draft-keys";
 
 /** New workspace drafts share one editing-session home, keyed like a tab by draft. */
@@ -24,6 +24,14 @@ export default function NewWorkspaceRoute() {
   const displayName = typeof params.name === "string" ? params.name : undefined;
   const projectId = typeof params.projectId === "string" ? params.projectId : undefined;
   const draftId = typeof params.draftId === "string" ? params.draftId : undefined;
+  const handlePlacementChange = useCallback((placement: NewWorkspacePlacement) => {
+    router.setParams({
+      serverId: placement.serverId,
+      dir: placement.sourceDirectory,
+      name: placement.displayName,
+      projectId: placement.projectId,
+    });
+  }, []);
   const screenKey = JSON.stringify([
     serverId,
     sourceDirectory ?? null,
@@ -51,6 +59,7 @@ export default function NewWorkspaceRoute() {
             displayName={displayName}
             projectId={projectId}
             draftId={draftId}
+            onPlacementChange={handlePlacementChange}
           />
         </ComposerEditingScope>
       </WorkspaceComposerEditingSessionsProvider>

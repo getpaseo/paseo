@@ -32,6 +32,7 @@ interface NewWorkspaceProjectPickerInput {
 interface NewWorkspaceProjectPickerState {
   selectedProject: HostProjectListItem | null;
   selectedSourceDirectory: string | null;
+  hasManualProjectSelection: boolean;
   projectPickerOptions: ComboboxOptionType[];
   projectByOptionId: Map<string, HostProjectListItem>;
   selectedProjectOptionId: string;
@@ -183,6 +184,7 @@ export function useNewWorkspaceProjectPicker({
   );
 
   return {
+    hasManualProjectSelection: activeSelection.source === "manual",
     selectedProject,
     selectedSourceDirectory: selectedProject
       ? getHostProjectSourceDirectory(selectedProject, selectedServerId)

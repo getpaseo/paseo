@@ -64,6 +64,7 @@ import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
   getHostProjectId,
+  getHostProjectSourceDirectory,
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
@@ -164,12 +165,30 @@ function buildFirstAgentContext(input: {
   };
 }
 
-interface NewWorkspaceScreenProps {
+export interface NewWorkspacePlacement {
   serverId: string;
   sourceDirectory?: string;
   projectId?: string;
   displayName?: string;
+}
+
+interface NewWorkspaceScreenProps extends NewWorkspacePlacement {
   draftId?: string;
+  onPlacementChange: (placement: NewWorkspacePlacement) => void;
+}
+
+function placementForProject(
+  serverId: string,
+  project: HostProjectListItem,
+): NewWorkspacePlacement {
+  const projectId = getHostProjectId(project, serverId);
+  const sourceDirectory = getHostProjectSourceDirectory(project, serverId);
+  return {
+    serverId,
+    projectId: projectId ?? undefined,
+    sourceDirectory: sourceDirectory ?? undefined,
+    displayName: project.projectName,
+  };
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -737,6 +756,8 @@ function useNewWorkspaceHostSelector(input: {
     [routeServerId],
   );
 
+  const hasManualHostSelection = manualSelection?.serverId === selectedServerId;
+
   const handleHostPickerOpenChange = useCallback((open: boolean) => {
     setHostPickerOpen(open);
   }, []);
@@ -747,6 +768,7 @@ function useNewWorkspaceHostSelector(input: {
 
   return {
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -757,6 +779,7 @@ function useNewWorkspaceHostSelector(input: {
 interface NewWorkspaceInitialContextState {
   allHosts: HostProfile[];
   selectedServerId: string;
+  hasManualHostSelection: boolean;
   hostPickerOpen: boolean;
   handleSelectHost: (id: string) => void;
   handleHostPickerOpenChange: (open: boolean) => void;
@@ -772,7 +795,7 @@ function useNewWorkspaceInitialContext({
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
-}: NewWorkspaceScreenProps): NewWorkspaceInitialContextState {
+}: NewWorkspacePlacement): NewWorkspaceInitialContextState {
   const allHosts = useHosts();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const projects = useHostProjects(allServerIds);
@@ -818,6 +841,7 @@ function useNewWorkspaceInitialContext({
   const workspaceMultiplicityByServerId = useHostFeatureMap(allServerIds, "workspaceMultiplicity");
   const {
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -834,6 +858,7 @@ function useNewWorkspaceInitialContext({
   return {
     allHosts,
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -851,6 +876,7 @@ export function NewWorkspaceScreen({
   projectId,
   displayName: displayNameProp,
   draftId,
+  onPlacementChange,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -867,6 +893,7 @@ export function NewWorkspaceScreen({
   const {
     allHosts,
     selectedServerId,
+    hasManualHostSelection,
     hostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
@@ -961,6 +988,7 @@ export function NewWorkspaceScreen({
   const {
     selectedProject,
     selectedSourceDirectory,
+    hasManualProjectSelection,
     projectPickerOptions,
     projectByOptionId,
     selectedProjectOptionId,
@@ -974,6 +1002,30 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  useEffect(() => {
+    const hasManualPlacement = hasManualHostSelection || hasManualProjectSelection;
+    if (!hasManualPlacement || !selectedProject || !selectedSourceDirectory) return;
+    const placement = placementForProject(selectedServerId, selectedProject);
+    const matchesRoute =
+      placement.serverId === serverId &&
+      placement.projectId === projectId &&
+      placement.sourceDirectory === sourceDirectoryProp &&
+      placement.displayName === displayNameProp;
+    if (matchesRoute) return;
+    onPlacementChange(placement);
+  }, [
+    displayNameProp,
+    hasManualHostSelection,
+    hasManualProjectSelection,
+    onPlacementChange,
+    projectId,
+    selectedProject,
+    selectedServerId,
+    selectedSourceDirectory,
+    serverId,
+    sourceDirectoryProp,
+  ]);
+
   const projectIconTargets = useMemo(
     () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
     [projects, selectedServerId],
