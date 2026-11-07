@@ -10,6 +10,7 @@ import type {
   AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
+import { EmptyModelCatalogError } from "./empty-model-catalog-error.js";
 
 const CLAUDE_CUSTOM_THINKING_FIELDS = {
   thinkingOptions: [
@@ -1789,5 +1790,59 @@ describe("fetchCatalog", () => {
     expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
     expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
+  });
+
+  test("rejects when the provider advertises model selection but enumerates nothing", async () => {
+    // Regression for the "default"-only model selector: a provider whose
+    // session advertises a model selector with zero options must surface a
+    // refreshable error, not a ready snapshot caching an empty list.
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({
+        models: [],
+        modes: [{ id: "agent", label: "Agent" }],
+        advertisesModelSelection: true,
+      })),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger);
+
+    await expect(
+      registry.codex.fetchCatalog({ cwd: "/tmp/catalog", force: false }, injectedClient),
+    ).rejects.toBeInstanceOf(EmptyModelCatalogError);
+  });
+
+  test("configured models cover an advertised-but-empty runtime catalog", async () => {
+    // Providers with configured models must not fail: mode discovery is why
+    // the catalog probe runs at all when runtime models are replaced.
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({
+        models: [],
+        modes: [{ id: "agent", label: "Agent" }],
+        advertisesModelSelection: true,
+      })),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [],
+          additionalModels: [{ id: "extra-model", label: "Extra Model" }],
+        },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["extra-model"]);
+    expect(catalog.modes.map((mode) => mode.id)).toEqual(["agent"]);
   });
 });
