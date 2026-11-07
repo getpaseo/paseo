@@ -3,6 +3,7 @@ import {
   getStreamItemMessageId,
   type StreamItem,
   type ThoughtItem,
+  type TimelinePosition,
   type ToolCallItem,
   type TurnSummaryItem,
 } from "@/types/stream";
@@ -61,6 +62,10 @@ function hasSameWork(a: OverviewSummary, b: OverviewSummary): boolean {
   return hasSameCounts(countsA, countsB) && hasSameCounts(actionsA, actionsB);
 }
 
+function hasSamePosition(a: TimelinePosition | undefined, b: TimelinePosition | undefined) {
+  return a === b || (a !== undefined && b !== undefined && a.epoch === b.epoch && a.seq === b.seq);
+}
+
 function hasSameCounts(a: Record<string, number>, b: Record<string, number>): boolean {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
@@ -72,12 +77,20 @@ function summaryRow(
   tools: OverviewSummary,
   previous: TurnSummaryItem | undefined,
 ): TurnSummaryItem {
-  if (previous && previous.expanded === expanded && hasSameWork(previous.tools, tools)) {
+  if (
+    previous &&
+    previous.expanded === expanded &&
+    hasSameWork(previous.tools, tools) &&
+    hasSamePosition(previous.timelineCursor, host.timelineCursor)
+  ) {
     return previous;
   }
   return {
     kind: "turn_summary",
     id: `turn-summary:${host.id}`,
+    // The row stands at its host's place in the timeline, so the reading position over it
+    // still resolves to the turn's prompt.
+    ...(host.timelineCursor !== undefined ? { timelineCursor: host.timelineCursor } : {}),
     ...(host.turnId !== undefined ? { turnId: host.turnId } : {}),
     timestamp: host.timestamp,
     hostId: host.id,

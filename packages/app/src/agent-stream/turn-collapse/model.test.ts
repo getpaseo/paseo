@@ -137,6 +137,17 @@ describe("collapseTurns", () => {
     });
     expect(opened.summaryRowsByHostId.get("u1")).not.toBe(moreWork.summaryRowsByHostId.get("u1"));
   });
+  it("stands at its host's timeline position, taking a new row when that position lands", () => {
+    const live = collapse([user("u1"), shell("c1"), reply("r1")]);
+    expect(live.summaryRowsByHostId.get("u1")).not.toHaveProperty("timelineCursor");
+    const cursor = { epoch: "epoch-1", seq: 7 };
+    const placed = [{ ...user("u1"), timelineCursor: cursor }, shell("c1"), reply("r1")];
+    const canonical = collapse(placed, { previousSummaryRowsByHostId: live.summaryRowsByHostId });
+    expect(canonical.summaryRowsByHostId.get("u1")).not.toBe(live.summaryRowsByHostId.get("u1"));
+    expect(canonical.summaryRowsByHostId.get("u1")?.timelineCursor).toEqual(cursor);
+    const again = collapse(placed, { previousSummaryRowsByHostId: canonical.summaryRowsByHostId });
+    expect(again.summaryRowsByHostId.get("u1")).toBe(canonical.summaryRowsByHostId.get("u1"));
+  });
   it("maps hidden rows to the summary row only while their turn is closed", () => {
     const result = collapse([user("u1"), shell("c1"), reply("final")]);
     expect(result.summaryIdByHiddenRowId.get("c1")).toBe("turn-summary:u1");
