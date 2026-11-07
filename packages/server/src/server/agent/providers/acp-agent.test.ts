@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -49,6 +49,7 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { TraeACPAgentClient, traeActiveTurnSteeringAdapter } from "./trae-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -58,6 +59,7 @@ import type {
   AgentSession,
   ProviderRefreshContext,
 } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
@@ -5075,5 +5077,429 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stale/removed-model");
 
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+  });
+});
+
+interface SteeringHarnessOptions {
+  initialize?: Record<string, unknown>;
+  resume?: "load" | "resume";
+  generic?: boolean;
+  receipt?: unknown;
+  rpcError?: boolean;
+  holdReceipt?: boolean;
+}
+
+async function createStdioSteeringHarness(options: SteeringHarnessOptions = {}) {
+  const cwd = await mkdtemp(path.join(tmpdir(), "paseo-acp-steering-"));
+  const scriptPath = new URL("./test-utils/steering-acp-agent.mjs", import.meta.url);
+  const command: [string, ...string[]] = [
+    process.execPath,
+    fileURLToPath(scriptPath),
+    JSON.stringify(options),
+  ];
+  const clientOptions = { logger: createTestLogger(), command };
+  const client = options.generic
+    ? new GenericACPAgentClient(clientOptions)
+    : new TraeACPAgentClient(clientOptions);
+  const manager = new AgentManager({ clients: { acp: client }, logger: createTestLogger() });
+  const capture = vi.spyOn(client, options.resume ? "resumeSession" : "createSession");
+  const agent = options.resume
+    ? await manager.resumeAgentFromPersistence({
+        provider: "acp",
+        sessionId: "session-1",
+        metadata: { cwd },
+      })
+    : await manager.createAgent({ provider: "acp", cwd }, undefined, { workspaceId: undefined });
+  const session = await capture.mock.results[0]!.value;
+  capture.mockRestore();
+  const connection = asInternals<{ connection: ClientSideConnection }>(session).connection;
+  const control = (method: string) => connection.extMethod(`_test/${method}`, {});
+  onTestFinished(async () => {
+    try {
+      if (!connection.signal.aborted) await control("release");
+    } finally {
+      await manager.closeAgent(agent.id);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const run = manager.streamAgent(agent.id, "initial prompt", {
+    clientMessageId: "initial-client",
+  });
+  const drained = (async () => {
+    for await (const _event of run) {
+      /* Broadcast by manager. */
+    }
+  })();
+  await manager.waitForAgentRunStart(agent.id);
+  const turnId = manager.getAgent(agent.id)!.activeForegroundTurnId!;
+  await control("prompt-started");
+  const steer = (
+    input: Parameters<NonNullable<AgentSession["steerActiveTurn"]>>[0] = "follow up",
+    overrides: Partial<Parameters<NonNullable<AgentSession["steerActiveTurn"]>>[1]> = {},
+  ) => {
+    if (!session.steerActiveTurn) throw new Error("ACP active-turn steering is missing");
+    return session.steerActiveTurn(input, { expectedTurnId: turnId, ...overrides });
+  };
+  const dispatch = (input = "follow up", clearPendingPermissions = false) =>
+    manager.steerOrReplaceActiveTurn(agent.id, input, {
+      clientMessageId: "steer-client",
+      clearPendingPermissions,
+    });
+  const finish = async () => {
+    await control("release");
+    await drained;
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId }),
+    ]);
+  };
+  return {
+    session,
+    connection,
+    events,
+    turnId,
+    steer,
+    dispatch,
+    finish,
+    control,
+    manager,
+    agentId: agent.id,
+  };
+}
+
+describe("ACP active-turn steering over stdio", () => {
+  test("Trae injects into the existing turn without canceling or prompting again", async () => {
+    const h = await createStdioSteeringHarness();
+    await expect(h.steer()).resolves.toEqual({ status: "accepted" });
+    await expect(h.control("state")).resolves.toMatchObject({
+      calls: [
+        { method: "initialize", params: expect.any(Object) },
+        { method: "session/new", params: expect.any(Object) },
+        {
+          method: "session/prompt",
+          params: { sessionId: "session-1", prompt: [{ type: "text", text: "initial prompt" }] },
+        },
+        {
+          method: "_session/steering",
+          params: { sessionId: "session-1", prompt: [{ type: "text", text: "follow up" }] },
+        },
+      ],
+    });
+    expect(await h.session.canStopRuntime?.()).toBe(false);
+    expect(h.events.filter((event) => event.type === "turn_started")).toEqual([
+      { type: "turn_started", provider: "acp", turnId: h.turnId },
+    ]);
+    expect(terminalEvents(h.events)).toEqual([]);
+    await h.finish();
+  });
+});
+
+async function expectSteeringTurnUnchanged(
+  h: Awaited<ReturnType<typeof createStdioSteeringHarness>>,
+  steeringRequests: number,
+  sessionMethod = "session/new",
+) {
+  const state = await h.control("state");
+  expect(state.calls).toEqual([
+    expect.objectContaining({ method: "initialize" }),
+    expect.objectContaining({ method: sessionMethod }),
+    expect.objectContaining({ method: "session/prompt" }),
+    ...Array.from({ length: steeringRequests }, () =>
+      expect.objectContaining({ method: "_session/steering" }),
+    ),
+  ]);
+  expect(h.manager.getAgent(h.agentId)).toMatchObject({
+    activeForegroundTurnId: h.turnId,
+    activeTurnId: h.turnId,
+    lifecycle: "running",
+  });
+  expect(terminalEvents(h.events)).toEqual([]);
+}
+
+describe("ACP active-turn steering over stdio", () => {
+  test("manager records an accepted steer in the original turn", async () => {
+    const h = await createStdioSteeringHarness();
+    await expect(h.dispatch()).resolves.toEqual({ status: "steered" });
+    await expectSteeringTurnUnchanged(h, 1);
+    expect(h.manager.fetchTimeline(h.agentId, { limit: 0 }).rows).toEqual([
+      expect.objectContaining({
+        turnId: h.turnId,
+        item: expect.objectContaining({
+          type: "user_message",
+          text: "initial prompt",
+          clientMessageId: "initial-client",
+        }),
+      }),
+      expect.objectContaining({
+        turnId: h.turnId,
+        item: expect.objectContaining({
+          type: "user_message",
+          text: "follow up",
+          clientMessageId: "steer-client",
+        }),
+      }),
+    ]);
+    await h.finish();
+  });
+
+  test.each(["load", "resume"] as const)(
+    "negotiates steering on a session restored via %s",
+    async (resume) => {
+      const h = await createStdioSteeringHarness({ resume });
+      await expect(h.steer()).resolves.toEqual({ status: "accepted" });
+      await expectSteeringTurnUnchanged(h, 1, `session/${resume}`);
+      await h.finish();
+    },
+  );
+
+  test.each([
+    { name: "missing", initialize: {} },
+    { name: "false", initialize: { _meta: { steering: { supported: false } } } },
+    {
+      name: "wrong level",
+      initialize: {
+        agentCapabilities: { loadSession: true, _meta: { steering: { supported: true } } },
+      },
+    },
+    { name: "string true", initialize: { _meta: { steering: { supported: "true" } } } },
+  ])(
+    "does not inject when capability is $name, including restored connections",
+    async ({ initialize }) => {
+      const h = await createStdioSteeringHarness({ initialize, resume: "load" });
+      await expect(h.steer()).resolves.toEqual({ status: "unavailable" });
+      await expectSteeringTurnUnchanged(h, 0, "session/load");
+      await h.finish();
+    },
+  );
+
+  test("generic ACP stays unavailable even if the peer advertises Trae steering", async () => {
+    const h = await createStdioSteeringHarness({ generic: true });
+    await expect(h.steer()).resolves.toEqual({ status: "unavailable" });
+    await expectSteeringTurnUnchanged(h, 0);
+    await h.finish();
+  });
+
+  test("a mismatched turn cannot receive the steer or release permissions", async () => {
+    const h = await createStdioSteeringHarness();
+    await h.control("permissions");
+    await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+    await expect(
+      h.steer("wrong turn", { expectedTurnId: "another-turn", clearPendingPermissions: true }),
+    ).resolves.toEqual({ status: "unavailable" });
+    expect(h.session.getPendingPermissions()).toHaveLength(2);
+    await expectSteeringTurnUnchanged(h, 0);
+    await h.finish();
+  });
+
+  test("converts structured steering content using the normal ACP prompt format", async () => {
+    const h = await createStdioSteeringHarness();
+    const prompt = [
+      { type: "text", text: "look at this" },
+      { type: "image", data: "AA==", mimeType: "image/png" },
+    ] satisfies Parameters<NonNullable<AgentSession["steerActiveTurn"]>>[0];
+    await expect(h.steer(prompt)).resolves.toEqual({ status: "accepted" });
+    const state = await h.control("state");
+    expect(state.calls).toContainEqual({
+      method: "_session/steering",
+      params: { sessionId: "session-1", prompt },
+    });
+    await h.finish();
+  });
+
+  test.each([
+    { name: "queued", receipt: { outcome: "queued" } },
+    { name: "missing outcome", receipt: {} },
+    { name: "null", receipt: null },
+    { name: "array", receipt: [] },
+    { name: "primitive", receipt: "injected" },
+    { name: "RPC failure", rpcError: true },
+  ])(
+    "manager surfaces $name without cancellation, replacement, retry, or permission release",
+    async (options) => {
+      const h = await createStdioSteeringHarness(options);
+      await h.control("permissions");
+      await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+      await expect(h.dispatch("follow up", true)).rejects.toThrow(
+        options.rpcError ? "steering failed" : "did not confirm injection",
+      );
+      expect(h.session.getPendingPermissions()).toHaveLength(2);
+      await expect(h.control("state")).resolves.toMatchObject({ order: [], permissionResults: [] });
+      await expectSteeringTurnUnchanged(h, 1);
+      expect(h.manager.getTimeline(h.agentId)).not.toContainEqual(
+        expect.objectContaining({ clientMessageId: "steer-client" }),
+      );
+      await h.finish();
+    },
+  );
+
+  test("denies every pending permission only after the successful injection receipt", async () => {
+    const h = await createStdioSteeringHarness({ holdReceipt: true });
+    await h.control("permissions");
+    await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+    const steering = h.dispatch("follow up", true);
+    await h.control("steering-started");
+    expect(h.session.getPendingPermissions()).toHaveLength(2);
+    await expect(h.control("state")).resolves.toMatchObject({ order: [], permissionResults: [] });
+    await h.control("ack-steer");
+    await expect(steering).resolves.toEqual({ status: "steered" });
+    expect(h.session.getPendingPermissions()).toEqual([]);
+    await expect(h.control("permission-results")).resolves.toMatchObject({
+      order: ["injected", "deny", "deny"],
+      permissionResults: [
+        { outcome: { outcome: "selected", optionId: "deny" } },
+        { outcome: { outcome: "selected", optionId: "deny" } },
+      ],
+    });
+    await expectSteeringTurnUnchanged(h, 1);
+    await h.finish();
+  });
+
+  test("leaves permissions pending when clearPendingPermissions is absent", async () => {
+    const h = await createStdioSteeringHarness();
+    await h.control("permissions");
+    await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+    await expect(h.steer()).resolves.toEqual({ status: "accepted" });
+    expect(h.session.getPendingPermissions()).toHaveLength(2);
+    await expect(h.control("state")).resolves.toMatchObject({
+      order: ["injected"],
+      permissionResults: [],
+    });
+    await expectSteeringTurnUnchanged(h, 1);
+    await h.finish();
+  });
+
+  test("manager retains interrupt-and-replace fallback when capability is missing", async () => {
+    const h = await createStdioSteeringHarness({ initialize: {} });
+    const result = await h.dispatch();
+    expect(result.status).toBe("replaced");
+    if (result.status !== "replaced") throw new Error("Expected replacement iterator");
+    for await (const _event of result.iterator) {
+      /* Drain replacement. */
+    }
+    const state = await h.control("state");
+    expect(state.calls).toEqual([
+      expect.objectContaining({ method: "initialize" }),
+      expect.objectContaining({ method: "session/new" }),
+      expect.objectContaining({ method: "session/prompt" }),
+      { method: "session/cancel", params: { sessionId: "session-1" } },
+      expect.objectContaining({
+        method: "session/prompt",
+        params: expect.objectContaining({ prompt: [{ type: "text", text: "follow up" }] }),
+      }),
+    ]);
+  });
+});
+
+describe("Trae steering protocol validation", () => {
+  test.each([
+    undefined,
+    null,
+    false,
+    [],
+    "true",
+    {},
+    { steering: null },
+    { steering: [] },
+    { steering: { supported: 1 } },
+    { steering: { supported: "true" } },
+  ])("rejects malformed or unsupported initialize metadata %j", (_meta) => {
+    const initialize = asInternals<SpawnedACPProcess["initialize"]>({
+      protocolVersion: PROTOCOL_VERSION,
+      _meta,
+    });
+    expect(traeActiveTurnSteeringAdapter.isSupported(initialize)).toBe(false);
+  });
+
+  test("only the strict top-level true capability enables steering", () => {
+    expect(
+      traeActiveTurnSteeringAdapter.isSupported({
+        protocolVersion: PROTOCOL_VERSION,
+        _meta: { steering: { supported: true } },
+      }),
+    ).toBe(true);
+    expect(
+      traeActiveTurnSteeringAdapter.isSupported({
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { _meta: { steering: { supported: true } } },
+      }),
+    ).toBe(false);
+  });
+
+  test.each([null, [], "injected", {}, { outcome: "queued" }, { outcome: true }])(
+    "rejects receipt %j without retrying",
+    async (receipt) => {
+      const extMethod = vi.fn().mockResolvedValue(receipt);
+      await expect(
+        traeActiveTurnSteeringAdapter.steer({
+          connection: { extMethod },
+          sessionId: "session-1",
+          prompt: [],
+        }),
+      ).rejects.toThrow("did not confirm injection");
+      expect(extMethod).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test.each(["closed", "connection", "sessionId", "no turn"] as const)(
+    "ACP reports unavailable for %s state",
+    async (state) => {
+      const session = createSession();
+      const internal = asInternals<{
+        closed: boolean;
+        connection: unknown;
+        sessionId: string | null;
+        activeForegroundTurnId: string | null;
+        activeTurnSteeringSupported: boolean;
+        activeTurnSteeringAdapter: typeof traeActiveTurnSteeringAdapter;
+      }>(session);
+      const extMethod = vi.fn();
+      Object.assign(internal, {
+        connection: { extMethod },
+        sessionId: "session-1",
+        activeForegroundTurnId: "turn-1",
+        activeTurnSteeringSupported: true,
+        activeTurnSteeringAdapter: traeActiveTurnSteeringAdapter,
+      });
+      if (state === "closed") internal.closed = true;
+      if (state === "connection") internal.connection = null;
+      if (state === "sessionId") internal.sessionId = null;
+      if (state === "no turn") internal.activeForegroundTurnId = null;
+      await expect(
+        session.steerActiveTurn("follow up", { expectedTurnId: "turn-1" }),
+      ).resolves.toEqual({ status: "unavailable" });
+      expect(extMethod).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("ACP steering permission release", () => {
+  test("leaves permissions raised during release for the user's next decision", async () => {
+    const h = await createStdioSteeringHarness();
+    await h.control("permissions");
+    await vi.waitFor(() => expect(h.session.getPendingPermissions()).toHaveLength(2));
+    let raisedNextPermission = false;
+    h.session.subscribe((event) => {
+      if (event.type !== "permission_resolved" || raisedNextPermission) return;
+      raisedNextPermission = true;
+      // Resolution callbacks may synchronously raise a new request for subsequent work.
+      void asInternals<ACPAgentSession>(h.session).requestPermission({
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "next-work",
+          title: "Next work",
+          kind: "execute",
+          status: "pending",
+        },
+        options: [{ optionId: "deny", name: "Deny", kind: "reject_once" }],
+      });
+    });
+    await expect(h.dispatch("follow up", true)).resolves.toEqual({ status: "steered" });
+    expect(raisedNextPermission).toBe(true);
+    expect(h.session.getPendingPermissions()).toHaveLength(1);
+    await expect(h.control("permission-results")).resolves.toMatchObject({
+      order: ["injected", "deny", "deny"],
+    });
+    await h.finish();
   });
 });
