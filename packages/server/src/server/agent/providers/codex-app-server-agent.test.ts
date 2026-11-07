@@ -5418,9 +5418,14 @@ describe("Codex app-server provider", () => {
     );
   });
 
-  test.each(["completed", "failed"])(
-    "restores each persisted child independently of a %s observation",
-    async (observationStatus) => {
+  test.each([
+    ["completed", ["finished-child", "running-child"]],
+    ["completed", ["running-child", "finished-child"]],
+    ["failed", ["finished-child", "running-child"]],
+    ["failed", ["running-child", "finished-child"]],
+  ])(
+    "restores each persisted child independently of a %s observation in %s order",
+    async (observationStatus, receiverThreadIds) => {
       const session = createSession();
       const items = [
         {
@@ -5428,7 +5433,7 @@ describe("Codex app-server provider", () => {
           id: "shared-spawn",
           tool: "spawnAgent",
           status: "completed",
-          receiverThreadIds: ["finished-child", "running-child"],
+          receiverThreadIds,
           agentsStates: {
             "finished-child": { status: "pendingInit" },
             "running-child": { status: "running" },
@@ -5460,14 +5465,90 @@ describe("Codex app-server provider", () => {
       const descriptors = history.flatMap((event) =>
         event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
       );
-      expect(descriptors).toEqual([
-        expect.objectContaining({ id: "finished-child", status: "completed" }),
-        expect.objectContaining({ id: "running-child", status: "running" }),
-      ]);
+      expect(descriptors).toHaveLength(2);
+      expect(descriptors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "finished-child", status: "completed" }),
+          expect.objectContaining({ id: "running-child", status: "running" }),
+        ]),
+      );
       expect(history).toContainEqual(
         expect.objectContaining({
           type: "timeline",
           item: expect.objectContaining({ callId: "shared-spawn", status: "running" }),
+        }),
+      );
+      const liveEvents: AgentStreamEvent[] = [];
+      session.subscribe((event) => liveEvents.push(event));
+      await asInternals(session).handleNotification("item/agentMessage/delta", {
+        threadId: "running-child",
+        itemId: "child-message",
+        delta: "Still working",
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "running-child",
+            status: "running",
+          }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "running",
+          }),
+        }),
+      );
+      liveEvents.length = 0;
+      await asInternals(session).handleNotification("turn/completed", {
+        threadId: "running-child",
+        turn: { id: "child-turn", status: "failed", error: null },
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({ type: "upsert", id: "running-child", status: "failed" }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "failed",
+          }),
+        }),
+      );
+      liveEvents.length = 0;
+      await asInternals(session).handleNotification("turn/started", {
+        threadId: "finished-child",
+        turn: { id: "reopened-turn" },
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "running",
+          }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "running-child",
+            status: "running",
+          }),
         }),
       );
     },
