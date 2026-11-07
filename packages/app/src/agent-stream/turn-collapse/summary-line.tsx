@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Summary } from "lucide-react-native";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
@@ -12,9 +12,12 @@ import type { CollapsedTurn } from "./model";
  */
 export const TurnSummaryLine = memo(function TurnSummaryLine({
   turn,
+  gapAbove,
   onExpandedChange,
 }: {
   turn: CollapsedTurn;
+  /** Space between the host row's content and the line, from `getGapAboveTurnSummary`. */
+  gapAbove: number;
   onExpandedChange: (hostId: string, expanded: boolean) => void;
 }) {
   const { t } = useTranslation();
@@ -24,10 +27,12 @@ export const TurnSummaryLine = memo(function TurnSummaryLine({
     () => hold(() => onExpandedChange(turn.hostId, !turn.expanded)),
     [hold, onExpandedChange, turn.expanded, turn.hostId],
   );
+  const style = useMemo(() => ({ marginTop: gapAbove }), [gapAbove]);
 
   return (
     <ExpandableBadge
       testID="turn-summary"
+      style={style}
       label={label}
       icon={Summary}
       isExpanded={turn.expanded}
