@@ -55,6 +55,8 @@ import { PluginAgentClientRegistry } from "./plugin-provider.js";
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
+const DEFAULT_CATALOG_MAX_AGE_MS = 60 * 60 * 1000;
+const CATALOG_MAX_AGE_ENV = "PASEO_PROVIDER_CATALOG_MAX_AGE_MS";
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
@@ -74,6 +76,15 @@ function providerRefreshDeadline(configured: number | undefined): number {
     validRefreshDeadline(Number(process.env[PROVIDER_REFRESH_DEADLINE_ENV])) ??
     DEFAULT_REFRESH_TIMEOUT_MS
   );
+}
+
+function resolveCatalogMaxAgeMs(option: number | undefined): number {
+  if (typeof option === "number" && Number.isFinite(option) && option > 0) {
+    return Math.floor(option);
+  }
+  const fromEnv = Number(process.env[CATALOG_MAX_AGE_ENV]);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+  return DEFAULT_CATALOG_MAX_AGE_MS;
 }
 
 function resolveDiagnosticTimeoutMs(option: number | undefined, refreshTimeoutMs: number): number {
@@ -121,6 +132,7 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
+  catalogMaxAgeMs?: number;
   openCodeBridge?: OpenCodeBridge;
 }
 
@@ -240,6 +252,7 @@ export class ProviderSnapshotManager {
   private destroyed = false;
   private refreshTimeoutMs: number;
   private diagnosticTimeoutMs: number;
+  private catalogMaxAgeMs: number;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -273,6 +286,7 @@ export class ProviderSnapshotManager {
       options.diagnosticTimeoutMs,
       this.refreshTimeoutMs,
     );
+    this.catalogMaxAgeMs = resolveCatalogMaxAgeMs(options.catalogMaxAgeMs);
     this.generation = this.createGeneration(
       this.buildRegistry(this.runtimeSettings, this.providerOverrides),
       this.providerOverrides,
@@ -286,6 +300,16 @@ export class ProviderSnapshotManager {
   getSnapshot(cwd?: string): ProviderSnapshot {
     const target = resolveProviderSnapshotTarget(cwd);
     return this.getSnapshotForTarget(target);
+  }
+
+  isSnapshotStale(cwd?: string | null): boolean {
+    const now = Date.now();
+    const snapshot = this.getSnapshot(cwd ?? undefined);
+    return snapshot.records.some(({ entry }) => {
+      if (entry.status !== "ready" || !entry.fetchedAt) return false;
+      const fetchedAt = Date.parse(entry.fetchedAt);
+      return Number.isFinite(fetchedAt) && now - fetchedAt > this.catalogMaxAgeMs;
+    });
   }
 
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
@@ -964,7 +988,14 @@ export class ProviderSnapshotManager {
       catalogs.set(provider, catalog);
     }
     this.publishTargets([snapshotCwd]);
-    if (!force && (catalog.load || (catalog.result && !catalog.stale))) return catalog.load;
+    const fetchedAtMs = catalog.result?.entry.fetchedAt
+      ? Date.parse(catalog.result.entry.fetchedAt)
+      : NaN;
+    const staleByAge =
+      Number.isFinite(fetchedAtMs) && Date.now() - fetchedAtMs > this.catalogMaxAgeMs;
+    if (!force && (catalog.load || (catalog.result && !catalog.stale && !staleByAge))) {
+      return catalog.load;
+    }
     catalog.stale = false;
 
     const current = catalog;

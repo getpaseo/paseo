@@ -477,6 +477,93 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("catalogs older than catalogMaxAgeMs refresh on the next read", async () => {
+    const cwd = "/tmp/project";
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT 5.4 Mini",
+        },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      catalogMaxAgeMs: 1,
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable, fetchCatalog }),
+      },
+    });
+    try {
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+
+      await waitForDelay(5);
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("catalogs within catalogMaxAgeMs are served from cache", async () => {
+    const cwd = "/tmp/project";
+    const fetchCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT 5.4 Mini",
+        },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      catalogMaxAgeMs: 60_000,
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable: async () => true, fetchCatalog }),
+      },
+    });
+    try {
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      await waitForDelay(5);
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("isSnapshotStale reflects entry age and freshness", async () => {
+    const cwd = "/tmp/project";
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      catalogMaxAgeMs: 1,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+        }),
+      },
+    });
+    try {
+      expect(manager.isSnapshotStale(cwd)).toBe(false);
+      await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(manager.isSnapshotStale(cwd)).toBe(false);
+
+      await waitForDelay(5);
+      expect(manager.isSnapshotStale(cwd)).toBe(true);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("ready snapshots publish the catalog's capability-aware default mode", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
