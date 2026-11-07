@@ -371,6 +371,11 @@ export const zhCN: TranslationResources = {
       insertAndSend: "插入转写并发送",
       failed: "听写失败：{{error}}",
       failedRetry: "听写失败。点按重试。",
+      empty: {
+        noAudio: "未录到音频。是否有其他应用正在使用麦克风？",
+        silentAudio: "只录到了静音。请检查麦克风。",
+        noSpeech: "未识别到语音。点按重试再试一次。",
+      },
     },
     question: {
       responseFailed: "未能发送你的回复，请重试。",

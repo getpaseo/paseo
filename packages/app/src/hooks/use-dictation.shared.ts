@@ -1,6 +1,14 @@
+import type { DictationEmptyReason } from "@/dictation/empty-transcript-reason";
 import { i18n } from "@/i18n/i18next";
 
-export type DictationStatus = "idle" | "recording" | "paused" | "uploading" | "failed";
+export type DictationStatus =
+  | "idle"
+  | "recording"
+  | "paused"
+  | "uploading"
+  | "failed"
+  // Finished, but produced no text. `emptyReason` says why; the audio is kept for retry.
+  | "empty";
 
 export interface UseDictationOptions {
   client: import("@getpaseo/client/internal/daemon-client").DaemonClient | null;
@@ -22,6 +30,9 @@ export interface UseDictationResult {
   duration: number;
   error: string | null;
   status: DictationStatus;
+  emptyReason: DictationEmptyReason | null;
+  // True while recording and no audible audio has arrived in the last SILENCE_HOLD_MS.
+  isHearingSilence: boolean;
   startDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;
   confirmDictation: () => Promise<void>;
@@ -31,6 +42,8 @@ export interface UseDictationResult {
 }
 
 export const DURATION_TICK_MS = 1000;
+// Long enough to ride out the pauses between words without flickering.
+export const SILENCE_HOLD_MS = 1500;
 export const PCM_DICTATION_FORMAT = "audio/pcm;rate=16000;bits=16";
 
 export const toError = (error: unknown): Error => {
