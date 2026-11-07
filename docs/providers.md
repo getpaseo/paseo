@@ -53,6 +53,12 @@ preferences and selection history. Cursor versions without that extension must b
 still probes model selections in its own shim. The initial session supplies modes and the current
 model; it does not override the model list returned by a resolver.
 
+Vendor capabilities that ACP does not model are declared in `clientCapabilityMeta`, which the base
+client sends as `clientCapabilities._meta` on `initialize`. Cursor's `subagents` is the current
+example: Cursor enables it for `true` or a non-null object, and the ACP stream filter uses the same
+predicate. The provider declares it up front; do not infer it from what the agent returns, because
+the capability is what makes the agent return it.
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
