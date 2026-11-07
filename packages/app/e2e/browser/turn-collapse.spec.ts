@@ -63,6 +63,28 @@ async function rowsBetweenLatestSummaryAndReply(
   }, replyTestId);
 }
 
+/**
+ * The latest turn's summary line touches neither its prompt nor its reply, and sits as far
+ * below the prompt as the reply sits below it.
+ */
+async function expectSummaryLineSitsEvenlyBetweenPromptAndReply(page: Page) {
+  const gaps = () =>
+    page.evaluate(() => {
+      const latest = (testId: string) =>
+        [...document.querySelectorAll(`[data-testid="${testId}"]`)].at(-1)!.getBoundingClientRect();
+      const prompt = latest("user-message");
+      const summary = latest("turn-summary");
+      const reply = latest("assistant-message");
+      return {
+        fromPrompt: Math.round(summary.top - prompt.bottom),
+        toReply: Math.round(reply.top - summary.bottom),
+      };
+    });
+  await expect.poll(async () => (await gaps()).fromPrompt).toBeGreaterThan(0);
+  const { fromPrompt, toReply } = await gaps();
+  expect(toReply).toBe(fromPrompt);
+}
+
 async function groupedToolsInsideLatestTurn(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const rows = [...document.querySelectorAll("[data-message-id]")];
@@ -208,6 +230,7 @@ export default function contribute(client) {
         /\(end of synthetic stream\)$/,
       );
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+      await expectSummaryLineSitsEvenlyBetweenPromptAndReply(page);
 
       await summary.click();
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBeGreaterThan(0);

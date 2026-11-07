@@ -71,6 +71,7 @@ import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { IndentRail } from "@/components/indent-rail";
 import { TurnSummaryLine } from "./turn-collapse/summary-line";
+import { getGapAboveTurnSummary } from "./spacing";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
@@ -734,7 +735,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         return (
           <>
             {message}
-            <TurnSummaryLine turn={collapsedTurn} onExpandedChange={setTurnExpanded} />
+            <TurnSummaryLine
+              turn={collapsedTurn}
+              gapAbove={getGapAboveTurnSummary(item)}
+              onExpandedChange={setTurnExpanded}
+            />
           </>
         );
       },
@@ -937,6 +942,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 {getCollapsedTurn(item.id) ? (
                   <TurnSummaryLine
                     turn={getCollapsedTurn(item.id)!}
+                    gapAbove={getGapAboveTurnSummary(item)}
                     onExpandedChange={setTurnExpanded}
                   />
                 ) : null}
