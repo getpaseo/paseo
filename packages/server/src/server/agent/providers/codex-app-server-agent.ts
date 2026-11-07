@@ -534,6 +534,27 @@ interface PersistedSubAgentRoute {
   toolCall: ToolCallTimelineItem;
 }
 
+interface CodexHistoryProjectionState {
+  timeline: PersistedTimelineEntry[];
+  subAgentTimelineIndexByThreadId: Map<string, number>;
+  subAgentToolCallsByThreadId: Map<string, ToolCallTimelineItem>;
+}
+
+interface HistoricalToolCallUpdate {
+  toolCall: ToolCallTimelineItem;
+  observation: ToolCallTimelineItem;
+}
+
+function applyHistoricalToolCallStatus({
+  toolCall,
+  observation,
+}: HistoricalToolCallUpdate): ToolCallTimelineItem {
+  if (observation.status === "failed") {
+    return { ...toolCall, status: "failed", error: observation.error };
+  }
+  return { ...toolCall, status: observation.status, error: null };
+}
+
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
@@ -2122,36 +2143,110 @@ async function loadCodexThreadHistoryTimeline(params: {
 }): Promise<CodexThreadHistoryProjection> {
   const timeline: PersistedTimelineEntry[] = [];
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
+  const subAgentToolCallsByThreadId = new Map<string, ToolCallTimelineItem>();
   try {
-    await projectCodexThreadHistory(params, { timeline, subAgentTimelineIndexByThreadId });
+    await projectCodexThreadHistory(params, {
+      timeline,
+      subAgentTimelineIndexByThreadId,
+      subAgentToolCallsByThreadId,
+    });
   } catch (error) {
     if (!(error instanceof CodexThreadHistoryTooLargeError)) throw error;
     // The session stays usable; the row says why the history stops here.
     timeline.push({ item: { type: "notification", level: "warning", message: error.message } });
   }
+  const callsByTimelineIndex = new Map<number, ToolCallTimelineItem[]>();
   const subAgentRoutes = Array.from(subAgentTimelineIndexByThreadId.entries()).flatMap(
     ([childThreadId, timelineIndex]): PersistedSubAgentRoute[] => {
       const item = timeline[timelineIndex]?.item;
-      return item?.type === "tool_call" && item.detail.type === "sub_agent"
-        ? [{ childThreadId, toolCall: item }]
-        : [];
+      if (item?.type !== "tool_call" || item.detail.type !== "sub_agent") {
+        return [];
+      }
+      const observation = subAgentToolCallsByThreadId.get(childThreadId);
+      const toolCall = observation
+        ? applyHistoricalToolCallStatus({ toolCall: item, observation })
+        : item;
+      const calls = callsByTimelineIndex.get(timelineIndex) ?? [];
+      calls.push(toolCall);
+      callsByTimelineIndex.set(timelineIndex, calls);
+      return [{ childThreadId, toolCall }];
     },
   );
+  for (const [timelineIndex, calls] of callsByTimelineIndex) {
+    const entry = timeline[timelineIndex];
+    if (entry.item.type !== "tool_call") continue;
+    const running = calls.find((call) => call.status === "running");
+    const failed = calls.find((call) => call.status === "failed");
+    const canceled = calls.find((call) => call.status === "canceled");
+    const representative = running ?? failed ?? canceled ?? calls[0];
+    timeline[timelineIndex] = {
+      ...entry,
+      item: applyHistoricalToolCallStatus({ toolCall: entry.item, observation: representative }),
+    };
+  }
   return { timeline, subAgentRoutes };
+}
+
+function updateHistoricalCollabAgentState(params: {
+  item: unknown;
+  projection: CodexHistoryProjectionState;
+}): void {
+  const record = toObjectRecord(params.item);
+  if (!record) return;
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof record.type === "string" ? record.type : undefined,
+  );
+  const states = toObjectRecord(record.agentsStates);
+  if (normalizedType !== "collabAgentToolCall" || !states) return;
+
+  const { timeline, subAgentTimelineIndexByThreadId, subAgentToolCallsByThreadId } =
+    params.projection;
+  for (const [childThreadId, snapshot] of Object.entries(states)) {
+    const timelineIndex = subAgentTimelineIndexByThreadId.get(childThreadId);
+    if (timelineIndex === undefined) continue;
+    const launch = timeline[timelineIndex].item;
+    if (launch.type !== "tool_call" || launch.detail.type !== "sub_agent") continue;
+    const rawStatus = toObjectRecord(snapshot)?.status;
+    if (typeof rawStatus !== "string") continue;
+    const childStatus = rawStatus.trim().toLowerCase();
+    const knownStatus = [
+      "pendinginit",
+      "running",
+      "completed",
+      "interrupted",
+      "shutdown",
+      "errored",
+      "error",
+      "notfound",
+      "failed",
+      "canceled",
+    ].includes(childStatus);
+    if (!knownStatus) continue;
+    const previous = subAgentToolCallsByThreadId.get(childThreadId) ?? launch;
+    // A lookup after closure cannot invalidate an already observed terminal outcome.
+    if (childStatus === "notfound" && isTerminalSubAgentStatus(previous.status)) continue;
+    const observation = mapCodexToolCallFromThreadItem({
+      ...record,
+      type: normalizedType,
+      status: "completed",
+      error: null,
+      agentsStates: { [childThreadId]: snapshot },
+    });
+    if (observation) subAgentToolCallsByThreadId.set(childThreadId, observation);
+  }
 }
 
 async function projectCodexThreadHistory(
   params: { client: CodexAppServerClientLike; threadId: string; cwd: string | null },
-  projection: {
-    timeline: PersistedTimelineEntry[];
-    subAgentTimelineIndexByThreadId: Map<string, number>;
-  },
+  projection: CodexHistoryProjectionState,
 ): Promise<void> {
   const { timeline, subAgentTimelineIndexByThreadId } = projection;
   for await (const row of readCodexThreadHistory(params.client, params.threadId)) {
     const { item } = row;
+    updateHistoricalCollabAgentState({ item, projection });
     const historicalSubAgentActivity = readCodexSubAgentActivity(item);
     if (historicalSubAgentActivity) {
+      projection.subAgentToolCallsByThreadId.delete(historicalSubAgentActivity.agentThreadId);
       const existingIndex = subAgentTimelineIndexByThreadId.get(
         historicalSubAgentActivity.agentThreadId,
       );
