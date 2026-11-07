@@ -74,6 +74,7 @@ export interface CloneGithubProjectDirectlyInput extends ProjectRegistrationCall
   repo: string;
   targetDirectory: string;
   cloneProtocol?: ProjectGithubCloneProtocol;
+  directoryName?: string;
   client: Pick<DaemonClient, "cloneGithubProject"> | null;
 }
 
@@ -134,6 +135,7 @@ export async function cloneGithubProjectDirectly(
     repo: trimmedRepo,
     targetDirectory: trimmedTargetDirectory,
     ...(input.cloneProtocol ? { cloneProtocol: input.cloneProtocol } : {}),
+    ...(input.directoryName ? { directoryName: input.directoryName } : {}),
   });
   if (payload.error || !payload.project) {
     return { ok: false, errorCode: null, error: payload.error };

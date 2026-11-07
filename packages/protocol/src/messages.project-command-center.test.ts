@@ -166,6 +166,7 @@ describe("project command-center protocol", () => {
 
     expect(parsed.features?.workspaceGithubRepositorySearch).toBeUndefined();
     expect(parsed.features?.projectGithubClone).toBeUndefined();
+    expect(parsed.features?.projectGithubCloneDirectoryName).toBeUndefined();
     expect(parsed.features?.projectCreateDirectory).toBeUndefined();
   });
 

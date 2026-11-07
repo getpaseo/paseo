@@ -64,6 +64,12 @@ test.describe("Add Project GitHub flow", () => {
 
       await mkdir(checkoutPath);
       await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "project-name");
+      await expect(addProjectFlowInput(page)).toHaveValue(repository.name);
+      await expect(page.getByTestId("add-project-flow-path-preview")).toContainText(
+        repository.name,
+      );
+      await page.keyboard.press("Enter");
       await expect(page.getByTestId("add-project-flow-error")).toHaveText(
         `Checkout path already exists: ${checkoutPath}`,
       );
