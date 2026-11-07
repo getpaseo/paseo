@@ -1,9 +1,20 @@
 import TurndownService from "turndown";
+import { tables } from "turndown-plugin-gfm";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 
 const markdown = new TurndownService({
   codeBlockStyle: "fenced",
   bulletListMarker: "-",
+});
+// Heading tables become Markdown; headerless tables retain their HTML structure.
+markdown.use(tables);
+markdown.addRule("tableCell", {
+  filter: ["th", "td"],
+  replacement: (content, node) => {
+    const prefix = node.previousElementSibling ? " " : "| ";
+    const cell = content.trim().replace(/\|/g, "\\|").replace(/ *\n/g, "<br>");
+    return `${prefix}${cell} |`;
+  },
 });
 const copiedMarkdown = createAssistantMarkdownParser();
 

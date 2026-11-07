@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
   pasteRichTextIntoComposer,
+  fillComposerDraft,
   copyLatestTurnIntoComposer,
   selectComposerDraftRange,
   undoComposerEdit,
@@ -183,6 +184,16 @@ test("submitting a message leaves the composer ready for the next message", asyn
     await expectComposerDraft(
       page,
       "Investigate: [this FR](https://example.com/issues/39150) next[offline link](https://example.com/offline). Thanks",
+    );
+    await fillComposerDraft(page, "");
+    await pasteRichTextIntoComposer(
+      page,
+      '<table><thead><tr><th>Resource</th><th>Status</th></tr></thead><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr></tbody></table>',
+      "Resource\tStatus\nIssue\tclosed",
+    );
+    await expectComposerDraft(
+      page,
+      "| Resource | Status |\n| --- | --- |\n| [Issue](https://example.com/issue) | closed |",
     );
     await copyLatestTurnIntoComposer(page);
     await expectComposerDraft(page, copiedTable);

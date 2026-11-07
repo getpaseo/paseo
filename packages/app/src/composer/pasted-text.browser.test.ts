@@ -60,6 +60,48 @@ describe("pasted prompt links", () => {
     );
   });
 
+  it("preserves external linked table rows and columns", () => {
+    const input = editor();
+    expect(
+      pasteLinkedClipboardText(
+        input,
+        clipboard(
+          '<table><thead><tr><th>Resource</th><th>Status</th></tr></thead><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr></tbody></table>',
+          "Resource\tStatus\nIssue\tclosed",
+        ),
+      ),
+    ).toBe(true);
+    expect(input.value).toBe(
+      "| Resource | Status |\n| --- | --- |\n| [Issue](https://example.com/issue) | closed |",
+    );
+  });
+
+  it("keeps table cell separators and line breaks inside their cells", () => {
+    const input = editor();
+    expect(
+      pasteLinkedClipboardText(
+        input,
+        clipboard(
+          '<table><tr><th>Resource</th><th>Status</th></tr><tr><td><a href="https://example.com/issue">Issue | tracker</a></td><td>closed<br>today</td></tr></table>',
+          "Resource\tStatus\nIssue | tracker\tclosed today",
+        ),
+      ),
+    ).toBe(true);
+    expect(input.value).toBe(
+      "| Resource | Status |\n| --- | --- |\n| [Issue \\| tracker](https://example.com/issue) | closed<br>today |",
+    );
+  });
+
+  it("retains headerless tables as HTML without inventing a heading", () => {
+    const html =
+      '<table><tbody><tr><td><a href="https://example.com/issue">Issue</a></td><td>closed</td></tr><tr><td>Other</td><td>open</td></tr></tbody></table>';
+    const input = editor();
+    expect(pasteLinkedClipboardText(input, clipboard(html, "Issue\tclosed\nOther\topen"))).toBe(
+      true,
+    );
+    expect(input.value).toBe(html);
+  });
+
   it("leaves plain text and rich text without links to native paste", () => {
     const input = editor();
     expect(pasteLinkedClipboardText(input, clipboard("", "[link](https://example.com)"))).toBe(
