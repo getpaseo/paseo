@@ -869,6 +869,103 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("patch keeps host metadata instructions when the model changes", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            metadataGeneration: {
+              providers: [{ provider: "claude", model: "haiku" }],
+              title: { instructions: "Titles in Simplified Chinese." },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+          title: { instructions: "Titles in Simplified Chinese." },
+        },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = await store.patch({
+      metadataGeneration: { providers: [{ provider: "codex", model: "gpt-5.4-mini" }] },
+    });
+
+    expect(next.metadataGeneration.title).toEqual({
+      instructions: "Titles in Simplified Chinese.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      title: { instructions: "Titles in Simplified Chinese." },
+    });
+  });
+
+  test("patch persists host metadata instructions without dropping the provider list", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    await store.patch({
+      metadataGeneration: {
+        title: { instructions: "Titles in Simplified Chinese." },
+        commitMessage: { instructions: "Commit messages in Simplified Chinese." },
+      },
+    });
+
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      title: { instructions: "Titles in Simplified Chinese." },
+      commitMessage: { instructions: "Commit messages in Simplified Chinese." },
+    });
+  });
+
   test("patch persists clearing metadata generation providers into config.json", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

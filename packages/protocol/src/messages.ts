@@ -27,6 +27,7 @@ export {
   type AgentSkillSelection,
 } from "./agent-profile.js";
 import { PluginIdSchema, PluginRequirementsSchema, PluginSourceSchema } from "./plugin-config.js";
+import { PaseoMetadataGenerationInstructionsSchema } from "./paseo-config-schema.js";
 export {
   PluginIdSchema,
   PluginRequirementsSchema,
@@ -186,6 +187,16 @@ const MutableStructuredGenerationProviderSchema = z
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    ...PaseoMetadataGenerationInstructionsSchema.shape,
+  })
+  .passthrough();
+
+// A patch must not fill in `providers`: the default would read as "clear the
+// model list" for a wording-only patch.
+const MutableMetadataGenerationConfigPatchSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+    ...PaseoMetadataGenerationInstructionsSchema.shape,
   })
   .passthrough();
 
@@ -264,7 +275,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    metadataGeneration: MutableMetadataGenerationConfigPatchSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
