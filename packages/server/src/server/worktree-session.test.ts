@@ -562,6 +562,13 @@ describe("runWorktreeSetupInBackground", () => {
   });
 
   function startSubdirectorySetup(command: string) {
+    const startedAt = performance.now();
+    const recordPhase = (phase: string) => {
+      process.stdout.write(
+        `${JSON.stringify({ phase, elapsedMs: performance.now() - startedAt })}\n`,
+      );
+    };
+    recordPhase("fixture-started");
     const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "worktree-setup-test-")));
     cleanupPaths.push(tempDir);
     const repoDir = path.join(tempDir, "source");
@@ -574,6 +581,7 @@ describe("runWorktreeSetupInBackground", () => {
     // Setup consumes an existing workspace. Git creation is covered by the workflow tests.
     mkdirSync(sourceWorkspaceCwd, { recursive: true });
     mkdirSync(workspaceCwd, { recursive: true });
+    recordPhase("git-init-started");
     execFileSync("git", ["init", "-b", worktree.branchName], {
       cwd: worktree.worktreePath,
       stdio: "pipe",
@@ -588,12 +596,20 @@ describe("runWorktreeSetupInBackground", () => {
     );
     const paseoHome = path.join(tempDir, ".paseo");
 
+    recordPhase("fixture-ready");
     const controller = new AbortController();
     const completion = runWorktreeSetupInBackground(
       {
         paseoHome,
         emitWorkspaceUpdateForWorkspaceId: async () => {},
-        cacheWorkspaceSetupSnapshot: () => {},
+        cacheWorkspaceSetupSnapshot: (_workspaceId, snapshot) => {
+          const lastCommand = snapshot.detail.commands.at(-1);
+          recordPhase(
+            lastCommand
+              ? `setup-${snapshot.status}:command-${lastCommand.status}`
+              : `setup-${snapshot.status}`,
+          );
+        },
         emit: () => {},
         sessionLogger: createLogger(),
         terminalManager: null,
@@ -611,8 +627,10 @@ describe("runWorktreeSetupInBackground", () => {
       controller.signal,
     );
     const stop = async () => {
+      recordPhase("cleanup-started");
       controller.abort();
       await completion;
+      recordPhase("cleanup-joined");
     };
     stopSetup = stop;
     return { tempDir, workspaceCwd, worktreePath: worktree.worktreePath, completion, stop };
