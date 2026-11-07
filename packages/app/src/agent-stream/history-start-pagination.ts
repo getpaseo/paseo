@@ -49,8 +49,24 @@ export function createHistoryStartPagination(input: {
   };
   const fail = () => finish("failed");
 
+  const watchProgress = (geometry: HistoryStartPaginationInput | null) => {
+    if (completed && !geometry?.isReady) {
+      clearTimeout(timeout);
+      timeout = undefined;
+    } else if (timeout === undefined) {
+      const request = generation;
+      timeout = setTimeout(() => {
+        timeout = undefined;
+        // A completed request waits for its retained view to become measurable again.
+        // Unfinished requests still time out even while the view is inactive.
+        if (request === generation && (!completed || input.read()?.isReady)) fail();
+      }, 15_000);
+    }
+  };
+
   const update = () => {
     const geometry = input.read();
+    if (isHistoryStartLoadingOperation(state)) watchProgress(geometry);
     if (!geometry) return;
     if (state.status === "loading") {
       if (!completed) return;
@@ -79,9 +95,7 @@ export function createHistoryStartPagination(input: {
     completed = false;
     publish("loading");
     const request = ++generation;
-    timeout = setTimeout(() => {
-      if (request === generation) fail();
-    }, 15_000);
+    watchProgress(geometry);
     void input.load().then(
       (applied) => {
         if (request !== generation) return undefined;

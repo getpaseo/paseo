@@ -259,3 +259,52 @@ it("uses the forward native list's top edge to request older history", () => {
   expect(requests).toBe(1);
   pagination.dispose();
 });
+
+it.each([null, { ...initial, isReady: false }])(
+  "resumes a completed page after its view stays inactive beyond the deadline (%j)",
+  async (inactive) => {
+    vi.useFakeTimers();
+    let geometry: HistoryStartPaginationInput | null = { ...initial };
+    let complete!: (applied: boolean) => void;
+    let requests = 0;
+    const pagination = createHistoryStartPagination({
+      initiallyVisible: false,
+      read: () => geometry,
+      load: () => {
+        requests++;
+        return new Promise<boolean>((resolve) => {
+          complete = resolve;
+        });
+      },
+      changed: () => {},
+      scheduleSettle: () => {},
+    });
+    try {
+      pagination.update();
+      geometry = inactive;
+      pagination.update();
+      complete(true);
+      await Promise.resolve();
+      vi.advanceTimersByTime(30_000);
+      expect(pagination.state.status).toBe("loading");
+      geometry = { ...initial, progressKey: "10" };
+      pagination.update();
+      expect(pagination.state.status).toBe("settling");
+      geometry = inactive;
+      pagination.update();
+      pagination.settle();
+      vi.advanceTimersByTime(30_000);
+      expect(pagination.state.status).toBe("settling");
+      geometry = { ...initial, progressKey: "10" };
+      pagination.update();
+      pagination.settle();
+      expect(requests).toBe(2);
+      expect(pagination.state.status).toBe("loading");
+      vi.advanceTimersByTime(15_000);
+      expect(pagination.state.status).toBe("failed");
+    } finally {
+      pagination.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
