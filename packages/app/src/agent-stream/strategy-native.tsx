@@ -675,6 +675,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       extraData={renderHistoryMountedRow}
       keyExtractor={keyExtractor}
       testID="agent-chat-scroll"
+      // The Android scroll owner identifies the timeline to contain nested panel gestures.
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={historyStartContent}
       ListFooterComponent={liveAuxiliaryContent ?? undefined}
