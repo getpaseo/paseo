@@ -1,0 +1,17 @@
+context platform=android timeout=120000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-header-menu-trigger\"" 45000
+wait stable 1000 15000
+press "id=\"workspace-explorer-toggle\""
+wait "id=\"file-explorer-backdrop\"" 10000
+back
+wait absent "id=\"file-explorer-backdrop\"" 10000
+is visible "id=\"workspace-header-menu-trigger\""
+back
+wait "id=\"agent-list-backdrop\"" 10000
+is visible "id=\"sidebar-add-project\""
+back
+wait absent "id=\"sidebar-add-project\"" 10000
+close
