@@ -141,7 +141,11 @@ function resolveCanonicalModelId(
 ): string {
   const normalizedModelId = normalizeSelectedModelId(modelId);
   if (!normalizedModelId || !availableModels) return normalizedModelId;
-  return findModelByReference(availableModels, normalizedModelId)?.id ?? "";
+  const model = findModelByReference(availableModels, normalizedModelId);
+  if (model) return model.id;
+  // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
+  // Older drafts used "default" before providers exposed concrete model IDs.
+  return normalizedModelId === "default" ? resolveDefaultModelId(availableModels) : "";
 }
 
 export function resolveEffectiveModel(
@@ -304,13 +308,6 @@ function resolveModelField(input: {
   if (!provider) return "";
   const initialModel = normalizeSelectedModelId(initialValues?.model);
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
-  // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
-  // Older drafts used "default" before providers exposed concrete model IDs.
-  if ((initialModel || preferredModel) === "default" && availableModels?.length) {
-    return (
-      findModelByReference(availableModels, "default")?.id || resolveDefaultModelId(availableModels)
-    );
-  }
   if (initialModel) {
     return !availableModels
       ? initialModel

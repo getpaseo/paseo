@@ -1477,3 +1477,16 @@ it("keeps a new model's thinking preference when pending fork defaults finish re
   });
   expect(ready.form).toEqual(edited.form);
 });
+
+it("preserves saved thinking when a legacy default-model fork resolves", () => {
+  const resolved = resolveFormState(
+    { provider: "codex", model: "default", thinkingOptionId: "low" },
+    { providerPreferences: { codex: { thinkingByModel: { "gpt-5.3-codex": "xhigh" } } } },
+    CODEX_MODELS,
+    INITIAL_USER_MODIFIED,
+    makeState().form,
+    codexProviderMap,
+  );
+  expect(resolved.model).toBe("gpt-5.3-codex");
+  expect(resolved.thinkingOptionId).toBe("low");
+});
