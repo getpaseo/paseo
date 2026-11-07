@@ -179,6 +179,23 @@ export declare const Loading: ComponentType;
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
 
+export interface RewindMenuProps {
+  /** The host the agent runs on: `host.id` from the plugin's props. */
+  hostId: string;
+  agentId: string;
+  /** The prompt's message id (`messageId` on a `user_message` timeline item). Nothing is drawn without one. */
+  messageId?: string;
+  /** The prompt's text, put back in the composer after a conversation rewind. */
+  text: string;
+}
+
+/**
+ * The host's rewind menu for a prompt the plugin draws in place of the host
+ * bubble. It offers only the modes the agent's provider supports and renders
+ * nothing when there are none. Undefined on older hosts: feature-detect it.
+ */
+export declare const RewindMenu: ComponentType<RewindMenuProps> | undefined;
+
 export interface MarkdownProps {
   children: string;
 }
