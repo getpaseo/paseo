@@ -60,6 +60,7 @@ import {
 } from "@getpaseo/protocol/check-traits";
 import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
 import { isGitLabStatusFacts, type GitLabStatusFacts } from "./gitlab-facts.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 
 const GLAB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
@@ -143,6 +144,12 @@ const GitLabPipelineDetailsSchema = z
     jobs: z.array(GitLabPipelineJobSchema).optional().default([]),
   })
   .passthrough();
+
+const GitLabSourceProjectSchema = z.object({
+  namespace: z.object({ full_path: z.string() }),
+  ssh_url_to_repo: z.string(),
+  http_url_to_repo: z.string(),
+});
 
 const GitLabMergeRequestSchema = z
   .object({
@@ -950,6 +957,16 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     return runJson(["mr", "view", ref, "-F", "json"], { cwd }, GitLabMergeRequestSchema);
   }
 
+  async function loadSourceProject(cwd: string, projectId: number) {
+    try {
+      return await runJson(["api", `projects/${projectId}`], { cwd }, GitLabSourceProjectSchema);
+    } catch (error) {
+      // The target's MR ref remains fetchable even if the source project is private.
+      if (error instanceof GlabCommandError && /\b404\b/.test(error.stderr)) return null;
+      throw error;
+    }
+  }
+
   async function listMergeRequestsBySourceBranch(
     cwd: string,
     sourceBranch: string,
@@ -1185,10 +1202,23 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       return mr.source_branch;
     },
 
+    buildPrLocalBranchName({ headRef, checkoutTarget }) {
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
+    },
+
     async getPullRequestCheckoutTarget(
       input: GetPullRequestOptions,
     ): Promise<PullRequestCheckoutTarget> {
       const mr = await viewMergeRequest(input.cwd, String(input.number));
+      const isCrossRepository =
+        mr.source_project_id !== undefined &&
+        mr.source_project_id !== null &&
+        mr.target_project_id !== undefined &&
+        mr.target_project_id !== null &&
+        mr.source_project_id !== mr.target_project_id;
+      const sourceProject = isCrossRepository
+        ? await loadSourceProject(input.cwd, mr.source_project_id!)
+        : null;
       return {
         number: mr.iid,
         baseRefName: mr.target_branch,
@@ -1197,15 +1227,10 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           { remoteName: "origin", remoteRef: `refs/merge-requests/${mr.iid}/head` },
           { remoteName: "origin", remoteRef: `refs/heads/${mr.source_branch}` },
         ],
-        headOwnerLogin: null,
-        headRepositorySshUrl: null,
-        headRepositoryUrl: null,
-        isCrossRepository:
-          mr.source_project_id !== undefined &&
-          mr.source_project_id !== null &&
-          mr.target_project_id !== undefined &&
-          mr.target_project_id !== null &&
-          mr.source_project_id !== mr.target_project_id,
+        headOwnerLogin: sourceProject?.namespace.full_path ?? null,
+        headRepositorySshUrl: sourceProject?.ssh_url_to_repo ?? null,
+        headRepositoryUrl: sourceProject?.http_url_to_repo ?? null,
+        isCrossRepository,
         headRefKind: "branch",
       };
     },
