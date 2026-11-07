@@ -49,6 +49,7 @@ import type {
   FetchCatalogOptions,
   ImportableProviderSession,
   ImportedProviderSession,
+  ImportedTimelineEntry,
   ImportProviderSessionContext,
   ImportProviderSessionInput,
   ListImportableSessionsOptions,
@@ -997,6 +998,7 @@ class PluginAgentClient implements AgentClient {
       config: { ...overrides, provider: this.provider, cwd: overrides.cwd },
       launchContext,
       persistence: decodePersistence(handle),
+      previousNotices: decodePluginSessionNotices(handle),
       history: "replay",
       persist: true,
     });
@@ -1091,6 +1093,7 @@ class PluginAgentClient implements AgentClient {
     config: AgentSessionConfig;
     launchContext?: AgentLaunchContext;
     persistence?: ProviderPersistence;
+    previousNotices?: readonly PersistedPluginNotice[];
     history: "replay" | "skip";
     persist: boolean;
   }): Promise<PluginAgentSession> {
@@ -1133,6 +1136,7 @@ class PluginAgentClient implements AgentClient {
         });
       },
       bind,
+      input.previousNotices,
     );
     bind(bridge);
     return session;
@@ -1188,6 +1192,8 @@ function isTextSnapshotItem(
 
 class PluginAgentSession implements AgentSession {
   readonly initialTimeline: ImportedProviderSession["timeline"];
+  private readonly notices: PersistedPluginNotice[];
+  private opening = true;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history = new PluginSessionHistory();
   private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -1221,14 +1227,13 @@ class PluginAgentSession implements AgentSession {
       state: ProviderConfigState,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
+    previousNotices?: readonly PersistedPluginNotice[],
   ) {
+    this.notices = [...(previousNotices ?? [])];
+    this.initialTimeline = [];
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
-    // Opening notices arrive before the manager subscribes to the session.
-    // Commit them on registration and replay the same timestamps from history.
-    this.initialTimeline = this.timelineHistory().filter(
-      (entry) => entry.item.type === "notification",
-    );
+    this.opening = false;
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
   }
 
@@ -1319,7 +1324,24 @@ class PluginAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     await this.ensureReplay();
-    for (const event of this.history.read(this.provider)) yield event;
+    const pending = this.notices.map(toNoticeTimelineEntry);
+    const toEvent = (entry: ImportedTimelineEntry): AgentStreamEvent => ({
+      type: "timeline",
+      provider: this.provider,
+      ...entry,
+    });
+    for (const row of this.history.read(this.provider)) {
+      while (
+        row.type === "timeline" &&
+        row.timestamp &&
+        pending[0]?.timestamp &&
+        pending[0].timestamp <= row.timestamp
+      ) {
+        yield toEvent(pending.shift()!);
+      }
+      yield row;
+    }
+    for (const entry of pending) yield toEvent(entry);
   }
 
   get canStopRuntime(): (() => Promise<boolean>) | undefined {
@@ -1372,7 +1394,7 @@ class PluginAgentSession implements AgentSession {
 
   describePersistence(): AgentPersistenceHandle | null {
     return this.bridge.persistence
-      ? persistenceHandle(this.provider, this.bridge.persistence)
+      ? persistenceHandle(this.provider, this.bridge.persistence, this.notices)
       : null;
   }
 
@@ -1483,10 +1505,38 @@ class PluginAgentSession implements AgentSession {
   }
 
   private accept(event: ProviderEvent, live: boolean): void {
+    if (!live && event.type === "session.notice") {
+      this.acceptOpeningNotice(event.notice);
+      return;
+    }
     const translated = this.translate(event);
     for (const next of translated) {
       this.history.push(next);
       if (live) this.emit(next);
+    }
+  }
+
+  private acceptOpeningNotice(
+    notice: Extract<ProviderEvent, { type: "session.notice" }>["notice"],
+  ): void {
+    if (notice.dismissed) return;
+    const id = normalizeSessionNoticeId(notice.id, this.bridge.providerId);
+    const level = notice.severity;
+    const message = [notice.title, notice.description].filter(Boolean).join("\n");
+    const existing = this.notices.findLast((entry) => entry.id === id);
+    if (existing && existing.level === level && existing.message === message) return;
+    // Opening notices arrive before the manager subscribes to the session.
+    // Record only newly emitted notices for registration and preserve their
+    // original timestamps in the persistence handle across resumes and history rebuilds.
+    const entry: PersistedPluginNotice = {
+      id,
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+    };
+    this.notices.push(entry);
+    if (this.opening) {
+      this.initialTimeline.push(toNoticeTimelineEntry(entry));
     }
   }
 
@@ -1951,14 +2001,54 @@ function rememberRevertToken(
   }
 }
 
+interface PersistedPluginNotice {
+  id: string;
+  level: "info" | "warning" | "error";
+  message: string;
+  timestamp: string;
+}
+
+const PersistedPluginNoticesSchema: z.ZodType<PersistedPluginNotice[]> = z.array(
+  z.object({
+    id: z.string().min(1),
+    level: z.enum(["info", "warning", "error"]),
+    message: z.string(),
+    timestamp: z.string().datetime(),
+  }),
+);
+
+function decodePluginSessionNotices(handle?: AgentPersistenceHandle): PersistedPluginNotice[] {
+  return PersistedPluginNoticesSchema.parse(handle?.metadata?.pluginSessionNotices ?? []);
+}
+
+function normalizeSessionNoticeId(id: string, providerSessionId: string): string {
+  const prefix = `${providerSessionId}:`;
+  return id.startsWith(prefix) && id.length > prefix.length ? id.slice(prefix.length) : id;
+}
+
+function toNoticeTimelineEntry(notice: PersistedPluginNotice): ImportedTimelineEntry {
+  return {
+    timestamp: notice.timestamp,
+    item: {
+      type: "notification",
+      level: notice.level,
+      message: notice.message,
+    },
+  };
+}
+
 function persistenceHandle(
   provider: string,
   persistence: ProviderPersistence,
+  notices: readonly PersistedPluginNotice[],
 ): AgentPersistenceHandle {
   return {
     provider,
     sessionId: encodePersistence(persistence),
-    metadata: { pluginProviderPersistence: persistence },
+    metadata: {
+      pluginProviderPersistence: persistence,
+      ...(notices.length > 0 ? { pluginSessionNotices: notices } : {}),
+    },
   };
 }
 
