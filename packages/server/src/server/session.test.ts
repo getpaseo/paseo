@@ -5143,6 +5143,7 @@ describe("session workspace launch handling", () => {
       async stop() {
         return launch;
       },
+      runWorkspaceOperation: (_workspaceId, operation) => operation(),
       async disposeWorkspace() {},
     };
     const session = createSessionForTest({
@@ -5209,6 +5210,7 @@ describe("session workspace launch handling", () => {
       async stop() {
         return launch;
       },
+      runWorkspaceOperation: (_workspaceId, operation) => operation(),
       async disposeWorkspace() {},
     };
     const session = createSessionForTest({
