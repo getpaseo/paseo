@@ -195,6 +195,13 @@ test("submitting a message leaves the composer ready for the next message", asyn
       page,
       "| Resource | Status |\n| --- | --- |\n| [Issue](https://example.com/issue) | closed |",
     );
+    await fillComposerDraft(page, "");
+    await pasteRichTextIntoComposer({
+      page,
+      html: '<a href="https://example.com/">Issue</a><table></table>',
+      text: "Issue",
+    });
+    await expectComposerDraft(page, "[Issue](https://example.com/)");
     await copyLatestTurnIntoComposer(page);
     await expectComposerDraft(page, copiedTable);
     await expectComposerFocused(page);

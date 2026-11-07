@@ -8,6 +8,10 @@ const markdown = new TurndownService({
 });
 // Heading tables become Markdown; headerless tables retain their HTML structure.
 markdown.use(tables);
+markdown.addRule("rowlessTable", {
+  filter: (node) => node.nodeName === "TABLE" && (node as HTMLTableElement).rows.length === 0,
+  replacement: (content) => (content ? `\n\n${content}\n\n` : ""),
+});
 markdown.addRule("tableCell", {
   filter: ["th", "td"],
   replacement: (content, node) => {

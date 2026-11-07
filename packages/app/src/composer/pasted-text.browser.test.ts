@@ -102,6 +102,20 @@ describe("pasted prompt links", () => {
     expect(input.value).toBe(html);
   });
 
+  it.each([
+    ["<table></table>", ""],
+    ["<table><caption>Context</caption></table>", "\n\nContext"],
+  ])("keeps surrounding links when a table has no rows: %s", (table, caption) => {
+    const input = editor();
+    expect(
+      pasteLinkedClipboardText(
+        input,
+        clipboard(`<a href="https://example.com/">Issue</a>${table}`, "Issue"),
+      ),
+    ).toBe(true);
+    expect(input.value).toBe(`[Issue](https://example.com/)${caption}`);
+  });
+
   it("leaves plain text and rich text without links to native paste", () => {
     const input = editor();
     expect(pasteLinkedClipboardText(input, clipboard("", "[link](https://example.com)"))).toBe(
