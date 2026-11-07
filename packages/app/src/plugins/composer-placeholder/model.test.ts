@@ -67,6 +67,22 @@ describe("composer placeholders", () => {
     expect(store.textFor("host-a", "agent")).toBeNull();
   });
 
+  it("drops the hint when the installation stops, before plugin cleanup", () => {
+    const store = new ComposerPlaceholderStore();
+    const plugin = installation();
+    const hint = store.set(plugin, { agentId: "agent", text: "Run the tests" });
+    plugin.lifetime.abort();
+    expect(store.textFor("host-a", "agent")).toBeNull();
+    expect(store.getSnapshot()).toEqual([]);
+    hint.update("Still here");
+    expect(store.textFor("host-a", "agent")).toBeNull();
+
+    const stopped = installation();
+    stopped.lifetime.abort();
+    store.set(stopped, { agentId: "agent", text: "Too late" });
+    expect(store.getSnapshot()).toEqual([]);
+  });
+
   it("rejects a missing agent and caps long text", () => {
     const store = new ComposerPlaceholderStore();
     expect(() => store.set(installation(), { agentId: "  ", text: "Next" })).toThrow(

@@ -39,7 +39,12 @@ export class ComposerPlaceholderStore {
   textFor(serverId: string, agentId: string): string | null {
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       const entry = this.entries[index];
-      if (entry.serverId === serverId && entry.agentId === agentId && entry.text) {
+      if (
+        entry.serverId === serverId &&
+        entry.agentId === agentId &&
+        entry.text &&
+        !entry.installation.lifetime.signal.aborted
+      ) {
         return entry.text;
       }
     }
@@ -60,18 +65,25 @@ export class ComposerPlaceholderStore {
       agentId,
       text: normalizeComposerPlaceholder(input.text) ?? "",
     };
+    const signal = installation.lifetime.signal;
+    if (signal.aborted) {
+      return { update() {}, remove() {} };
+    }
     this.publish([...this.entries, entry]);
     let active = true;
+    const remove = () => {
+      if (!active) return;
+      active = false;
+      signal.removeEventListener("abort", remove);
+      this.publish(this.entries.filter((candidate) => candidate.key !== key));
+    };
+    signal.addEventListener("abort", remove, { once: true });
     return {
       update: (text) => {
         if (!active) return;
         this.replace(key, normalizeComposerPlaceholder(text) ?? "");
       },
-      remove: () => {
-        if (!active) return;
-        active = false;
-        this.publish(this.entries.filter((candidate) => candidate.key !== key));
-      },
+      remove,
     };
   }
 
