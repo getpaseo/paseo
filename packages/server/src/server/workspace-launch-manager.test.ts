@@ -15,7 +15,10 @@ import {
   type TerminalManager,
 } from "../terminal/terminal-manager.js";
 import { createServiceProxySubsystem } from "./service-proxy.js";
-import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
+import {
+  WorkspaceLaunchManager,
+  type WorkspaceLaunchManagerDependencies,
+} from "./workspace-launch-manager.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import {
   ensureWorkspaceServicePortPlan,
@@ -346,24 +349,23 @@ describe("WorkspaceLaunchManager", () => {
   it("does not restore a captured script block after workspace disposal", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-recovery-disposal-"));
     tempDirs.push(directory);
-    const terminalManager = createTerminalManager();
+    const captured = createDeferred();
+    const resumeDiscovery = createDeferred();
+    let firstRead = true;
+    const terminalManager = createTerminalManager({
+      afterList: async () => {
+        if (!firstRead) return;
+        firstRead = false;
+        captured.resolve();
+        await resumeDiscovery.promise;
+      },
+    });
     const workspaceId = "disposed-during-recovery";
     const owner = await terminalManager.manager.createTerminal({
       cwd: directory,
       workspaceId,
       workspacePortBlock: { portBase: 42000, portCount: 4 },
     });
-    const captured = createDeferred();
-    const resumeDiscovery = createDeferred();
-    const getTerminals = terminalManager.manager.getTerminals.bind(terminalManager.manager);
-    vi.spyOn(terminalManager.manager, "getTerminals").mockImplementationOnce(
-      async (cwd, options) => {
-        const terminals = await getTerminals(cwd, options);
-        captured.resolve();
-        await resumeDiscovery.promise;
-        return terminals;
-      },
-    );
     const environment = new WorkspaceRuntimeEnvironmentService({
       checkPortAvailable: async () => true,
       random: () => 0,
@@ -422,18 +424,23 @@ describe("WorkspaceLaunchManager", () => {
       },
     });
     const environment = new WorkspaceRuntimeEnvironmentService();
-    const adopt = environment.adopt.bind(environment);
     const adoptionStarted = createDeferred();
     const resumeAdoption = createDeferred();
-    vi.spyOn(environment, "adopt").mockImplementationOnce(async (input) => {
-      adoptionStarted.resolve();
-      await resumeAdoption.promise;
-      return await adopt(input);
-    });
+    const controlledEnvironment: WorkspaceLaunchManagerDependencies["workspaceRuntimeEnvironment"] =
+      {
+        get: (id) => environment.get(id),
+        ensure: (input) => environment.ensure(input),
+        release: (id) => environment.release(id),
+        async adopt(input) {
+          adoptionStarted.resolve();
+          await resumeAdoption.promise;
+          return await environment.adopt(input);
+        },
+      };
     const manager = new WorkspaceLaunchManager({
       terminalManager: terminalManager.manager,
       serviceProxy: null,
-      workspaceRuntimeEnvironment: environment,
+      workspaceRuntimeEnvironment: controlledEnvironment,
       assertAutomationAllowed: async () => {},
       getDaemonTcpPort: null,
       serviceProxyPublicBaseUrl: null,
@@ -2155,6 +2162,7 @@ function createTerminalManager(
   managerOptions: {
     unavailableError?: Error;
     beforeKill?: (terminalId: string) => Promise<void>;
+    afterList?: () => Promise<void>;
   } = {},
 ): {
   manager: TerminalManager;
@@ -2242,11 +2250,13 @@ function createTerminalManager(
     },
     getTerminals: async (cwd: string, options?: { workspaceId?: string }) => {
       if (unavailableError) throw unavailableError;
-      return Array.from(sessions.values()).filter(
+      const terminals = Array.from(sessions.values()).filter(
         (session) =>
           session.cwd === cwd &&
           (options?.workspaceId === undefined || session.workspaceId === options.workspaceId),
       );
+      await managerOptions.afterList?.();
+      return terminals;
     },
     getTerminal: (id: string) => sessions.get(id),
     killTerminal: (id: string) => {

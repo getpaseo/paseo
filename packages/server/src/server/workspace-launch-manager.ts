@@ -99,7 +99,10 @@ export interface WorkspaceLaunchEndpointProbe {
 export interface WorkspaceLaunchManagerDependencies {
   terminalManager: TerminalManager | null;
   serviceProxy: ServiceProxySubsystem | null;
-  workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService;
+  workspaceRuntimeEnvironment: Pick<
+    WorkspaceRuntimeEnvironmentService,
+    "get" | "ensure" | "adopt" | "release"
+  >;
   assertAutomationAllowed: (workspaceId: string) => Promise<void>;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
