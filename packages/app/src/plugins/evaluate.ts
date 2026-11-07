@@ -422,6 +422,7 @@ export function runPluginClientBundle(
       const title = normalizePluginText(contribution.title);
       const pickerTitle = normalizePluginText(contribution.pickerTitle);
       const searchPlaceholder = normalizePluginText(contribution.searchPlaceholder);
+      const newAgentShortcut = contribution.newAgentShortcut;
       const method = contribution.search.name.trim();
       if (!title) throw new Error(`Attachment source ${normalizedId} has no title`);
       const icon = parseSerializablePluginIcon(
@@ -431,6 +432,9 @@ export function runPluginClientBundle(
       if (!pickerTitle) throw new Error(`Attachment source ${normalizedId} has no picker title`);
       if (!searchPlaceholder) {
         throw new Error(`Attachment source ${normalizedId} has no search placeholder`);
+      }
+      if (newAgentShortcut !== undefined && typeof newAgentShortcut !== "boolean") {
+        throw new Error(`Attachment source ${normalizedId} has an invalid New Agent shortcut`);
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
       attachmentSourceIds.add(normalizedId);
@@ -442,6 +446,7 @@ export function runPluginClientBundle(
           icon,
           pickerTitle,
           searchPlaceholder,
+          ...(newAgentShortcut === true ? { newAgentShortcut: true } : {}),
           search: { ...contribution.search, name: method },
         },
         () => attachmentSourceIds.delete(normalizedId),
