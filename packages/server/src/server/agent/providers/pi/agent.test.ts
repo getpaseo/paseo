@@ -4018,6 +4018,22 @@ test("pi runtime safety protects queued replies and runtime-owned activity", asy
   expect(await session.canStopRuntime!()).toBe(false);
   native.state.isCompacting = false;
   expect(await session.canStopRuntime!()).toBe(true);
+  for (const state of [
+    "running",
+    "waiting_background",
+    "waiting_children",
+    "waiting_human",
+    "paused",
+    "held",
+  ]) {
+    native.state.lifecycle = { state };
+    expect(await session.canStopRuntime!(), state).toBe(false);
+  }
+  for (const state of ["done", "failed", "cancelled"]) {
+    native.state.lifecycle = { state };
+    expect(await session.canStopRuntime!(), state).toBe(true);
+  }
+  native.state.lifecycle = undefined;
   native.getStateError = new Error("Unable to prove idle");
   await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
 });
