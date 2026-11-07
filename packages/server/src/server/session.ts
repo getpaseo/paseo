@@ -1187,6 +1187,12 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
+      isScriptTerminal: (terminal) =>
+        this.scriptRuntimeStore
+          ?.listForWorkspace(terminal.workspaceId)
+          .some((script) => script.terminalId === terminal.id) ?? false,
+      subscribeTerminalMetadata: (listener) =>
+        this.scriptRuntimeStore?.subscribe(listener) ?? (() => {}),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({

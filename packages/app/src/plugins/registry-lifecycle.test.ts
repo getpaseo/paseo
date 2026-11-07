@@ -1,3 +1,4 @@
+import { getPluginClientApi } from "./client-state/api";
 import { filePanelTitle } from "@/file-panels/choice/presentation";
 import { i18n } from "@/i18n/i18next";
 import { createPluginHosts } from "./hosts";
@@ -50,7 +51,7 @@ function registry(
           },
           installation.lifetime.signal,
         ),
-        paseo: installation.paseo,
+        paseo: getPluginClientApi(installation).paseo,
         i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected plugin RPC");

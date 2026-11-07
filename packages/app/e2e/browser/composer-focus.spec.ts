@@ -19,6 +19,7 @@ import {
   expectWorkspaceHeaderVisible,
   resizeComposerViewport,
   submitMessage,
+  submitMessageWithButton,
   typeIntoFocusedComposer,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -146,6 +147,14 @@ test("submitting a message leaves the composer ready for the next message", asyn
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
 
+    await submitMessageWithButton(page, "Pointer submission");
+    await expectComposerDraft(page, "");
+    await expectComposerFocused(page);
+    await typeIntoFocusedComposer(page, "Ready after Send");
+    await expectComposerDraft(page, "Ready after Send");
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await expectComposerFocused(page);
+
     await submitMessage(page, "First message");
     await expectComposerFocused(page);
 
@@ -173,7 +182,7 @@ test("submitting a message leaves the composer ready for the next message", asyn
       "Investigate: [this FR](https://example.com/issues/39150) next. Thanks",
     );
     await agent.client.waitForFinish(agent.agentId, 15_000);
-    await expect(page.getByRole("button", { name: "Copy turn", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy turn", exact: true }).last()).toBeVisible();
     await connection.drop();
     await connection.waitForBlockedConnection();
     await pasteRichTextIntoComposer({
@@ -312,6 +321,9 @@ test.describe("touch screen wide enough for the desktop layout", () => {
       ).toBe(false);
       // Autofocus makes its first attempt on the next animation frame.
       await waitForAnimationFrames(page, 4);
+      await expectComposerNotFocused(page);
+      await submitMessageWithButton(page, "Touch submission");
+      await expectComposerDraft(page, "");
       await expectComposerNotFocused(page);
     } finally {
       await agent.cleanup();
