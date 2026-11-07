@@ -4029,9 +4029,11 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
-            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
-          }
+          await this.recordInitialTimelineIfMissing({
+            agent: managed,
+            initialTimeline: session.initialTimeline,
+            durableTimelineHasRows,
+          });
         }
         this.refreshSessionPersistence(managed);
       }
@@ -4222,6 +4224,37 @@ export class AgentManager {
       nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
       timestamp: now.toISOString(),
     };
+  }
+
+  private async recordInitialTimelineIfMissing(options: {
+    agent: ActiveManagedAgent;
+    initialTimeline: NonNullable<AgentSession["initialTimeline"]>;
+    durableTimelineHasRows: boolean;
+  }): Promise<void> {
+    const { agent, initialTimeline, durableTimelineHasRows } = options;
+    const inMemoryRows = this.timelineStore.getRows(agent.id);
+    const firstInMemorySeq = inMemoryRows[0]?.seq ?? Number.POSITIVE_INFINITY;
+    const existingItems: AgentTimelineItem[] = [];
+    if (durableTimelineHasRows && this.durableTimelineStore && firstInMemorySeq > 1) {
+      for (const row of await this.durableTimelineStore.getCommittedRows(agent.id)) {
+        if (row.seq < firstInMemorySeq) {
+          existingItems.push(row.item);
+        }
+      }
+    }
+    for (const row of inMemoryRows) {
+      existingItems.push(row.item);
+    }
+    for (const entry of buildImportedTimelineRows(initialTimeline)) {
+      if (
+        entry.item.type === "notification" &&
+        isDuplicateInitialTimelineNotification({ existingItems, incoming: entry.item })
+      ) {
+        continue;
+      }
+      this.recordTimeline(agent.id, entry.item, { timestamp: entry.timestamp });
+      existingItems.push(entry.item);
+    }
   }
 
   private prepareAgentForClosure(
@@ -5964,6 +5997,31 @@ export class AgentManager {
     }
     return agent;
   }
+}
+
+function isDuplicateInitialTimelineNotification(input: {
+  existingItems: readonly AgentTimelineItem[];
+  incoming: Extract<AgentTimelineItem, { type: "notification" }>;
+}): boolean {
+  const { existingItems, incoming } = input;
+  const isOpenCodeRuntimeVersionNotice = /^This chat uses OpenCode v\d+\.$/.test(incoming.message);
+  if (isOpenCodeRuntimeVersionNotice) {
+    const lastVersionNotice = existingItems.findLast(
+      (item): item is Extract<AgentTimelineItem, { type: "notification" }> =>
+        item.type === "notification" && /^This chat uses OpenCode v\d+\.$/.test(item.message),
+    );
+    return (
+      lastVersionNotice !== undefined &&
+      lastVersionNotice.level === incoming.level &&
+      lastVersionNotice.message === incoming.message
+    );
+  }
+  return existingItems.some(
+    (item) =>
+      item.type === "notification" &&
+      item.level === incoming.level &&
+      item.message === incoming.message,
+  );
 }
 
 function matchesImportableSessionQuery(

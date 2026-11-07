@@ -12650,8 +12650,10 @@ test("commits startup notices once on create and after restored history", async 
     },
   };
   const limitedToolOutput = limitAgentTimelineItemContent(toolOutput);
+  let activeNotice = notice;
+  let lastSession: NotifyingSession | null = null;
   class NotifyingSession extends TestAgentSession {
-    readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
+    readonly initialTimeline = [{ item: activeNotice, timestamp: "2026-09-22T00:00:00.000Z" }];
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -12670,10 +12672,14 @@ test("commits startup notices once on create and after restored history", async 
   }
   const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig) {
-      return new NotifyingSession(config);
+      const session = new NotifyingSession(config);
+      lastSession = session;
+      return session;
     }
     override async resumeSession() {
-      return new NotifyingSession({ provider: "codex", cwd: workdir });
+      const session = new NotifyingSession({ provider: "codex", cwd: workdir });
+      lastSession = session;
+      return session;
     }
   })();
   const store = new RecordingTimelineStore();
@@ -12687,6 +12693,55 @@ test("commits startup notices once on create and after restored history", async 
     const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
     ids.push(created.id);
     expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    await manager.reloadAgentSession(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    await manager.closeAgent(created.id);
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "existing-created",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      created.id,
+    );
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    const followUp: AgentTimelineItem = {
+      type: "user_message",
+      text: "after cold restore",
+      messageId: "msg-after-cold-restore",
+    };
+    lastSession!.pushEvent({ type: "timeline", provider: "codex", item: followUp });
+    await manager.reloadAgentSession(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([
+      notice,
+      followUp,
+    ]);
+    const v1Notice: AgentTimelineItem = {
+      type: "notification",
+      level: "info",
+      message: "This chat uses OpenCode v1.",
+    };
+    const v2Notice: AgentTimelineItem = {
+      type: "notification",
+      level: "info",
+      message: "This chat uses OpenCode v2.",
+    };
+    activeNotice = v1Notice;
+    await manager.reloadAgentSession(created.id);
+    activeNotice = v2Notice;
+    await manager.reloadAgentSession(created.id);
+    activeNotice = v1Notice;
+    await manager.reloadAgentSession(created.id);
+    await manager.reloadAgentSession(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([
+      notice,
+      followUp,
+      v1Notice,
+      v2Notice,
+      v1Notice,
+    ]);
+    activeNotice = notice;
     const resumed = await manager.resumeAgentFromPersistence({
       provider: "codex",
       sessionId: "existing",
