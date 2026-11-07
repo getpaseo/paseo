@@ -2576,6 +2576,14 @@ type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
+      kind: "hook_completed";
+      threadId: string;
+      turnId: string | null;
+      eventName: string;
+      status: string;
+      entries: Array<{ kind: string; text: string }>;
+    }
+  | {
       kind: "turn_completed";
       status: string;
       errorMessage: string | null;
@@ -2695,6 +2703,36 @@ function isCodexDeltaNotification(
 }
 
 const CodexNotificationSchema = z.union([
+  z
+    .object({
+      method: z.literal("hook/completed"),
+      params: z.object({
+        threadId: z.string(),
+        turnId: z.string().nullish(),
+        run: z.object({
+          eventName: z.string(),
+          status: z.string(),
+          entries: z.array(z.object({ kind: z.string(), text: z.string() })),
+        }),
+      }),
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "hook_completed",
+        threadId: params.threadId,
+        turnId: params.turnId ?? null,
+        eventName: params.run.eventName,
+        status: params.run.status,
+        entries: params.run.entries,
+      }),
+    ),
+  z.object({ method: z.literal("hook/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
   z
     .object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema })
     .transform(
@@ -3484,6 +3522,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   // in this app-server, so no other app-server can resume it and it is not reported.
   private savedThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  private turnPromptOutcome: "unobserved" | "accepted" | { rejection: string } = "unobserved";
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -5799,6 +5838,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "turn_completed":
         this.handleTurnCompletedNotification(parsed);
         return;
+      case "hook_completed":
+        this.handleHookCompletedNotification(parsed);
+        return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
         return;
@@ -5826,9 +5868,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.handlePatchApplyCompletedNotification(parsed);
         return;
       case "item_completed":
+        this.recordAcceptedTurnWork(parsed);
         await this.handleItemCompletedNotification(parsed);
         return;
       case "item_started":
+        this.recordAcceptedTurnWork(parsed);
         await this.handleItemStartedNotification(parsed);
         return;
       case "invalid_payload":
@@ -6415,6 +6459,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: current });
   }
 
+  private handleHookCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "hook_completed" }>,
+  ): void {
+    const rejectsCurrentPrompt =
+      parsed.eventName === "userPromptSubmit" &&
+      (parsed.status === "blocked" || parsed.status === "stopped") &&
+      this.currentTurnId !== null &&
+      parsed.turnId === this.currentTurnId;
+    if (!rejectsCurrentPrompt) return;
+
+    const feedback = parsed.entries
+      .filter(
+        (entry) => entry.kind === "feedback" || entry.kind === "stop" || entry.kind === "error",
+      )
+      .map((entry) => entry.text.trim())
+      .filter((text) => text.length > 0)
+      .join("\n\n");
+    const message = feedback || "Prompt rejected by a UserPromptSubmit hook.";
+    if (this.turnPromptOutcome !== "accepted") {
+      this.turnPromptOutcome = { rejection: message };
+    }
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: { type: "notification", level: "error", message },
+    });
+  }
+
   private handleTurnCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
   ): void {
@@ -6445,6 +6517,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else if (parsed.status === "interrupted") {
       this.dismissInterruptedAsyncQuestions();
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } else if (typeof this.turnPromptOutcome === "object") {
+      this.emitEvent({
+        type: "turn_failed",
+        provider: CODEX_PROVIDER,
+        error: this.turnPromptOutcome.rejection,
+      });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
         this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
@@ -6464,7 +6542,24 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resetTurnTrackingState();
   }
 
+  private recordAcceptedTurnWork(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_started" | "item_completed" }>,
+  ): void {
+    // Pre-prompt housekeeping can precede a rejected input. Only admitted input or
+    // task work keeps a rejected follow-up from failing the native turn.
+    const itemType = normalizeCodexThreadItemType(parsed.item.type);
+    if (itemType === CODEX_CONTEXT_COMPACTION_TYPE || itemType === "hookPrompt") return;
+    if (
+      this.currentTurnId !== null &&
+      parsed.threadId === this.currentThreadId &&
+      (parsed.turnId === null || parsed.turnId === this.currentTurnId)
+    ) {
+      this.turnPromptOutcome = "accepted";
+    }
+  }
+
   private resetTurnTrackingState(): void {
+    this.turnPromptOutcome = "unobserved";
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
