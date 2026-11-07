@@ -3386,6 +3386,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
+    // shortcut: binds to the run tracked when the wait begins, so a sender already replaced by then follows the replacement; pass the run token from dispatch if that window matters.
     const pendingRun = this.runs.getPendingRun(agentId);
     if (
       (snapshot.lifecycle === "running" || pendingRun?.start.status === "started") &&
@@ -3453,6 +3454,18 @@ export class AgentManager {
           return true;
         }
 
+        // A replacement's start must not acknowledge the sender's own run that ended unstarted.
+        if (pendingRun?.settled && pendingRun.start.status !== "started") {
+          finishErr(
+            new Error(
+              pendingRun.start.status === "failed"
+                ? pendingRun.start.error
+                : `Agent ${agentId} run was canceled before its turn started; its prompt was not delivered`,
+            ),
+          );
+          return true;
+        }
+
         const currentPendingRun = this.runs.getPendingRun(agentId);
         if (
           (current.lifecycle === "running" || currentPendingRun?.start.status === "started") &&
@@ -3490,6 +3503,8 @@ export class AgentManager {
         { agentId, replayState: false },
       );
 
+      // Clearing a run emits no agent state.
+      void pendingRun?.settledPromise.then(checkCurrentState);
       checkCurrentState();
     });
   }

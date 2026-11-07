@@ -9266,16 +9266,17 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    const firstRun = manager.runAgent(agent.id, "Canceled prompt", {
-      clientMessageId: "canceled-prompt",
-    });
+    // Drain the stream: a fresh Codex agent has no session handle for runAgent before its first turn.
+    const firstRun = drainAsyncGenerator(
+      manager.streamAgent(agent.id, "Canceled prompt", { clientMessageId: "canceled-prompt" }),
+    );
     void firstRun.catch(() => undefined);
     await appServer.waitForRequest("thread/loaded/list");
     const cancel = manager.cancelAgentRun(agent.id);
     await new Promise((resolve) => setTimeout(resolve, 0));
     threadLoaded.resolve({ data: ["thread-1"] });
     await expect(cancel).resolves.toEqual({ status: "settled" });
-    await expect(firstRun).resolves.toMatchObject({ canceled: true, timeline: [] });
+    await expect(firstRun).resolves.toBeUndefined();
     expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle", lastError: undefined });
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
     expect(events.map((event) => event.type)).toEqual(["turn_canceled"]);
@@ -9325,13 +9326,13 @@ test("stopping a pending Codex replacement clears replacement activity", async (
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    const firstRun = manager.runAgent(agent.id, "Original prompt");
+    const firstRun = drainAsyncGenerator(manager.streamAgent(agent.id, "Original prompt"));
     await appServer.waitForRequest("thread/loaded/list");
     const replacement = manager.replaceAgentRun(agent.id, "Replacement prompt");
     await new Promise((resolve) => setTimeout(resolve, 0));
     firstLoaded.resolve({ data: ["thread-1"] });
     const replacementStream = await replacement;
-    await expect(firstRun).resolves.toMatchObject({ canceled: true });
+    await expect(firstRun).resolves.toBeUndefined();
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
     const replacementEvent = replacementStream.next();
     await replacementEntered.promise;
@@ -9350,6 +9351,65 @@ test("stopping a pending Codex replacement clears replacement activity", async (
   } finally {
     firstLoaded.resolve({ data: ["thread-1"] });
     replacementLoaded.resolve({ data: ["thread-1"] });
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a pending Codex start replaced before reaching Codex rejects its sender's start wait", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-replaced-start-wait-"));
+  const firstLoaded = deferred<{ data: string[] }>();
+  let loadCount = 0;
+  const appServer = createFakeCodexAppServer({
+    "thread/loaded/list": () => {
+      loadCount += 1;
+      return loadCount === 1 ? firstLoaded.promise : { data: ["thread-1"] };
+    },
+  });
+  class ColdStartClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ColdStartClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = drainAsyncGenerator(manager.streamAgent(agent.id, "First prompt"));
+    await appServer.waitForRequest("thread/loaded/list");
+    const firstWait = manager.waitForAgentRunStart(agent.id);
+    void firstWait.catch(() => undefined);
+    const replacement = manager.replaceAgentRun(agent.id, "Second prompt");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    firstLoaded.resolve({ data: ["thread-1"] });
+    const replacementStream = await replacement;
+    await expect(firstRun).resolves.toBeUndefined();
+
+    const secondWait = manager.waitForAgentRunStart(agent.id);
+    const replacementDrained = drainAsyncGenerator(replacementStream);
+    await appServer.waitForRequest("turn/start");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
+    await expect(secondWait).resolves.toBeUndefined();
+    await expect(firstWait).rejects.toThrow("its prompt was not delivered");
+    appServer.completeTurn();
+    await replacementDrained;
+    expect(appServer.requests().filter((request) => request.method === "turn/start")).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({
+          input: [expect.objectContaining({ text: "Second prompt" })],
+        }),
+      }),
+    ]);
+    appServer.assertNoErrors();
+  } finally {
+    firstLoaded.resolve({ data: ["thread-1"] });
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();
