@@ -1,4 +1,6 @@
 import { describe, expect, test } from "vitest";
+import { execFileSync } from "node:child_process";
+import { daemonLaunchEnvironment } from "./config-environment.js";
 import {
   buildSelfNodeCommand,
   createExternalCommandProcessEnv,
@@ -8,6 +10,47 @@ import {
 } from "./paseo-env.js";
 
 describe("paseo env contract", () => {
+  test("does not propagate macOS launch flags through daemon or provider environments", () => {
+    const inherited = {
+      XPC_FLAGS: "0x2",
+      ELECTRON_RUN_AS_NODE: "1",
+      CODEX_HOME: "/configured/codex",
+      PATH: "/configured/bin",
+    };
+    for (const mode of ["managed", "deployment"] as const) {
+      expect(daemonLaunchEnvironment({ env: inherited, home: "/paseo", mode })).toEqual({
+        ELECTRON_RUN_AS_NODE: "1",
+        CODEX_HOME: "/configured/codex",
+        PATH: "/configured/bin",
+        PASEO_HOME: "/paseo",
+      });
+    }
+    expect(createPaseoInternalEnv(inherited)).toEqual({
+      ELECTRON_RUN_AS_NODE: "1",
+      CODEX_HOME: "/configured/codex",
+      PATH: "/configured/bin",
+    });
+    expect(createExternalProcessEnv(inherited, { XPC_FLAGS: "0x2" })).toEqual({
+      CODEX_HOME: "/configured/codex",
+      PATH: "/configured/bin",
+    });
+    expect(inherited.XPC_FLAGS).toBe("0x2");
+  });
+
+  test.runIf(process.platform === "darwin")(
+    "daemon launches retain access to the macOS service manager with inherited XPC flags",
+    () => {
+      const env = daemonLaunchEnvironment({
+        env: { ...process.env, XPC_FLAGS: "0x2" },
+        home: "/tmp/paseo-env-test",
+        mode: "managed",
+      });
+      expect(execFileSync("/bin/launchctl", ["manageruid"], { env, encoding: "utf8" }).trim()).toBe(
+        String(process.getuid?.()),
+      );
+    },
+  );
+
   const ELECTRON_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
   const PASEO_NODE_ENV = "PASEO_NODE_ENV";
   const baseEnv = {
