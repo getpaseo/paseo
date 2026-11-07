@@ -1,4 +1,5 @@
 import { validateProviderOptions } from "../provider-options.js";
+import { createTurnIdSequence } from "../turn-ids.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -3409,7 +3410,7 @@ class OpenCodeAgentSession implements AgentSession {
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
-  private nextTurnOrdinal = 0;
+  private readonly nextTurnId = createTurnIdSequence(0);
   private turnState: OpenCodeTurnState = { status: "idle" };
   /**
    * Settlement of every session-scoped abort issued so far. It outlives the stop
@@ -4886,7 +4887,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private createTurnId(): string {
     this.gapRepairRevision += 1;
-    return `opencode-turn-${this.nextTurnOrdinal++}`;
+    return this.nextTurnId("opencode");
   }
 
   private traceOpenCode(msg: OpenCodeTraceMessage, data: OpenCodeTraceData = {}): void {

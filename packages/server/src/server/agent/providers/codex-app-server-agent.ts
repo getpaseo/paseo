@@ -1,5 +1,6 @@
 import { CodexBackgroundInventory } from "./codex/background-inventory.js";
 import { validateProviderOptions } from "../provider-options.js";
+import { createTurnIdSequence } from "../turn-ids.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
@@ -3499,7 +3500,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private startupEvents: AgentStreamEvent[] | null = null;
-  private nextTurnOrdinal = 0;
+  private readonly nextTurnId = createTurnIdSequence(0);
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
@@ -5677,7 +5678,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private createTurnId(): string {
-    return `codex-turn-${this.nextTurnOrdinal++}`;
+    return this.nextTurnId("codex");
   }
 
   private pendingNotifications: Promise<void> = Promise.resolve();

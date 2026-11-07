@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -100,6 +100,12 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { AgentManager } from "../agent-manager.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { sessionTurnIds } from "./test-utils/turn-ids.js";
+
+let codexTurnId = sessionTurnIds("codex");
+beforeEach(() => {
+  codexTurnId = sessionTurnIds("codex");
+});
 
 interface CollaborationModeRecord {
   name: string;
@@ -1343,6 +1349,29 @@ describe("Codex app-server provider", () => {
       appServer.assertNoErrors();
     } finally {
       await session.close();
+    }
+  });
+
+  test("issues turn ids that stay unique after the thread is reopened", async () => {
+    // Idle runtime collection closes the provider session; the next prompt reopens it from
+    // persistence while the daemon keeps the earlier turns' rows and their turn ids.
+    const beforeReopen = createFakeCodexAppServer();
+    const firstSession =
+      await createProviderWithFakeAppServer(beforeReopen).createSession(createConfig());
+    const { turnId: firstTurnId } = await firstSession.startTurn("first turn");
+    const saved = waitForNextEvent(firstSession, "thread_started");
+    beforeReopen.startsTurn({ threadId: "thread-1" });
+    await saved;
+    const handle = firstSession.describePersistence()!;
+    await firstSession.close();
+
+    const afterReopen = createFakeCodexAppServer();
+    const resumed = await createProviderWithFakeAppServer(afterReopen).resumeSession(handle);
+    try {
+      const { turnId: secondTurnId } = await resumed.startTurn("turn after reopen");
+      expect(secondTurnId).not.toBe(firstTurnId);
+    } finally {
+      await resumed.close();
     }
   });
 
@@ -4867,7 +4896,7 @@ describe("Codex app-server provider", () => {
       await expect(child).resolves.toMatchObject({
         type: "provider_subagent",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: codexTurnId(0),
         event: {
           type: "upsert",
           id: "legacy-only-child-thread",
@@ -4877,7 +4906,7 @@ describe("Codex app-server provider", () => {
       await expect(spawn).resolves.toMatchObject({
         type: "timeline",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: codexTurnId(0),
         item: {
           type: "tool_call",
           callId: "spawn-legacy-only-child",

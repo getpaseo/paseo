@@ -1077,6 +1077,30 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("issues turn ids that stay unique after the session is reopened", async () => {
+    // Idle runtime collection closes the provider session; the next prompt reopens it from
+    // persistence while the daemon keeps the earlier turns' rows and their turn ids.
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-turn-ids-"));
+    vi.stubEnv("CLAUDE_CONFIG_DIR", path.join(tempRoot, "claude-config"));
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory: createQueryMock().queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const handle = { provider: "claude" as const, sessionId: "reopened-session" };
+    const first = await client.resumeSession(handle, { cwd: process.cwd() });
+    const { turnId: firstTurnId } = await first.startTurn("first prompt");
+    await first.close();
+
+    const second = await client.resumeSession(handle, { cwd: process.cwd() });
+    const { turnId: secondTurnId } = await second.startTurn("second prompt");
+    await second.close();
+    vi.unstubAllEnvs();
+    await fs.rm(tempRoot, { recursive: true, force: true });
+
+    expect(secondTurnId).not.toBe(firstTurnId);
+  });
+
   test("keeps an extraArgs settings file when Paseo sets Claude flag settings", async () => {
     const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-settings-"));
     const settingsPath = path.join(settingsDir, "settings.json");

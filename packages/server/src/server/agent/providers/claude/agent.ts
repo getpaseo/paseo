@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
+import { createTurnIdSequence } from "../../turn-ids.js";
 import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -2378,7 +2379,7 @@ class ClaudeAgentSession implements AgentSession {
   private historySessionId: string | null = null;
   private replayingHistory = false;
   private turnState: TurnState = "idle";
-  private nextTurnOrdinal = 1;
+  private readonly nextTurnId = createTurnIdSequence(1);
   private cancelCurrentTurn: (() => void) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
@@ -3981,7 +3982,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private createTurnId(owner: "foreground" | "autonomous"): string {
-    return `${owner}-turn-${this.nextTurnOrdinal++}`;
+    return this.nextTurnId(owner);
   }
 
   private isTerminalTurnEvent(event: AgentStreamEvent): boolean {
