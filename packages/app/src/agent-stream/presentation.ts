@@ -210,8 +210,8 @@ export function createStreamPresentation() {
           if (result.turns.nestedItemIds.has(id)) return undefined;
           const groupHost = liveGroupHosts.get(id) ?? retainedGroupHosts.get(id) ?? id;
           return (
-            result.turns.summaryIdByHiddenRowId.get(id) ??
-            result.turns.summaryIdByHiddenRowId.get(groupHost) ??
+            result.turns.hostIdByHiddenRowId.get(id) ??
+            result.turns.hostIdByHiddenRowId.get(groupHost) ??
             (groupHost === id ? undefined : groupHost)
           );
         },

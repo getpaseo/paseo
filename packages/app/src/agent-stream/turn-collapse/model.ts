@@ -15,8 +15,8 @@ export interface TurnCollapse {
   nestedItemIds: ReadonlySet<string>;
   /** The host of the turn a folded message belongs to, for surfaces that must reveal it. */
   hostIdByFoldedMessageId: ReadonlyMap<string, string>;
-  /** Mounted rows replaced by a closed turn's summary row, for preserving the reading position. */
-  summaryIdByHiddenRowId: ReadonlyMap<string, string>;
+  /** Mounted rows replaced by a closed turn's host, for preserving the reading position. */
+  hostIdByHiddenRowId: ReadonlyMap<string, string>;
   /**
    * The summary rows by host. A mounted row renders again only when its item changes, so a fold
    * keeps the previous row object for a turn whose work and open state are unchanged.
@@ -138,7 +138,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const summaryRowsByHostId = new Map<string, TurnSummaryItem>();
   const nestedItemIds = new Set<string>();
   const hostIdByFoldedMessageId = new Map<string, string>();
-  const summaryIdByHiddenRowId = new Map<string, string>();
+  const hostIdByHiddenRowId = new Map<string, string>();
 
   let runStart = 0;
   const flushRun = (runEnd: number) => {
@@ -179,7 +179,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       if (staysVisibleWhenCollapsed(item)) continue;
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
-      else summaryIdByHiddenRowId.set(item.id, summary.id);
+      else hostIdByHiddenRowId.set(item.id, host.id);
     }
     output.push(
       summary,
@@ -205,7 +205,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       tail,
       nestedItemIds: EMPTY_IDS,
       hostIdByFoldedMessageId: EMPTY_HOSTS,
-      summaryIdByHiddenRowId: EMPTY_HOSTS,
+      hostIdByHiddenRowId: EMPTY_HOSTS,
       summaryRowsByHostId: EMPTY_ROWS,
     };
   }
@@ -213,7 +213,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     tail: output,
     nestedItemIds,
     hostIdByFoldedMessageId,
-    summaryIdByHiddenRowId,
+    hostIdByHiddenRowId,
     summaryRowsByHostId,
   };
 }

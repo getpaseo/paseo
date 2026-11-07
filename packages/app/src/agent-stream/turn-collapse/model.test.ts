@@ -148,13 +148,13 @@ describe("collapseTurns", () => {
     const again = collapse(placed, { previousSummaryRowsByHostId: canonical.summaryRowsByHostId });
     expect(again.summaryRowsByHostId.get("u1")).toBe(canonical.summaryRowsByHostId.get("u1"));
   });
-  it("maps hidden rows to the summary row only while their turn is closed", () => {
+  it("maps hidden rows to their turn's host only while the turn is closed", () => {
     const result = collapse([user("u1"), shell("c1"), reply("final")]);
-    expect(result.summaryIdByHiddenRowId.get("c1")).toBe("turn-summary:u1");
+    expect(result.hostIdByHiddenRowId.get("c1")).toBe("u1");
     const expanded = collapse([user("u1"), shell("c1"), reply("final")], {
       expandedHostIds: new Set(["u1"]),
     });
-    expect(expanded.summaryIdByHiddenRowId.size).toBe(0);
+    expect(expanded.hostIdByHiddenRowId.size).toBe(0);
   });
   it("keeps lifecycle events and compaction recognizable beside a semantic action summary", () => {
     const create = shell("create");

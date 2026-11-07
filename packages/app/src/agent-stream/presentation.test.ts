@@ -751,9 +751,9 @@ it.each(["collapseToolCalls", "collapseTurns"] as const)(
         { kind: "assistant_message", id: "reply", text: "Done", timestamp },
       ],
     });
-    // Both the original partial group and its replacement resolve directly to the turn's summary row.
-    expect(folded.readingRowReplacements.get(calls[1]!.id)).toBe("turn-summary:prompt");
-    expect(anchor.getRowId(folded.readingRowReplacements)).toBe("turn-summary:prompt");
+    // Both the original partial group and its replacement resolve directly to the turn's host.
+    expect(folded.readingRowReplacements.get(calls[1]!.id)).toBe("prompt");
+    expect(anchor.getRowId(folded.readingRowReplacements)).toBe("prompt");
     const opened = present({ ...input, tail: calls, display: "full" });
     expect(opened.readingRowReplacements.get(calls[1]!.id)).toBeUndefined();
   },
