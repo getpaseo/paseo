@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,7 @@ async function harness(env: Record<string, string> = {}) {
   const launch: ProviderLaunch = {
     command: process.execPath,
     args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
+    env: { HOME: cwd, AGY_TEST_LOG: log, ...env },
   };
   const connection = await provider.connect({
     versions: [1],
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -508,21 +512,302 @@ it("defers model and mode changes until the next prompt, then respawns with vali
   );
 });
 
-it("resumes after connection close without replay or another system prefix", async () => {
+it("resumes after connection close, replays transcript history when requested, and skips another system prefix", async () => {
   const first = await harness();
   await first.open();
   await first.completed(await first.prompt("HELLO"));
   const persistence = first.persistence();
   await first.connection.close();
-  const second = await harness();
+  const second = await harness({ HOME: first.cwd });
   await second.open(persistence);
-  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+  const openedIndex = second.events.findIndex((event) => event.type === "session.opened");
+  const noticeIndex = second.events.findIndex((event) => event.type === "session.notice");
+  const timelineIndices = second.events
+    .map((event, index) => (event.type === "timeline.item" ? index : -1))
+    .filter((index) => index >= 0);
+  expect(timelineIndices.every((index) => index > openedIndex && index < noticeIndex)).toBe(true);
+  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-02T16:27:03Z",
+      item: {
+        type: "user_message",
+        id: "history:0",
+        messageId: "history:0",
+        text: "HELLO",
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-02T16:27:04Z",
+      item: {
+        type: "assistant_message",
+        id: "history:2",
+        messageId: "history:2",
+        text: "PHASE0_HELLO\n",
+      },
+    },
+  ]);
   await second.completed(await second.prompt("RESUME"));
   expect(
     (await second.records())
       .filter((entry) => entry.input)
       .map((entry) => entry.input.message.content),
   ).toEqual(["RESUME"]);
+
+  const skipped = await harness({ HOME: first.cwd });
+  await skipped.open(persistence, "s", "skip");
+  expect(skipped.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+});
+
+it("replays reasoning, tool calls, subagents, and compact transcript fallback on resume", async () => {
+  const h = await harness();
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const logsDir = path.join(
+    h.cwd,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(logsDir, { recursive: true });
+  const transcriptLines = [
+    {
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:00Z",
+      content:
+        "<USER_REQUEST>\nINITIAL SYSTEM PREFIX\n\nInspect literal </USER_REQUEST> tag.\nAttached image: /tmp/paseo-antigravity-images-abc/sample.png\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-11-02T16:27:00Z.\n</ADDITIONAL_METADATA>",
+    },
+    {
+      step_index: 1,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:01Z",
+      thinking: "Checking CONTEXT.md and running a status command.\n",
+      tool_calls: [
+        { name: "read_file", args: { Path: "/repo/CONTEXT.md" } },
+        { name: "write_file", args: { Path: "/repo/out.txt", Content: "hello" } },
+        {
+          name: "edit_file",
+          args: { Path: "/repo/out.txt", Target: "hello", Replacement: "world" },
+        },
+        { name: "run_command", args: { CommandLine: "git status" } },
+        {
+          name: "invoke_subagent",
+          args: { TypeName: "research", Role: "Reviewer", Prompt: "Audit changes" },
+        },
+        { name: "run_command", args: { CommandLine: "sleep 60" } },
+      ],
+    },
+    {
+      step_index: 2,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:02Z",
+      content:
+        "Created At: 2026-11-02T16:27:02Z\nCompleted At: 2026-11-02T16:27:02Z\nShowing lines 1-2 of 2\n1: # Context",
+    },
+    {
+      step_index: 3,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:02Z",
+      content: "Created At: 2026-11-02T16:27:02Z\nCompleted At: 2026-11-02T16:27:02Z\nWrote file",
+    },
+    {
+      step_index: 4,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:02Z",
+      content: "Created At: 2026-11-02T16:27:02Z\nCompleted At: 2026-11-02T16:27:02Z\nEdited file",
+    },
+    {
+      step_index: 5,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "ERROR",
+      error: "permission denied",
+      created_at: "2026-11-02T16:27:03Z",
+      content:
+        "Created At: 2026-11-02T16:27:03Z\nCompleted At: 2026-11-02T16:27:03Z\nEncountered error in step execution: permission denied",
+    },
+    {
+      step_index: 6,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:04Z",
+      content:
+        'Created At: 2026-11-02T16:27:04Z\nCompleted At: 2026-11-02T16:27:04Z\nCreated the following subagent:\n{\n  "conversationId": "b6f02329-7415-49a7-a9a9-1cd09e898d26",\n  "logAbsoluteUri": "file:///tmp/subagent/transcript.jsonl",\n  "workspaceUris": ["file:///repo"]\n}\n',
+    },
+    {
+      step_index: 8,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-02T16:27:05Z",
+      content: "Inspection complete.",
+    },
+  ];
+  await writeFile(
+    path.join(logsDir, "transcript.jsonl"),
+    transcriptLines.map((line) => JSON.stringify(line)).join("\n") +
+      '\n{"step_index": 9, "type": "PLANNER_RES',
+  );
+  await h.open({
+    version: 1,
+    data: { conversationId, systemPrompt: "INITIAL SYSTEM PREFIX" },
+  });
+  const items = h.events
+    .filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item",
+    )
+    .map((event) => event.item);
+  expect(items).toEqual([
+    {
+      type: "user_message",
+      id: "history:0",
+      messageId: "history:0",
+      text: "Inspect literal </USER_REQUEST> tag.",
+    },
+    {
+      type: "reasoning",
+      id: "history:1:reasoning",
+      text: "Checking CONTEXT.md and running a status command.",
+    },
+    {
+      type: "tool_call",
+      id: "history:2",
+      callId: "history:2",
+      name: "read_file",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "read",
+        filePath: "/repo/CONTEXT.md",
+        content: "Showing lines 1-2 of 2\n1: # Context",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "tool_call",
+      id: "history:3",
+      callId: "history:3",
+      name: "write_file",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "write",
+        filePath: "/repo/out.txt",
+        content: "hello",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "tool_call",
+      id: "history:4",
+      callId: "history:4",
+      name: "edit_file",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/out.txt",
+        oldString: "hello",
+        newString: "world",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "tool_call",
+      id: "history:5",
+      callId: "history:5",
+      name: "run_command",
+      status: "failed",
+      error: "permission denied",
+      detail: {
+        type: "shell",
+        command: "git status",
+        output: "",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "tool_call",
+      id: "history:6",
+      callId: "history:6",
+      name: "invoke_subagent",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "research",
+        description: "Audit changes",
+        childSessionId: "b6f02329-7415-49a7-a9a9-1cd09e898d26",
+        log: "file:///tmp/subagent/transcript.jsonl",
+      },
+      metadata: {
+        subagents: [
+          {
+            type_name: "research",
+            role: "Reviewer",
+            initial_prompt: "Audit changes",
+            conversation_id: "b6f02329-7415-49a7-a9a9-1cd09e898d26",
+            log_uri: "file:///tmp/subagent/transcript.jsonl",
+            workspace_uris: ["file:///repo"],
+          },
+        ],
+      },
+    },
+    {
+      type: "tool_call",
+      id: "history:7",
+      callId: "history:7",
+      name: "run_command",
+      status: "canceled",
+      error: null,
+      detail: {
+        type: "shell",
+        command: "sleep 60",
+        output: "",
+      },
+      metadata: undefined,
+    },
+    {
+      type: "assistant_message",
+      id: "history:8",
+      messageId: "history:8",
+      text: "Inspection complete.",
+    },
+  ]);
+
+  const unprefixed = await harness({ HOME: h.cwd });
+  await unprefixed.open({
+    version: 1,
+    data: { conversationId, systemPrompt: null },
+  });
+  const firstUserItem = unprefixed.events.find(
+    (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+      event.type === "timeline.item" && event.item.type === "user_message",
+  );
+  expect(firstUserItem?.item).toEqual({
+    type: "user_message",
+    id: "history:0",
+    messageId: "history:0",
+    text: "INITIAL SYSTEM PREFIX\n\nInspect literal </USER_REQUEST> tag.",
+  });
 });
 
 it.each(["auth", "exit", "stderr"])(

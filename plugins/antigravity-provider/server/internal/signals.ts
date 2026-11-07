@@ -23,7 +23,14 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
   try {
     process.kill(plan.pid, plan.signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ESRCH" || error.code === "EPERM")
+      )
+    )
+      throw error;
   }
 }
 
