@@ -1,4 +1,6 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import { GrokQuestions } from "./grok-questions.js";
+import { CursorQuestions } from "./cursor-questions.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -16,6 +18,7 @@ import type {
 } from "node:stream/web";
 import {
   ClientSideConnection,
+  RequestError,
   PROTOCOL_VERSION,
   type AgentCapabilities as ACPAgentCapabilities,
   type Error as ACPError,
@@ -1753,6 +1756,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly harnessEnvironment: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
+  private readonly grokQuestions: GrokQuestions;
+  private readonly cursorQuestions: CursorQuestions;
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
@@ -1795,6 +1800,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
+    this.grokQuestions = new GrokQuestions(this.provider, (event) => this.pushEvent(event));
+    this.cursorQuestions = new CursorQuestions(this.provider, (event) => this.pushEvent(event));
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
@@ -2519,10 +2526,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return Array.from(this.pendingPermissions.values(), (entry) => entry.request);
+    return [
+      ...Array.from(this.pendingPermissions.values(), (entry) => entry.request),
+      ...this.grokQuestions.pending(),
+      ...this.cursorQuestions.pending(),
+    ];
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+    const questions = [this.grokQuestions, this.cursorQuestions].find((bridge) =>
+      bridge.has(requestId),
+    );
+    if (questions) {
+      questions.respond(requestId, response);
+      if (response.behavior === "deny" && response.interrupt && this.connection && this.sessionId) {
+        await this.connection.cancel({ sessionId: this.sessionId });
+      }
+      return;
+    }
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
@@ -2591,7 +2612,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async canStopRuntime(): Promise<boolean> {
     return (
       this.activeForegroundTurnId === null &&
-      this.pendingPermissions.size === 0 &&
+      this.getPendingPermissions().length === 0 &&
       this.pendingUserMessage === null &&
       !Array.from(this.terminalEntries.values()).some((terminal) => terminal.running)
     );
@@ -2745,6 +2766,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     for (const event of events) {
       this.pushEvent(event);
     }
+  }
+
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (method === "cursor/ask_question") {
+      if (!this.sessionId) throw RequestError.invalidParams();
+      return this.cursorQuestions.request(params, this.activeForegroundTurnId);
+    }
+    if (method !== "_x.ai/ask_user_question") throw RequestError.methodNotFound(method);
+    return this.grokQuestions.request(params, this.sessionId, this.activeForegroundTurnId);
   }
 
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
@@ -3485,6 +3518,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    this.grokQuestions.cancel();
+    this.cursorQuestions.cancel();
     // Failed and canceled turns clear every request in the manager. Answer the
     // same set here so an outside-turn request cannot keep the provider blocked.
     this.cancelPendingPermissions(
@@ -3498,11 +3533,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent(event);
   }
 
-  private cancelPendingPermissions(
-    matches: (pending: PendingPermission) => boolean = () => true,
-  ): void {
+  private cancelPendingPermissions(matches?: (pending: PendingPermission) => boolean): void {
+    if (!matches) {
+      this.grokQuestions.cancel();
+      this.cursorQuestions.cancel();
+    }
+    const filter = matches ?? (() => true);
     for (const [requestId, pending] of this.pendingPermissions) {
-      if (!matches(pending)) continue;
+      if (!filter(pending)) continue;
       this.pendingPermissions.delete(requestId);
       pending.resolve({ outcome: { outcome: "cancelled" } });
       this.pushEvent({
