@@ -12,10 +12,13 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with two corrections. Java, because the content-position
+ * React Native's vertical scroll view with timeline corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
+  // The chat timeline, packages/app/src/agent-stream/strategy-native.tsx.
+  private static final String TIMELINE_NATIVE_ID = "agent-chat-scroll-native-virtualized";
+
   // The chat timeline's end pin, packages/app/src/agent-stream/native-end-pin.tsx.
   private static final String END_PIN_NATIVE_ID = "paseo-end-pin";
 
@@ -30,6 +33,26 @@ final class PaseoScrollView extends ReactScrollView {
 
   PaseoScrollView(Context context) {
     super(context);
+  }
+
+  // A panel owns its gesture through its edges; remaining child motion must not move the chat
+  // behind it. The timeline's native identity stays present when its end pin is removed for
+  // reading history. Ordinary parents retain Android's nested-scroll handoff.
+  @Override
+  public void onNestedScroll(
+      View target, int dxConsumed, int dyConsumed, int dxUnconsumed, int dyUnconsumed) {
+    if (isTimeline()) return;
+    super.onNestedScroll(target, dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed);
+  }
+
+  @Override
+  public boolean onNestedFling(View target, float velocityX, float velocityY, boolean consumed) {
+    if (isTimeline() && !consumed) return true;
+    return super.onNestedFling(target, velocityX, velocityY, consumed);
+  }
+
+  private boolean isTimeline() {
+    return TIMELINE_NATIVE_ID.equals(getTag(R.id.view_tag_native_id));
   }
 
   @Override
