@@ -91,7 +91,7 @@ import {
   parseToolArgs,
   parseToolResult,
   toolFailureMessage,
-  isOmpToolFailure,
+  getOmpToolStatus,
   resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
@@ -1930,9 +1930,8 @@ export class OmpAgentSession implements AgentSession {
     this.questionUi.finish(event.toolName);
 
     const result = parseToolResult(event.result);
-    const failed = isOmpToolFailure(toolCall, result, Boolean(event.isError));
-    const error = failed ? toolFailureMessage(result) : null;
-    const status = failed ? "failed" : "completed";
+    const status = getOmpToolStatus({ toolCall, result, isError: Boolean(event.isError) });
+    const error = status === "failed" ? toolFailureMessage(result) : null;
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
     if (event.toolName === "task") {
       this.subagentCardTracker.delete(event.toolCallId);
