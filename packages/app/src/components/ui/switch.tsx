@@ -16,6 +16,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { switchGeometryForLayout, type SwitchGeometry } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 
 interface SwitchProps {
@@ -140,6 +141,7 @@ export function Switch({
       accessibilityLabel={accessibilityLabel}
       aria-checked={value}
       testID={testID}
+      dataSet={OUTER_FOCUS_RING_DATASET}
       style={pressableStyle}
     >
       <ThemedSwitchTrack value={value} geometry={geometry} />

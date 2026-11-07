@@ -10,6 +10,7 @@ import { useFileLink } from "@/assistant-file-links";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
 import { markdownLinkSource } from "./source";
@@ -53,6 +54,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const anchor = (
     <a
       {...anchorProps}
+      data-focus-ring={OUTER_FOCUS_RING_DATASET.focusRing}
       href={forgeUrl ?? anchorProps.href}
       style={anchorStyle}
       onMouseEnter={handleMouseEnter}

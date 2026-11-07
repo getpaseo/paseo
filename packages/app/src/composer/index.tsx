@@ -82,6 +82,7 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/agent-commands";
 import { encodeImages } from "@/utils/encode-images";
@@ -712,6 +713,7 @@ function QueuedMessageRow({
           style={[styles.queueActionButton, styles.queueSendButton]}
           accessibilityLabel={sendNowLabel}
           accessibilityRole="button"
+          dataSet={FILLED_FOCUS_RING_DATASET}
         >
           <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
         </Pressable>
