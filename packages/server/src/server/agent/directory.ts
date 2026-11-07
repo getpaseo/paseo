@@ -143,7 +143,9 @@ export class AgentDirectory {
       .filter((record) => !liveIds.has(record.id) && matches(record))
       .filter(
         (record) =>
-          filter?.includeUnavailablePersisted || this.deps.isStoredProviderAvailable(record),
+          filter?.includeUnavailablePersisted ||
+          filter?.includeArchived ||
+          this.deps.isStoredProviderAvailable(record),
       )
       .map((record) => this.deps.projectStored(record));
     const active = await Promise.all(
