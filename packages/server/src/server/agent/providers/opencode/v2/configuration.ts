@@ -10,6 +10,8 @@ import type {
 import { OpenCodeProviderOptionsSchema, buildOpenCodePermissionRules } from "../options.js";
 
 import { modelRef } from "./mapping.js";
+import type { OpenCodeServerScope } from "./external-server.js";
+import type { V2RuntimeAcquireOptions } from "./runtime.js";
 
 export function features(config: AgentSessionConfig): AgentFeature[] {
   return [
@@ -80,4 +82,19 @@ export function requiresDedicatedV2Server(
 ): boolean {
   if (Object.keys(config.mcpServers ?? {}).length > 0) return true;
   return Object.keys(launch?.env ?? {}).some((key) => !V2_SESSION_ENV_KEYS.has(key));
+}
+
+/**
+ * The helper an agent's session acquires: its own under the `agent` scope or when it needs
+ * isolation, otherwise the shared helper or, under the `workspace` scope, its workspace's.
+ */
+export function sessionServerRequest(input: {
+  config: AgentSessionConfig;
+  launch?: AgentLaunchContext;
+  scope: OpenCodeServerScope;
+}): V2RuntimeAcquireOptions {
+  const workspace = input.launch?.workspaceId ? { workspaceId: input.launch.workspaceId } : {};
+  if (input.scope === "agent" || requiresDedicatedV2Server(input.config, input.launch))
+    return { env: input.launch?.env, dedicated: true, ...workspace };
+  return workspace;
 }
