@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { features, permissionRules, requiresDedicatedV2Server } from "./configuration.js";
+import { V2Harness } from "../test-utils/v2-harness.js";
+
+import {
+  applyResumeOverrides,
+  features,
+  permissionRules,
+  requiresDedicatedV2Server,
+} from "./configuration.js";
 
 describe("OpenCode v2 permission rules", () => {
   test("maps authored native permissions and exact injected MCP grants", () => {
@@ -69,4 +76,27 @@ describe("OpenCode v2 features", () => {
       }),
     ).toEqual([{ type: "toggle", id: "auto_accept", label: "Auto-accept", value: true }]);
   });
+});
+
+describe("OpenCode v2 resume variants", () => {
+  test.each([
+    { model: undefined, thinkingOptionId: "default", expectedId: "model" },
+    { model: "test/other", thinkingOptionId: "default", expectedId: "other" },
+    { model: "test/other", thinkingOptionId: null, expectedId: "other" },
+    { model: "test/other", thinkingOptionId: undefined, expectedId: "other", variant: "medium" },
+  ])(
+    "resumes with the requested variant: $thinkingOptionId / $model",
+    async ({ model, thinkingOptionId, expectedId, variant }) => {
+      const harness = new V2Harness();
+      harness.info.model = { providerID: "test", id: "model", variant: "medium" };
+      const switches: Parameters<typeof harness.api.session.switchModel>[0][] = [];
+      harness.api.session.switchModel = async (input) => {
+        switches.push(input);
+      };
+      await applyResumeOverrides(harness.api, harness.info, { model, thinkingOptionId });
+      const expected = { providerID: "test", id: expectedId, ...(variant ? { variant } : {}) };
+      expect(switches).toEqual([{ sessionID: "session", model: expected }]);
+      expect(harness.info.model).toEqual(expected);
+    },
+  );
 });

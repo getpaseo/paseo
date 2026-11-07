@@ -59,10 +59,11 @@ export async function applyResumeOverrides(
     info.agent = overrides.modeId;
   }
   if (overrides?.model || overrides?.thinkingOptionId !== undefined) {
-    const model = overrides.model
-      ? modelRef(overrides.model, overrides.thinkingOptionId ?? info.model?.variant)
-      : info.model && { ...info.model, variant: overrides.thinkingOptionId };
-    if (!model) throw new Error("Select an OpenCode model before changing its variant");
+    const id = overrides.model ?? (info.model && `${info.model.providerID}/${info.model.id}`);
+    if (!id) throw new Error("Select an OpenCode model before changing its variant");
+    const variant =
+      overrides.thinkingOptionId === undefined ? info.model?.variant : overrides.thinkingOptionId;
+    const model = modelRef(id, variant);
     await client.session.switchModel({ sessionID: info.id, model });
     info.model = model;
   }
