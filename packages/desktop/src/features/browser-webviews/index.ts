@@ -35,13 +35,21 @@ interface AttachedBrowserRegistration {
 
 interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
   sender: BrowserWebContentsIdentity;
-  profileSession: object;
+  /** The shared profile session or a routed per-host session that is ready. */
+  isProfileSession(session: object): boolean;
   findWebContents(webContentsId: number): RegisteredBrowserWebContents | null;
 }
 
-export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: string }): boolean {
+export function isPaseoBrowserWebviewAttach(
+  input: { src?: string; partition?: string },
+  options: { isRoutedPartitionReady?: (partition: string) => boolean } = {},
+): boolean {
+  if (!isAllowedBrowserWebviewUrl(input.src) || typeof input.partition !== "string") {
+    return false;
+  }
   return (
-    isAllowedBrowserWebviewUrl(input.src) && input.partition === PASEO_BROWSER_PROFILE_PARTITION
+    input.partition === PASEO_BROWSER_PROFILE_PARTITION ||
+    options.isRoutedPartitionReady?.(input.partition) === true
   );
 }
 
@@ -68,7 +76,7 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
     !guest ||
     guest.isDestroyed() ||
     guest.hostWebContents !== input.sender ||
-    guest.session !== input.profileSession
+    !input.isProfileSession(guest.session)
   ) {
     return false;
   }

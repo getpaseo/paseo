@@ -66,26 +66,29 @@ class FakeWebContents extends FakeLiveGuest {
 }
 
 describe("listPaseoBrowserProfileGuests", () => {
-  test("returns every live webview and popup in the shared profile", () => {
+  test("returns every live webview and popup in the shared and routed profiles", () => {
     const profileSession = {};
+    const routedSession = {};
     const firstWindowGuest = new FakeWebContents(1, profileSession, "webview");
     const secondWindowGuest = new FakeWebContents(2, profileSession, "webview");
     const foreignProfileGuest = new FakeWebContents(3, {}, "webview");
     const popupWindow = new FakeWebContents(4, profileSession, "window");
     const destroyedGuest = new FakeWebContents(5, profileSession, "webview", true);
+    const routedGuest = new FakeWebContents(6, routedSession, "webview");
 
     const guests = listPaseoBrowserProfileGuests({
-      profileSession,
+      profileSessions: [profileSession, routedSession],
       webContents: [
         firstWindowGuest,
         secondWindowGuest,
         foreignProfileGuest,
         popupWindow,
         destroyedGuest,
+        routedGuest,
       ],
     });
 
-    expect(guests).toEqual([firstWindowGuest, secondWindowGuest, popupWindow]);
+    expect(guests).toEqual([firstWindowGuest, secondWindowGuest, popupWindow, routedGuest]);
   });
 });
 
@@ -111,6 +114,25 @@ describe("legacy browser profiles", () => {
       `persist:paseo-browser-${fallbackId}`,
     ]);
     expect(sessions).toHaveLength(3);
+  });
+
+  test("adds the routed per-host sessions as given, without resolving their partitions", () => {
+    const partitions: string[] = [];
+    const routed = [new FakeProfileSession(), new FakeProfileSession()];
+    const sessions = getPaseoBrowserProfileSessions(
+      {
+        fromPartition: (partition) => {
+          partitions.push(partition);
+          return new FakeProfileSession();
+        },
+      },
+      [],
+      routed,
+    );
+
+    expect(partitions).toEqual(["persist:paseo-browser"]);
+    expect(sessions).toHaveLength(3);
+    expect(sessions.slice(1)).toEqual(routed);
   });
 
   test("resolves one valid legacy profile for tab-close cleanup", () => {
@@ -170,6 +192,24 @@ describe("clearPaseoBrowserProfile", () => {
     expect(legacyProfile.authClears).toBe(1);
     expect(firstGuest.reloads).toBe(1);
     expect(secondGuest.reloads).toBe(1);
+  });
+
+  test("runs the pre-reload hook after clearing and before any guest reloads", async () => {
+    const profile = new FakeProfileSession();
+    const guest = new FakeLiveGuest(1);
+    const order: string[] = [];
+
+    await clearPaseoBrowserProfile({
+      profileSessions: [profile],
+      listGuests: () => [guest],
+      beforeReload: async () => {
+        order.push(`rewarm:auth-clears=${profile.authClears}:reloads=${guest.reloads}`);
+      },
+      logReloadError: () => {},
+    });
+
+    expect(order).toEqual(["rewarm:auth-clears=1:reloads=0"]);
+    expect(guest.reloads).toBe(1);
   });
 
   test("skips destroyed guests and logs individual reload failures", async () => {
