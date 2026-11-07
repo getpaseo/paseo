@@ -2328,19 +2328,12 @@ export class AgentManager {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
-    if (agent.session.setModel) {
-      await agent.session.setModel(normalizedModelId);
-    }
+    const selection = await agent.session.setModel?.(normalizedModelId);
     await this.drainSessionEvents(agentId);
 
+    // A reset clears the preference even when the provider retains its active model.
     let effectiveModelId = normalizedModelId;
-    // Clearing the preference still applies when the provider keeps its active model.
-    if (normalizedModelId !== null && agent.session.setModel) {
-      const runtimeInfo = await agent.session.getRuntimeInfo();
-      if (runtimeInfo.model !== undefined) {
-        effectiveModelId = runtimeInfo.model;
-      }
-    }
+    if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
 
     agent.config.model = effectiveModelId ?? undefined;
     if (agent.runtimeInfo) {

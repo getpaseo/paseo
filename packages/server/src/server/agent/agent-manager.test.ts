@@ -700,6 +700,71 @@ test("stops an OpenCode execution already active when its conversation is reopen
   }
 });
 
+test("a completed OpenCode model switch does not depend on another session read", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-model-"));
+  const harness = new V2Harness();
+  harness.info.location.directory = workdir;
+  harness.info.model = { providerID: "provider", id: "source" };
+  let observationUnavailable = false;
+  harness.api.model.list = async () => ({
+    location: { directory: workdir },
+    data: [
+      {
+        providerID: "provider",
+        id: "target",
+        modelID: "target",
+        name: "Target",
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        enabled: true,
+        variants: [],
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        limit: { context: 200000, output: 10000 },
+      },
+    ],
+  });
+  harness.api.session.switchModel = async ({ model }) => {
+    harness.info.model = model;
+    observationUnavailable = true;
+  };
+  harness.api.session.get = async () => {
+    if (observationUnavailable) throw new Error("Transport");
+    return harness.info;
+  };
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeV2AgentClient({ logger, runtime: harness.runtime });
+  const manager = new AgentManager({ clients: { opencode: client }, registry: storage, logger });
+  const agent = await manager.resumeAgentFromPersistence({
+    provider: "opencode",
+    sessionId: "session",
+    nativeHandle: "session",
+    metadata: { cwd: workdir },
+  });
+  try {
+    await manager.setAgentModel(agent.id, "provider/target");
+    await manager.flush();
+    expect(harness.info.model?.id).toBe("target");
+    expect(manager.getAgent(agent.id)?.config.model).toBe("provider/target");
+    expect(manager.getAgent(agent.id)?.runtimeInfo?.model).toBe("provider/target");
+    const stored = await storage.get(agent.id);
+    expect(stored?.config?.model).toBe("provider/target");
+    expect(stored?.runtimeInfo?.model).toBe("provider/target");
+    expect(stored?.persistence?.metadata?.model).toBe("provider/target");
+    observationUnavailable = false;
+    for await (const _event of manager.streamAgent(agent.id, "continue after switching")) {
+      // A successful mutation leaves a usable session.
+    }
+    expect(harness.prompts).toEqual(["continue after switching"]);
+  } finally {
+    observationUnavailable = false;
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await client.shutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
   const store = new RecordingTimelineStore();
@@ -5466,8 +5531,9 @@ test.each([
     class SelectingSession extends TestAgentSession {
       private model: string | null = "source";
 
-      async setModel(model: string | null): Promise<void> {
+      async setModel(model: string | null) {
         if (model && model !== "unavailable") this.model = model === "alias" ? "canonical" : model;
+        return { model: this.model };
       }
 
       override async getRuntimeInfo() {

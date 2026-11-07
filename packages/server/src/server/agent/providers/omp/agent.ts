@@ -1302,10 +1302,10 @@ export class OmpAgentSession implements AgentSession {
     return null;
   }
 
-  async setModel(modelId: string | null): Promise<void> {
+  async setModel(modelId: string | null): Promise<{ model: string | null }> {
     const parsedReference = parseModelReference(modelId);
     if (!parsedReference) {
-      return;
+      return { model: modelToId(this.state.model) };
     }
     if (!parsedReference.provider) {
       throw new Error(`OMP model id must include a provider: ${modelId}`);
@@ -1314,6 +1314,7 @@ export class OmpAgentSession implements AgentSession {
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
     this.config.model = `${model.provider}/${model.id}`;
     await this.refreshState();
+    return { model: modelToId(this.state.model) };
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
