@@ -2683,19 +2683,32 @@ export class DaemonClient {
    * FOREGROUND_LIVENESS_TIMEOUT_MS windows back to back, then teardown and an immediate
    * reconnect. Misses recorded before the app was suspended do not count, and a heartbeat
    * probe that straddled the suspension measured the suspension, not the socket, so it is
-   * dropped without a miss. A latency measurement keeps its own deadline and is shared.
+   * replaced without a miss. A latency measurement keeps its own deadline and is shared.
    */
   private verifyConnectionOnForeground(): void {
     // A cycle already running keeps its deadline and its window count.
     if (this.pingProbe?.role === "foreground") return;
-    if (this.pingProbe?.role === "heartbeat") {
-      this.rejectPingProbe(new Error("Heartbeat superseded by foreground check"));
+    // The straddling heartbeat is detached, not failed: its waiters (the heartbeat tick and
+    // any latency measurement that joined it) take the outcome of the fresh window instead.
+    const superseded = this.pingProbe?.role === "heartbeat" ? this.pingProbe : null;
+    if (superseded) {
+      this.pingProbe = null;
+      clearTimeout(superseded.timeoutHandle);
     }
     // A shared latency measurement keeps its deadline, but only frames that arrive from now on
     // count for this check; a latency probe never reads this flag for itself.
     if (this.pingProbe) this.pingProbe.receivedActivity = false;
     this.consecutiveLivenessFailures = 0;
     this.tickLivenessHeartbeat("foreground");
+    if (!superseded) return;
+    const replacement = this.pingProbe;
+    if (!replacement) {
+      superseded.reject(new Error("Heartbeat superseded by foreground check"));
+      return;
+    }
+    // Registered after the fresh window's own handler, so that handler decides the next step
+    // first; the superseded tick's handler then finds a probe or a timer already in place.
+    void replacement.promise.then(superseded.resolve, superseded.reject);
   }
 
   private tickLivenessHeartbeat(check: "heartbeat" | "foreground" = "heartbeat"): void {

@@ -2933,6 +2933,29 @@ test("a shared latency probe's activity from before foreground does not satisfy 
   expect(attempts()).toBe(2);
 });
 
+test("a latency measurement that joined a heartbeat probe survives the foreground check", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("2s");
+  const { client, attempts } = connectThroughReplacements("latency-joins-heartbeat", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // the first heartbeat ping is outstanding
+  const measurement = client.measureLatency({ timeoutMs: 5_000 });
+  await vi.advanceTimersByTimeAsync(1_000);
+  client.ensureConnected({ verify: true });
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s"]);
+  // The heartbeat's pong lands at 12s and answers the fresh window; pongs are not correlated.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(measurement).resolves.toBe(1000);
+  await vi.advanceTimersByTimeAsync(19_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(attempts()).toBe(1);
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "22s"]);
+});
+
 // Fake timers cannot suspend: a suspension is modelled as the wall clock jumping forward while
 // the pending window timer stays queued, then firing late on resume.
 async function suspendFor(ms: number): Promise<void> {
