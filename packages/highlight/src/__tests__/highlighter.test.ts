@@ -401,6 +401,22 @@ describe("Terraform", () => {
     expect(styleOf(result[3], "3")).toBe("number");
   });
 
+  it("ends a heredoc with a Unicode delimiter", () => {
+    const result = highlightCode("x = <<ÉOF\nfoo\nÉOF\ny = 1", "main.tf");
+
+    expect(styleOf(result[3], "y")).toBe("definition");
+    expect(styleOf(result[3], "1")).toBe("number");
+  });
+
+  it.each([
+    ['x = "$$${var.name}"', "$"],
+    ['x = "%%%{ if true }"', "%"],
+  ])("keeps escaped template text in %s as a string", (code) => {
+    const line = highlightCode(code, "main.tf")[0];
+
+    expect(line[line.length - 1]).toEqual({ text: code.slice(4), style: "string" });
+  });
+
   it("parses a real configuration without error nodes", () => {
     const code = [
       "terraform {",

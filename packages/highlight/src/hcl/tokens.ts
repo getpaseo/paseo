@@ -164,6 +164,21 @@ function scanHeredocBody(input: InputStream, expected: string): void {
   }
 }
 
+// `$${` and `%%{` are escapes. The doubled marker counts only when `{` follows it, so in `$$${`
+// the first `$` is literal text and the rest is the escape.
+function scanTemplateMarker(input: InputStream, marker: string, startToken: number): void {
+  input.advance();
+  if (String.fromCharCode(input.next) === "{") {
+    input.advance();
+    return input.acceptToken(startToken);
+  }
+  if (String.fromCharCode(input.next) === marker && String.fromCharCode(input.peek(1)) === "{") {
+    input.advance();
+    input.advance();
+  }
+  input.acceptToken(templateLiteralChunk);
+}
+
 export const scanQuotedTemplateStart = new ExternalTokenizer(
   (input, stack) => {
     if (
@@ -225,23 +240,7 @@ export const scanTemplateInterpolationStart = new ExternalTokenizer(
       !(stack.context && stack.context.type === ContextType.TEMPLATE_INTERPOLATION) &&
       String.fromCharCode(input.next) === "$"
     ) {
-      input.advance();
-      if (String.fromCharCode(input.next) === "{") {
-        input.advance();
-        return input.acceptToken(TemplateInterpolationStart);
-      }
-
-      // escape sequence
-      if (String.fromCharCode(input.next) === "$") {
-        input.advance();
-        if (String.fromCharCode(input.next) === "{") {
-          // $${
-          input.advance();
-          return input.acceptToken(templateLiteralChunk);
-        }
-      }
-
-      return input.acceptToken(templateLiteralChunk);
+      return scanTemplateMarker(input, "$", TemplateInterpolationStart);
     }
   },
   { contextual: true, fallback: true },
@@ -268,23 +267,7 @@ export const scanTemplateDirectiveStart = new ExternalTokenizer(
       !(stack.context && stack.context.type === ContextType.TEMPLATE_DIRECTIVE) &&
       String.fromCharCode(input.next) === "%"
     ) {
-      input.advance();
-      if (String.fromCharCode(input.next) === "{") {
-        input.advance();
-        return input.acceptToken(TemplateDirectiveStart);
-      }
-
-      // escape sequence
-      if (String.fromCharCode(input.next) === "%") {
-        input.advance();
-        if (String.fromCharCode(input.next) === "{") {
-          // $${
-          input.advance();
-          return input.acceptToken(templateLiteralChunk);
-        }
-      }
-
-      return input.acceptToken(templateLiteralChunk);
+      return scanTemplateMarker(input, "%", TemplateDirectiveStart);
     }
   },
   { contextual: true, fallback: true },
@@ -312,7 +295,7 @@ export const scanHeredocIdentifier = new ExternalTokenizer(
       input.next !== -1
     ) {
       let next = String.fromCharCode(input.next);
-      while (/[0-9a-zA-Z]/.test(next) || next === "_" || next === "-") {
+      while (/[\p{L}\p{N}_-]/u.test(next)) {
         input.advance();
         next = String.fromCharCode(input.next);
       }
