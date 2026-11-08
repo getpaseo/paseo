@@ -13,6 +13,7 @@ import {
   type ControlSizing,
 } from "@/components/ui/control-geometry";
 import { StyleSheet } from "react-native-unistyles";
+import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
 
@@ -90,7 +91,7 @@ export function ComposerInputPresentation({
       testID={fullscreen ? "composer-fullscreen" : undefined}
     >
       {fullscreen ? (
-        <View style={styles.exitRow}>
+        <WindowChromeSafeArea placement="inline" style={styles.exitRow}>
           <Button
             variant="ghost"
             size="sm"
@@ -103,7 +104,7 @@ export function ComposerInputPresentation({
           >
             {null}
           </Button>
-        </View>
+        </WindowChromeSafeArea>
       ) : null}
       <ComposerFullscreenBody fullscreen={fullscreen}>
         <View
