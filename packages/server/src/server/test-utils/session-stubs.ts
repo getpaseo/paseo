@@ -39,6 +39,8 @@ export function asAgentManager(stub: {
     getRetiredInternalAgent: () => null,
     effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
     getAgentBackgroundWorkSummary: () => undefined,
+    // Archive reads one active-record snapshot; tests without agent storage have none.
+    listActiveAgentRecords: async () => [],
     ...stub,
   });
 }
