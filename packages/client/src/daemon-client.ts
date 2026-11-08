@@ -1923,18 +1923,34 @@ export class DaemonClient {
       });
     }
   }
-  async openHostLink(channelId: string): Promise<string> {
+  openHostLink(channelId: string): Promise<string>;
+  openHostLink(
+    channelId: string,
+    flowControl: true,
+  ): Promise<{ routeId: string; flowControl: boolean }>;
+  async openHostLink(
+    channelId: string,
+    flowControl?: true,
+  ): Promise<string | { routeId: string; flowControl: boolean }> {
     this.requireConnectedHosts();
     if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
       throw Object.assign(new Error("Update the destination daemon"), {
         code: "unsupported_capability",
       });
-    return (
-      await this.sendCorrelatedSessionRequest({
-        message: { type: "hosts.link.open.request", channelId },
-        responseType: "hosts.link.open.response",
-      })
-    ).routeId;
+    const response = await this.sendCorrelatedSessionRequest({
+      message: {
+        type: "hosts.link.open.request",
+        channelId,
+        ...(flowControl ? { flowControl } : {}),
+      },
+      responseType: "hosts.link.open.response",
+    });
+    return flowControl
+      ? { routeId: response.routeId, flowControl: response.flowControl === true }
+      : response.routeId;
+  }
+  acknowledgeHostLink(routeId: string, sequence: number): Promise<void> {
+    return this.sendSessionMessageStrict({ type: "hosts.link.ack", routeId, sequence });
   }
   sendHostFrame(routeId: string, data: string | Uint8Array): Promise<void> {
     if (typeof data === "string") {
