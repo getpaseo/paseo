@@ -594,6 +594,7 @@ export interface SessionOptions {
   getDaemonTcpHost?: () => string | null;
   serviceProxyPublicBaseUrl?: string | null;
   resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
+  forgetWorkspaceScriptHealth?: (workspaceId: string) => void;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
@@ -871,6 +872,7 @@ export class Session {
   private readonly getDaemonTcpHost: (() => string | null) | null;
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
+  private readonly forgetWorkspaceScriptHealth: ((workspaceId: string) => void) | undefined;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
@@ -1310,6 +1312,7 @@ export class Session {
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.forgetWorkspaceScriptHealth = options.forgetWorkspaceScriptHealth;
     this.workspaceScripts = createWorkspaceScriptsService({
       serviceProxy: this.serviceProxy,
       scriptRuntimeStore: this.scriptRuntimeStore,
@@ -6551,7 +6554,10 @@ export class Session {
 
   private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
+    this.serviceProxy?.removeRoutesForWorkspace(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
+    this.workspaceSetupObservation.forgetWorkspace(workspaceId);
+    this.forgetWorkspaceScriptHealth?.(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   }
 

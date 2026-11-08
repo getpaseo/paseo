@@ -1078,6 +1078,9 @@ export async function createPaseoDaemon(
   await workspaceLabelService.initialize();
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
+    serviceProxy.removeRoutesForWorkspace(workspaceId);
+    scriptHealthMonitor.removeWorkspace(workspaceId);
+    wsServer?.forgetWorkspaceSetupObservation(workspaceId);
     scriptRuntimeStore.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   };
@@ -1871,6 +1874,7 @@ export async function createPaseoDaemon(
               () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
               () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
               (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
+              (workspaceId) => scriptHealthMonitor.removeWorkspace(workspaceId),
               workspaceGitService,
               github,
               config.pushNotificationSender,

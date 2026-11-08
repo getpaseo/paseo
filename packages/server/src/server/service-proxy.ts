@@ -550,6 +550,12 @@ export class ServiceProxyRouteRegistry {
     }
   }
 
+  removeRoutesForWorkspace(workspaceId: string): void {
+    for (const route of this.listRoutesForWorkspace(workspaceId)) {
+      this.removeRoute(route.hostname);
+    }
+  }
+
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void {
     this.removeRouteForWorkspaceScript(params);
   }
@@ -810,6 +816,7 @@ export function createScriptProxyUpgradeHandler({
 export interface ServiceProxySubsystem {
   registerWorkspaceService(input: RegisterWorkspaceServiceInput): ServiceProxyRouteEntry;
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void;
+  removeRoutesForWorkspace(workspaceId: string): void;
   removeServiceRoutesByHostnames(hostnames: string[]): void;
   replaceWorkspaceBranchRoutes(params: { workspaceId: string; newBranch: string | null }): boolean;
   getHealthCheckTargets(): ServiceProxyHealthTarget[];
@@ -875,6 +882,10 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
 
   removeWorkspaceService(params: { workspaceId: string; scriptName: string }): void {
     this.routes.removeRouteForWorkspaceScript(params);
+  }
+
+  removeRoutesForWorkspace(workspaceId: string): void {
+    this.routes.removeRoutesForWorkspace(workspaceId);
   }
 
   removeServiceRoutesByHostnames(hostnames: string[]): void {
