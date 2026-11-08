@@ -82,7 +82,7 @@ export function createWebSocketTransportFactory(factory: WebSocketFactory): Daem
         // connect timeouts does not crash the CLI with an unhandled error event.
         const suppressEarlyCloseError = bindTemporaryEarlyCloseErrorHandler(ws);
         try {
-          ws.close(code, reason);
+          ws.close(toSendableCloseCode(code), toSendableCloseReason(reason));
         } finally {
           if (typeof ws.on !== "function" && typeof ws.addEventListener !== "function") {
             suppressEarlyCloseError();
@@ -95,6 +95,32 @@ export function createWebSocketTransportFactory(factory: WebSocketFactory): Daem
       onMessage: (handler) => bindWsMessageHandler(ws, handler),
     };
   };
+}
+
+// WHATWG WebSocket.close throws for a code other than 1000 or 3000-4999 and for a
+// reason over 123 UTF-8 bytes, and the throw leaves the socket open: the peer keeps
+// streaming into a connection nobody reads. Browsers, Electron and Node's global
+// WebSocket enforce this; Node's `ws` accepts more. Translate once here so callers
+// keep their reasons and every runtime sends the same close frame.
+const MAX_CLOSE_REASON_BYTES = 123;
+
+function toSendableCloseCode(code: number | undefined): number {
+  if (code === 1000 || (code !== undefined && code >= 3000 && code <= 4999)) return code;
+  return 1000;
+}
+
+function toSendableCloseReason(reason: string | undefined): string | undefined {
+  if (reason === undefined) return undefined;
+  const encoder = new TextEncoder();
+  if (encoder.encode(reason).byteLength <= MAX_CLOSE_REASON_BYTES) return reason;
+  let truncated = "";
+  let bytes = 0;
+  for (const character of reason) {
+    bytes += encoder.encode(character).byteLength;
+    if (bytes > MAX_CLOSE_REASON_BYTES) break;
+    truncated += character;
+  }
+  return truncated;
 }
 
 function bindWsMessageHandler(

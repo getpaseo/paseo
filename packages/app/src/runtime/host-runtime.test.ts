@@ -1189,6 +1189,151 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
   });
 
+  it.each([40, null])(
+    "keeps the selected connection when it reconnects before an alternative probe resolves with heartbeat RTT %s",
+    async (reconnectedRtt) => {
+      useHostRuntimeClock();
+      const primary: HostConnection = {
+        id: "relay:relay.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay.paseo.sh:443",
+        daemonPublicKeyB64: "pk_test",
+      };
+      const alternative: HostConnection = {
+        id: "relay:relay-next.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay-next.paseo.sh:443",
+        daemonPublicKeyB64: "pk_test",
+      };
+      const host = makeHost({
+        connections: [primary, alternative],
+        preferredConnectionId: primary.id,
+      });
+      const activeClient = new FakeDaemonClient();
+      activeClient.setConnectionState({ status: "connected" });
+      activeClient.heartbeatReportsRtt(40);
+      // The first alternative probe (startup) answers immediately; the one that
+      // runs after the foreground is slow, like a relay handshake on mobile.
+      const slowAlternativeProbe = createDeferred<void>();
+      let alternativeProbes = 0;
+      const createdClients: FakeDaemonClient[] = [];
+      const controller = new HostRuntimeController({
+        host,
+        deps: {
+          createClient: () => {
+            const client = new FakeDaemonClient();
+            createdClients.push(client);
+            return client as unknown as DaemonClient;
+          },
+          connectToDaemon: async ({ connection }) => {
+            if (connection.id !== alternative.id) {
+              throw new Error(`unexpected probe for ${connection.id}`);
+            }
+            alternativeProbes += 1;
+            if (alternativeProbes > 1) await slowAlternativeProbe.promise;
+            return {
+              client: makeConnectedProbeClient(60) as unknown as DaemonClient,
+              serverId: host.serverId,
+              hostname: host.label ?? null,
+            };
+          },
+          getClientId: async () => "cid_test_runtime",
+        },
+      });
+      await controller.start({
+        autoProbe: false,
+        initialConnection: {
+          connectionId: primary.id,
+          existingClient: activeClient as unknown as DaemonClient,
+        },
+      });
+      expect(controller.getSnapshot().activeConnectionId).toBe(primary.id);
+
+      // The relay closed the socket while the app was in the background.
+      activeClient.setConnectionState({ status: "disconnected", reason: "1012" });
+      await vi.advanceTimersByTimeAsync(130_000);
+
+      // Foreground: the probe cycle starts while the selected client is still down ...
+      const cycle = controller.runProbeCycleNow();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(alternativeProbes).toBe(2);
+      // ... the selected client reconnects ...
+      activeClient.heartbeatReportsRtt(reconnectedRtt);
+      activeClient.setConnectionState({ status: "connected" });
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+      const statuses: string[] = [];
+      controller.subscribe(() => statuses.push(controller.getSnapshot().connectionStatus));
+      // ... and only then does the alternative probe come back.
+      slowAlternativeProbe.resolve();
+      await cycle;
+
+      // Once the selected connection is back online, nothing should take it down again.
+      expect(statuses.filter((status) => status !== "online")).toEqual([]);
+      expect(controller.getSnapshot().activeConnectionId).toBe(primary.id);
+      expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
+      expect(activeClient.isDisposed()).toBe(false);
+      expect(createdClients).toEqual([]);
+    },
+  );
+
+  it("fails over when the selected connection stays down until an alternative probe resolves", async () => {
+    useHostRuntimeClock();
+    const primary: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const alternative: HostConnection = {
+      id: "relay:relay-next.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay-next.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({
+      connections: [primary, alternative],
+      preferredConnectionId: primary.id,
+    });
+    const activeClient = new FakeDaemonClient();
+    activeClient.setConnectionState({ status: "connected" });
+    const slowAlternativeProbe = createDeferred<void>();
+    let alternativeProbes = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          alternativeProbes += 1;
+          if (alternativeProbes > 1) await slowAlternativeProbe.promise;
+          return {
+            client: makeConnectedProbeClient(60) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: primary.id,
+        existingClient: activeClient as unknown as DaemonClient,
+      },
+    });
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "1012" });
+    await vi.advanceTimersByTimeAsync(130_000);
+    const cycle = controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(1_000);
+    slowAlternativeProbe.resolve();
+    await cycle;
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(alternative.id);
+    expect(activeClient.isDisposed()).toBe(true);
+    await controller.stop();
+  });
+
   it("rejects probes that resolve to a different server id", async () => {
     const host = makeHost({
       serverId: "srv_old",

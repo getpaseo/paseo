@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonConnectionDependencies, DaemonProbeClient } from "./test-daemon-connection";
+import { createHostLogger } from "@/runtime/host-logger";
 
 class FakeDaemonClient implements DaemonProbeClient {
   readonly lastError: string | null;
+  private connected = false;
 
   constructor(
     private readonly probe: FakeDaemonProbe,
@@ -17,9 +19,11 @@ class FakeDaemonClient implements DaemonProbeClient {
     if (this.probe.nextConnectError) {
       throw this.probe.nextConnectError;
     }
+    this.connected = true;
   }
 
   getLastServerInfoMessage() {
+    if (!this.connected) return null;
     return {
       serverId: "srv_probe_test",
       hostname: "probe-host",
@@ -27,11 +31,13 @@ class FakeDaemonClient implements DaemonProbeClient {
   }
 
   async close(): Promise<void> {
+    this.connected = false;
     this.probe.closedClients.push(this);
   }
 }
 
 class FakeDaemonProbe {
+  diagnosticLines: string[] = [];
   createdClients: FakeDaemonClient[] = [];
   closedClients: FakeDaemonClient[] = [];
   clientIdsRequested = 0;
@@ -39,6 +45,12 @@ class FakeDaemonProbe {
   nextLastError: string | null = null;
 
   readonly deps: DaemonConnectionDependencies<FakeDaemonClient> = {
+    createLogger: (readServerId) => {
+      const capture = (...values: unknown[]) => {
+        this.diagnosticLines.push(values.map(String).join(" "));
+      };
+      return createHostLogger(readServerId, { log: capture, warn: capture, error: capture });
+    },
     getClientId: async () => {
       this.clientIdsRequested += 1;
       return "cid_shared_probe_test";
@@ -75,6 +87,34 @@ describe("test-daemon-connection connectToDaemon", () => {
     vi.stubGlobal("__DEV__", false);
     probe = new FakeDaemonProbe();
   });
+
+  it.each([undefined, "srv_probe_test"])(
+    "logs learned host identity on an adopted probe initially given %s",
+    async (serverId) => {
+      const { connectToDaemon } = await import("./test-daemon-connection");
+      const result = await connectToDaemon(
+        { id: "direct:test", type: "directTcp", endpoint: "localhost:6767" },
+        { serverId },
+        probe.deps,
+      );
+      try {
+        result.client.config.logger!.error({ err: new Error("socket closed") }, "connection_error");
+        const record = JSON.parse(probe.diagnosticLines[0]!.slice("connection_error ".length));
+        expect(record.serverId).toBe("srv_probe_test");
+        expect(record.err.message).toBe("socket closed");
+        await result.client.close();
+        expect(result.client.getLastServerInfoMessage()).toBeNull();
+        result.client.config.logger!.error({ err: new Error("disconnected") }, "connection_error");
+        const closedRecord = JSON.parse(
+          probe.diagnosticLines[1]!.slice("connection_error ".length),
+        );
+        expect(closedRecord.serverId).toBe("srv_probe_test");
+        expect(closedRecord.err.message).toBe("disconnected");
+      } finally {
+        await result.client.close();
+      }
+    },
+  );
 
   it.each([
     { id: "direct:lan:6767", type: "directTcp" as const, endpoint: "lan:6767" },

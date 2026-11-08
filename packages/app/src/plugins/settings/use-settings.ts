@@ -1,3 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { queryClient as appQueryClient } from "@/data/query-client";
+import { createDeviceSettings } from "./device";
 import type { SettingsState } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +11,8 @@ import { useReplicaQuery } from "@/data/query";
 import { z, type ZodType } from "zod";
 import { pluginSettingsKey } from "./query";
 
+const deviceSettings = createDeviceSettings(AsyncStorage);
+
 function message(error: unknown): string {
   if (error instanceof z.ZodError) return error.issues.map((issue) => issue.message).join("\n");
   return error instanceof Error ? error.message : String(error);
@@ -15,34 +20,49 @@ function message(error: unknown): string {
 
 export function useSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
+  installationId: string,
 ): SettingsState<Schema> {
   const rpc = useMemo(() => settingsRpc(definition.id), [definition.id]);
   const read = useRpc(rpc.read);
   const write = useRpc(rpc.write);
   const reset = useRpc(rpc.reset);
-  const client = useQueryClient();
-  const key = pluginSettingsKey(definition.id);
-  const query = useReplicaQuery({
-    queryKey: key,
-    pushEvent: "plugin_settings_changed",
-    queryFn: () => read({}),
-    retry: false,
-  });
-  const mutation = useMutation({
-    mutationFn: async (
-      input: { revision: string; values: z.output<Schema> } | { revision: string },
-    ) => {
-      const result =
-        "values" in input
-          ? await write({
-              revision: input.revision,
-              values: z.json().parse(await definition.schema.parseAsync(input.values)),
-            })
-          : await reset(input);
-      if (result.status !== "saved") throw new Error(result.error);
-      client.setQueryData(key, { ...result, status: "ready" });
+  const installationClient = useQueryClient();
+  const device = definition.scope === "device";
+  const client = device ? appQueryClient : installationClient;
+  const key = device
+    ? ["plugin-device-settings", installationId, definition.id, definition.version]
+    : pluginSettingsKey(definition.id);
+  const local = useMemo(
+    () => deviceSettings(installationId, definition),
+    [installationId, definition],
+  );
+  const query = useReplicaQuery(
+    {
+      queryKey: key,
+      pushEvent: device ? "plugin_device_settings_saved" : "plugin_settings_changed",
+      queryFn: () => (device ? local.read() : read({})),
+      retry: false,
     },
-  });
+    client,
+  );
+  const mutation = useMutation(
+    {
+      mutationFn: async (
+        input: { revision: string; values: z.output<Schema> } | { revision: string },
+      ) => {
+        const result =
+          "values" in input
+            ? await (device ? local.write : write)({
+                revision: input.revision,
+                values: z.json().parse(await definition.schema.parseAsync(input.values)),
+              })
+            : await (device ? local.reset : reset)(input);
+        if (result.status !== "saved") throw new Error(result.error);
+        client.setQueryData(key, { ...result, status: "ready" });
+      },
+    },
+    client,
+  );
   async function save(values: z.output<Schema>, revision: string) {
     try {
       await mutation.mutateAsync({ values, revision });

@@ -634,6 +634,13 @@ Cleanup can be async. Release timers, watchers, sockets, and other resources cre
 
 Register async handlers with `server.addHook(name, handler)`. See [Hooks](/docs/plugins/hooks) for names, payloads, ordering, errors, and complete examples.
 
+## Sidebar views
+
+`addSidebarView({ id, title, description?, Component })` registers an optional replacement for the
+sidebar content region. It returns cleanup. The user selects one view in Settings > Sidebar;
+registration does not activate it. See [Build a sidebar view](sidebar-views.md) for the props,
+ref-based queries and actions, device state and theme tokens.
+
 ## Screens and sidebar items
 
 A screen is a full page of plugin UI. A sidebar item is a component Paseo renders in the sidebar
@@ -1387,13 +1394,13 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-| Definition field               | Contract                                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                    |
-| `scope`                        | Required `"host"`. All authorized clients of that host share the document. No per-user, device-local, or cross-host synchronization. |
-| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                  |
-| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                            |
-| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.               |
+| Definition field               | Contract                                                                                                                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                                                                               |
+| `scope`                        | Required `"host"` or `"device"`. Host documents are shared by authorized clients. Device documents stay on this device, keyed by installation and settings ID; use them for layout preferences. |
+| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                                                                             |
+| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                                                                                       |
+| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.                                                                          |
 
 Call `useSettings(preferences)` in any contributed component. It returns a discriminated state:
 

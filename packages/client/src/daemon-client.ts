@@ -1,4 +1,10 @@
 import {
+  DiffStreamRouter,
+  DiffSubscriptionError,
+  type DiffCompare,
+  type DiffState,
+} from "./diff/index.js";
+import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
 } from "@getpaseo/protocol/chunked-transport";
@@ -1049,6 +1055,9 @@ type CorrelatedResponsePayloads = {
 };
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> =
   CorrelatedResponsePayloads[TType];
+export type AgentBackgroundWorkListPayload =
+  CorrelatedResponsePayload<"agent.background_work.list.response">;
+export type AgentBackgroundWorkItem = AgentBackgroundWorkListPayload["items"][number];
 
 type PluginCatalogResponseEntry =
   CorrelatedResponsePayload<"plugin.catalog.get.response">["plugins"][number];
@@ -1296,6 +1305,7 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  receivedActivity: boolean;
   // Whether a timeout on this ping should be recorded as a liveness failure. Only the
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
@@ -1410,6 +1420,20 @@ export class DaemonClient {
   private connectionFailure: Error | undefined;
   private authFailureReasonValue: DaemonAuthFailureReason | null = null;
   private connectionState: ConnectionState = { status: "idle" };
+  private readonly diffStreams = new DiffStreamRouter({
+    modern: (compare) =>
+      this.observe(
+        "diff.subscribe.response",
+        { type: "diff.subscribe.request", ...compare },
+        {
+          validateSnapshot: (payload) => {
+            if (payload.error) throw new DiffSubscriptionError(payload.error);
+          },
+        },
+      ),
+    legacy: (cwd, compare) => this.observeCheckoutDiff(cwd, compare),
+    failed: (error) => this.logger.error({ err: error }, "Diff observer failed"),
+  });
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
@@ -1439,7 +1463,6 @@ export class DaemonClient {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
-  private connectionVerification: DaemonTransport | null = null;
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
@@ -1589,6 +1612,7 @@ export class DaemonClient {
         send: (frame) => transport.send(frame),
         onFailure: () => transport.close(4003, "Transport send failed"),
         deliver: (frame) => this.handleTransportMessage(frame),
+        onActivity: () => this.recordTransportActivity(),
       });
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
@@ -1759,6 +1783,7 @@ export class DaemonClient {
     this.disposeTransport(1000, "Client closed");
     this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
+    await this.diffStreams.close();
     await this.owned.close();
     this.creations.close();
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
@@ -1785,7 +1810,7 @@ export class DaemonClient {
       this.shouldReconnect = true;
     }
     if (this.connectionState.status === "connected") {
-      if (options?.verify) this.verifyConnection();
+      if (options?.verify) this.tickLivenessHeartbeat();
       return;
     }
     if (this.connectionState.status === "connecting") return;
@@ -1798,26 +1823,9 @@ export class DaemonClient {
     );
   }
 
-  private verifyConnection(): void {
-    const transport = this.transport;
-    if (!transport || this.connectionVerification === transport) return;
-    this.connectionVerification = transport;
-    // A session probe has its own deadline, independent of a heartbeat that the OS
-    // may have suspended. A successful response also proves the session can serve RPCs.
-    void this.ping({ timeoutMs: 3_000 })
-      .catch((error: unknown) => {
-        if (this.transport !== transport || this.connectionState.status !== "connected") return;
-        this.disposeTransport(1001, "Connection verification failed");
-        this.scheduleReconnect({
-          reason: error instanceof Error ? error.message : String(error),
-          event: "CONNECTION_VERIFICATION_FAILED",
-          reasonCode: "liveness_timeout",
-        });
-        this.ensureConnected();
-      })
-      .finally(() => {
-        if (this.connectionVerification === transport) this.connectionVerification = null;
-      });
+  private recordTransportActivity(): void {
+    this.consecutiveLivenessFailures = 0;
+    if (this.pingProbe) this.pingProbe.receivedActivity = true;
   }
 
   requireConnectedHosts(): void {
@@ -2553,9 +2561,18 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    return this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }).catch((error) => {
-      throw toTimeoutError(error, "Latency measurement", timeoutMs);
+    let deadline: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
     });
+    return Promise.race([
+      this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }),
+      timeout,
+    ])
+      .catch((error) => {
+        throw toTimeoutError(error, "Latency measurement", timeoutMs);
+      })
+      .finally(() => clearTimeout(deadline));
   }
 
   private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
@@ -2591,21 +2608,23 @@ export class DaemonClient {
       resolveProbe = resolve;
       rejectProbe = reject;
     });
+    const expire = () => {
+      if (this.pingProbe !== probe) return;
+      this.pingProbe = null;
+      const error = new PingTimeoutError(timeoutMs);
+      probe.reject(error);
+      // Keep the deadline fixed so subsequent pings renew the daemon socket lease
+      // during a long download. Progress proves life even when its pong is queued.
+      if (probe.drivesLivenessFailure && !probe.receivedActivity) {
+        this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
+      }
+    };
     const probe: PingProbe = {
       promise,
       resolve: (value) => resolveProbe?.(value),
       reject: (error) => rejectProbe?.(error),
-      timeoutHandle: setTimeout(() => {
-        if (this.pingProbe !== probe) {
-          return;
-        }
-        this.pingProbe = null;
-        const error = new PingTimeoutError(timeoutMs);
-        probe.reject(error);
-        if (probe.drivesLivenessFailure) {
-          this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
-        }
-      }, timeoutMs),
+      timeoutHandle: setTimeout(expire, timeoutMs),
+      receivedActivity: false,
       startedAt,
       drivesLivenessFailure: params.drivesLivenessFailure,
     };
@@ -2646,12 +2665,19 @@ export class DaemonClient {
     }
     this.livenessHeartbeatTimer = setTimeout(() => {
       this.livenessHeartbeatTimer = null;
-      this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS })
-        .catch(() => {})
-        .finally(() => {
-          this.scheduleNextLivenessHeartbeat();
-        });
+      this.tickLivenessHeartbeat();
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private tickLivenessHeartbeat(): void {
+    this.stopLivenessHeartbeat();
+    const transport = this.transport;
+    const tick = this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS });
+    void tick
+      .catch(() => {})
+      .finally(() => {
+        if (this.transport === transport) this.scheduleNextLivenessHeartbeat();
+      });
   }
 
   // ============================================================================
@@ -2661,7 +2687,12 @@ export class DaemonClient {
   private observe<T extends CorrelatedResponseType>(
     responseType: T,
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>,
-    options?: { requestId?: string; timeout?: number; signal?: AbortSignal },
+    options?: {
+      requestId?: string;
+      timeout?: number;
+      signal?: AbortSignal;
+      validateSnapshot?: (payload: CorrelatedResponsePayload<T>) => void;
+    },
   ): OwnedSubscription<CorrelatedResponsePayload<T>> {
     let resetSource = false;
     return this.owned.observeRequest<CorrelatedResponsePayload<T>>(
@@ -2687,12 +2718,16 @@ export class DaemonClient {
                   requestType: message.type,
                   error: payload.error,
                 });
+              options?.validateSnapshot?.(payload);
               accept(payload);
               return payload;
             },
           });
         } catch (error) {
-          resetSource = !(error instanceof DaemonRpcError) && this.isConnected;
+          resetSource =
+            !(error instanceof DaemonRpcError) &&
+            !(error instanceof DiffSubscriptionError) &&
+            this.isConnected;
           throw error;
         }
       },
@@ -3580,6 +3615,22 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceBaseBranch(options: {
+    workspaceId: string;
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }> {
+    const { requestId, workspaceId, baseRef } = options;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.base_branch.set.response">({
+        requestId,
+        message: { type: "workspace.base_branch.set.request", workspaceId, baseRef },
+      });
+    if (!payload.accepted)
+      throw new Error(payload.error ?? "Changing the workspace base branch failed");
+    return { baseRef: payload.baseRef };
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,
@@ -3607,6 +3658,23 @@ export class DaemonClient {
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
+    }
+  }
+
+  /** Rejects when the host could not put the workspace back; an old host has no such RPC. */
+  async undoWorkspaceArchive(workspaceId: string, requestId?: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.archive.undo.response">({
+        requestId,
+        message: {
+          type: "workspace.archive.undo.request",
+          workspaceId,
+        },
+        // Undoing a finished worktree archive recreates the worktree, like recovery does.
+        timeout: 150_000,
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "The host could not undo the workspace archive");
     }
   }
 
@@ -3832,6 +3900,58 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
     return payload;
+  }
+
+  async listAgentBackgroundWork(
+    agentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<AgentBackgroundWorkItem[]> {
+    this.assertAgentBackgroundWorkSupported();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.background_work.list.response">({
+        requestId: options.requestId,
+        timeout: options.timeout,
+        message: { type: "agent.background_work.list.request", agentId },
+      });
+    if (payload.error) throw new Error(payload.error);
+    return payload.items;
+  }
+
+  async stopAgentBackgroundWork(
+    agentId: string,
+    item: AgentBackgroundWorkItem,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<void> {
+    // COMPAT(agentBackgroundWorkStop): added after v0.15.0, remove after 2027-05-03.
+    if (this.lastServerInfoMessage?.features?.agentBackgroundWorkStop !== true)
+      throw new Error("Update the host to stop background work.");
+    if (!item.canStop || !item.stopToken) throw new Error("Background work cannot be stopped.");
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.background_work.stop.response">({
+        requestId: options.requestId,
+        timeout: options.timeout ?? 30000,
+        message: {
+          type: "agent.background_work.stop.request",
+          agentId,
+          itemId: item.id,
+          stopToken: item.stopToken,
+        },
+      });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  observeAgentBackgroundWork(
+    options: { signal?: AbortSignal } = {},
+  ): OwnedSubscription<CorrelatedResponsePayload<"session.events.set_subscription.response">> {
+    this.assertAgentBackgroundWorkSupported();
+    return this.observeEvents(["agent.background_work.update"], options);
+  }
+
+  private assertAgentBackgroundWorkSupported(): void {
+    // COMPAT(agentBackgroundWork): added after v0.11.0-beta.5, remove gate after 2027-04-06.
+    if (this.lastServerInfoMessage?.features?.agentBackgroundWork !== true) {
+      throw new Error("Update the host to see an agent's background work.");
+    }
   }
 
   async fetchProviderSubagentTimeline(
@@ -4642,6 +4762,26 @@ export class DaemonClient {
     });
   }
 
+  observeDiff(compare: DiffCompare): OwnedSubscription<DiffState> {
+    return this.diffStreams.observe(compare);
+  }
+
+  async readDiff(compare: DiffCompare): Promise<DiffState> {
+    const observation = this.observeDiff(compare);
+    try {
+      return await new Promise<DiffState>((resolve) => {
+        observation.subscribe({
+          snapshot: (state) => {
+            if (state.phase !== "loading") resolve(state);
+          },
+          update: () => {},
+        });
+      });
+    } finally {
+      await observation.release();
+    }
+  }
+
   observeCheckoutDiff(
     cwd: string,
     compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
@@ -5132,7 +5272,7 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; refMode?: "exact" },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -5142,6 +5282,7 @@ export class DaemonClient {
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,
+        refMode: options.refMode,
       },
       responseType: "branch_suggestions_response",
     });
@@ -6487,10 +6628,16 @@ export class DaemonClient {
   // ============================================================================
 
   observeTerminals(input: {
-    cwd: string;
+    cwd?: string;
     workspaceId?: string;
     signal?: AbortSignal;
   }): OwnedSubscription<CorrelatedResponsePayload<"terminals_changed">> {
+    // COMPAT(terminalCollection): added in v0.16, remove after 2027-06.
+    if (
+      input.cwd === undefined &&
+      this.getLastServerInfoMessage()?.features?.terminalCollection !== true
+    )
+      throw new Error("Update the host to list terminals across workspaces.");
     const { signal, ...query } = input;
     return this.observe(
       "terminals_changed",
@@ -6917,6 +7064,7 @@ export class DaemonClient {
     this.chunkedTransport?.close();
     this.chunkedTransport = null;
     this.owned.disconnected();
+    this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
     this.stopLivenessHeartbeat();
     this.cleanupTransport();
@@ -7105,6 +7253,10 @@ export class DaemonClient {
     }
     if (hostFrame) {
       for (const handler of this.hostFrameListeners) handler(hostFrame);
+      return true;
+    }
+    if (rawBytes[0] >= 0x40 && rawBytes[0] <= 0x4f) {
+      this.diffStreams.receive(rawBytes);
       return true;
     }
     if (isPluginFrameOpcode(rawBytes[0])) {
@@ -7307,6 +7459,7 @@ export class DaemonClient {
     }
 
     this.owned.disconnected();
+    this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
 
     // Clear all pending waiters and queued sends since the connection was lost
@@ -7466,6 +7619,7 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
+          this.diffStreams.connected(serverInfo.features?.diffSubscription === true);
           this.owned.restore(serverInfo, {
             ...DEFAULT_CLIENT_CAPABILITIES,
             ...this.config.capabilities,
@@ -7742,3 +7896,5 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     cwd: merged.cwd,
   };
 }
+
+export type { DiffCompare, DiffState, DiffEntry, ResolvedShas } from "./diff/index.js";

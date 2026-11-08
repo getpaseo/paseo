@@ -105,6 +105,29 @@ describe("shared agent descriptor", () => {
     expect(describeAgent({ isTurnActive: true }).statusBucket).toBe("running");
   });
 
+  it("shows background work as running without making the turn active", () => {
+    expect(describeAgent({ backgroundWork: { count: 1 } })).toMatchObject({
+      statusBucket: "running",
+      subtitle: "Background work running",
+    });
+    expect(
+      describeAgent({
+        backgroundWork: { count: 1 },
+        attentionReason: "error",
+        requiresAttention: true,
+      }).statusBucket,
+    ).toBe("failed");
+    expect(describeAgent({ backgroundWork: { count: 1 }, status: "error" }).statusBucket).toBe(
+      "running",
+    );
+  });
+
+  it("localizes the background work detail", async () => {
+    await i18n.changeLanguage("zh-CN");
+    expect(describeAgent({ backgroundWork: { count: 1 } }).subtitle).toBe("后台任务运行中");
+    await i18n.changeLanguage("en");
+  });
+
   it("surfaces pending permissions even while the turn is running", () => {
     expect(describeAgent({ isTurnActive: true, pendingPermissionCount: 1 }).statusBucket).toBe(
       "needs_input",

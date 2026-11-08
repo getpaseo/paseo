@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.15.2",
+  "version": "0.15.3",
   "description": "Paseo client SDK package",
   "license": "Apache-2.0",
   "files": [
@@ -45,11 +45,12 @@
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
     "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "measure:diff-materialization": "tsx scripts/measure-diff-materialization.ts"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.15.2",
-    "@getpaseo/relay": "0.15.2",
+    "@getpaseo/protocol": "0.15.3",
+    "@getpaseo/relay": "0.15.3",
     "ws": "^8.20.0",
     "zod": "^4.4.3"
   },

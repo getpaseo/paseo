@@ -712,19 +712,36 @@ describe("background Claude subagents", () => {
 test("Claude runtime safety protects silent shells, monitors and pending completion notifications", () => {
   const safety = new ClaudeRuntimeSafety();
   const observe = (message: unknown) => safety.observe(message as SDKMessage);
-  observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" });
+  expect(observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" })).toEqual([]);
   expect(safety.canStopRuntime()).toBe(true);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
+        { task_id: "monitor", task_type: "local_bash", description: "watch build" },
+        { task_id: "native-child", task_type: "local_agent", description: "research" },
+      ],
+    }),
+  ).toEqual([
+    { id: "quiet-shell", kind: "shell", description: "sleep 7200", canStop: true },
+    { id: "monitor", kind: "shell", description: "watch build", canStop: true },
+  ]);
+  expect(safety.canStopRuntime()).toBe(false);
   observe({
     type: "system",
-    subtype: "background_tasks_changed",
-    tasks: [
-      { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
-      { task_id: "monitor", task_type: "local_bash", description: "watch build" },
-      { task_id: "native-child", task_type: "local_agent", description: "research" },
-    ],
+    subtype: "task_started",
+    task_id: "monitor",
+    tool_use_id: "tool-monitor",
   });
-  expect(safety.canStopRuntime()).toBe(false);
-  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(
+    observe({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tool-monitor", name: "Monitor" }] },
+    })?.find((item) => item.id === "monitor")?.kind,
+  ).toBe("monitor");
+  expect(observe({ type: "system", subtype: "background_tasks_changed", tasks: [] })).toEqual([]);
   expect(safety.canStopRuntime()).toBe(false);
   for (const task_id of ["quiet-shell", "monitor"])
     observe({ type: "system", subtype: "task_notification", task_id });
@@ -736,6 +753,108 @@ test("Claude runtime safety protects silent shells, monitors and pending complet
   expect(safety.canStopRuntime()).toBe(false);
   observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
   expect(safety.canStopRuntime()).toBe(true);
+  safety.retire();
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "late", task_type: "local_bash" }],
+    }),
+  ).toBeUndefined();
+  safety.reset();
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "new", task_type: "local_bash" }],
+    }),
+  ).toEqual([{ id: "new", kind: "shell", description: null, canStop: true }]);
+});
+
+test("emits inventory only when relevant observations change it", () => {
+  const safety = new ClaudeRuntimeSafety();
+  const observe = (message: unknown) => safety.observe(message as SDKMessage);
+  expect(observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" })).toEqual([]);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "m", task_type: "local_bash" }],
+    }),
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "m", task_type: "local_bash" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    observe({ type: "system", subtype: "task_started", task_id: "m", tool_use_id: "tool" }),
+  ).toBeUndefined();
+  expect(
+    observe({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tool", name: "Monitor" }] },
+    }),
+  ).toEqual([{ id: "m", kind: "monitor", description: null, canStop: true }]);
+  expect(
+    observe({ type: "assistant", message: { content: [{ type: "text", text: "streamed" }] } }),
+  ).toBeUndefined();
+  expect(
+    observe({ type: "system", subtype: "task_started", task_id: "m", tool_use_id: "other" }),
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
+});
+
+test("Claude runtime safety releases a process that has not been sent a turn", () => {
+  const safety = new ClaudeRuntimeSafety();
+  // A resumed process that only answered control requests never sends init.
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.notePromptSent();
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.reset();
+  expect(safety.canStopRuntime()).toBe(true);
+  // A CLI without a roster that ran a turn may own background work.
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.220" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.retire();
+  expect(safety.canStopRuntime()).toBe(false);
+});
+
+test("Claude session started by a control request without a turn can stop its runtime", async () => {
+  let launched = 0;
+  const query = {
+    next: () => new Promise<IteratorResult<SDKMessage>>(() => {}),
+    return: async () => ({ done: true, value: undefined }),
+    close: () => {},
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    supportedModels: async () => [],
+    supportedCommands: async () => [],
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      launched++;
+      return query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  try {
+    // Reopening a chat lists its commands, which launches Claude with no prompt.
+    await session.listCommands!();
+    expect(launched).toBe(1);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
 });
 
 test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
