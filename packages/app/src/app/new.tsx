@@ -50,6 +50,7 @@ export default function NewWorkspaceRoute() {
   const [routeIdentity, setRouteIdentity] = useState({
     placementKey: routePlacementKey,
     generation: 0,
+    context: { serverId, sourceDirectory, displayName, projectId },
   });
   if (routeIdentity.placementKey !== routePlacementKey) {
     // Our URL mirror preserves the draft; a new navigation owns a new selection context.
@@ -58,11 +59,16 @@ export default function NewWorkspaceRoute() {
     setRouteIdentity({
       placementKey: routePlacementKey,
       generation: routeIdentity.generation + (isPlacementMirror ? 0 : 1),
+      context: isPlacementMirror
+        ? routeIdentity.context
+        : { serverId, sourceDirectory, displayName, projectId },
     });
   }
   const handlePlacementChange = useCallback(
     (placement: NewWorkspacePlacement) => {
-      publishedPlacementKey.current = placementKey(placement, draftId);
+      const nextPlacementKey = placementKey(placement, draftId);
+      if (nextPlacementKey === routePlacementKey) return;
+      publishedPlacementKey.current = nextPlacementKey;
       navigation.setParams({
         serverId: placement.serverId,
         dir: placement.sourceDirectory,
@@ -70,7 +76,7 @@ export default function NewWorkspaceRoute() {
         projectId: placement.projectId,
       });
     },
-    [draftId, navigation],
+    [draftId, navigation, routePlacementKey],
   );
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const sessionTabIds = useMemo(() => [draftKey], [draftKey]);
@@ -84,10 +90,10 @@ export default function NewWorkspaceRoute() {
         <ComposerEditingScope tabId={draftKey} targetKey={draftKey}>
           <NewWorkspaceScreen
             key={`${draftKey}:${routeIdentity.generation}`}
-            serverId={serverId}
-            sourceDirectory={sourceDirectory}
-            displayName={displayName}
-            projectId={projectId}
+            serverId={routeIdentity.context.serverId}
+            sourceDirectory={routeIdentity.context.sourceDirectory}
+            displayName={routeIdentity.context.displayName}
+            projectId={routeIdentity.context.projectId}
             draftId={draftId}
             onPlacementChange={handlePlacementChange}
           />

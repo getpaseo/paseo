@@ -1048,24 +1048,14 @@ export function NewWorkspaceScreen({
     const hasManualPlacement = hasManualHostSelection || hasManualProjectSelection;
     if (!hasManualPlacement || !selectedProject || !selectedSourceDirectory) return;
     const placement = placementForProject(selectedServerId, selectedProject);
-    const matchesRoute =
-      placement.serverId === serverId &&
-      placement.projectId === projectId &&
-      placement.sourceDirectory === sourceDirectoryProp &&
-      placement.displayName === displayNameProp;
-    if (matchesRoute) return;
     onPlacementChange(placement);
   }, [
-    displayNameProp,
     hasManualHostSelection,
     hasManualProjectSelection,
     onPlacementChange,
-    projectId,
     selectedProject,
     selectedServerId,
     selectedSourceDirectory,
-    serverId,
-    sourceDirectoryProp,
   ]);
 
   const projectIconTargets = useMemo(

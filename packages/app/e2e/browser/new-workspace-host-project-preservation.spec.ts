@@ -305,6 +305,30 @@ test.describe("New workspace host project preservation", () => {
       await client.close();
     }
   });
+  test("returns to the route seeded clone after switching hosts", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openNewWorkspaceFromContextProject(page, crossHostProject);
+    await selectNewWorkspaceProject(page, {
+      projectKey: crossHostProject.sharedProjectKey,
+      projectViewKey: crossHostProject.duplicateProjectViewKey,
+      projectDisplayName: "Paseo duplicate",
+    });
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("projectId"))
+      .toBe(crossHostProject.duplicateProjectId);
+    await reloadPreservingHostRegistry(page);
+    await expectNewWorkspaceProjectSelected(page, "Paseo duplicate");
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+    await selectNewWorkspaceHost(page, PRIMARY_HOST_LABEL);
+    await expectNewWorkspaceProjectSelected(page, "Paseo duplicate");
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("projectId"))
+      .toBe(crossHostProject.duplicateProjectId);
+  });
+
   test("returns to the manually chosen clone after switching hosts", async ({
     page,
     crossHostProject,
