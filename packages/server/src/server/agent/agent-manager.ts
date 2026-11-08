@@ -849,6 +849,7 @@ export class AgentManager {
   private readonly historySessions = new WeakSet<AgentSession>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
+  private readonly runtimeCleanupOpenedAt = new WeakMap<AgentSession, number>();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -1977,6 +1978,7 @@ export class AgentManager {
     const candidates: RuntimeCleanupCandidate[] = [];
     for (const agent of this.agents.values()) {
       const updatedAt = agent.updatedAt;
+      const openedAt = this.runtimeCleanupOpenedAt.get(agent.session) ?? 0;
       let identity = this.runtimeCleanupIdentities.get(agent.session);
       if (!identity) {
         identity = Object.freeze({});
@@ -1992,7 +1994,7 @@ export class AgentManager {
         parentAgentId: getParentAgentIdFromLabels(agent.labels) ?? undefined,
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? null,
-        lastActivityAt: updatedAt.getTime(),
+        lastActivityAt: Math.max(updatedAt.getTime(), openedAt),
         isEligible,
         canStopRuntime: agent.session.canStopRuntime?.bind(agent.session),
         closeIfEligible: async (revalidate) => {
@@ -4038,6 +4040,7 @@ export class AgentManager {
       }
 
       this.assertAcceptingAgentRegistrations();
+      this.runtimeCleanupOpenedAt.set(session, now.getTime());
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -4047,9 +4050,7 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
-            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
-          }
+          this.recordPrimedInitialTimeline(managed.id, session.initialTimeline);
         }
         this.refreshSessionPersistence(managed);
       }
@@ -4084,6 +4085,28 @@ export class AgentManager {
         await this.closeUnregisteredSession(session);
       }
       throw error;
+    }
+  }
+
+  private recordPrimedInitialTimeline(
+    agentId: string,
+    entries: readonly ImportedTimelineEntry[],
+  ): void {
+    const existingItems = this.timelineStore.getItems(agentId);
+    for (const entry of buildImportedTimelineRows(entries)) {
+      const item = entry.item;
+      if (
+        item.type === "notification" &&
+        existingItems.some(
+          (existing) =>
+            existing.type === "notification" &&
+            existing.level === item.level &&
+            existing.message === item.message,
+        )
+      ) {
+        continue;
+      }
+      this.recordTimeline(agentId, item, { timestamp: entry.timestamp });
     }
   }
 

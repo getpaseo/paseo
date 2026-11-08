@@ -46,6 +46,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  AgentUsageSession,
   FetchCatalogOptions,
   ImportableProviderSession,
   ImportedProviderSession,
@@ -955,6 +956,7 @@ interface PendingChild {
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
   private readonly runtime: ProviderRuntime;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
@@ -962,6 +964,7 @@ class PluginAgentClient implements AgentClient {
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.runtimeSettings = runtimeSettings;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1133,6 +1136,10 @@ class PluginAgentClient implements AgentClient {
         });
       },
       bind,
+      createProviderEnv({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [config.env],
+      }),
     );
     bind(bridge);
     return session;
@@ -1211,6 +1218,7 @@ class PluginAgentSession implements AgentSession {
     closed: boolean;
   } | null = null;
   private replaying: Promise<void> | null = null;
+  private readonly usageSessionKey = randomUUID();
 
   constructor(
     readonly provider: string,
@@ -1221,6 +1229,7 @@ class PluginAgentSession implements AgentSession {
       state: ProviderConfigState,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
+    private readonly launchEnv: Record<string, string> = {},
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
@@ -1234,6 +1243,16 @@ class PluginAgentSession implements AgentSession {
 
   get id(): string {
     return this.describePersistence()?.sessionId ?? this.bridge.id;
+  }
+
+  usageSession(): AgentUsageSession | null {
+    if (this.closed) return null;
+    return {
+      provider: this.provider,
+      model: this.bridge.config.model ?? undefined,
+      env: this.launchEnv,
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   get capabilities(): AgentCapabilityFlags {
@@ -1630,6 +1649,7 @@ class PluginAgentSession implements AgentSession {
     event: Extract<ProviderEvent, { type: "session.notice" }>,
   ): AgentStreamEvent[] {
     if (event.notice.dismissed) return [];
+    const message = [event.notice.title, event.notice.description].filter(Boolean).join("\n");
     return [
       {
         type: "timeline",
@@ -1638,7 +1658,7 @@ class PluginAgentSession implements AgentSession {
         item: {
           type: "notification",
           level: event.notice.severity,
-          message: [event.notice.title, event.notice.description].filter(Boolean).join("\n"),
+          message,
         },
         turnId: this.currentTurnId ?? undefined,
       },

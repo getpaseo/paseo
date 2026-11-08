@@ -1319,6 +1319,32 @@ describe("PluginAgentClientRegistry", () => {
     await registry.shutdown();
   });
 
+  test("reports usage session with model, env, and session key until closed", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession(
+      {
+        provider: harness.registration.id,
+        cwd: "/workspace",
+      },
+      { env: { CUSTOM_API_KEY: "secret" } },
+    );
+
+    const usage = session.usageSession?.();
+    expect(usage).toMatchObject({
+      provider: harness.registration.id,
+      model: "plugin-model",
+      env: { CUSTOM_API_KEY: "secret" },
+    });
+    expect(usage?.sessionKey).toBeDefined();
+
+    await session.close();
+    expect(session.usageSession?.()).toBeNull();
+    await registry.shutdown();
+  });
+
   test("terminalizes an active turn exactly once when its plugin provider is removed", async () => {
     const harness = createProviderHarness({ completeTurn: false });
     const registry = new PluginAgentClientRegistry(createTestLogger());
