@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createNativeDisclosureHold,
   disclosureAnchor,
-  settledEndHoldDistance,
+  createEndHoldDistance,
 } from "./native-disclosure-hold";
 
 function createFrames() {
@@ -144,19 +144,31 @@ describe("disclosure anchor", () => {
   });
 });
 
-describe("settled end hold distance", () => {
+describe("end hold distance", () => {
+  const viewportHeight = 600;
+
   it("keeps the distance from the end the toggle started at", () => {
-    expect(
-      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 2000, viewportHeight: 600 }),
-    ).toBe(20);
+    const distance = createEndHoldDistance(20);
+
+    distance.noteContentSize({ contentHeight: 2000, viewportHeight });
+
+    expect(distance.current()).toBe(20);
   });
 
-  it("ends at the end when a collapse leaves less scroll room than that distance", () => {
-    expect(
-      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 500, viewportHeight: 600 }),
-    ).toBe(0);
-    expect(
-      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 610, viewportHeight: 600 }),
-    ).toBe(10);
+  it("shrinks to the scroll room a collapse leaves", () => {
+    const distance = createEndHoldDistance(20);
+
+    distance.noteContentSize({ contentHeight: 610, viewportHeight });
+
+    expect(distance.current()).toBe(10);
+  });
+
+  it("stays at the end when output grows the content after a collapse reached the end", () => {
+    const distance = createEndHoldDistance(20);
+
+    distance.noteContentSize({ contentHeight: 600, viewportHeight });
+    distance.noteContentSize({ contentHeight: 700, viewportHeight });
+
+    expect(distance.current()).toBe(0);
   });
 });

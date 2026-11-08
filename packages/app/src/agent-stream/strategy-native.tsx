@@ -38,7 +38,8 @@ import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-k
 import {
   createNativeDisclosureHold,
   disclosureAnchor,
-  settledEndHoldDistance,
+  createEndHoldDistance,
+  type EndHoldDistance,
 } from "./native-disclosure-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
@@ -315,21 +316,14 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const isAtEnd = useStableEvent(
     () => distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
   );
-  // A hold on the content end mounts the end pin while detached (`holdRow`). The pin keeps the
-  // distance from the end, clamped to the scroll room left, so the release computes where the hold
-  // settles instead of reading the offset: the content size reaches JS before the pin's scroll does.
-  const [endHold, setEndHold] = useState<{ distanceAtToggle: number } | null>(null);
+  // A hold on the content end mounts the end pin while detached (`holdRow`). The release reads the
+  // tracked distance instead of the offset: the content size reaches JS before the pin's scroll does.
+  const [endHoldDistance, setEndHoldDistance] = useState<EndHoldDistance | null>(null);
   const releaseDisclosure = useStableEvent(() => {
-    setEndHold(null);
-    const metrics = streamViewportMetricsRef.current;
-    const settlesAtEnd = endHold
-      ? settledEndHoldDistance({
-          distanceAtToggle: endHold.distanceAtToggle,
-          contentHeight: metrics.contentHeight,
-          viewportHeight: metrics.viewportHeight,
-        }) <= AT_END_OFFSET_PX
-      : isAtEnd();
-    bottomAnchorController.releaseDisclosure({ isAtEnd: settlesAtEnd });
+    setEndHoldDistance(null);
+    bottomAnchorController.releaseDisclosure({
+      isAtEnd: endHoldDistance ? endHoldDistance.current() <= AT_END_OFFSET_PX : isAtEnd(),
+    });
   });
   const [disclosureHold] = useState(() =>
     createNativeDisclosureHold({
@@ -351,7 +345,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const cancelDisclosureHold = useStableEvent(() => {
     flushPendingEndHold();
     disclosureHold.cancel();
-    setEndHold(null);
+    setEndHoldDistance(null);
   });
   useEffect(() => () => cancelDisclosureHold(), [cancelDisclosureHold]);
   // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
@@ -376,12 +370,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       const anchor = disclosureAnchor(rows, rowId, triggerEdge);
       bottomAnchorController.holdForDisclosure();
       if (anchor.kind === "row" || !isListPlacedRef.current) {
-        setEndHold(null);
+        setEndHoldDistance(null);
         disclosureHold.hold(anchor);
         applyAndMeasure();
         return;
       }
-      setEndHold({ distanceAtToggle: distanceFromEnd(streamViewportMetricsRef.current) });
+      setEndHoldDistance(createEndHoldDistance(distanceFromEnd(streamViewportMetricsRef.current)));
       const frame = requestAnimationFrame(() => {
         pendingEndHoldRef.current = null;
         disclosureHold.hold(anchor);
@@ -420,7 +414,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading
   //   above or rows growing below leave what the user is reading where it is.
   const isFollowingEnd = bottomAnchorController.mode === "sticky-bottom";
-  const isEndPinned = isFollowingEnd || endHold !== null;
+  const isEndPinned = isFollowingEnd || endHoldDistance !== null;
   const pinsEnd = isEndPinned && isListPlaced;
   const maintainVisibleContentPosition = useMemo(
     () => (isEndPinned ? false : { data: true, size: true, shouldRestorePosition }),
@@ -647,6 +641,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentHeight: nextContentHeight,
       contentMeasuredForKey: isListPlacedRef.current ? "native-virtualized" : null,
     };
+    endHoldDistance?.noteContentSize(streamViewportMetricsRef.current);
     bottomAnchorController.handleContentSizeChange();
     // Content growing below a detached viewport moves the end away without a scroll event.
     if (

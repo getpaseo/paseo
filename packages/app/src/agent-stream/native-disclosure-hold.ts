@@ -87,13 +87,21 @@ export function disclosureAnchor(
 }
 
 /**
- * Where an end hold leaves the list, as a distance from the end. The end pin keeps the distance the
- * toggle started at, and the scroll view clamps it to the scroll room the content has left.
+ * The list's distance from the end during an end hold. The end pin keeps the distance through every
+ * content size change, and the scroll view clamps it to the scroll room the content has at that
+ * moment. A clamp is permanent: content that grows afterwards does not bring the distance back.
  */
-export function settledEndHoldDistance(input: {
-  distanceAtToggle: number;
-  contentHeight: number;
-  viewportHeight: number;
-}): number {
-  return Math.min(input.distanceAtToggle, Math.max(0, input.contentHeight - input.viewportHeight));
+export function createEndHoldDistance(distanceAtToggle: number): EndHoldDistance {
+  let distance = distanceAtToggle;
+  return {
+    noteContentSize({ contentHeight, viewportHeight }) {
+      distance = Math.min(distance, Math.max(0, contentHeight - viewportHeight));
+    },
+    current: () => distance,
+  };
+}
+
+export interface EndHoldDistance {
+  noteContentSize(input: { contentHeight: number; viewportHeight: number }): void;
+  current(): number;
 }
