@@ -20,6 +20,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { isRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
@@ -3519,7 +3520,7 @@ test("createAgent injects paseo MCP server only into provider launch config", as
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpBaseUrl: "http://192.168.1.25:6767/mcp/agents",
     idFactory: () => "00000000-0000-4000-8000-000000000103",
   });
 
@@ -3547,13 +3548,14 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: `http://192.168.1.25:6767/mcp/agents?callerAgentId=${snapshot.id}`,
     },
     custom: {
       type: "stdio",
       command: "custom-mcp",
     },
   });
+  expect(isRuntimePaseoMcpServer(client.lastConfig!.mcpServers!.paseo!)).toBe(true);
 
   const stored = await storage.get(snapshot.id);
   expect(stored?.config?.mcpServers).toEqual({
@@ -4028,7 +4030,7 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    mcpBaseUrl: "http://100.85.12.3:6768/mcp/agents",
     idFactory: () => "00000000-0000-4000-8000-000000000105",
   });
   const handle: AgentPersistenceHandle = {
@@ -4056,13 +4058,14 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
   expect(client.resumeOverrides[0]?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: `http://100.85.12.3:6768/mcp/agents?callerAgentId=${snapshot.id}`,
     },
     custom: {
       type: "stdio",
       command: "custom-mcp",
     },
   });
+  expect(isRuntimePaseoMcpServer(client.resumeOverrides[0]!.mcpServers!.paseo!)).toBe(true);
   expect(snapshot.config.mcpServers).toEqual({
     custom: {
       type: "stdio",
