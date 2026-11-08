@@ -10,6 +10,7 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -2584,8 +2585,8 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async listControls(_config: AgentSessionConfig): Promise<AgentOptionControl[]> {
-    return [];
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls: [], options: config.providerOptions ?? {} };
   }
 
   async listImportableSessions(

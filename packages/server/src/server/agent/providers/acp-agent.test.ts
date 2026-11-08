@@ -2334,9 +2334,12 @@ describe("ACPAgentClient config features", () => {
         cwd: "/tmp/acp-features",
         providerOptions: { auto_accept: true },
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
+      ],
+      options: { auto_accept: true },
+    });
   });
 
   test("derives controls from configured ACP select options", async () => {
@@ -2364,22 +2367,26 @@ describe("ACPAgentClient config features", () => {
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
     });
 
+    // The select nobody set reads as the agent opened it.
     await expect(
       client.listControls({
         provider: "copilot",
         cwd: "/tmp/acp-features",
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({ type: "toggle", key: "auto_accept" }),
-      expect.objectContaining({
-        type: "select",
-        key: "agent",
-        choices: [
-          expect.objectContaining({ value: "", label: "Default" }),
-          expect.objectContaining({ value: "Probe Agent", label: "Probe Agent" }),
-        ],
-      }),
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        expect.objectContaining({ type: "toggle", key: "auto_accept" }),
+        expect.objectContaining({
+          type: "select",
+          key: "agent",
+          choices: [
+            expect.objectContaining({ value: "", label: "Default" }),
+            expect.objectContaining({ value: "Probe Agent", label: "Probe Agent" }),
+          ],
+        }),
+      ],
+      options: { agent: "Probe Agent" },
+    });
   });
 });
 

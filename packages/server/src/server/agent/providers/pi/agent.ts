@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentOptionControl,
+  type AgentDraftControls,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2833,8 +2833,8 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  async listControls(_config: AgentSessionConfig): Promise<AgentOptionControl[]> {
-    return [];
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls: [], options: config.providerOptions ?? {} };
   }
 
   async listImportableSessions(

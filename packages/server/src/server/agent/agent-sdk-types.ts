@@ -798,6 +798,11 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface AgentDraftControls {
+  controls: AgentOptionControl[];
+  options: ProviderOptions;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
@@ -840,7 +845,12 @@ export interface AgentClient {
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
-  listControls?(config: AgentSessionConfig): Promise<AgentOptionControl[]>;
+  /**
+   * The controls of a draft, with the options a session opened from `config` would run with:
+   * `config.providerOptions` (defaults already merged in) plus what the provider resolves
+   * natively for the ones nobody set.
+   */
+  listControls?(config: AgentSessionConfig): Promise<AgentDraftControls>;
   /** Effective options: provider defaults from `config.json` deep-merged with the agent's own. */
   effectiveOptions?(own: ProviderOptions | undefined): ProviderOptions;
   listImportableSessions?(

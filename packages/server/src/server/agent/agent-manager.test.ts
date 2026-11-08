@@ -39,6 +39,7 @@ import type {
 import type {
   AgentClient,
   AgentCreateSessionOptions,
+  AgentDraftControls,
   AgentOptionControl,
   AgentLaunchContext,
   AgentPromptInput,
@@ -61,6 +62,8 @@ import type { ProviderDefinition } from "./provider-registry.js";
 import { mergeProviderOptions } from "./provider-options.js";
 
 import { OpenCodeV2AgentClient } from "./providers/opencode/v2/agent.js";
+import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
+import { fileURLToPath } from "node:url";
 import { V2Harness } from "./providers/opencode/test-utils/v2-harness.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
@@ -2493,9 +2496,9 @@ test("listDraftControls uses client feature listing without a model", async () =
       return await super.createSession(config);
     }
 
-    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
       this.featureConfigs.push(config);
-      return [draftControl];
+      return { controls: [draftControl], options: config.providerOptions ?? {} };
     }
   }
   const client = new DraftFeatureClient();
@@ -2559,9 +2562,9 @@ test("listDraftControls uses explicit model config without default model fetchin
       return await super.createSession(config);
     }
 
-    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
       this.featureConfigs.push(config);
-      return [draftControl];
+      return { controls: [draftControl], options: config.providerOptions ?? {} };
     }
   }
   const client = new DraftFeatureClient();
@@ -2589,6 +2592,60 @@ test("listDraftControls uses explicit model config without default model fetchin
       model: "gpt-5.4",
     },
   ]);
+});
+
+test("listDraftControls reports the Fast selection a fresh Cursor draft opens with", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-cursor-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const fakeAgentPath = fileURLToPath(
+    new URL("./providers/test-utils/fake-acp-agent.mjs", import.meta.url),
+  );
+  const scenario = {
+    options: [
+      {
+        id: "fast",
+        name: "Fast",
+        type: "select",
+        currentValue: "true",
+        options: [
+          { value: "false", name: "Off" },
+          { value: "true", name: "Fast" },
+        ],
+      },
+    ],
+  };
+  // The registry maps "cursor" onto the generic ACP provider id; this manager has no registry.
+  const client = new CursorACPAgentClient({
+    logger,
+    command: [process.execPath, fakeAgentPath, JSON.stringify(scenario)],
+  });
+  const manager = new AgentManager({ clients: { acp: client }, registry: storage, logger });
+  const controls = [
+    expect.objectContaining({ type: "toggle", key: "auto_accept" }),
+    expect.objectContaining({
+      type: "select",
+      key: "fast",
+      choices: [
+        { value: "false", label: "Off" },
+        { value: "true", label: "Fast" },
+      ],
+    }),
+  ];
+
+  // Nobody set Fast, so the draft shows the value the agent opens with.
+  await expect(manager.listDraftControls({ provider: "acp", cwd: workdir })).resolves.toEqual({
+    controls,
+    options: { fast: "true" },
+  });
+
+  // A set value stands over the probe's reading.
+  await expect(
+    manager.listDraftControls({
+      provider: "acp",
+      cwd: workdir,
+      providerOptions: { fast: "false" },
+    }),
+  ).resolves.toEqual({ controls, options: { fast: "false" } });
 });
 
 test("createAgent injects daemon append system prompt at runtime only", async () => {

@@ -3084,7 +3084,7 @@ describe("PiRpcAgentClient", () => {
 
     await expect(
       client.listControls(createConfig({ model: "openrouter/test/model" })),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
 
     expect(pi.recordedLaunches).toHaveLength(0);
   });

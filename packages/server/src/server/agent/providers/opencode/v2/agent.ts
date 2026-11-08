@@ -17,7 +17,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
-  AgentOptionControl,
+  AgentDraftControls,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentSession,
@@ -222,8 +222,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       throw error;
     }
   }
-  async listControls(): Promise<AgentOptionControl[]> {
-    return controls;
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls, options: config.providerOptions ?? {} };
   }
   async listCommands(config: AgentSessionConfig) {
     const connection = await this.runtime.acquire();

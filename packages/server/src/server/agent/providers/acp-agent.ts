@@ -70,6 +70,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateConfigUnattendedInput,
+  type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -893,6 +894,19 @@ export function deriveControlsFromACP(
   });
 }
 
+/** The feature selects as the agent reports them, keyed by feature id. */
+function featureValuesFromACP(
+  configOptions: SessionConfigOption[] | null | undefined,
+  featureOptions: ACPConfigFeatureOption[],
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const featureOption of featureOptions) {
+    const current = findSelectConfigFeatureOption(configOptions, featureOption)?.currentValue;
+    if (current != null) values[featureOption.id] = current;
+  }
+  return values;
+}
+
 function isACPAutoAcceptEnabled(config: AgentSessionConfig): boolean {
   return config.providerOptions?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true;
 }
@@ -1209,9 +1223,10 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    const options = config.providerOptions ?? {};
     if (this.configFeatureOptions.length === 0) {
-      return [ACP_AUTO_ACCEPT_CONTROL];
+      return { controls: [ACP_AUTO_ACCEPT_CONTROL], options };
     }
 
     this.assertProvider(config);
@@ -1226,10 +1241,18 @@ export class ACPAgentClient implements AgentClient {
       );
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
-      return [
-        ACP_AUTO_ACCEPT_CONTROL,
-        ...deriveControlsFromACP(transformed.configOptions, this.configFeatureOptions),
-      ];
+      return {
+        controls: [
+          ACP_AUTO_ACCEPT_CONTROL,
+          ...deriveControlsFromACP(transformed.configOptions, this.configFeatureOptions),
+        ],
+        // The probe opened with the agent's own defaults, which a session would overwrite with
+        // the set values, so those stand over the probe's reading.
+        options: {
+          ...featureValuesFromACP(transformed.configOptions, this.configFeatureOptions),
+          ...options,
+        },
+      };
     } finally {
       await this.closeProbe(probe, probeSessionId);
     }
@@ -2502,15 +2525,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   /** The selects as the provider reports them now. */
   private featureValues(): Record<string, string> {
-    const values: Record<string, string> = {};
-    for (const featureOption of this.configFeatureOptions) {
-      const current = findSelectConfigFeatureOption(
-        this.configOptions,
-        featureOption,
-      )?.currentValue;
-      if (current != null) values[featureOption.id] = current;
-    }
-    return values;
+    return featureValuesFromACP(this.configOptions, this.configFeatureOptions);
   }
 
   /** The selects whose value is not what `expected` says, including ones it does not name. */

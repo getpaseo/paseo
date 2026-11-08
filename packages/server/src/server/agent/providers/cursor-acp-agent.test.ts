@@ -167,28 +167,31 @@ describe("CursorACPAgentClient model discovery", () => {
         provider: "acp",
         cwd: "/tmp/cursor",
       }),
-    ).resolves.toEqual([
-      {
-        type: "toggle",
-        key: "auto_accept",
-        label: "Auto Accept",
-        description: "Automatically approves ACP permission prompts.",
-        tooltip: "Auto accept permission prompts",
-        icon: "shield-check",
-      },
-      {
-        type: "select",
-        key: CURSOR_FAST_FEATURE_OPTION.id,
-        label: "Fast",
-        description: "Cursor fast mode",
-        tooltip: "Select Cursor fast mode",
-        icon: "zap",
-        choices: [
-          { value: "false", label: "Off" },
-          { value: "true", label: "Fast" },
-        ],
-      },
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        {
+          type: "toggle",
+          key: "auto_accept",
+          label: "Auto Accept",
+          description: "Automatically approves ACP permission prompts.",
+          tooltip: "Auto accept permission prompts",
+          icon: "shield-check",
+        },
+        {
+          type: "select",
+          key: CURSOR_FAST_FEATURE_OPTION.id,
+          label: "Fast",
+          description: "Cursor fast mode",
+          tooltip: "Select Cursor fast mode",
+          icon: "zap",
+          choices: [
+            { value: "false", label: "Off" },
+            { value: "true", label: "Fast" },
+          ],
+        },
+      ],
+      options: { fast: "false" },
+    });
   });
 });
 

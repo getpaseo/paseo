@@ -35,6 +35,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
   type AgentResumeSessionOptions,
+  type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentSlashCommand,
@@ -1324,9 +1325,7 @@ export class AgentManager {
     }
   }
 
-  async listDraftControls(
-    config: AgentSessionConfig,
-  ): Promise<{ controls: AgentOptionControl[]; options: ProviderOptions }> {
+  async listDraftControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
     const options = this.effectiveOptionsFor(
@@ -1344,7 +1343,7 @@ export class AgentManager {
     }
 
     if (client.listControls) {
-      return { controls: await client.listControls(normalizedConfig), options };
+      return await client.listControls(normalizedConfig);
     }
 
     const session = await client.createSession(normalizedConfig);

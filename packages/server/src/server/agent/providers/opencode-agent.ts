@@ -27,6 +27,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMode,
@@ -1686,9 +1687,9 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
     this.assertConfig(config);
-    return [OPENCODE_AUTO_ACCEPT_CONTROL];
+    return { controls: [OPENCODE_AUTO_ACCEPT_CONTROL], options: config.providerOptions ?? {} };
   }
 
   async listImportableSessions(

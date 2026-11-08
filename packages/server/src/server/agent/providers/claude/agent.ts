@@ -106,6 +106,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -1760,8 +1761,11 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
-    return buildClaudeControls(this.assertConfig(config).model);
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return {
+      controls: buildClaudeControls(this.assertConfig(config).model),
+      options: config.providerOptions ?? {},
+    };
   }
 
   async listImportableSessions(

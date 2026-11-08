@@ -100,13 +100,13 @@ test.each([
   });
   try {
     await writeFile(script, initialSource);
-    expect((await client.listControls({ provider: "opencode", cwd: root }))[0]?.label).toBe(
-      "Auto Accept",
-    );
+    expect(
+      (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label,
+    ).toBe("Auto Accept");
     await writeFile(script, 'console.log("opencode v2.0.10")');
-    expect((await client.listControls({ provider: "opencode", cwd: root }))[0]?.label).toBe(
-      "Auto-accept",
-    );
+    expect(
+      (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label,
+    ).toBe("Auto-accept");
   } finally {
     await client.shutdown();
     await rm(root, { recursive: true, force: true });
@@ -221,7 +221,7 @@ test("selects v2 without probing the binary when an external server is configure
     env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
   });
   try {
-    const controls = await client.listControls({ provider: "opencode", cwd: "/tmp/project" });
+    const { controls } = await client.listControls({ provider: "opencode", cwd: "/tmp/project" });
     expect(controls.map((control) => control.label)).toEqual(["Auto-accept"]);
   } finally {
     await client.shutdown();

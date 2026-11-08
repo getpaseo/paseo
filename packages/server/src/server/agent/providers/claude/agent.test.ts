@@ -1153,7 +1153,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-opus-4-8",
       }),
-    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1161,7 +1164,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-opus-4-8[1m]",
       }),
-    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1169,7 +1175,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-opus-4-8-20260101",
       }),
-    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1177,7 +1186,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-opus-5",
       }),
-    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1185,7 +1197,7 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
 
     await expect(
       client.listControls({
@@ -1193,7 +1205,7 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-sonnet-5",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
 
     await expect(
       client.listControls({
@@ -1201,7 +1213,7 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-sonnet-4-6",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
   });
 
   test("opens with Fast off on a model that has none, so unrelated options still apply", async () => {

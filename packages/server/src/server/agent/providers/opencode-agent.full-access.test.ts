@@ -115,15 +115,18 @@ describe("OpenCode auto_accept feature", () => {
       serverManager: runtime,
       createClient: runtime.createClient,
     });
-    const controls = await client.listControls({
-      provider: "opencode",
-      cwd: "/tmp/project",
-      providerOptions: { auto_accept: true },
+    await expect(
+      client.listControls({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        providerOptions: { auto_accept: true },
+      }),
+    ).resolves.toEqual({
+      controls: [
+        expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
+      ],
+      options: { auto_accept: true },
     });
-
-    expect(controls).toEqual([
-      expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
-    ]);
   });
 
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
