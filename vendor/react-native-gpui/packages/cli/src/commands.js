@@ -821,7 +821,7 @@ export function scaffoldDesktop(
     beforeWrite(cargoPath);
     fs.writeFileSync(
       cargoPath,
-      `[package]\nname = ${JSON.stringify(appPackageName(projectRoot, packageJson))}\nversion = "0.1.0"\nedition = "2021"\n\n# Set CARGO_PROFILE_DEV_DEBUG=full to opt into full debug information.\n[profile.dev]\ndebug = "line-tables-only"\nsplit-debuginfo = "packed"\n\n# Dependencies are optimized even in a dev build: GPUI rebuilds and paints the\n# element tree on every frame, and they are only compiled once.\n[profile.dev.package."*"]\ndebug = false\nopt-level = 3\n\n# The C++ bridge picks its CMake build type from this crate's opt-level, and a\n# Release build of React Native has no dev server, inspector or Fast Refresh.\n[profile.dev.package.rn-gpui-sys]\nopt-level = 0\n\n[profile.release]\ndebug = "line-tables-only"\n# Cargo strips inside the linker, before dsymutil, so package-desktop writes the\n# dSYM and then strips. Full LTO: 2 MB smaller for 1.4x the build time.\nstrip = "none"\nsplit-debuginfo = "packed"\nlto = "fat"\ncodegen-units = 1\n\n[build-dependencies]\nserde_json = "1"\n\n[dependencies]\n`,
+      `[package]\nname = ${JSON.stringify(appPackageName(projectRoot, packageJson))}\nversion = "0.1.0"\nedition = "2021"\n\n# Set CARGO_PROFILE_DEV_DEBUG=full to opt into full debug information.\n[profile.dev]\ndebug = "line-tables-only"\nsplit-debuginfo = "packed"\n\n# Dependencies are optimized even in a dev build: GPUI rebuilds and paints the\n# element tree on every frame, and they are only compiled once.\n[profile.dev.package."*"]\ndebug = false\nopt-level = 3\n\n# The C++ bridge picks its CMake build type from this crate's opt-level, and a\n# Release build of React Native has no dev server, inspector or Fast Refresh.\n[profile.dev.package.rn-gpui-sys]\nopt-level = 0\n\n[profile.release]\ndebug = "line-tables-only"\n# Cargo strips inside the linker, before dsymutil, so package-desktop preserves the\n# Cargo dSYM and then strips. Full LTO: 2 MB smaller for 1.4x the build time.\nstrip = "none"\nsplit-debuginfo = "packed"\nlto = "fat"\ncodegen-units = 1\n\n[build-dependencies]\nserde_json = "1"\n\n[dependencies]\n`,
     );
   }
 
@@ -1538,10 +1538,9 @@ export async function packageDesktop({
   const binaryName = desktopCrateName(crateDir);
   const buildDir = path.join(crateDir, 'build');
 
-  // The binary is finished. Ask for the debug file first — it can only be
-  // collected from a binary that still has its debug info — then take the symbols
-  // off, so the packager copies the small binary.
-  ensureDsym({ crateDir, binaryName });
+  // Cargo owns the packed debug output and its symlink in the profile directory.
+  // Replacing that symlink with a directory makes the next Cargo build fail.
+  // Keep its output intact and copy the symbols after packaging.
   stripReleaseBinary({ crateDir, binaryName });
 
   // 2. Icons, from the one PNG the config names.
@@ -1634,33 +1633,6 @@ export function ensureCargoPackager() {
   );
 }
 
-/**
- * Write the release dSYM if it is not there yet.
- *
- * Cargo does not invoke `dsymutil`, so a binary built with `strip = "none"` still
- * has no dSYM until one is asked for. This must happen before `stripReleaseBinary`
- * — the debug info has to be in the binary to be collected out of it.
- */
-function ensureDsym({ crateDir, binaryName }) {
-  const profileDir = targetProfileDir(crateDir, 'release');
-  const binary = path.join(profileDir, binaryName);
-  const dsym = path.join(profileDir, `${binaryName}.dSYM`);
-  if (!fs.existsSync(binary)) return;
-  // `dsymutil` writes the bundle read-only, and Cargo then cannot replace the
-  // binary it belongs to: "failed to remove file … Operation not permitted". Make
-  // it writable before removing it.
-  if (fs.existsSync(dsym)) fs.chmodSync(dsym, 0o755);
-  fs.rmSync(dsym, { recursive: true, force: true });
-  try {
-    execFileSync('dsymutil', [binary, '-o', dsym], { stdio: 'inherit' });
-    // `dsymutil` writes the bundle read-only, and Cargo then cannot replace the
-    // binary it belongs to: "failed to remove file … Operation not permitted".
-    if (fs.existsSync(dsym)) fs.chmodSync(dsym, 0o755);
-  } catch (error) {
-    console.log(`could not write a dSYM for ${binaryName}: ${error.message}`);
-  }
-}
-
 /// Whether `file` is a directory with no files anywhere below it.
 function isEmptyDirectory(file) {
   const stat = fs.statSync(file);
@@ -1684,7 +1656,7 @@ function isEmptyDirectory(file) {
  * function names, and it must not ship: it is larger than the binary and useless
  * to anyone who is not symbolizing.
  */
-function copyDebugSymbols({ crateDir, binaryName, outDir }) {
+export function copyDebugSymbols({ crateDir, binaryName, outDir }) {
   const profileDir = targetProfileDir(crateDir, 'release');
   // `split-debuginfo = "packed"` gives a dSYM on macOS, a `.dwp` on Linux and a
   // `.pdb` on Windows. The unpacked `.debug` file is listed too because a
@@ -1708,7 +1680,7 @@ function copyDebugSymbols({ crateDir, binaryName, outDir }) {
   for (const file of found) {
     const target = path.join(outDir, path.basename(file));
     fs.rmSync(target, { recursive: true, force: true });
-    fs.cpSync(file, target, { recursive: true });
+    fs.cpSync(file, target, { recursive: true, dereference: true });
     // A read-only directory here would make the next run fail to replace it.
     fs.chmodSync(target, 0o755);
     console.log(`debug symbols: ${target}`);

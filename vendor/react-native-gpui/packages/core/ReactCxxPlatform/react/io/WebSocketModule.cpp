@@ -51,6 +51,20 @@ WebSocketModule::~WebSocketModule() {
   connections_.clear();
 }
 
+void WebSocketModule::releaseConnection(int32_t socketID) {
+  // Only the JS thread owns connections_. Destroying a client joins its IO
+  // thread, so terminal callbacks must dispatch here rather than delete it
+  // from that IO thread. RN's JS WebSocket is already CLOSED when it receives
+  // a terminal event and does not call the native close method afterward.
+  auto it = connections_.find(socketID);
+  if (it == connections_.end()) {
+    return;
+  }
+  removeSocketSender(socketID);
+  setBlobWebSocketHandler(socketID, false);
+  connections_.erase(it);
+}
+
 void WebSocketModule::connect(
     jsi::Runtime& /*rt*/,
     const std::string& url,
@@ -119,24 +133,29 @@ void WebSocketModule::connect(
   });
   connections_[socketID]->setOnClosedFrameCallback(
       [weakThis = weak_from_this(), socketID](uint16_t code, const std::string& reason) {
-        removeSocketSender(socketID);
-        setBlobWebSocketHandler(socketID, false);
         auto strongThis = weakThis.lock();
         if (!strongThis) {
           return;
         }
-        strongThis->emitDeviceEvent(
-            "websocketClosed",
-            [socketID, code, reason](jsi::Runtime& rt, std::vector<jsi::Value>& args) {
-              auto arg = jsi::Object(rt);
-              arg.setProperty(rt, "id", jsi::Value(socketID));
-              arg.setProperty(rt, "code", jsi::Value(code));
-              arg.setProperty(
-                  rt,
-                  "reason",
-                  facebook::jsi::String::createFromUtf8(rt, reason));
-              args.emplace_back(rt, arg);
-            });
+        strongThis->jsInvoker_->invokeAsync([weakThis, socketID, code, reason](jsi::Runtime&) {
+          auto owner = weakThis.lock();
+          if (!owner || owner->connections_.find(socketID) == owner->connections_.end()) {
+            return;
+          }
+          owner->releaseConnection(socketID);
+          owner->emitDeviceEvent(
+              "websocketClosed",
+              [socketID, code, reason](jsi::Runtime& rt, std::vector<jsi::Value>& args) {
+                auto arg = jsi::Object(rt);
+                arg.setProperty(rt, "id", jsi::Value(socketID));
+                arg.setProperty(rt, "code", jsi::Value(code));
+                arg.setProperty(
+                    rt,
+                    "reason",
+                    facebook::jsi::String::createFromUtf8(rt, reason));
+                args.emplace_back(rt, arg);
+              });
+        });
       });
 
   connections_[socketID]->connect(
@@ -156,18 +175,25 @@ void WebSocketModule::connect(
                 args.emplace_back(rt, arg);
               });
         } else {
-          strongThis->emitDeviceEvent(
-              "websocketFailed",
-              [socketID](jsi::Runtime& rt, std::vector<jsi::Value>& args) {
-                auto arg = jsi::Object(rt);
-                arg.setProperty(rt, "id", jsi::Value(socketID));
-                arg.setProperty(
-                    rt,
-                    "message",
-                    facebook::jsi::String::createFromAscii(
-                        rt, "Could not connect to websocket."));
-                args.emplace_back(rt, arg);
-              });
+          strongThis->jsInvoker_->invokeAsync([weakThis, socketID](jsi::Runtime&) {
+            auto owner = weakThis.lock();
+            if (!owner || owner->connections_.find(socketID) == owner->connections_.end()) {
+              return;
+            }
+            owner->releaseConnection(socketID);
+            owner->emitDeviceEvent(
+                "websocketFailed",
+                [socketID](jsi::Runtime& rt, std::vector<jsi::Value>& args) {
+                  auto arg = jsi::Object(rt);
+                  arg.setProperty(rt, "id", jsi::Value(socketID));
+                  arg.setProperty(
+                      rt,
+                      "message",
+                      facebook::jsi::String::createFromAscii(
+                          rt, "Could not connect to websocket."));
+                  args.emplace_back(rt, arg);
+                });
+          });
         }
       });
 }
@@ -237,9 +263,6 @@ void WebSocketModule::close(
     return;
   }
   it->second->close(static_cast<uint16_t>(code), reason);
-  removeSocketSender(socketID);
-  setBlobWebSocketHandler(socketID, false);
-  connections_.erase(it);
 }
 
 void WebSocketModule::addListener(

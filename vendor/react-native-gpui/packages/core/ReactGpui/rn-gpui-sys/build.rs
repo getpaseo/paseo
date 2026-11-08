@@ -99,6 +99,8 @@ fn main() {
     for changed_platform_source in [
         "react/io/ImageLoaderModule.cpp",
         "react/io/ImageLoaderModule.h",
+        "react/io/WebSocketModule.cpp",
+        "react/io/WebSocketModule.h",
         "react/runtime/ReactCxxTurboModuleProvider.cpp",
         "react/runtime/ReactCxxTurboModuleProvider.h",
         "react/runtime/ReactHost.cpp",
@@ -308,6 +310,11 @@ fn main() {
     // the path (the /usr/bin shim or the Xcode toolchain binary behind it), so
     // name the shim unless the user chose a compiler.
     if cfg!(target_os = "macos") && target_triple.contains("apple") {
+        // CMake otherwise defaults to the installed SDK, independently of
+        // Cargo's deployment target (including when reusing its cache).
+        if let Ok(minimum) = env::var("MACOSX_DEPLOYMENT_TARGET") {
+            defines.push(("CMAKE_OSX_DEPLOYMENT_TARGET", minimum));
+        }
         for (variable, tool, env_name) in [
             ("CMAKE_C_COMPILER", "/usr/bin/cc", "CC"),
             ("CMAKE_CXX_COMPILER", "/usr/bin/c++", "CXX"),

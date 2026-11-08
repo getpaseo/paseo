@@ -660,6 +660,16 @@ export function toPackagerConfig(config, build) {
   const macos = {
     minimumSystemVersion: config.bundle.macos.minimumSystemVersion,
   };
+  // The linker's executable signature does not seal the packaged app's
+  // resources. Local macOS packages need a complete ad-hoc bundle signature.
+  if (os === 'macos') {
+    macos.signingIdentity = '-';
+    // cargo-packager enables hardened runtime. Ad-hoc signatures have no Team
+    // ID, so library validation otherwise rejects even the bundled dylibs.
+    macos.entitlements = relative(
+      require.resolve('../templates/adhoc.entitlements.plist'),
+    );
+  }
   if (config.bundle.macos.entitlements !== null) {
     macos.entitlements = relative(
       path.resolve(process.cwd(), config.bundle.macos.entitlements),

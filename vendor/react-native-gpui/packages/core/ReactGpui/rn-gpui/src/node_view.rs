@@ -3932,10 +3932,16 @@ impl Render for RNNodeView {
                 true,
             ),
         ];
+        // GPUI paints a complete rounded border, including the inner curve.
+        // Four edge rules cannot represent it, even with rounded clipping.
+        let native_border = self.view.border_colors[0] != 0
+            && edges.iter().any(|(_, _, _, _, thickness, _)| *thickness > 0.0)
+            && self.view.border_colors.iter().all(|color| *color == self.view.border_colors[0])
+            && self.view.border_styles.iter().all(|style| *style == 0);
         let mut border_rules = Vec::new();
         for (edge, x, y, length, thickness, horizontal) in edges {
             let color = self.view.border_colors[edge];
-            if color != 0 && thickness > 0.0 {
+            if !native_border && color != 0 && thickness > 0.0 {
                 border_rules.extend(rule_segments(
                     x,
                     y,
@@ -3947,7 +3953,7 @@ impl Render for RNNodeView {
                 ));
             }
         }
-        if !border_rules.is_empty() {
+        if native_border || !border_rules.is_empty() {
             let mut border_clip = div()
                 .absolute()
                 .top_0()
@@ -3963,7 +3969,19 @@ impl Render for RNNodeView {
                 radii.bottom_left =
                     Some(px(self.view.border_radii.bl * scale_x.min(scale_y)).into());
             }
-            element = element.child(border_clip.children(border_rules));
+            if native_border {
+                // Keep the border on a decoration child: adding border widths
+                // to the Fabric node itself would inset its Yoga-laid-out children.
+                let border = border_clip.style();
+                border.border_color = Some(style::color(self.view.border_colors[0]));
+                border.border_widths.left = Some(px(self.view.border_widths.left * scale_x).into());
+                border.border_widths.top = Some(px(self.view.border_widths.top * scale_y).into());
+                border.border_widths.right = Some(px(self.view.border_widths.right * scale_x).into());
+                border.border_widths.bottom = Some(px(self.view.border_widths.bottom * scale_y).into());
+                element = element.child(border_clip);
+            } else {
+                element = element.child(border_clip.children(border_rules));
+            }
         }
         let mut outline_rules = Vec::new();
         if self.view.outline_color != 0 && self.view.outline_width > 0.0 {

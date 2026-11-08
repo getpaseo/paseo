@@ -21,8 +21,8 @@ opt-level = 0
 
 [profile.release]
 debug = "line-tables-only"
-# Cargo strips inside the linker, before dsymutil, so package-desktop writes the
-# dSYM and then strips. Full LTO: 2 MB smaller for 1.4x the build time.
+# Cargo strips inside the linker, before dsymutil, so package-desktop preserves the
+# Cargo dSYM and then strips. Full LTO: 2 MB smaller for 1.4x the build time.
 strip = "none"
 split-debuginfo = "packed"
 lto = "fat"

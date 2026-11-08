@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, expect, test } from 'vitest';
 import {
   collectNodeAddons,
+  copyDebugSymbols,
   createLibrary,
   desktopLaunchConfig,
   linuxBuildDependencyProblem,
@@ -32,6 +33,29 @@ const repoRoot = (() => {
   }
 })();
 const temporaryRoots = [];
+
+test('packaging copies Cargo dSYM contents without retaining its build-tree symlink', () => {
+  fs.mkdirSync(nodePath.join(repoRoot, '.artifacts'), { recursive: true });
+  const root = fs.mkdtempSync(nodePath.join(repoRoot, '.artifacts/gpui-dsym-'));
+  temporaryRoots.push(root);
+  const crateDir = nodePath.join(root, 'desktop');
+  const release = nodePath.join(crateDir, 'target/release');
+  const symbols = nodePath.join(release, 'deps/app-hash.dSYM');
+  const dwarf = 'Contents/Resources/DWARF/app';
+  fs.mkdirSync(nodePath.dirname(nodePath.join(symbols, dwarf)), { recursive: true });
+  fs.writeFileSync(nodePath.join(symbols, dwarf), 'debug symbols');
+  const cargoLink = nodePath.join(release, 'app.dSYM');
+  fs.symlinkSync('deps/app-hash.dSYM', cargoLink);
+  const outDir = nodePath.join(root, 'dist');
+  fs.mkdirSync(outDir);
+
+  copyDebugSymbols({ crateDir, binaryName: 'app', outDir });
+
+  expect(fs.lstatSync(cargoLink).isSymbolicLink()).toBe(true);
+  expect(fs.lstatSync(nodePath.join(outDir, 'app.dSYM')).isSymbolicLink()).toBe(false);
+  fs.rmSync(release, { recursive: true });
+  expect(fs.readFileSync(nodePath.join(outDir, 'app.dSYM', dwarf), 'utf8')).toBe('debug symbols');
+});
 
 afterAll(() => {
   for (const root of temporaryRoots) {

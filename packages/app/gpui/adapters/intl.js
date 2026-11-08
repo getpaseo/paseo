@@ -13,4 +13,5 @@ import "@formatjs/intl-displaynames/polyfill-force.js";
 import "@formatjs/intl-displaynames/locale-data/en.js";
 import "@formatjs/intl-segmenter/polyfill-force.js";
 import Desktop from "../desktop/src/NativePaseoDesktop";
-Intl.DateTimeFormat.__setDefaultTimeZone(Desktop.timezone());
+import { setDefaultTimeZone } from "./intl-timezone";
+setDefaultTimeZone(Desktop.timezone());

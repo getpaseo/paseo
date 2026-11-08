@@ -1,9 +1,9 @@
 # Experimental GPUI client
 
-Run Paseo's existing React Native app in a native GPUI window on Linux. This is
+Run Paseo's existing React Native app in a native GPUI window on Linux or macOS. This is
 a community starting point: the real workspace UI runs, but terminal/diff
 renderers and several native services still need porting. The normal desktop
-build remains Electron. No daemon changes or release installers are included.
+build remains Electron. The native app connects to a separately running daemon.
 
 ## Run it
 
@@ -33,6 +33,51 @@ not wired into this launcher. `build:gpui` builds without opening a window.
 `gpui:bundle -- --dev false` only writes the JS bundle, source map, and assets to
 `.artifacts/gpui/`. Bundle validation checks that the real routes are present and
 that no `react-native-webview` modules were included.
+
+## Build a macOS test DMG
+
+On an Apple Silicon Mac, install the dependencies above plus Xcode, CMake, and
+Ninja. From the repository root, after `npm run gpui:install`:
+
+```sh
+gpui_repo_root="$PWD"
+cd packages/app/gpui
+MACOSX_DEPLOYMENT_TARGET=15.0 NODE_OPTIONS=--max-old-space-size=6144 CARGO_BUILD_JOBS=4 \
+  CARGO_TARGET_DIR="$gpui_repo_root/.artifacts/gpui/macos/target" \
+  PASEO_RENDERER=gpui EXPO_PUBLIC_LOCAL_DAEMON=localhost:6767 \
+  node node_modules/react-native/cli.js package-desktop \
+    --target app,dmg --out "$gpui_repo_root/.artifacts/gpui/macos/dist"
+```
+
+Use the React Native CLI entry point shown here; the standalone GPUI CLI rejects
+`package-desktop`. Keep one absolute `CARGO_TARGET_DIR` for both compilation and
+packaging because their default target directories differ. Metro needs more than
+Node's default 2 GiB heap for this app.
+Keep `MACOSX_DEPLOYMENT_TARGET` aligned with `desktop/desktop.json` when building
+from source; it controls both Rust and CMake's macOS API availability.
+
+The DMG requires macOS 15 or later, matching the bundled Hermes/JSI libraries.
+It contains `Paseo GPUI.app` with ad-hoc signing and the library-validation
+exception required for loading ad-hoc dylibs under hardened runtime. It is not
+notarized or signed with Developer ID. Copy it out of the mounted DMG before testing. Its daemon
+address is fixed at bundle time, and the installer does not include a daemon.
+Native terminals and diff rendering remain unsupported.
+
+Check the installed bundle before sharing it:
+
+```sh
+node packages/app/gpui/verify-macos-package.mjs "/Applications/Paseo GPUI.app"
+```
+
+This checks the sealed signature, ad-hoc library-loading entitlement, and the
+minimum macOS version of each bundled dylib. A successful launch on a Mac with
+SIP disabled does not test Team ID library validation; verify the signing policy
+and use a Mac with SIP enabled for distribution launch acceptance.
+
+Namespace GUI testing needs an active remote desktop session; SSH alone can leave
+GPUI waiting for a display. Use Namespace's `devbox desktop` commands before
+launching the app. Keep Cargo's generated debug-symbol symlink intact when
+rebuilding; the packager copies its contents alongside the installer.
 
 ## Approach and renderer choice
 
@@ -70,14 +115,14 @@ controlled CPU, memory, startup, or frame-time results against these alternative
 
 ## What belongs in the change
 
-| Area                                                                   | Why it is here                                                                                                                                                                                                              |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vendor/react-native-gpui/`                                            | Editable, pinned runtime source. This accounts for roughly 130,000 lines of the diff. GitHub marks it as vendored; inspect [UPSTREAM](../../../vendor/react-native-gpui/UPSTREAM) for provenance and the two local patches. |
-| npm and Cargo lockfiles                                                | Reproduce the experiment's dependencies. Roughly 15,000 generated lines, collapsed on GitHub.                                                                                                                               |
-| `desktop/`, `index.js`, `routes.js`, Metro/Babel config, root launcher | Register the full app, select the native runtime, compile native services, and bundle the actual route graph. The explicit route context prevents an apparently successful build with no app routes.                        |
-| `adapters/`                                                            | Desktop implementations of the app-used APIs, plus explicit unavailable-capability implementations for mobile features. About 700 lines; these are limited ports, not complete replacements for Expo/Unistyles.             |
-| Shared app edits                                                       | One capability gate for alpha-mask shimmer. GPUI shows the logo and labels without that effect. Existing web/iOS/Android paths keep their behavior.                                                                         |
-| Native tests and this guide                                            | Make the working slice reproducible and give contributors bounded follow-up work.                                                                                                                                           |
+| Area                                                                   | Why it is here                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vendor/react-native-gpui/`                                            | Editable, pinned runtime source. This accounts for roughly 130,000 lines of the diff. GitHub marks it as vendored; inspect [UPSTREAM](../../../vendor/react-native-gpui/UPSTREAM) for provenance and the local patches. |
+| npm and Cargo lockfiles                                                | Reproduce the experiment's dependencies. Roughly 15,000 generated lines, collapsed on GitHub.                                                                                                                           |
+| `desktop/`, `index.js`, `routes.js`, Metro/Babel config, root launcher | Register the full app, select the native runtime, compile native services, and bundle the actual route graph. The explicit route context prevents an apparently successful build with no app routes.                    |
+| `adapters/`                                                            | Desktop implementations of the app-used APIs, plus explicit unavailable-capability implementations for mobile features. About 700 lines; these are limited ports, not complete replacements for Expo/Unistyles.         |
+| Shared app edits                                                       | One capability gate for alpha-mask shimmer. GPUI shows the logo and labels without that effect. Existing web/iOS/Android paths keep their behavior.                                                                     |
+| Native tests and this guide                                            | Make the working slice reproducible and give contributors bounded follow-up work.                                                                                                                                       |
 
 Upstream examples, its tester/testing package, website, unused fonts/vector-icon
 ports, starter navigation dependencies, sample icon, and unused nested Cargo config
@@ -107,11 +152,12 @@ source-built distribution, and release packaging has not been verified.
 
 ## Working slice and limits
 
-Verified on Linux x86_64: all 24 app routes in the bundle, connection to the dev
+Verified on Linux x86_64 and macOS arm64: all 24 app routes in the bundle, connection to the
 daemon, the real project/workspace sidebar, opening an existing workspace,
 existing message rendering, and native composer typing/deletion. The native
 regression test restores the draft and does not send a message. Rust tests cover
 SHA-256/random-byte bounds and real SQLite parameter binding/transaction rollback.
+The macOS build also passed draft restoration after restarting the native process.
 
 The following are not feature-parity claims:
 
@@ -126,7 +172,7 @@ The following are not feature-parity claims:
 | Terminals                          | The mobile view expects an Expo `PaseoTerminal` component. No GPUI implementation yet.                                                                        |
 | Diffs                              | The mobile surface uses React Native Skia. No GPUI drawing backend yet.                                                                                       |
 | Plugins                            | The existing loader evaluates JS and injects host React/RN. No end-to-end plugin verification on GPUI yet.                                                    |
-| Other platforms                    | The upstream runtime targets macOS/Windows too; this Paseo integration has only been exercised on Linux.                                                      |
+| Other platforms                    | Linux x86_64 and macOS arm64 have been exercised. Windows remains unverified.                                                                                 |
 
 The initial stripped development executable was about 68 MiB, with about 10 MiB
 of Hermes/JSI libraries and a 21 MiB JS bundle, approximately 100 MiB uncompressed.
@@ -200,3 +246,29 @@ npx vitest run packages/app/gpui/native.test.ts --bail=1
 
 Without a driver URL the test is skipped. Put diagnostic logs/captures in
 `.artifacts/gpui/`; do not commit them or publish private workspace contents as QA.
+
+For border and hover regressions, bundle the isolated scene from `packages/app/gpui`:
+
+```sh
+PASEO_RENDERER=gpui node node_modules/react-native/cli.js bundle --platform desktop \
+  --entry-file appearance-regression.fixture.js --config desktop/metro.config.js \
+  --bundle-output ../../../.artifacts/gpui/appearance.bundle --dev false --max-workers 1
+```
+
+Launch the driver-enabled executable with `RN_GPUI_BUNDLE` pointing at that bundle.
+Run `native.test.ts` from the root with the driver URL/token above and
+`PASEO_GPUI_TEST_SCENE=appearance`. It checks the rendered border pixels,
+Pressable hover callbacks and render props, and hover across nested controls.
+No daemon is needed for this scene.
+
+On macOS, test WebSocket cleanup against a compiled native executable:
+
+```sh
+PASEO_GPUI_TEST_BINARY="/absolute/path/to/react-native-gpui-paseo-gpui" \
+npx vitest run packages/app/gpui/websocket.native.test.ts --bail=1
+```
+
+This opens an isolated native window and uses a loopback peer for 128 rejected
+handshakes, 128 server closes, and 128 client closes under a 256-descriptor limit.
+It needs an active display and the GPUI npm dependencies, but no Paseo daemon.
+Without the executable path it is skipped. Its bundle and logs stay in `.artifacts/gpui/`.

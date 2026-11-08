@@ -13,8 +13,32 @@ Local patches (all other retained files match the revision above):
   install their own pointer area. Otherwise an empty portal overlay redirects
   clicks to its parent, blocking Paseo's sidebar. native.test.ts exercises this
   against the actual app.
+- packages/core/ReactGpui/rn-gpui/src/{node_view,style}.rs: paint uniform solid
+  borders with GPUI's rounded border primitive on a decoration child, keeping
+  Fabric child coordinates intact. Edge strips cannot draw the corner arcs.
+- packages/core/ReactGpui/rn-gpui-sys/cpp/GpuiJsEngine.h: route Pressability
+  hover through the pointer events GPUI emits. The desktop Pressable wrapper
+  in src-gpui/Libraries/Components/Pressable also supplies hovered to render
+  props; metro.config.js lets a wrapper import its upstream component without
+  resolving back to itself. native.test.ts covers callbacks, render props,
+  nested row hover and border pixels using appearance-regression.fixture.js.
 - packages/core/src-gpui/Libraries/Components/StatusBar/StatusBar.desktop.js:
   desktop StatusBar implementation, because there is no mobile OS status bar.
+- packages/cli/src/package-desktop.js: ad-hoc sign macOS packages so their
+  bundle resources are sealed, with templates/adhoc.entitlements.plist allowing
+  bundled ad-hoc dylibs under hardened runtime; covered by package-desktop.test.js.
+- packages/cli/src/commands.js: preserve Cargo's generated dSYM symlink so
+  subsequent builds can replace it; copy symbol contents into the distribution
+  instead of linking back into the build tree. Covered by commands.test.js.
+- packages/core/ReactCxxPlatform/react/io/WebSocketModule.{cpp,h}: release
+  failed and closed connections on the JS thread. Keeping terminal clients
+  exhausts file descriptors during daemon retries; deleting them on the IO
+  thread would join that same thread. websocket.native.test.ts exercises the
+  real RN API against a loopback peer. ReactGpui/rn-gpui-sys/build.rs tracks
+  these sources so incremental builds include the fix.
+- packages/core/ReactGpui/rn-gpui-sys/build.rs: pass Cargo's
+  MACOSX_DEPLOYMENT_TARGET to CMake. Otherwise source builds default to the
+  installed SDK's version even when the app targets an older macOS release.
 
 GPUI itself remains a pinned Cargo git dependency. Hermes/React Native prebuilt
 libraries are downloaded by upstream build tooling; this is not an offline or

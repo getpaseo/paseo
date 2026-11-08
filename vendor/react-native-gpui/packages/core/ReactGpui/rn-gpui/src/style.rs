@@ -60,8 +60,8 @@ pub fn to_refinement(v: &ViewPropsFlat) -> StyleRefinement {
     if v.background_color != 0 {
         s.background = Some(Fill::from(color(v.background_color)));
     }
-    // RN borders are painted as four independent edge rules by `node_view`.
-    // GPUI border widths would add a second, default-colored edge on top.
+    // `node_view` owns the border decoration. Border widths on this element
+    // would also inset children that already have their Fabric layout.
     s.corner_radii.top_left = Some(px(v.border_radii.tl).into());
     s.corner_radii.top_right = Some(px(v.border_radii.tr).into());
     s.corner_radii.bottom_right = Some(px(v.border_radii.br).into());

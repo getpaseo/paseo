@@ -1,1 +1,4 @@
-{ "identifier": "sh.paseo.gpui" }
+{
+  "identifier": "sh.paseo.gpui",
+  "bundle": { "macos": { "minimumSystemVersion": "15.0" } }
+}

@@ -31,6 +31,11 @@ class GpuiFeatureFlagsOverrides
   bool cxxNativeAnimatedEnabled() override {
     return true;
   }
+
+  // GPUI dispatches W3C pointer events, not browser mouseenter/mouseleave.
+  bool shouldPressibilityUseW3CPointerEventsForHover() override {
+    return true;
+  }
 };
 
 struct GpuiJsEngineInfo {

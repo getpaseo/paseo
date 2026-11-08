@@ -263,6 +263,24 @@ describe('toPackagerConfig', () => {
     expect(config.outDir).toBe('/project/desktop/build/dist');
   });
 
+  test('macOS packages seal the app with an ad-hoc signature', () => {
+    const config = toPackagerConfig(desktopConfig(), build({ os: 'macos' }));
+    expect(config.macos.signingIdentity).toBe('-');
+  });
+
+  test('ad-hoc macOS apps can load their bundled libraries without a Team ID', () => {
+    const context = build({ os: 'macos' });
+    const config = toPackagerConfig(desktopConfig(), context);
+    expect(config.macos.entitlements).toBeTypeOf('string');
+    const entitlements = fs.readFileSync(
+      path.resolve(context.crateDir, config.macos.entitlements),
+      'utf8',
+    );
+    expect(entitlements).toMatch(
+      /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>\s*<true\s*\/>/u,
+    );
+  });
+
   test('the bundle file and the assets directory ship as resources', () => {
     // A directory containing this run's output cannot be shipped, so the two
     // are named. The asset directory has to exist to be listed.

@@ -231,7 +231,11 @@ function makeMetroConfig({ projectRoot = process.cwd() } = {}) {
       }
     }
     const override = key && overrides.get(key);
-    return override ? withFilePath(resolution, override) : resolution;
+    // A platform wrapper can import the component it wraps without resolving
+    // that import back to itself (e.g. desktop Pressable wrapping RN Pressable).
+    return override && override !== context.originModulePath
+      ? withFilePath(resolution, override)
+      : resolution;
   };
 
   const config = mergeConfig(getDefaultConfig(projectRoot), {

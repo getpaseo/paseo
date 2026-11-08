@@ -48,6 +48,8 @@ class WebSocketModule : public NativeWebSocketModuleCxxSpec<WebSocketModule>,
   void removeListeners(jsi::Runtime &rt, int32_t count);
 
  private:
+  void releaseConnection(int32_t socketID);
+
   WebSocketClientFactory webSocketClientFactory_;
   std::unordered_map<int32_t, std::unique_ptr<IWebSocketClient>> connections_;
 };
