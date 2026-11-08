@@ -452,7 +452,12 @@ test.describe("Sidebar workspace list", () => {
     page,
   }) => {
     const workspaces = await Promise.all(
-      [1, 2, 3, 4, 5].map((index) => seedWorkspace({ repoPrefix: `sidebar-hover-scan-${index}-` })),
+      [1, 2, 3, 4, 5].map((index) =>
+        seedWorkspace({
+          repoPrefix: `sidebar-hover-scan-${index}-`,
+          title: `Hover scan ${index}`,
+        }),
+      ),
     );
 
     try {
