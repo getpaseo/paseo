@@ -123,6 +123,37 @@ describe("app diagnostics report", () => {
     expect(report).toContain("Last online: unknown");
   });
 
+  test.each(["online", "error"] as const)(
+    "identifies a routed connection while %s",
+    (connectionStatus) => {
+      const host = makeHost();
+      host.connections.push({ id: "routed-origin", type: "routed", originServerId: "srv-origin" });
+      const snapshot: HostRuntimeSnapshot = {
+        serverId: host.serverId,
+        activeConnectionId: "routed-origin",
+        activeConnection: { type: "routed", endpoint: "srv-origin", display: "via srv-origin" },
+        connectionStatus,
+        client: null,
+        lastError: connectionStatus === "error" ? "Host disconnected" : null,
+        lastOnlineAt: null,
+        agentDirectoryStatus: "ready",
+        agentDirectoryError: null,
+        hasEverLoadedAgentDirectory: true,
+        probeByConnectionId: new Map(),
+        clientGeneration: 1,
+        connectionEpoch: 1,
+      };
+
+      const report = formatHostRuntimeSection({ host, snapshot });
+
+      expect(report).toContain("Active connection: routed");
+      expect(report).toContain("Connection 5: routed, active, probe=unknown");
+      expect(report).toContain(`Status: ${connectionStatus}`);
+      expect(report).toContain(`Last error: ${snapshot.lastError ?? "none"}`);
+      expect(report).not.toContain("srv-origin");
+    },
+  );
+
   test("redacts saved connection secrets from collected daemon and desktop text", () => {
     const host = makeHost();
     const redacted = redactAppDiagnosticReport(
