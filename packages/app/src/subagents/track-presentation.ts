@@ -19,9 +19,12 @@ function presentationStatus(row: SubagentRow) {
  * A child's mark reports what it is doing, not whether anyone read it: the track is where a
  * failed child stays visible after the parent's own attention is cleared.
  */
-export function deriveSubagentStatusBucket(status: AgentLifecycleStatus): SidebarStateBucket {
+export function deriveSubagentStatusBucket(
+  status: AgentLifecycleStatus,
+  backgroundWork?: { count: number } | null,
+): SidebarStateBucket {
   if (status === "error") return "failed";
-  if (status === "running") return "running";
+  if (status === "running" || (backgroundWork?.count ?? 0) > 0) return "running";
   return "done";
 }
 
@@ -49,7 +52,10 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSubagentStatusBucket(status),
+    statusBucket: deriveSubagentStatusBucket(
+      status,
+      row.kind === "paseo" ? row.backgroundWork : undefined,
+    ),
   };
 }
 

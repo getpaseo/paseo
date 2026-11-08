@@ -388,3 +388,45 @@ describe("plugin subscription SDK boundary", () => {
     ).toEqual([]);
   });
 });
+
+describe("sidebar data SDK boundary", () => {
+  it("accepts references and preserves string-id panel consumers", () => {
+    expect(
+      typeErrors(`
+      import { useWorkspace, useAgent, usePaseo, type PluginClientContext, type PluginSidebarViewProps, type WorkspaceRef, type AgentRef, useProject, useTerminal, useWorkspaces, useAgents, useProjects, useTerminals, type ProjectRef, type TerminalRef, type Query, type Group } from "@getpaseo/plugin/client";
+      import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
+      function Panel({ workspace, agent }: { workspace: WorkspaceRef; agent: AgentRef }) {
+        const snapshot: PluginWorkspaceSnapshot | null = useWorkspace(workspace);
+        const title: string | null = useWorkspace("workspace", item => item.name);
+        const status = useAgent(agent, item => ({ status: item.status }), (a, b) => a?.status === b?.status);
+        const agentSnapshot = useAgent(agent);
+        const custom = useWorkspace(workspace, undefined, (a, b) => a?.name === b?.name);
+        const workspaces: readonly WorkspaceRef[] = useWorkspaces({ orderBy: "name" });
+        const groups: readonly Group<AgentRef>[] = useAgents({ groupBy: item => item.status });
+        const projects: readonly ProjectRef[] = useProjects({ hosts: [workspace.hostId] });
+        const terminals: readonly TerminalRef[] = useTerminals();
+        const paseo = usePaseo();
+        void paseo.workspaces.ref(workspace).setPinned(true);
+        void paseo.workspaces.ref(workspace).setLabel("Later", { assigned: true });
+        void paseo.workspaces.ref("old-id").setTitle("Title");
+        if (projects[0]) { paseo.projects.ref(projects[0]).open(); void paseo.projects.ref(projects[0]).createWorkspace(); }
+        if (terminals[0]) { paseo.terminals.ref(terminals[0]).focus(); void paseo.terminals.ref(terminals[0]).kill(); }
+        void paseo.agents.ref(agent);
+        if (projects[0]) useProject(projects[0], item => item.displayName);
+        if (terminals[0]) useTerminal(terminals[0]);
+        function View(props: PluginSidebarViewProps) {
+          props.navigation.openWorkspace(workspace);
+          props.navigation.openAgent(agent);
+          props.dismiss();
+          return null;
+        }
+        function contribute(client: PluginClientContext) {
+          client.addSidebarView({ id: "workspaces", title: "Workspaces", Component: View });
+        }
+        const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
+        return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});

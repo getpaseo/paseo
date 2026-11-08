@@ -67,7 +67,7 @@ function mountTimeline(historyMounted: StreamItem[]) {
     routeBottomAnchorRequest: null,
     isAuthoritativeHistoryReady: true,
     onNearBottomChange: () => {},
-    onNearHistoryStart: () => true,
+    onNearHistoryStart: async () => true,
     isLoadingOlderHistory: false,
     hasOlderHistory: false,
     olderHistoryProgressKey: null,

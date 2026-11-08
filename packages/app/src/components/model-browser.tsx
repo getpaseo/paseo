@@ -216,17 +216,19 @@ export function ModelProviderGlyph({
   provider,
   serverId,
   size,
+  strokeWidth,
   tone = "muted",
 }: {
   provider: string;
   serverId: string | null;
   size: number;
+  strokeWidth?: number;
   tone?: ProviderGlyphTone;
 }) {
   const Icon = useProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
-  return <Icon size={size} color={color} />;
+  return <Icon size={size} strokeWidth={strokeWidth} color={color} />;
 }
 
 function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
