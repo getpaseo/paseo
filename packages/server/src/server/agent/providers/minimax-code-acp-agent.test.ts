@@ -86,6 +86,14 @@ const lateMember = member("late-session", "root-session", "worker", "Start late"
 const lateRunning = member("late-session", "root-session", "worker", "Start late", "running", 8000, 8200);
 const withLate = { ...tree, members: [...tree.members, lateMember] };
 const withLateRunning = { ...tree, members: [...tree.members, lateRunning] };
+// The provider answers the read with a tree that reports a child as finished,
+// and publishes the same child as running again a moment later.
+const regressedTree = {
+  ...tree,
+  members: tree.members.map((entry) =>
+    entry.sessionId === "grandchild-session" ? { ...entry, status: "running" } : entry,
+  ),
+};
 
 new AgentSideConnection(
   (connection) => ({
@@ -114,6 +122,13 @@ new AgentSideConnection(
       return { snapshot: tree };
     },
     async prompt() {
+      if (scenario === "regress") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: regressedTree,
+        });
+        return { stopReason: "end_turn" };
+      }
       if (scenario === "confirm-repeat") {
         // The provider reports the same child as finished again and again,
         // while the tree it publishes changes around it.
@@ -464,6 +479,24 @@ describe("MiniMaxCodeACPAgentClient", () => {
     const log = await readAgentLog();
     const updates = log.filter((entry) => entry.method === "delegation_update").length;
     expect(updates).toBeLessThan(30);
+  });
+
+  test("shows the live state of a child the snapshot reported as finished", async () => {
+    const client = createClient({ scenario: "regress" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // The tree the provider answered the read with reported the child as
+    // finished, and its live state says it runs again. The row follows what
+    // the provider reports, so the status goes back for a moment.
+    expect(rowsFor(events, "grandchild-session").map((row) => row.status)).toEqual([
+      "completed",
+      "running",
+    ]);
   });
 
   test("shows the running status the provider takes the child back with", async () => {

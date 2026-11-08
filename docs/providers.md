@@ -59,6 +59,10 @@ vendor supplies the tree through the `delegationExtension` option of the ACP cli
 provider reports becomes rows in the parent's subagents track. A vendor that reports a child as finished
 before it started can hold that row back with `deferMs`: the row waits for a bounded deadline, so it
 shows even when the provider keeps publishing its tree, and a newer state for the same child replaces it.
+The tree a session reads at startup is published as the provider reported it, so a child it reports as
+finished is shown as finished at once. A live update can bring such a row back to running for a moment:
+the snapshot and the live state of a provider can disagree briefly, and the row follows what the provider
+reports.
 Those rows are read-only, like every provider subagent row.
 
 ### Direct

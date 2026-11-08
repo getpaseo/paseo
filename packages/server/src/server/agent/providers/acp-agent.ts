@@ -2937,6 +2937,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /**
    * Reads the provider's delegation tree once, so a session that already had
    * sub-agents shows them before the next update arrives.
+   *
+   * The tree is published as the provider reported it: a child it reports as
+   * finished is finished, and a session that starts or resumes shows it at
+   * once. A live update can bring such a row back to running, because the
+   * snapshot and the live state of a provider can disagree briefly. The row
+   * follows what the provider reports, so no timing is guessed.
    */
   private async refreshDelegationTree(): Promise<void> {
     const extension = this.delegationExtension;
