@@ -11201,6 +11201,47 @@ test("idle runtime cleanup honors a provider veto and resumes the saved conversa
   }
 });
 
+test("idle runtime cleanup reaps a settled error runtime on the same clock", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-error-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ErrorClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new ErrorClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const collect = runtimeCleanup(manager);
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Provider turn failed.",
+  });
+  await failed;
+  await manager.flush();
+
+  const now = new Date(Date.now() + 61 * 60_000);
+  expect((await collect({ now })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
+  expect(manager.getAgent(agent.id)).toBeNull();
+});
+
 test("idle agents remain resident until an explicit lifecycle action closes them", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-residency-"));
   let closeCount = 0;
