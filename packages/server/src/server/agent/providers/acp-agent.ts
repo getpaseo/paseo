@@ -104,6 +104,7 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import type { ProviderSubagentStatus } from "../provider-subagents/store.js";
 import {
   raceProviderRefreshAbort,
   runProviderRefreshActivity,
@@ -184,6 +185,83 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
+}
+
+/**
+ * One member of a provider's delegation tree.
+ *
+ * The shape is a provider's own: the session id of the child, the session id
+ * of its parent, the name of the agent that runs it, the task it was given and
+ * where it stands.
+ */
+interface ProviderDelegationMember {
+  sessionId: string;
+  parentSessionId: string | null;
+  agentName: string | null;
+  task: string | null;
+  status: ProviderSubagentStatus;
+  createdAtMs: number | null;
+  updatedAtMs: number | null;
+}
+
+/**
+ * Reads the status of a delegation member.
+ *
+ * An unknown status is not a finished one. Reporting it as running keeps the
+ * child visible instead of claiming work that may still be going.
+ */
+function readDelegationMemberStatus(value: unknown): ProviderSubagentStatus {
+  switch (value) {
+    case "completed":
+    case "done":
+    case "finished":
+      return "completed";
+    case "failed":
+    case "error":
+      return "failed";
+    case "canceled":
+    case "cancelled":
+    case "stopped":
+      return "canceled";
+    default:
+      return "running";
+  }
+}
+
+/**
+ * Reads the members of a delegation snapshot.
+ *
+ * The provider sends the whole tree, not a diff, so the members replace the
+ * previous state. A member without a session id cannot be addressed and is
+ * skipped.
+ */
+function readDelegationMembers(snapshot: unknown): ProviderDelegationMember[] | null {
+  if (!isRecord(snapshot)) {
+    return null;
+  }
+  const members = snapshot.members;
+  if (!Array.isArray(members)) {
+    return null;
+  }
+  const parsed: ProviderDelegationMember[] = [];
+  for (const entry of members) {
+    if (!isRecord(entry) || typeof entry.sessionId !== "string" || !entry.sessionId) {
+      continue;
+    }
+    parsed.push({
+      sessionId: entry.sessionId,
+      parentSessionId:
+        typeof entry.parentSessionId === "string" && entry.parentSessionId
+          ? entry.parentSessionId
+          : null,
+      agentName: typeof entry.agentName === "string" && entry.agentName ? entry.agentName : null,
+      task: typeof entry.task === "string" && entry.task ? entry.task : null,
+      status: readDelegationMemberStatus(entry.status),
+      createdAtMs: typeof entry.createdAtMs === "number" ? entry.createdAtMs : null,
+      updatedAtMs: typeof entry.updatedAtMs === "number" ? entry.updatedAtMs : null,
+    });
+  }
+  return parsed;
 }
 
 function isACPInvalidParams(error: unknown): boolean {
@@ -346,6 +424,48 @@ const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
  */
 const COMMAND_INVENTORY_QUIET_MS = 600;
 const COMMAND_INVENTORY_POLL_MS = 25;
+
+// MiniMax Code publishes its extension notifications only to a client that
+// asked for them in the handshake. Without the request the provider keeps its
+// background work to itself and never publishes the tree of the sub-agents a
+// session delegated to.
+const MCODE_EXTENSIONS_META_KEY = "minimax-code/extensions";
+const MCODE_DELEGATION_GET_METHOD = "mcode/session/delegation/get";
+const MCODE_DELEGATION_UPDATE_NOTIFICATION = "mcode/session/delegation_update";
+// The ACP SDK does not reject a request the provider never answers, so the
+// read of the delegation tree is bounded: a provider that advertises the
+// extension and stays silent must not hold the session startup hostage.
+const DELEGATION_SNAPSHOT_TIMEOUT_MS = 2_000;
+
+/**
+ * The handshake request that asks a MiniMax Code provider for its extension
+ * notifications.
+ *
+ * The request is a vendor extension, so it goes only to a provider that is
+ * MiniMax Code: another ACP provider has no business receiving it.
+ */
+export const MCODE_CLIENT_CAPABILITY_META: ACPClientCapabilityMeta = {
+  [MCODE_EXTENSIONS_META_KEY]: { version: 1, notifications: true },
+};
+
+/**
+ * Reports whether a provider is MiniMax Code.
+ *
+ * The provider id is the usual answer, but a user may register the same
+ * command under a name of their own, so the command is checked as well.
+ */
+export function isMiniMaxCodeProvider(
+  providerId: string | undefined,
+  command: readonly string[] | undefined,
+): boolean {
+  if (providerId === "minimax-code") {
+    return true;
+  }
+  return (command ?? []).some((part) => {
+    const lowered = part.toLowerCase();
+    return lowered.includes("mcode") || lowered.includes("minimax");
+  });
+}
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -1756,6 +1876,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
+  // The metadata the provider sent in its initialize answer. A vendor
+  // extension advertises its methods there.
+  private agentMeta: Record<string, unknown> | null = null;
+  // The last delegation tree the provider published, so a repeated snapshot
+  // does not redraw the same rows.
+  private delegationSignature: string | null = null;
+  // Sub-agents the provider has already reported as running. A child that has
+  // not started yet is projected as finished by some providers, and only a
+  // child known to have started may be reported as finished on equal
+  // timestamps.
+  private readonly startedDelegationMembers = new Set<string>();
+  // The delegation tree is read while the session initializes, before the
+  // agent manager subscribes to the session. The rows wait here until a
+  // subscriber arrives.
+  private readonly pendingDelegationEvents: AgentStreamEvent[] = [];
+  private delegationBacklogDelivered = false;
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
@@ -1853,6 +1989,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.agentMeta = spawned.initialize._meta ?? null;
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1867,6 +2004,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         await this.sessionUpdate(update);
       }
       await this.applyConfiguredOverrides();
+      await this.refreshDelegationSnapshot();
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1890,6 +2028,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.agentMeta = spawned.initialize._meta ?? null;
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1921,6 +2060,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
 
       await this.applyConfiguredOverrides();
+      await this.refreshDelegationSnapshot();
 
       if (this.resumePurpose === "history") {
         await this.releaseHistoryRuntime();
@@ -2071,9 +2211,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: this.sessionId,
       });
     }
+    this.deliverDelegationBacklog(callback);
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  /**
+   * Hands the delegation rows published before the first subscriber to that
+   * subscriber, in the order the provider published them. Later rows are
+   * delivered live, so a row is never reported twice.
+   */
+  private deliverDelegationBacklog(callback: (event: AgentStreamEvent) => void): void {
+    if (this.delegationBacklogDelivered) {
+      return;
+    }
+    this.delegationBacklogDelivered = true;
+    for (const event of this.pendingDelegationEvents.splice(0)) {
+      callback(event);
+    }
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -2748,6 +2904,135 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  /**
+   * Reports whether the provider advertised a delegation extension.
+   *
+   * The advertisement lives in the metadata of the initialize answer, so a
+   * provider that never offered a delegation tree is never asked for one.
+   */
+  private supportsVendorDelegation(): boolean {
+    return this.advertisedProviderMethods().includes(MCODE_DELEGATION_GET_METHOD);
+  }
+
+  /**
+   * Reads the extension methods the provider advertised.
+   */
+  private advertisedProviderMethods(): unknown[] {
+    const extensions = this.agentMeta?.[MCODE_EXTENSIONS_META_KEY];
+    if (!isRecord(extensions)) {
+      return [];
+    }
+    const methods = extensions.methods;
+    return Array.isArray(methods) ? methods : [];
+  }
+
+  /**
+   * Publishes the provider's delegation tree as sub-agent rows.
+   *
+   * A provider that runs its own sub-agents keeps them out of the session
+   * list: their sessions cannot be opened, and they never appear as agents of
+   * their own. Without this the background work of a session is invisible -
+   * the user sees the parent turn and nothing about what it delegated.
+   *
+   * The provider sends the whole tree, so the rows replace the previous state
+   * instead of accumulating.
+   */
+  private applyDelegationSnapshot(snapshot: unknown): void {
+    const members = readDelegationMembers(snapshot);
+    if (!members) {
+      return;
+    }
+    const signature = members
+      .map(
+        (member) =>
+          `${member.sessionId}:${member.status}:${member.updatedAtMs ?? ""}:${member.task ?? ""}:${member.agentName ?? ""}`,
+      )
+      .join("|");
+    if (signature === this.delegationSignature) {
+      // The provider repeats a snapshot it already sent. Republishing it would
+      // only redraw the same rows.
+      return;
+    }
+    this.delegationSignature = signature;
+    const memberIds = new Set(members.map((member) => member.sessionId));
+    for (const member of members) {
+      const parentSubagentId =
+        member.parentSessionId && memberIds.has(member.parentSessionId)
+          ? member.parentSessionId
+          : null;
+      this.pushEvent({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: {
+          type: "upsert",
+          id: member.sessionId,
+          title: member.task,
+          description: member.agentName,
+          status: this.readDelegationStatus(member),
+          parentSubagentId,
+          ...(member.updatedAtMs !== null
+            ? { timestamp: new Date(member.updatedAtMs).toISOString() }
+            : {}),
+        },
+      });
+    }
+  }
+
+  /**
+   * Reads the status of one delegation member.
+   *
+   * Some providers project a child that has not started yet as finished, with
+   * the same timestamp for its creation and its last update. Reporting that
+   * as finished would claim the work is done before it began, so such a child
+   * stays running until the provider says otherwise. A child the provider
+   * already reported as running is taken at its word when it finishes.
+   */
+  private readDelegationStatus(member: ProviderDelegationMember): ProviderSubagentStatus {
+    if (member.status === "running") {
+      this.startedDelegationMembers.add(member.sessionId);
+      return "running";
+    }
+    const neverStarted =
+      member.createdAtMs !== null &&
+      member.updatedAtMs !== null &&
+      member.createdAtMs === member.updatedAtMs;
+    if (
+      member.status === "completed" &&
+      neverStarted &&
+      !this.startedDelegationMembers.has(member.sessionId)
+    ) {
+      return "running";
+    }
+    return member.status;
+  }
+
+  /**
+   * Reads the delegation tree once, so a session that already had sub-agents
+   * shows them before the next update arrives.
+   */
+  private async refreshDelegationSnapshot(): Promise<void> {
+    const connection = this.connection;
+    if (!connection || !this.sessionId || !this.supportsVendorDelegation()) {
+      return;
+    }
+    try {
+      const response = await withTimeout(
+        connection.extMethod(MCODE_DELEGATION_GET_METHOD, { sessionId: this.sessionId }),
+        DELEGATION_SNAPSHOT_TIMEOUT_MS,
+        `ACP delegation snapshot timed out after ${DELEGATION_SNAPSHOT_TIMEOUT_MS}ms`,
+      );
+      const snapshot = isRecord(response) ? response.snapshot : undefined;
+      if (snapshot !== undefined) {
+        this.applyDelegationSnapshot(snapshot);
+      }
+    } catch (error) {
+      // A provider without a delegation tree, or one that is not attached to
+      // this process, answers with an error. That is not a failure of the
+      // session: the tree is an extra, not a requirement.
+      this.logger.debug({ err: error }, "ACP provider did not report a delegation tree");
+    }
+  }
+
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
     this.logger.trace(
       {
@@ -2759,6 +3044,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.extension_notification",
     );
+
+    if (method === MCODE_DELEGATION_UPDATE_NOTIFICATION) {
+      // The provider publishes the whole delegation tree whenever it changes.
+      // This is the only way to see the work a session delegated.
+      const sessionId = typeof params.sessionId === "string" ? params.sessionId : null;
+      const snapshot = isRecord(params) ? params.snapshot : undefined;
+      // A provider may publish the tree of another session to the same client.
+      // Only the tree of this session belongs to it.
+      if (snapshot !== undefined && (sessionId === null || sessionId === this.sessionId)) {
+        this.applyDelegationSnapshot(snapshot);
+      }
+    }
 
     const parsedCommands = this.extensionCommandsParser?.(method, params);
     if (parsedCommands) {
@@ -3439,6 +3736,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.event_emit",
     );
+    if (
+      event.type === "provider_subagent" &&
+      this.subscribers.size === 0 &&
+      !this.delegationBacklogDelivered
+    ) {
+      // The delegation tree is read while the session initializes, before the
+      // agent manager subscribes. The row waits for the first subscriber.
+      this.pendingDelegationEvents.push(event);
+      return;
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

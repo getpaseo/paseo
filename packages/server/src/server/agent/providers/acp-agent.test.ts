@@ -30,6 +30,7 @@ import {
   createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
+  isMiniMaxCodeProvider,
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
@@ -5075,5 +5076,336 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stale/removed-model");
 
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+  });
+});
+
+const DELEGATION_ACP_AGENT = `
+import { appendFileSync } from "node:fs";
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+
+const scenario = process.env.ACP_DELEGATION_SCENARIO ?? "snapshot";
+const log = (entry) => appendFileSync(process.env.ACP_TEST_LOG, JSON.stringify(entry) + "\\n");
+
+const runningMember = {
+  sessionId: "child-session",
+  parentSessionId: null,
+  agentName: "researcher",
+  task: "Read the failing test",
+  status: "running",
+  createdAtMs: 1000,
+  updatedAtMs: 2000,
+};
+const pendingMember = {
+  sessionId: "pending-session",
+  parentSessionId: null,
+  agentName: "researcher",
+  task: "Wait for the first task",
+  status: "completed",
+  createdAtMs: 4000,
+  updatedAtMs: 4000,
+};
+const finishedMember = {
+  sessionId: "grandchild-session",
+  parentSessionId: "child-session",
+  agentName: "researcher",
+  task: "Summarize the findings",
+  status: "completed",
+  createdAtMs: 1000,
+  updatedAtMs: 3000,
+};
+const initialSnapshot = { members: [runningMember, pendingMember, finishedMember] };
+const updatedSnapshot = {
+  members: [
+    { ...runningMember, status: "completed", updatedAtMs: 5000 },
+    pendingMember,
+    finishedMember,
+  ],
+};
+
+new AgentSideConnection(
+  (connection) => ({
+    async initialize(params) {
+      log({ method: "initialize", clientCapabilities: params.clientCapabilities });
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        _meta:
+          scenario === "no-extension"
+            ? undefined
+            : {
+                "minimax-code/extensions": {
+                  version: 1,
+                  notifications: true,
+                  methods: ["mcode/session/delegation/get"],
+                },
+              },
+      };
+    },
+    async newSession() {
+      return { sessionId: "delegation-session" };
+    },
+    async loadSession() {
+      return {};
+    },
+    async extMethod(method, params) {
+      log({ method, params });
+      if (scenario === "silent") {
+        // A provider that advertises the extension and never answers it.
+        await new Promise(() => {});
+      }
+      return { snapshot: initialSnapshot };
+    },
+    async prompt() {
+      if (scenario === "update") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "delegation-session",
+          snapshot: updatedSnapshot,
+        });
+      }
+      if (scenario === "repeat") {
+        for (let index = 0; index < 2; index += 1) {
+          await connection.extNotification("mcode/session/delegation_update", {
+            sessionId: "delegation-session",
+            snapshot: initialSnapshot,
+          });
+        }
+      }
+      if (scenario === "other-session") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "another-session",
+          snapshot: updatedSnapshot,
+        });
+      }
+      return { stopReason: "end_turn" };
+    },
+    async authenticate() {},
+    async cancel() {},
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+describe("ACP delegation visibility", () => {
+  let dir: string;
+  let agentScript: string;
+  let logPath: string;
+  let session: AgentSession | null = null;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-delegation-"));
+    agentScript = path.join(dir, "agent.mjs");
+    logPath = path.join(dir, "agent.log");
+    await writeFile(agentScript, DELEGATION_ACP_AGENT);
+  });
+
+  afterEach(async () => {
+    await session?.close();
+    session = null;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function createClient(options: { providerId?: string; scenario?: string }) {
+    return new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, agentScript],
+      providerId: options.providerId,
+      env: {
+        ACP_SDK_URL: pathToFileURL(
+          createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+        ).href,
+        ACP_TEST_LOG: logPath,
+        ACP_DELEGATION_SCENARIO: options.scenario ?? "snapshot",
+      },
+    });
+  }
+
+  async function readAgentLog(): Promise<Array<Record<string, unknown>>> {
+    const raw = await readFile(logPath, "utf8");
+    return raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  function collectRows(events: AgentStreamEvent[]): Array<Record<string, unknown>> {
+    return events
+      .filter((event) => event.type === "provider_subagent")
+      .map((event) => {
+        const input = (event as { event: Record<string, unknown> }).event;
+        return {
+          id: input.id,
+          title: input.title,
+          status: input.status,
+          parent: input.parentSubagentId,
+        };
+      });
+  }
+
+  async function waitForRows(
+    events: AgentStreamEvent[],
+    count: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const rows = collectRows(events);
+      if (rows.length >= count) {
+        return rows;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return collectRows(events);
+  }
+
+  test("asks a MiniMax Code provider for its extension notifications in the handshake", async () => {
+    const client = createClient({ providerId: "minimax-code" });
+
+    session = await client.createSession({ provider: "acp", cwd: dir });
+
+    const log = await readAgentLog();
+    const initialize = log.find((entry) => entry.method === "initialize");
+    const capabilities = initialize?.clientCapabilities as
+      | { _meta?: Record<string, unknown> }
+      | undefined;
+    expect(capabilities?._meta).toEqual({
+      "minimax-code/extensions": { version: 1, notifications: true },
+    });
+  });
+
+  test("does not ask another ACP provider for the MiniMax extension notifications", async () => {
+    const client = createClient({ providerId: "other-agent" });
+
+    session = await client.createSession({ provider: "acp", cwd: dir });
+
+    const log = await readAgentLog();
+    const initialize = log.find((entry) => entry.method === "initialize");
+    const capabilities = initialize?.clientCapabilities as
+      | { _meta?: Record<string, unknown> }
+      | undefined;
+    expect(capabilities?._meta).toBeUndefined();
+  });
+
+  test("publishes the delegation tree the provider reports", async () => {
+    const client = createClient({ providerId: "minimax-code" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(collectRows(events)).toEqual([
+      { id: "child-session", title: "Read the failing test", status: "running", parent: null },
+      {
+        id: "pending-session",
+        title: "Wait for the first task",
+        status: "running",
+        parent: null,
+      },
+      {
+        id: "grandchild-session",
+        title: "Summarize the findings",
+        status: "completed",
+        parent: "child-session",
+      },
+    ]);
+  });
+
+  test("publishes the delegation tree the provider updates", async () => {
+    const client = createClient({ providerId: "minimax-code", scenario: "update" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+
+    const rows = await waitForRows(events, 6);
+    expect(rows.slice(3)).toEqual([
+      { id: "child-session", title: "Read the failing test", status: "completed", parent: null },
+      {
+        id: "pending-session",
+        title: "Wait for the first task",
+        status: "running",
+        parent: null,
+      },
+      {
+        id: "grandchild-session",
+        title: "Summarize the findings",
+        status: "completed",
+        parent: "child-session",
+      },
+    ]);
+  });
+
+  test("ignores a repeated delegation snapshot", async () => {
+    const client = createClient({ providerId: "minimax-code", scenario: "repeat" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+
+    const rows = await waitForRows(events, 3);
+    expect(rows).toHaveLength(3);
+  });
+
+  test("ignores the delegation tree of another session", async () => {
+    const client = createClient({ providerId: "minimax-code", scenario: "other-session" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(collectRows(events)).toHaveLength(3);
+  });
+
+  test("does not read the delegation tree of a provider that does not advertise it", async () => {
+    const client = createClient({ providerId: "minimax-code", scenario: "no-extension" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(collectRows(events)).toEqual([]);
+    const log = await readAgentLog();
+    expect(log.some((entry) => entry.method === "mcode/session/delegation/get")).toBe(false);
+  });
+
+  test("starts the session even when the provider never answers the delegation read", async () => {
+    const client = createClient({ providerId: "minimax-code", scenario: "silent" });
+
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(collectRows(events)).toEqual([]);
+  });
+
+  test("shows the delegation tree of a resumed session", async () => {
+    const client = createClient({ providerId: "minimax-code" });
+
+    session = await client.resumeSession(
+      { provider: "acp", sessionId: "delegation-session", metadata: { cwd: dir } },
+      undefined,
+      undefined,
+      { purpose: "interactive" },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(collectRows(events)).toHaveLength(3);
+  });
+});
+
+describe("isMiniMaxCodeProvider", () => {
+  test("recognizes the provider id", () => {
+    expect(isMiniMaxCodeProvider("minimax-code", undefined)).toBe(true);
+  });
+
+  test("recognizes the command a user registered under a name of their own", () => {
+    expect(isMiniMaxCodeProvider("my-agent", ["/usr/local/bin/mcode", "--acp"])).toBe(true);
+    expect(isMiniMaxCodeProvider("my-agent", ["/usr/local/bin/minimax-code"])).toBe(true);
+  });
+
+  test("leaves another ACP provider alone", () => {
+    expect(isMiniMaxCodeProvider("other-agent", ["/usr/local/bin/claude", "--acp"])).toBe(false);
+    expect(isMiniMaxCodeProvider(undefined, undefined)).toBe(false);
   });
 });

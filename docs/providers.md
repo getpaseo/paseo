@@ -53,6 +53,12 @@ preferences and selection history. Cursor versions without that extension must b
 still probes model selections in its own shim. The initial session supplies modes and the current
 model; it does not override the model list returned by a resolver.
 
+A provider that runs its own child sessions can publish that tree. MiniMax Code sends it through a
+vendor extension, so Paseo asks for the extension notifications in the handshake and turns the
+provider's delegation snapshot into rows in the parent's subagents track. The request goes only to
+a provider that is MiniMax Code, recognized by its provider id or by the command it runs. Those rows
+are read-only, like every provider subagent row.
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
