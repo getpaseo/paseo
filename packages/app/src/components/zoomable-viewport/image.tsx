@@ -41,8 +41,8 @@ export function ZoomableImage({
   const resolvedSize = contentSize ?? (loadedImage?.uri === uri ? loadedImage.size : null);
   const source = useMemo(() => ({ uri }), [uri]);
   const handleLoad = useCallback(
-    ({ source: { width, height } }: ImageLoadEventData) => {
-      if (width > 0 && height > 0) setLoadedImage({ uri, size: { width, height } });
+    ({ source: { url, width, height } }: ImageLoadEventData) => {
+      if (url === uri && width > 0 && height > 0) setLoadedImage({ uri, size: { width, height } });
     },
     [uri],
   );

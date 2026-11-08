@@ -14,6 +14,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { holdNextPreviewLoad } from "../support/helpers/image-preview";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -784,6 +785,29 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(image).toBeVisible();
     await expect(image).toHaveJSProperty("complete", true);
     await expect(image).toHaveJSProperty("naturalWidth", 240);
+
+    const oldSource = await image.evaluate((element: HTMLImageElement) => ({
+      url: element.currentSrc,
+      width: element.naturalWidth,
+      height: element.naturalHeight,
+    }));
+    const pendingLoad = await holdNextPreviewLoad(page, oldSource.url);
+    try {
+      await writeFile(
+        path.join(workspace.repoPath, "shape.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240"><rect width="160" height="240" fill="green"/></svg>',
+      );
+      await expect.poll(() => image.getAttribute("src")).not.toBe(oldSource.url);
+      await pendingLoad.wait();
+      // Native can deliver the old source's queued event to this new listener.
+      await pendingLoad.deliver(oldSource);
+      await expect(imageCanvas).toHaveCount(0);
+    } finally {
+      await pendingLoad.release();
+    }
+    await expect(imageCanvas).toBeVisible();
+    const tallFrame = await transformedContent.boundingBox();
+    expect(tallFrame!.height).toBeGreaterThan(tallFrame!.width);
   });
 
   test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
