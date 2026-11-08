@@ -420,6 +420,11 @@
                     "isDefault": {
                       "type": "boolean"
                     },
+                    "contextWindowMaxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
                     "thinkingOptions": {
                       "type": "array",
                       "items": {
@@ -463,6 +468,11 @@
                     },
                     "isDefault": {
                       "type": "boolean"
+                    },
+                    "contextWindowMaxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "thinkingOptions": {
                       "type": "array",
