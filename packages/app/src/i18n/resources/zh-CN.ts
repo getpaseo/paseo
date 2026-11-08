@@ -2451,6 +2451,10 @@ export const zhCN: TranslationResources = {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
       },
+      taskPill: {
+        label: "任务进度胶囊",
+        description: "在输入框上方显示代理任务进度的原生胶囊",
+      },
       chatDisplay: {
         label: "聊天显示",
         description: "聊天中显示多少智能体的工作",

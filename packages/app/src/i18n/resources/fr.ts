@@ -2533,6 +2533,11 @@ export const fr: TranslationResources = {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
       },
+      taskPill: {
+        label: "Pastille de progression des tâches",
+        description:
+          "Affiche la pastille native avec la progression des tâches de l'agent au-dessus du composeur",
+      },
       chatDisplay: {
         label: "Affichage du chat",
         description: "La part du travail de l’agent affichée dans le chat",

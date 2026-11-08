@@ -37,6 +37,10 @@ export function ChatSection() {
     (chatOutlineEnabled: boolean) => void updateSettings({ chatOutlineEnabled }),
     [updateSettings],
   );
+  const changeTaskPill = useCallback(
+    (taskPillEnabled: boolean) => void updateSettings({ taskPillEnabled }),
+    [updateSettings],
+  );
 
   return (
     <View>
@@ -54,6 +58,12 @@ export function ChatSection() {
             value={settings.chatDisplay}
             options={chatDisplayOptions}
             onValueChange={changeChatDisplay}
+          />
+          <SettingsSwitch
+            label={t("settings.general.taskPill.label")}
+            hint={t("settings.general.taskPill.description")}
+            value={settings.taskPillEnabled}
+            onValueChange={changeTaskPill}
           />
           {isNative ? null : (
             <SettingsSwitch
