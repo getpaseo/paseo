@@ -853,6 +853,10 @@ export class Session {
   private loadedAgentWorkspaceIds: ReadonlySet<string> | null = null;
   /** Last workspaces carrying an open agent tab label, part of the same change check. */
   private openAgentTabWorkspaceIds: ReadonlySet<string> | null = null;
+  /** Tail of the serialized liveness reconciles, so a slow run cannot apply a stale set. */
+  private workspaceGitObserverReconcileTail: Promise<void> = Promise.resolve();
+  /** A liveness read that started before the current reconcile needs its own run afterwards. */
+  private workspaceGitObserverReconcileRequested = false;
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
     string,
@@ -7266,7 +7270,23 @@ export class Session {
     return { snapshotByWorkspaceId };
   }
 
-  private async reconcileWorkspaceGitObservers(): Promise<void> {
+  private reconcileWorkspaceGitObservers(): Promise<void> {
+    this.workspaceGitObserverReconcileRequested = true;
+    const run = this.workspaceGitObserverReconcileTail.then(() =>
+      this.runWorkspaceGitObserverReconcile(),
+    );
+    this.workspaceGitObserverReconcileTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runWorkspaceGitObserverReconcile(): Promise<void> {
+    if (!this.workspaceGitObserverReconcileRequested || this.isCleanedUp) return;
+    // Coalesce a burst of events into this run plus at most one rerun that reads fresh data.
+    this.workspaceGitObserverReconcileRequested = false;
+    await this.applyWorkspaceGitObserverReconcile();
+  }
+
+  private async applyWorkspaceGitObserverReconcile(): Promise<void> {
     const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
     const wanted = this.wantsEvent("checkout_status_update");
     const live = wanted ? await this.listLiveWorkspaceObservationTargets(explicitlySubscribed) : [];
@@ -7371,7 +7391,8 @@ export class Session {
     for (const terminal of event.terminals) {
       if (terminal.workspaceId) next.add(terminal.workspaceId);
     }
-    this.liveTerminalWorkspaceIdsByCwd.set(event.cwd, next);
+    if (next.size === 0) this.liveTerminalWorkspaceIdsByCwd.delete(event.cwd);
+    else this.liveTerminalWorkspaceIdsByCwd.set(event.cwd, next);
     if (previous && sameWorkspaceIdSet(previous, next)) return false;
     return true;
   }
