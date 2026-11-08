@@ -1,12 +1,12 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator } from "@playwright/test";
 
 function isReady(value: { ready(): boolean }): boolean {
   return value.ready();
 }
 
 /** Replay a queued native load payload after a real file refresh, through the image's load event. */
-export async function holdNextPreviewLoad(page: Page, previousUrl: string) {
-  const pending = await page.evaluateHandle((oldUrl: string) => {
+export async function holdNextPreviewLoad(pane: Locator, previousUrl: string) {
+  const pending = await pane.evaluateHandle((container, oldUrl: string) => {
     let image: HTMLImageElement | null = null;
     let holding = true;
     const hold = (event: Event) => {
@@ -14,7 +14,7 @@ export async function holdNextPreviewLoad(page: Page, previousUrl: string) {
     };
     const observer = new MutationObserver(() => {
       if (image) return;
-      const candidates = document.querySelectorAll<HTMLImageElement>(
+      const candidates = container.querySelectorAll<HTMLImageElement>(
         '[data-testid="image-file-preview-image"] img',
       );
       const next = Array.from(candidates).find((candidate) => candidate.src !== oldUrl);
@@ -23,7 +23,7 @@ export async function holdNextPreviewLoad(page: Page, previousUrl: string) {
       image.addEventListener("load", hold, true);
       observer.disconnect();
     });
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
+    observer.observe(container, { subtree: true, childList: true, attributes: true });
     return {
       ready: () => image !== null && image.complete && image.naturalWidth > 0,
       deliver(source: { url: string; width: number; height: number }) {

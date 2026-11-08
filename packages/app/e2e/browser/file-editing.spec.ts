@@ -766,7 +766,7 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
-    const imageCanvas = page.getByTestId("image-file-preview-canvas");
+    const imageCanvas = visibleFilePane.getByTestId("image-file-preview-canvas");
     await expect(imageCanvas).toBeVisible();
     await imageCanvas.hover();
     const transformedContent = imageCanvas.locator(":scope > div").first();
@@ -791,7 +791,7 @@ test.describe("CodeMirror workspace file editing", () => {
       width: element.naturalWidth,
       height: element.naturalHeight,
     }));
-    const pendingLoad = await holdNextPreviewLoad(page, oldSource.url);
+    const pendingLoad = await holdNextPreviewLoad(visibleFilePane, oldSource.url);
     try {
       await writeFile(
         path.join(workspace.repoPath, "shape.svg"),
