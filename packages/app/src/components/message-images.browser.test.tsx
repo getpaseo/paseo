@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -7,16 +7,33 @@ import { UserMessage } from "./message";
 import { getAttachmentStore } from "@/attachments/store";
 import { garbageCollectAttachments } from "@/attachments/service";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { useRewindAgentMutation } from "./rewind/use-rewind-agent-mutation";
+import { ToastApiProvider } from "@/contexts/toast-context";
+import { useToastHost } from "@/components/toast-host";
 
-// Keep message actions observable without requiring a workspace composer or toast host.
-vi.mock("./rewind/use-rewind-agent-mutation", () => ({
-  useRewindAgentMutation: vi.fn(() => ({ rewindAgent: vi.fn(), isPending: false })),
-}));
+function MessageTestProviders({ children }: { children: ReactNode }) {
+  const { api, toast } = useToastHost();
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ToastApiProvider api={api}>
+        {children}
+        <output data-testid="message-action-toast">{toast?.content}</output>
+      </ToastApiProvider>
+    </QueryClientProvider>
+  );
+}
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const imageId = "child-image";
+const rewindCapabilities = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+  supportsRewindFiles: true,
+};
 const png = Uint8Array.from(
   atob(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
@@ -54,9 +71,14 @@ for (const imageAgentId of ["parent-agent", undefined]) {
       kind: "image",
       modifiedAt: "2026-01-01T00:00:00.000Z",
     });
+    // A synthetic provider-child ID may not be rewindable by the daemon.
+    // Exercise the real action's routing and error handling at its RPC boundary.
+    const rewind = vi
+      .spyOn(client, "rewindAgent")
+      .mockRejectedValue(new Error("Unsupported provider child rewind"));
     await act(async () => {
       root.render(
-        <QueryClientProvider client={queryClient}>
+        <MessageTestProviders>
           <UserMessage
             agentId={agentId}
             imageAgentId={imageAgentId}
@@ -68,17 +90,25 @@ for (const imageAgentId of ["parent-agent", undefined]) {
               { kind: "stored", id: imageId, mimeType: "image/png", byteSize: png.byteLength },
             ]}
             timestamp={0}
+            capabilities={rewindCapabilities}
           />
-        </QueryClientProvider>,
+        </MessageTestProviders>,
       );
     });
     await expect.poll(() => readImage.mock.calls).toEqual([[imageAgentId ?? agentId, imageId]]);
-    expect(vi.mocked(useRewindAgentMutation).mock.lastCall?.[0]).toEqual({
-      serverId: "image-display-server",
-      agentId,
-      client,
-      messageId: "child-message",
-    });
+    const trigger = host.querySelector<HTMLElement>('[data-testid="rewind-menu-trigger"]');
+    if (!trigger) throw new Error("Rewind action trigger was not rendered");
+    await act(async () => trigger.click());
+    await expect
+      .poll(() => document.querySelector('[data-testid="rewind-menu-files"]'))
+      .not.toBeNull();
+    const rewindFiles = document.querySelector<HTMLElement>('[data-testid="rewind-menu-files"]');
+    if (!rewindFiles) throw new Error("Rewind files action was not rendered");
+    await act(async () => rewindFiles.click());
+    await expect.poll(() => rewind.mock.calls).toEqual([[agentId, "child-message", "files"]]);
+    await expect
+      .poll(() => host.querySelector('[data-testid="message-action-toast"]')?.textContent)
+      .toBe("Unsupported provider child rewind");
     await expect.poll(() => host.querySelector("img")?.naturalWidth).toBe(1);
     expect(host.querySelector('[data-testid="user-message"]')?.textContent).toContain(
       "Child image",
@@ -101,7 +131,7 @@ for (const localCopy of ["preserved", "deleted", "garbage-collected", "in-flight
     const renderRow = async (visible: boolean) => {
       await act(async () => {
         root.render(
-          <QueryClientProvider client={queryClient}>
+          <MessageTestProviders>
             {visible ? (
               <UserMessage
                 agentId="remount-agent"
@@ -115,7 +145,7 @@ for (const localCopy of ["preserved", "deleted", "garbage-collected", "in-flight
                 timestamp={0}
               />
             ) : null}
-          </QueryClientProvider>,
+          </MessageTestProviders>,
         );
       });
     };
