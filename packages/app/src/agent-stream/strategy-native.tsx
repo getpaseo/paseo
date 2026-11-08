@@ -35,7 +35,7 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
-import { createNativeDisclosureHold, disclosureAnchorRowId } from "./native-disclosure-hold";
+import { createNativeDisclosureHold, disclosureAnchor } from "./native-disclosure-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
 import type {
@@ -311,8 +311,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const isAtEnd = useStableEvent(
     () => distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
   );
+  // A hold on the content end mounts the end pin while detached (`holdRow`). The pin keeps the
+  // distance from the end, so the list ends the hold at its end only if it started there. The
+  // metrics cannot tell sooner: the content size reaches JS before the pin's scroll does.
+  const [endHold, setEndHold] = useState<{ wasAtEnd: boolean } | null>(null);
   const releaseDisclosure = useStableEvent(() => {
-    bottomAnchorController.releaseDisclosure({ isAtEnd: isAtEnd() });
+    setEndHold(null);
+    bottomAnchorController.releaseDisclosure({ isAtEnd: endHold ? endHold.wasAtEnd : isAtEnd() });
   });
   const [disclosureHold] = useState(() =>
     createNativeDisclosureHold({
@@ -322,20 +327,54 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onRelease: releaseDisclosure,
     }),
   );
-  useEffect(() => () => disclosureHold.cancel(), [disclosureHold]);
+  const pendingEndHoldRef = useRef<{ frame: number; apply: () => void } | null>(null);
+  // A toggle waiting for the end pin to mount still lands when the hold is cancelled.
+  const flushPendingEndHold = useStableEvent(() => {
+    const pending = pendingEndHoldRef.current;
+    if (!pending) return;
+    pendingEndHoldRef.current = null;
+    cancelAnimationFrame(pending.frame);
+    pending.apply();
+  });
+  const cancelDisclosureHold = useStableEvent(() => {
+    flushPendingEndHold();
+    disclosureHold.cancel();
+    setEndHold(null);
+  });
+  useEffect(() => () => cancelDisclosureHold(), [cancelDisclosureHold]);
   // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
   // has end following off and LegendList anchoring on the held row, or on the row below it for a
   // trigger on the row's bottom edge. The row's measurement trigger makes that same commit carry
   // the row's new height. While following, a bottom trigger keeps following: the end pin holds the
   // content end, and with it the bottom of the row, in the frame the new height mounts.
+  // The last row's bottom is the content end, which LegendList cannot anchor. The end pin can, from
+  // any offset, but only once it is mounted: a pin that mounts with the new height anchors nothing.
+  // So the toggle lands a frame after the pin's commit, whose mount runs before the frame's timers.
   const holdRow = useStableEvent(
     (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => {
-      if (!(triggerEdge === "bottom" && bottomAnchorController.mode === "sticky-bottom")) {
-        disclosureHold.hold(disclosureAnchorRowId(rows, rowId, triggerEdge));
-        bottomAnchorController.holdForDisclosure();
+      const applyAndMeasure = () => {
+        apply();
+        rowLayoutSyncRegistry.get(rowId)?.();
+      };
+      flushPendingEndHold();
+      if (triggerEdge === "bottom" && bottomAnchorController.mode === "sticky-bottom") {
+        applyAndMeasure();
+        return;
       }
-      apply();
-      rowLayoutSyncRegistry.get(rowId)?.();
+      const anchor = disclosureAnchor(rows, rowId, triggerEdge);
+      bottomAnchorController.holdForDisclosure();
+      if (anchor.kind === "row" || !isListPlacedRef.current) {
+        disclosureHold.hold(anchor);
+        applyAndMeasure();
+        return;
+      }
+      setEndHold({ wasAtEnd: isAtEnd() });
+      const frame = requestAnimationFrame(() => {
+        pendingEndHoldRef.current = null;
+        disclosureHold.hold(anchor);
+        applyAndMeasure();
+      });
+      pendingEndHoldRef.current = { frame, apply: applyAndMeasure };
     },
   );
   const handleItemSizeChanged = useStableEvent(
@@ -361,16 +400,18 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   //   short of the real end and the controller reads that as the user scrolling away.
   // - A disclosure hold: the held row. The hold detaches the controller, which removes the pin, and
   //   LegendList keeps only the held row in place, or the row below it when the trigger sits on the
-  //   held row's bottom edge. A bottom-edge hold while following leaves the end pin in charge.
+  //   held row's bottom edge. A bottom-edge hold while following leaves the end pin in charge, and
+  //   one on the last row mounts the pin for the hold: the row's bottom is the content end.
   // - A user scroll: the finger. The controller detaches for the gesture, so streamed lines grow below
   //   the rows the user is dragging, and resumes following if the gesture ends at the end.
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading
   //   above or rows growing below leave what the user is reading where it is.
   const isFollowingEnd = bottomAnchorController.mode === "sticky-bottom";
-  const pinsEnd = isFollowingEnd && isListPlaced;
+  const isEndPinned = isFollowingEnd || endHold !== null;
+  const pinsEnd = isEndPinned && isListPlaced;
   const maintainVisibleContentPosition = useMemo(
-    () => (isFollowingEnd ? false : { data: true, size: true, shouldRestorePosition }),
-    [isFollowingEnd, shouldRestorePosition],
+    () => (isEndPinned ? false : { data: true, size: true, shouldRestorePosition }),
+    [isEndPinned, shouldRestorePosition],
   );
   // A new identity re-renders LegendList's scroll component, which is how the pin follows the mode.
   const renderScrollComponent = useCallback(
@@ -517,7 +558,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     // The gesture takes the viewport from a disclosure hold. Size changes from a streaming row can
     // keep the hold's quiet frames from ever passing, and a held row that scrolls away would leave
     // no row LegendList may anchor a history page on. The gesture's end decides following.
-    disclosureHold.cancel();
+    cancelDisclosureHold();
     bottomAnchorController.beginUserScroll();
     historyStartPagination.rearm();
   });

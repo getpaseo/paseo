@@ -3,7 +3,7 @@ import React, { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { disclosureAnchorRowId } from "./native-disclosure-hold";
+import { disclosureAnchor } from "./native-disclosure-hold";
 
 // The native chat timeline runs on the patched LegendList (patches/@legendapp+list+3.7.1.patch).
 // A disclosure hold keeps only the held row in place: `shouldRestorePosition` accepts no other row.
@@ -189,7 +189,9 @@ const bottomTriggerRows: Row[] = Array.from({ length: 10 }, (_, index) => ({
 }));
 
 function mountBottomTriggerHold(rowId: string) {
-  return mountList(disclosureAnchorRowId(bottomTriggerRows, rowId, "bottom"));
+  const anchor = disclosureAnchor(bottomTriggerRows, rowId, "bottom");
+  if (anchor.kind !== "row") throw new Error(`Row ${rowId} has no row below it`);
+  return mountList(anchor.rowId);
 }
 
 it("keeps the bottom of a row whose trigger sits under its growing content", async () => {

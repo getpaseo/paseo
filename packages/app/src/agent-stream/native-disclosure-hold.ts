@@ -1,14 +1,19 @@
 import type { DisclosureTriggerEdge } from "./strategy";
 
+/** What a disclosure hold keeps in place: the top of a row, or the end of the content. */
+export type DisclosureAnchor = { kind: "row"; rowId: string } | { kind: "end" };
+
 /**
- * The native viewport's disclosure hold. While it holds, its anchor row is the only row the list
- * may anchor on (`disclosureAnchorRowId`). The hold ends once item sizes stop changing for `quietFrames` frames: the list
- * measures the toggled row and any rows it inserted over one or more frames, and end following
- * must not resume between the change and the list's last layout correction.
+ * The native viewport's disclosure hold. While it holds a row anchor, that row is the only row the
+ * list may anchor on (`disclosureAnchor`). The hold ends once item sizes stop changing for
+ * `quietFrames` frames: the list measures the toggled row and any rows it inserted over one or more
+ * frames, and end following must not resume between the change and the list's last layout
+ * correction.
  */
 export interface NativeDisclosureHold {
+  /** The row the list may anchor on; null outside a hold and while the hold keeps the end. */
   anchorRowId(): string | null;
-  hold(anchorRowId: string): void;
+  hold(anchor: DisclosureAnchor): void;
   noteItemSizeChanged(): void;
   cancel(): void;
 }
@@ -19,7 +24,7 @@ export function createNativeDisclosureHold(input: {
   cancelFrame: (id: number) => void;
   onRelease: () => void;
 }): NativeDisclosureHold {
-  let anchorRowId: string | null = null;
+  let anchor: DisclosureAnchor | null = null;
   let frameId: number | null = null;
   let remainingFrames = 0;
 
@@ -37,7 +42,7 @@ export function createNativeDisclosureHold(input: {
       return;
     }
     frameId = null;
-    anchorRowId = null;
+    anchor = null;
     input.onRelease();
   };
 
@@ -48,34 +53,35 @@ export function createNativeDisclosureHold(input: {
   };
 
   return {
-    anchorRowId: () => anchorRowId,
-    hold(nextAnchorRowId) {
-      anchorRowId = nextAnchorRowId;
+    anchorRowId: () => (anchor?.kind === "row" ? anchor.rowId : null),
+    hold(nextAnchor) {
+      anchor = nextAnchor;
       restartCountdown();
     },
     noteItemSizeChanged() {
-      if (anchorRowId !== null) {
+      if (anchor !== null) {
         restartCountdown();
       }
     },
     cancel() {
       stopCountdown();
-      anchorRowId = null;
+      anchor = null;
     },
   };
 }
 
 /**
- * The row LegendList keeps in place while a disclosure holds `rowId`. LegendList restores row tops,
- * so a trigger on the bottom edge of its row anchors the row below: that row's top is the held
- * row's bottom. The last row has no row below and keeps its top.
+ * What the list keeps in place while a disclosure toggles `rowId`. LegendList restores row tops, so
+ * a trigger on the bottom edge of its row anchors the row below: that row's top is the toggled
+ * row's bottom. The last row's bottom is the end of the content.
  */
-export function disclosureAnchorRowId(
+export function disclosureAnchor(
   rows: readonly { id: string }[],
   rowId: string,
   triggerEdge: DisclosureTriggerEdge,
-): string {
-  if (triggerEdge === "top") return rowId;
+): DisclosureAnchor {
+  if (triggerEdge === "top") return { kind: "row", rowId };
   const index = rows.findIndex((row) => row.id === rowId);
-  return rows[index + 1]?.id ?? rowId;
+  const below = rows[index + 1];
+  return below ? { kind: "row", rowId: below.id } : { kind: "end" };
 }

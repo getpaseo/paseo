@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNativeDisclosureHold } from "./native-disclosure-hold";
+import { createNativeDisclosureHold, disclosureAnchor } from "./native-disclosure-hold";
 
 function createFrames() {
   let nextId = 1;
@@ -39,7 +39,7 @@ describe("native disclosure hold", () => {
   it("holds the row until two frames pass without an item size change", () => {
     const { frames, hold, releases } = createHarness();
 
-    hold.hold("turn-1");
+    hold.hold({ kind: "row", rowId: "turn-1" });
     frames.runFrame();
 
     expect(hold.anchorRowId()).toBe("turn-1");
@@ -54,7 +54,7 @@ describe("native disclosure hold", () => {
   it("restarts the quiet frames on every item size change", () => {
     const { frames, hold, releases } = createHarness();
 
-    hold.hold("turn-1");
+    hold.hold({ kind: "row", rowId: "turn-1" });
     frames.runFrame();
     hold.noteItemSizeChanged();
     frames.runFrame();
@@ -79,9 +79,9 @@ describe("native disclosure hold", () => {
   it("moves the hold to the latest toggled row and releases once", () => {
     const { frames, hold, releases } = createHarness();
 
-    hold.hold("turn-1");
+    hold.hold({ kind: "row", rowId: "turn-1" });
     frames.runFrame();
-    hold.hold("turn-2");
+    hold.hold({ kind: "row", rowId: "turn-2" });
 
     expect(hold.anchorRowId()).toBe("turn-2");
 
@@ -94,12 +94,48 @@ describe("native disclosure hold", () => {
   it("drops the hold without releasing when cancelled", () => {
     const { frames, hold, releases } = createHarness();
 
-    hold.hold("turn-1");
+    hold.hold({ kind: "row", rowId: "turn-1" });
     hold.cancel();
     frames.runFrame();
     frames.runFrame();
 
     expect(hold.anchorRowId()).toBeNull();
     expect(releases).toEqual([]);
+  });
+
+  it("holds the content end until two quiet frames pass, with no row to anchor on", () => {
+    const { frames, hold, releases } = createHarness();
+
+    hold.hold({ kind: "end" });
+    frames.runFrame();
+    hold.noteItemSizeChanged();
+    frames.runFrame();
+
+    expect(hold.anchorRowId()).toBeNull();
+    expect(releases).toEqual([]);
+
+    frames.runFrame();
+
+    expect(releases).toEqual(["released"]);
+  });
+});
+
+describe("disclosure anchor", () => {
+  const rows = [{ id: "message-1" }, { id: "turn-1" }, { id: "message-2" }];
+
+  it("keeps the top of a row whose trigger sits on its top edge", () => {
+    expect(disclosureAnchor(rows, "turn-1", "top")).toEqual({ kind: "row", rowId: "turn-1" });
+  });
+
+  it("keeps the top of the row below a row whose trigger sits on its bottom edge", () => {
+    expect(disclosureAnchor(rows, "message-1", "bottom")).toEqual({
+      kind: "row",
+      rowId: "turn-1",
+    });
+  });
+
+  // A prompt the agent has not answered yet is the last row; the running indicator is the footer.
+  it("keeps the content end for a bottom-edge trigger on the last row", () => {
+    expect(disclosureAnchor(rows, "message-2", "bottom")).toEqual({ kind: "end" });
   });
 });

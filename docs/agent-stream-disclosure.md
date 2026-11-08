@@ -62,14 +62,14 @@ toggle; its applied commit took up to 3.5 s of JS on a long turn.
 
 One owner keeps the scroll offset at any moment:
 
-| State                  | Owner                                                                                     |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| Before rows are placed | LegendList's initial scroll to the end. It keeps the rows hidden until they are measured. |
-| Following the end      | The end pin (`native-end-pin.tsx`), also for a bottom-edge hold.                          |
-| Disclosure hold        | LegendList's `maintainVisibleContentPosition`, restoring only the hold's anchor row.      |
-| User scroll            | The finger. The controller detaches at drag start.                                        |
-| Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                   |
-| Keyboard motion        | Nobody. The keyboard translates the list with the composer and leaves the offset alone.   |
+| State                  | Owner                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Before rows are placed | LegendList's initial scroll to the end. It keeps the rows hidden until they are measured.                         |
+| Following the end      | The end pin (`native-end-pin.tsx`), also for a bottom-edge hold.                                                  |
+| Disclosure hold        | LegendList's `maintainVisibleContentPosition` on the hold's anchor row, or the end pin for the last row's bottom. |
+| User scroll            | The finger. The controller detaches at drag start.                                                                |
+| Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                                           |
+| Keyboard motion        | Nobody. The keyboard translates the list with the composer and leaves the offset alone.                           |
 
 The end pin is a zero-height view at the bottom of the content and the content's first native
 child, with React Native's `maintainVisibleContentPosition` set to `{ minIndexForVisible: 0 }`. The
@@ -91,12 +91,21 @@ jumps by the keyboard height after the keyboard settles.
 
 `holdRow(rowId, apply, triggerEdge)` runs in the toggle's event:
 
-1. Pick the anchor row and detach the controller (`holdForDisclosure`). LegendList restores row
+1. Pick the anchor and detach the controller (`holdForDisclosure`). LegendList restores row
    tops only, so a top-edge hold anchors the toggled row and a bottom-edge hold anchors the row
-   below it, whose top is the toggled row's bottom (`disclosureAnchorRowId`). The pin goes away
+   below it, whose top is the toggled row's bottom (`disclosureAnchor`). The pin goes away
    and LegendList's `maintainVisibleContentPosition` takes over, restoring only the anchor row
    (`shouldRestorePosition`). A bottom-edge hold while following skips this step: the end pin
    keeps the content end, and the row's bottom with it, in the frame the new height mounts.
+
+   A bottom-edge hold on the last row, such as a prompt the agent has not answered yet, has no
+   row below it: its bottom is the content end (the running indicator is the list footer, not a
+   row). The hold mounts the end pin while detached, and `apply` runs a frame later. The pin
+   anchors only once it is mounted, and a pin that mounts in the same commit as the new height
+   anchors nothing. The pin's commit mounts before that frame's JS callbacks run, so `apply`'s
+   commit mounts with the pin already in place. The pin keeps the distance from the end, so the
+   hold re-sticks only if the list was at its end when the toggle was tapped. The scroll metrics
+   cannot decide it at release: the new content size reaches JS before the pin's scroll does.
 
    Upstream LegendList anchors only rows from the first fully visible one down to the last fully
    visible one, and a size change with no data change keeps the first row in view whatever

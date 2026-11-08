@@ -1,6 +1,7 @@
 import React, { act, createRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
 import { PlanCard } from "@/components/plan-card";
@@ -11,25 +12,24 @@ import type { DisclosureTriggerEdge, StreamViewportHandle } from "./strategy";
 // Load translations so the toggles expose their real accessible names.
 void testI18n;
 
-// The Markdown engine does not load in this harness; the plan body only needs to be present.
-vi.mock("@/components/markdown/renderer", () => ({
-  MarkdownRenderer: ({ text }: { text: string }) => <span>{text}</span>,
-}));
-
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
 
 let root: Root;
 let container: HTMLDivElement;
+// The plan body renders through the app's Markdown renderer, which reads through React Query.
+let queryClient: QueryClient;
 
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  queryClient = new QueryClient();
 });
 
 afterEach(() => {
   act(() => root.unmount());
+  queryClient.clear();
   container.remove();
 });
 
@@ -58,9 +58,11 @@ function mountRow(rowId: string, isApplied: () => boolean, children: ReactNode) 
   viewportRef.current = viewport;
   act(() =>
     root.render(
-      <DisclosureRow rowId={rowId} viewportRef={viewportRef}>
-        {children}
-      </DisclosureRow>,
+      <QueryClientProvider client={queryClient}>
+        <DisclosureRow rowId={rowId} viewportRef={viewportRef}>
+          {children}
+        </DisclosureRow>
+      </QueryClientProvider>,
     ),
   );
   return holds;
@@ -105,18 +107,19 @@ describe("timeline disclosures hold their row", () => {
   });
 
   it("routes plan card collapse and expand through the row's hold", () => {
+    const header = () => view().getByRole("button", { name: "Approved plan" });
+    const isExpanded = () => header().getAttribute("aria-expanded") === "true";
     const holds = mountRow(
       "plan-1",
-      () => view().queryByText("Step one") !== null,
+      isExpanded,
       <PlanCard title="Plan" text="Step one" outcome="approved" />,
     );
-    const header = () => view().getByRole("button", { name: "Approved plan" });
 
     act(() => header().click());
-    expect(view().queryByText("Step one")).toBeNull();
+    expect(isExpanded()).toBe(false);
 
     act(() => header().click());
-    expect(view().getByText("Step one")).toBeTruthy();
+    expect(isExpanded()).toBe(true);
 
     expect(holds).toEqual([
       { rowId: "plan-1", triggerEdge: "top", appliedBefore: true },
@@ -125,13 +128,20 @@ describe("timeline disclosures hold their row", () => {
   });
 
   it("toggles a plan card outside a timeline row, as the pending permission card renders", () => {
-    act(() => root.render(<PlanCard title="Plan" text="Step one" outcome="pending" />));
+    act(() =>
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <PlanCard title="Plan" text="Step one" outcome="pending" />
+        </QueryClientProvider>,
+      ),
+    );
     const header = () => view().getByRole("button", { name: "Plan" });
+    const isExpanded = () => header().getAttribute("aria-expanded") === "true";
 
     act(() => header().click());
-    expect(view().queryByText("Step one")).toBeNull();
+    expect(isExpanded()).toBe(false);
 
     act(() => header().click());
-    expect(view().getByText("Step one")).toBeTruthy();
+    expect(isExpanded()).toBe(true);
   });
 });
