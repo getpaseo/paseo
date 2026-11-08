@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterEach, expect, test, vi } from "vitest";
+import type { ProviderOverride } from "../agent/provider-launch-config.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
@@ -594,3 +595,49 @@ dns.lookup = function(host, ...args) {
   },
   60_000,
 );
+
+test("#3589: an empty default store and disabled built-in provider do not hide configured accounts", async () => {
+  for (const name of API_HOST_ENV) vi.stubEnv(name, undefined);
+  await mkdir(path.join(process.cwd(), ".artifacts"), { recursive: true });
+  const root = await mkdtemp(path.join(process.cwd(), ".artifacts", "reported-usage-"));
+  const providerOverrides: Record<string, ProviderOverride> = { claude: { enabled: false } };
+  for (let i = 0; i < 5; i++) {
+    const configDir = path.join(root, `account-${i}`);
+    await json(path.join(configDir, ".credentials.json"), {
+      claudeAiOauth: { accessToken: `fixture-independent-${i}` },
+    });
+    providerOverrides[`claude-${i}`] = {
+      extends: "claude",
+      label: `Account ${i}`,
+      env: { CLAUDE_CONFIG_DIR: configDir },
+    };
+  }
+  const builtinPlugins = await injectedUsageSources({
+    root,
+    lookup: { home: path.join(root, "empty-home"), env: {} },
+    fetchApi: `async function fetchApi(url, init) {
+      const token = new Headers(init.headers).get('Authorization');
+      const uuid = token.slice('Bearer fixture-independent-'.length);
+      if (String(url).endsWith('/profile')) return new Response(JSON.stringify({account:{uuid},organization:{uuid:'independent'}}));
+      return new Response(JSON.stringify({five_hour:{utilization:7},seven_day:{utilization:13}}));
+    }`,
+  });
+  const daemon = await createTestPaseoDaemon({
+    pluginsEnabled: false,
+    builtinPlugins,
+    providerOverrides,
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const reports = (await client.listUsageReports()).reports;
+    expect(reports.map((x) => x.id).sort()).toEqual(
+      [0, 1, 2, 3, 4].map((i) => `claude:${i}.independent`),
+    );
+    expect(reports.every((x) => x.report.status === "available")).toBe(true);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
