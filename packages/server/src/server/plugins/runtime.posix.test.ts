@@ -437,7 +437,18 @@ const provider: ProviderRegistration = {
           parentSessionId: input.sessionId,
           capabilities: [],
           restoration: "parent",
+          subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
           cwd: "/repo",
+        });
+        emit({
+          type: "session.subagent_presentation",
+          sessionId: "child-1",
+          subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+        });
+        emit({
+          type: "session.subagent_presentation",
+          sessionId: "child-1",
+          subtitle: null,
         });
         emit({
           type: "timeline.item",
@@ -523,7 +534,7 @@ export default function contribute(server: PluginServerContext) {
       },
     });
 
-    await expect.poll(() => events.length).toBe(8);
+    await expect.poll(() => events.length).toBe(10);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "session.prompt_result",
@@ -543,8 +554,19 @@ export default function contribute(server: PluginServerContext) {
         type: "session.opened",
         sessionId: "child-1",
         parentSessionId: "root-1",
+        subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
       }),
     );
+    expect(events).toContainEqual({
+      type: "session.subagent_presentation",
+      sessionId: "child-1",
+      subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+    });
+    expect(events).toContainEqual({
+      type: "session.subagent_presentation",
+      sessionId: "child-1",
+      subtitle: null,
+    });
     expect(events.find((event) => event.type === "session.opened")).not.toHaveProperty(
       "futureField",
     );

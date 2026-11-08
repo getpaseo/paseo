@@ -48,6 +48,7 @@ describe("direct provider example", () => {
         "prompt.command",
         "session.configure",
         "session.persistence",
+        "session.subagent_presentation",
         "session.subsession",
         "timeline.plugin",
       ],
@@ -134,6 +135,12 @@ describe("direct provider example", () => {
         event.type === "session.opened" && event.parentSessionId === "session-complete",
     );
     expect(child?.sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(child?.subtitle).toBe("Example model · Medium · 1 tokens");
+    expect(events).toContainEqual({
+      type: "session.subagent_presentation",
+      sessionId: child?.sessionId,
+      subtitle: "Example model · Medium · 2k tokens",
+    });
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "timeline.item",
@@ -142,6 +149,40 @@ describe("direct provider example", () => {
       }),
     );
     expect(events).toContainEqual(expect.objectContaining({ type: "session.persistence" }));
+    await connection.close();
+  });
+
+  it("skips presentation updates when the host does not offer the capability", async () => {
+    const connection = await createDirectExampleProvider().connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.subsession", "timeline.plugin"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({
+      type: "session.open",
+      requestId: "open-gated",
+      sessionId: "session-gated",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: false },
+      history: "skip",
+    });
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-gated",
+      prompt: {
+        clientMessageId: "message-gated",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+
+    expect(events.filter((event) => event.type === "session.subagent_presentation")).toEqual([]);
+    // The initial subtitle is a plain field on session.opened and needs no capability gate.
+    const child = events.find(
+      (event): event is Extract<ProviderEvent, { type: "session.opened" }> =>
+        event.type === "session.opened" && event.parentSessionId === "session-gated",
+    );
+    expect(child?.subtitle).toBe("Example model · Medium · 1 tokens");
     await connection.close();
   });
 

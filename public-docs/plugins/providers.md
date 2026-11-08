@@ -22,7 +22,7 @@ Choose one implementation path:
 
 The examples are:
 
-- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, settings, prompts, persistence, child sessions, and a provider-owned timeline renderer;
+- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, settings, prompts, persistence, child sessions, provider-owned subtitles, and a provider-owned timeline renderer;
 - [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer): an ACP command template with a Zod-validated vendor edit transformer. Replace `example-acp --stdio` with an installed ACP agent before loading it;
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking): a renderer-only plugin that does not implement a provider.
 
@@ -295,6 +295,51 @@ children. File-only rewind keeps the current session and conversation history.
 Use `restoration: "core"` when Paseo can reopen a session from persistence. A provider-owned child
 uses `restoration: "parent"`; emit it as another `session.opened` event with `parentSessionId` and
 recreate it while restoring the parent.
+
+## Show provider-owned subagent subtitles
+
+A provider child row can carry one compact subtitle under the row label, such as
+`general-purpose · Opus 5.5 · Medium · 1 tokens`. The provider owns the contents and formatting;
+Paseo displays and truncates the string without interpreting provider-specific model, thinking, or
+usage fields. Include the initial subtitle in the child's `session.opened` event:
+
+```ts
+emit({
+  type: "session.opened",
+  sessionId: childSessionId,
+  parentSessionId,
+  capabilities: [],
+  restoration: "parent",
+  title: "Example child",
+  subtitle: "general-purpose · Opus 5.5 · Medium · 1 tokens",
+  cwd,
+});
+```
+
+The facts behind the subtitle change while the child runs (model handoffs, growing token counts),
+so publish `session.subagent_presentation` whenever the composed subtitle changes:
+
+```ts
+emit({
+  type: "session.subagent_presentation",
+  sessionId: childSessionId,
+  subtitle: "general-purpose · Opus 5.5 · Medium · 2k tokens",
+});
+```
+
+`subtitle` replaces the row's current subtitle; `null` clears it. Emit only when the subtitle
+changes, because the client replaces the whole descriptor and an identical update is wasted work.
+The event targets provider child sessions only; Paseo ignores it for a root session or an unknown
+session ID.
+
+`session.subagent_presentation` is a host-advertised capability. The host lists the capabilities it
+understands in the connect request (`ProviderConnectRequest.capabilities`); add this one to your
+supported list and negotiate the connection as shown in
+[Register a direct provider](#register-a-direct-provider), then emit the event only when the
+negotiated capabilities include it. A host without the capability rejects the event in
+`ProviderEventSchema` validation and closes the whole provider connection, failing every session on
+it — the event is not silently dropped. The optional `subtitle` on `session.opened` needs no gate:
+older hosts ignore unknown fields.
 
 ## Add commands and steering
 
