@@ -599,7 +599,11 @@ describe("discovery", () => {
       type: "catalog",
       catalog: {
         models: expect.arrayContaining([
-          { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+          {
+            id: "gemini-3.8-flash-low",
+            label: "Gemini 3.8 Flash (Low)",
+            contextWindowMaxTokens: 1_048_576,
+          },
         ]),
         thinkingOptions: [],
         defaultMode: "full-access",
