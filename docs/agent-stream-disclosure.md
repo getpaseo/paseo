@@ -108,7 +108,8 @@ jumps by the keyboard height after the keyboard settles.
    at its end when tapped or a collapse used up the room. The release tracks that distance
    instead of reading the offset: the new content size reaches JS before the pin's scroll does.
    A reply landing below the row ends the pin in the commit that mounts the reply, so the reply
-   grows below the row and the trigger stays where it was.
+   grows below the row and the trigger stays where it was. A reply that lands before `apply` runs
+   moves the hold to the reply's row.
 
    Upstream LegendList anchors only rows from the first fully visible one down to the last fully
    visible one, and a size change with no data change keeps the first row in view whatever

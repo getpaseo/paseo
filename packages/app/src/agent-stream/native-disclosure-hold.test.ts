@@ -3,6 +3,7 @@ import {
   createNativeDisclosureHold,
   disclosureAnchor,
   createEndHoldDistance,
+  type DisclosureAnchor,
 } from "./native-disclosure-hold";
 
 function createFrames() {
@@ -121,6 +122,58 @@ describe("native disclosure hold", () => {
     frames.runFrame();
 
     expect(releases).toEqual(["released"]);
+  });
+});
+
+describe("next-frame disclosure hold", () => {
+  it("anchors the row a reply landed as while the toggle waited for its frame", () => {
+    const { frames, hold } = createHarness();
+    let anchor: DisclosureAnchor = { kind: "end" };
+    const applied: DisclosureAnchor[] = [];
+
+    hold.holdNextFrame(
+      () => anchor,
+      (resolved) => applied.push(resolved),
+    );
+    expect(applied).toEqual([]);
+
+    anchor = { kind: "row", rowId: "turn-2" };
+    frames.runFrame();
+
+    expect(hold.anchorRowId()).toBe("turn-2");
+    expect(applied).toEqual([{ kind: "row", rowId: "turn-2" }]);
+  });
+
+  it("still lands the toggle when the hold is cancelled before its frame", () => {
+    const { frames, hold, releases } = createHarness();
+    const applied: DisclosureAnchor[] = [];
+
+    hold.holdNextFrame(
+      () => ({ kind: "end" }),
+      (resolved) => applied.push(resolved),
+    );
+    hold.cancel();
+    frames.runFrame();
+    frames.runFrame();
+
+    expect(applied).toEqual([{ kind: "end" }]);
+    expect(releases).toEqual([]);
+  });
+
+  it("lands a waiting toggle before the next hold starts", () => {
+    const { frames, hold } = createHarness();
+    const applied: DisclosureAnchor[] = [];
+
+    hold.holdNextFrame(
+      () => ({ kind: "end" }),
+      (resolved) => applied.push(resolved),
+    );
+    hold.hold({ kind: "row", rowId: "turn-1" });
+
+    expect(applied).toEqual([{ kind: "end" }]);
+    frames.runFrame();
+    expect(applied).toEqual([{ kind: "end" }]);
+    expect(hold.anchorRowId()).toBe("turn-1");
   });
 });
 

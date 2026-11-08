@@ -333,17 +333,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onRelease: releaseDisclosure,
     }),
   );
-  const pendingEndHoldRef = useRef<{ frame: number; apply: () => void } | null>(null);
-  // A toggle waiting for the end pin to mount still lands when the hold is cancelled.
-  const flushPendingEndHold = useStableEvent(() => {
-    const pending = pendingEndHoldRef.current;
-    if (!pending) return;
-    pendingEndHoldRef.current = null;
-    cancelAnimationFrame(pending.frame);
-    pending.apply();
-  });
   const cancelDisclosureHold = useStableEvent(() => {
-    flushPendingEndHold();
     disclosureHold.cancel();
     setEndHold(null);
   });
@@ -356,13 +346,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // The last row's bottom is the content end, which LegendList cannot anchor. The end pin can, from
   // any offset, but only once it is mounted: a pin that mounts with the new height anchors nothing.
   // So the toggle lands a frame after the pin's commit, whose mount runs before the frame's timers.
+  const latestDisclosureAnchor = useStableEvent(
+    (rowId: string, triggerEdge: DisclosureTriggerEdge) =>
+      disclosureAnchor(rows, rowId, triggerEdge),
+  );
   const holdRow = useStableEvent(
     (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => {
       const applyAndMeasure = () => {
         apply();
         rowLayoutSyncRegistry.get(rowId)?.();
       };
-      flushPendingEndHold();
       if (triggerEdge === "bottom" && bottomAnchorController.mode === "sticky-bottom") {
         applyAndMeasure();
         return;
@@ -379,12 +372,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         rowId,
         distance: createEndHoldDistance(distanceFromEnd(streamViewportMetricsRef.current)),
       });
-      const frame = requestAnimationFrame(() => {
-        pendingEndHoldRef.current = null;
-        disclosureHold.hold(anchor);
-        applyAndMeasure();
-      });
-      pendingEndHoldRef.current = { frame, apply: applyAndMeasure };
+      disclosureHold.holdNextFrame(
+        () => latestDisclosureAnchor(rowId, triggerEdge),
+        (latestAnchor) => {
+          if (latestAnchor.kind === "row") setEndHold(null);
+          applyAndMeasure();
+        },
+      );
     },
   );
   const handleItemSizeChanged = useStableEvent(

@@ -14,7 +14,17 @@ export interface NativeDisclosureHold {
   /** The row the list may anchor on; null outside a hold and while the hold keeps the end. */
   anchorRowId(): string | null;
   hold(anchor: DisclosureAnchor): void;
+  /**
+   * Holds on the next frame and runs `apply` there, for a toggle that has to land after a commit
+   * already on its way. `resolveAnchor` runs in that frame, because rows may land while it waits.
+   * A later hold or a cancel lands a waiting toggle right away.
+   */
+  holdNextFrame(
+    resolveAnchor: () => DisclosureAnchor,
+    apply: (anchor: DisclosureAnchor) => void,
+  ): void;
   noteItemSizeChanged(): void;
+  /** Drops the hold without releasing it. */
   cancel(): void;
 }
 
@@ -27,6 +37,7 @@ export function createNativeDisclosureHold(input: {
   let anchor: DisclosureAnchor | null = null;
   let frameId: number | null = null;
   let remainingFrames = 0;
+  let waitingToggle: { frameId: number; land: () => void } | null = null;
 
   const stopCountdown = () => {
     if (frameId !== null) {
@@ -52,11 +63,34 @@ export function createNativeDisclosureHold(input: {
     frameId = input.requestFrame(tick);
   };
 
+  const landWaitingToggle = () => {
+    if (!waitingToggle) return;
+    const { frameId: waitingFrameId, land } = waitingToggle;
+    waitingToggle = null;
+    input.cancelFrame(waitingFrameId);
+    land();
+  };
+
+  const startHold = (nextAnchor: DisclosureAnchor) => {
+    anchor = nextAnchor;
+    restartCountdown();
+  };
+
   return {
     anchorRowId: () => (anchor?.kind === "row" ? anchor.rowId : null),
     hold(nextAnchor) {
-      anchor = nextAnchor;
-      restartCountdown();
+      landWaitingToggle();
+      startHold(nextAnchor);
+    },
+    holdNextFrame(resolveAnchor, apply) {
+      landWaitingToggle();
+      const waitingFrameId = input.requestFrame(() => {
+        waitingToggle = null;
+        const nextAnchor = resolveAnchor();
+        startHold(nextAnchor);
+        apply(nextAnchor);
+      });
+      waitingToggle = { frameId: waitingFrameId, land: () => apply(resolveAnchor()) };
     },
     noteItemSizeChanged() {
       if (anchor !== null) {
@@ -64,6 +98,7 @@ export function createNativeDisclosureHold(input: {
       }
     },
     cancel() {
+      landWaitingToggle();
       stopCountdown();
       anchor = null;
     },
