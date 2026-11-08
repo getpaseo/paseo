@@ -1094,6 +1094,39 @@ describe("archiveByScope", () => {
     expect(order).toEqual(["mark-archiving-update", "clear-archiving", "final-update"]);
   });
 
+  test("a completed archive starts the main-repo refresh", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "completed-refresh");
+    const workspaceId = "ws-completed-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-completed-refresh",
+    });
+
+    expect(result.removedDirectory).toBe(true);
+    await vi.waitFor(() => {
+      expect(deps.workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree",
+      });
+    });
+  });
+
   test("reuses the caller's active-workspace snapshot and still reads fresh before deleting", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -1294,6 +1327,45 @@ describe("archiveByScope cancellation", () => {
     expect(deps.archivedSnapshotIds).toEqual([]);
     expect(deps.markWorkspaceArchiving).not.toHaveBeenCalled();
     expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("a canceled archive does not start the main-repo refresh", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cancel-refresh");
+    const workspaceId = "ws-cancel-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    const firstEmit = gate();
+    deps.emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => {
+      firstEmit.reach();
+      await firstEmit.wait;
+    });
+    const controller = new AbortController();
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cancel-refresh",
+      signal: controller.signal,
+    });
+    await firstEmit.reached;
+    controller.abort();
+    firstEmit.open();
+    await canceledArchive(archive);
+
+    // The refresh would already be in flight by now if the canceled archive had started it.
+    expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   });
 });
 
