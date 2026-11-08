@@ -2598,8 +2598,12 @@ export class DaemonClient {
       deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
     });
     this.pongWaiters.add(waiter);
-    // The probe only puts a ping on the wire; its own outcome is the heartbeat's concern.
-    void this.ensurePingProbe({ timeoutMs, role: "latency" }).promise.catch(() => {});
+    // The probe only puts a ping on the wire; its own outcome is the heartbeat's concern. A
+    // measurement that joins an in-flight ping reports that ping's round trip, so the clock
+    // starts at the send, not at the join.
+    const probe = this.ensurePingProbe({ timeoutMs, role: "latency" });
+    void probe.promise.catch(() => {});
+    waiter.startedAt = probe.startedAt;
     return Promise.race([pong, timeout])
       .catch((error) => {
         throw toTimeoutError(error, "Latency measurement", timeoutMs);

@@ -3293,6 +3293,18 @@ test("a heartbeat sharing a latency measurement still saves the RTT", async () =
   expect(session.lastLivenessRttMs()).toBe(2000);
 });
 
+test("a measurement that joins an in-flight ping reports that ping's round trip", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("2s");
+  await session.connect();
+  await session.advance(11_000); // the heartbeat ping sent at 10s is still outstanding
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  await session.advance(1_000);
+  await expect(measurement).resolves.toBe(2000);
+  expect(session.lastLivenessRttMs()).toBe(2000);
+});
+
 test("reports the round-trip time of the last successful heartbeat", async () => {
   useHeartbeatClock();
   const session = new DaemonClientSession();
