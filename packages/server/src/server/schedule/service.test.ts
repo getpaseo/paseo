@@ -611,6 +611,113 @@ describe("ScheduleService", () => {
     },
   );
 
+  test("sleeps between ticks while nothing is due instead of polling", async () => {
+    const list = vi.spyOn(ScheduleStore.prototype, "list");
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      wakeBoundsMs: { min: 10, max: 60_000 },
+    });
+    await service.create({
+      prompt: "Due in an hour",
+      runOnCreate: false,
+      cadence: { type: "every", everyMs: 3_600_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    try {
+      await service.start();
+      // The first wake (10 ms) ticks, then plans the next one an hour out (capped at the maximum).
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const settled = list.mock.calls.length;
+      expect(settled).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      // A once-a-second poll would have listed (read) every schedule file again by now.
+      expect(list.mock.calls.length).toBe(settled);
+    } finally {
+      await service.stop();
+      list.mockRestore();
+    }
+  });
+
+  test("does not keep waking for an active schedule without a next run", async () => {
+    const list = vi.spyOn(ScheduleStore.prototype, "list");
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      wakeBoundsMs: { min: 10, max: 60_000 },
+    });
+    const created = await service.create({
+      prompt: "Expired without a next slot",
+      runOnCreate: false,
+      cadence: { type: "every", everyMs: 3_600_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    // tick() skips a schedule with no next run, so planning must skip it too.
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      nextRunAt: null,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    }));
+    try {
+      await service.start();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const settled = list.mock.calls.length;
+      expect(settled).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      expect(list.mock.calls.length).toBe(settled);
+    } finally {
+      await service.stop();
+      list.mockRestore();
+    }
+  });
+
+  test("runs a schedule created while the service sleeps without waiting for the next wake", async () => {
+    const ran = Promise.withResolvers<void>();
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      runner: async () => {
+        ran.resolve();
+        return { agentId: null, output: "ok" };
+      },
+      wakeBoundsMs: { min: 10, max: 60_000 },
+    });
+    try {
+      await service.start();
+      // Nothing is due, so the service plans to sleep for the full minute.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await service.create({
+        prompt: "Run now",
+        runOnCreate: true,
+        cadence: { type: "every", everyMs: 3_600_000 },
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      });
+      await expect(
+        Promise.race([
+          ran.promise.then(() => "ran"),
+          new Promise((resolve) => setTimeout(() => resolve("still asleep"), 5_000)),
+        ]),
+      ).resolves.toBe("ran");
+      await vi.waitFor(async () =>
+        expect((await service.list())[0]?.runs[0]?.status).toBe("succeeded"),
+      );
+    } finally {
+      await service.stop();
+    }
+  });
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

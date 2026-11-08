@@ -108,6 +108,8 @@ export class ScheduleStore {
   constructor(
     private readonly dir: string,
     private readonly logger: Logger,
+    /** Called after every write, so the service can re-plan when the next schedule is due. */
+    private readonly onChange: () => void = () => {},
   ) {}
 
   private filePath(id: string): string {
@@ -219,12 +221,14 @@ export class ScheduleStore {
   private async write(schedule: StoredSchedule): Promise<void> {
     await this.ensureDir();
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
+    this.onChange();
   }
 
   async delete(id: string): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
       await this.ensureDir();
       await rm(this.filePath(id), { force: true });
+      this.onChange();
     });
   }
 
