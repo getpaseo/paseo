@@ -381,6 +381,24 @@ export const it: TranslationResources = {
       answerPlaceholder: "Scrivi la tua risposta...",
       otherPlaceholder: "Altro...",
     },
+    backgroundWork: {
+      pillOne: "1 attività in background",
+      pillMany: "{{count}} attività in background",
+      notRunning: "Non più in esecuzione",
+      dismiss: "Chiudi",
+      stop: "Stop",
+      stopping: "Arresto in corso…",
+      stopError: "Impossibile confermare lo stop.",
+      label: "In background",
+      title: "Attività in background",
+      waiting: "In attesa dei dettagli dell'attività in background",
+      error: "Impossibile caricare l'attività in background",
+      retry: "Riprova",
+      running: "Attività in background in esecuzione",
+      shell: "Shell",
+      monitor: "Monitor",
+      other: "Altra attività",
+    },
     todo: {
       title: "Attività",
       empty: "Nessuna attività.",
@@ -957,6 +975,9 @@ export const it: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Cambia branch di base",
+        },
         openChangesTab: "Apri scheda Modifiche",
         openDiffTab: "Apri scheda Differenze",
         closeChangesTab: "Chiudi scheda Modifiche",
@@ -1190,6 +1211,14 @@ export const it: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Impossibile caricare la vista della barra laterale.",
+      useDefault: "Usa la vista predefinita",
+      readFailed: "Impossibile caricare la preferenza per la vista della barra laterale.",
+      agentUnavailable: "L'agente non è più disponibile",
+      terminalUnavailable: "Il terminale non è più disponibile",
+      projectUnavailable: "Il progetto non è più disponibile",
+    },
     statusGroupAccessibility: "Gruppo {{label}}",
     statusBucket: {
       needsInput: "Richiede intervento",
@@ -1266,6 +1295,7 @@ export const it: TranslationResources = {
       hosts: "Host",
       settings: "Impostazioni",
       closeSidebar: "Chiudi barra laterale",
+      moreActions: "Altre azioni",
     },
     footer: {
       usage: "Utilizzo",
@@ -1370,6 +1400,9 @@ export const it: TranslationResources = {
         hostDisconnected: "L'host non è connesso",
         hideFailed: "Impossibile nascondere l'ambiente di lavoro",
         archiveFailed: "Archiviazione dell'ambiente di lavoro non riuscita",
+        archived: "Ambiente di lavoro archiviato",
+        undoArchive: "Annulla",
+        undoArchiveFailed: "Impossibile annullare l'archiviazione",
       },
     },
   },
@@ -1659,6 +1692,7 @@ export const it: TranslationResources = {
     placeholder: "Cambia branch...",
     searchPlaceholder: "Filtra branch...",
     empty: "Nessun branch trovato.",
+    failedToLoad: "Impossibile caricare i branch. Riapri il selettore per riprovare.",
     title: "Cambia branch",
     uncommittedTitle: "Modifiche senza commit",
     uncommittedMessage:
@@ -1678,7 +1712,11 @@ export const it: TranslationResources = {
     loadingCommands: "Caricamento dei comandi...",
     noFiles: "Nessun file o cartella trovato",
     noCommands: "Nessun comando trovato",
-    failedToLoad: "Caricamento non riuscito",
+    loadingProviderCommands: "Caricamento dei comandi di {{provider}}...",
+    commandsFailed: "Impossibile caricare i comandi",
+    providerCommandsFailed: "Impossibile caricare i comandi di {{provider}}",
+    filesFailed: "Impossibile cercare i file",
+    skillTag: "Skill",
     chooseProjectForCommands: "Scegli un progetto per vedere i comandi",
     chooseModelForCommands: "Seleziona un modello per vedere i comandi",
   },
@@ -2724,6 +2762,13 @@ export const it: TranslationResources = {
         description: "Mostra un indice per passare da un prompt all'altro",
       },
       sidebar: {
+        view: {
+          title: "Vista della barra laterale",
+          label: "Vista",
+          default: "Vista predefinita",
+          unavailable:
+            "La vista selezionata non è disponibile o è disattivata. Viene mostrata la vista predefinita.",
+        },
         header: {
           title: "Intestazione",
           description:
