@@ -1724,6 +1724,81 @@ test("commits notices emitted during session open as the initial timeline with s
   );
 });
 
+test("reopening a plugin agent does not append the same startup notice", async () => {
+  await withObservedProvider(
+    {
+      openChildren(sessionId, emit) {
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: {
+            id: `${sessionId}:full-access`,
+            severity: "warning",
+            title: "Full access",
+          },
+        });
+      },
+    },
+    async (client) => {
+      const manager = new AgentManager({
+        clients: { [client.provider]: client },
+        logger: createTestLogger(),
+      });
+      const agent = await manager.createAgent(
+        { provider: client.provider, cwd: tmpdir() },
+        undefined,
+        {},
+      );
+      try {
+        for (let attempt = 0; attempt < 4; attempt++) await manager.reloadAgentSession(agent.id);
+        expect(
+          (await manager.getTimelineRows(agent.id)).filter(
+            (row) => row.item.type === "notification",
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await manager.closeAgent(agent.id);
+      }
+    },
+  );
+});
+
+test("a resumed plugin session offers only new startup rows to the manager", async () => {
+  await withObservedProvider(
+    {
+      openChildren(sessionId, emit) {
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: { id: "full-access", severity: "warning", title: "Full access" },
+        });
+      },
+    },
+    async (client) => {
+      const config = { provider: client.provider, cwd: tmpdir() };
+      const original = await client.createSession(config);
+      const handle = original.describePersistence()!;
+      expect(original.initialTimeline).toHaveLength(1);
+      await original.close();
+      const resumed = await client.resumeSession(handle, config);
+      try {
+        expect(resumed.initialTimeline).toEqual([]);
+        const history: AgentStreamEvent[] = [];
+        for await (const event of resumed.streamHistory()) history.push(event);
+        expect(
+          history.filter(
+            (event) => event.type === "timeline" && event.item.type === "notification",
+          ),
+        ).toEqual([
+          { type: "timeline", provider: client.provider, ...original.initialTimeline![0] },
+        ]);
+      } finally {
+        await resumed.close();
+      }
+    },
+  );
+});
+
 describe("pending provider responses", () => {
   test.each<RequestKind>(["session.open", "catalog", "session.configure", "session.prompt"])(
     "preserves the send error for %s",
