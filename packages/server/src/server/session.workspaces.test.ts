@@ -9956,7 +9956,9 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
     mainRepoRoot: null,
     displayName: "repro",
     createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
+    // Git observation is liveness-gated: the first session only observes a
+    // workspace with recent activity, which is what caches the PR snapshot.
+    updatedAt: new Date().toISOString(),
   });
   const projectRegistry: SessionOptions["projectRegistry"] = {
     initialize: async () => {},

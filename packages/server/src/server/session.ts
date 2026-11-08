@@ -53,6 +53,7 @@ import {
 } from "./messages.js";
 import type {
   TerminalManager,
+  TerminalsChangedEvent,
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
@@ -97,7 +98,7 @@ import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-stor
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, hasOpenAgentTab } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
@@ -263,8 +264,10 @@ import {
   summarizeFetchWorkspacesEntries,
   workspaceIdsOnCheckout,
   WorkspaceDirectory,
+  type WorkspaceObservationTarget,
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
+import { isLiveWorkspace } from "./session/workspace-git-observer/workspace-liveness.js";
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
   createPaseoWorktree,
@@ -714,6 +717,20 @@ function workspaceLabelErrorCode(error: unknown): string {
   return "workspace_label_failed";
 }
 
+function sameWorkspaceIdSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const workspaceId of left) {
+    if (!right.has(workspaceId)) return false;
+  }
+  return true;
+}
+
+/** Workspaces with a loaded agent runtime, and workspaces with an open agent tab label. */
+interface AgentWorkspaceLiveness {
+  loadedWorkspaceIds: ReadonlySet<string>;
+  openTabWorkspaceIds: ReadonlySet<string>;
+}
+
 interface ClientActivity {
   deviceType: "web" | "mobile";
   focusedAgentId: string | null;
@@ -828,6 +845,13 @@ export class Session {
     }
   >();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
+  private unsubscribeTerminalsChanged: (() => void) | null = null;
+  /** Last workspace ownership seen per terminal cwd, used to notice terminal lifecycle changes. */
+  private readonly liveTerminalWorkspaceIdsByCwd = new Map<string, ReadonlySet<string>>();
+  /** Last workspace ownership seen from loaded agents, used to notice agent lifecycle changes. */
+  private loadedAgentWorkspaceIds: ReadonlySet<string> | null = null;
+  /** Last workspaces carrying an open agent tab label, part of the same change check. */
+  private openAgentTabWorkspaceIds: ReadonlySet<string> | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
     string,
@@ -1878,6 +1902,16 @@ export class Session {
             ),
           );
         }) ?? null;
+      this.unsubscribeTerminalsChanged ??=
+        this.terminalManager?.subscribeTerminalsChanged((event) => {
+          if (!this.terminalLivenessChanged(event)) return;
+          void this.reconcileWorkspaceGitObservers().catch((error) => {
+            this.sessionLogger.warn(
+              { err: error, cwd: event.cwd },
+              "Failed to re-evaluate workspace git observation after terminal change",
+            );
+          });
+        }) ?? null;
     } else {
       this.unsubscribeProjectMutations?.();
       this.unsubscribeProjectMutations = null;
@@ -1885,6 +1919,8 @@ export class Session {
       this.unsubscribeWorkspaceMutations = null;
       this.unsubscribeTerminalWorkspaceContributionEvents?.();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
+      this.unsubscribeTerminalsChanged?.();
+      this.unsubscribeTerminalsChanged = null;
     }
   }
 
@@ -2128,6 +2164,10 @@ export class Session {
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
+        if (event.type === "agent_state" || event.type === "agent_removed") {
+          this.reconcileObserversAfterAgentChange();
+        }
+
         if (event.type === "timeline_replacement") {
           this.deliverTimelineReplacement(event.agentId, this.rewindInitiators.get(event.agentId));
           return;
@@ -7221,17 +7261,135 @@ export class Session {
   }
 
   private async reconcileWorkspaceGitObservers(): Promise<void> {
-    const all = this.wantsEvent("checkout_status_update")
-      ? await this.workspaceDirectory.listObservationTargets()
-      : [];
-    const entries = [...this.workspaceUpdatesSubscriptions.values()].flatMap((subscription) =>
-      [...subscription.lastEmittedByWorkspaceId.values()].flatMap((update) =>
-        update.kind === "upsert" ? [update.workspace] : [],
-      ),
-    );
+    const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
+    const wanted = this.wantsEvent("checkout_status_update");
+    const live = wanted ? await this.listLiveWorkspaceObservationTargets(explicitlySubscribed) : [];
     this.workspaceGitObserver.reconcileObservers(
-      this.wantsEvent("checkout_status_update") ? [...entries, ...all] : entries,
+      wanted ? [...explicitlySubscribed, ...live] : explicitlySubscribed,
     );
+  }
+
+  /**
+   * Workspaces a client asked for by narrowing `fetch_workspaces`. The unfiltered
+   * workspace-list subscription feeds every active workspace to the client and
+   * must not force an observation; that is the fan-out this session is avoiding.
+   */
+  private listExplicitWorkspaceSubscriptions(): WorkspaceDescriptorPayload[] {
+    return [...this.workspaceUpdatesSubscriptions.values()].flatMap((subscription) => {
+      const filter = subscription.filter;
+      if (!filter?.projectId?.trim() && !filter?.query?.trim()) return [];
+      return [...subscription.lastEmittedByWorkspaceId.values()].flatMap((update) =>
+        update.kind === "upsert" ? [update.workspace] : [],
+      );
+    });
+  }
+
+  private async listLiveWorkspaceObservationTargets(
+    subscribed: Iterable<Pick<WorkspaceDescriptorPayload, "id">>,
+  ): Promise<WorkspaceObservationTarget[]> {
+    const targets = await this.workspaceDirectory.listObservationTargets();
+    if (targets.length === 0) return [];
+    const subscribedWorkspaceIds = new Set(Array.from(subscribed, (workspace) => workspace.id));
+    const [lastUserMessageTimes, liveTerminalWorkspaceIds] = await Promise.all([
+      this.agentDirectory.workspaceLastUserMessageTimes(targets.map((target) => target.id)),
+      this.listLiveTerminalWorkspaceIds(),
+    ]);
+    const agentLiveness = this.listAgentWorkspaceLiveness();
+    const autoArchiveAfterMerge = this.daemonConfigStore.get().autoArchiveAfterMerge === true;
+    const now = Date.now();
+
+    return targets.filter((target) => {
+      const lastUserMessageAt = lastUserMessageTimes.get(target.id) ?? null;
+      const lastActivityAt =
+        lastUserMessageAt && lastUserMessageAt > target.updatedAt
+          ? lastUserMessageAt
+          : target.updatedAt;
+      return isLiveWorkspace(
+        {
+          lastActivityAt,
+          hasLoadedAgent: agentLiveness.loadedWorkspaceIds.has(target.id),
+          hasOpenAgentTab: agentLiveness.openTabWorkspaceIds.has(target.id),
+          hasLiveTerminal: liveTerminalWorkspaceIds.has(target.id),
+          hasRunningScript: this.hasRunningWorkspaceScript(target.id),
+          isExplicitlySubscribed: subscribedWorkspaceIds.has(target.id),
+          isAutoArchiveCandidate: autoArchiveAfterMerge && target.isPaseoOwnedWorktree,
+          hasOpenPullRequest: this.hasKnownOpenPullRequest(target.workspaceDirectory),
+        },
+        now,
+      );
+    });
+  }
+
+  private listAgentWorkspaceLiveness(): AgentWorkspaceLiveness {
+    const loadedWorkspaceIds = new Set<string>();
+    const openTabWorkspaceIds = new Set<string>();
+    for (const agent of this.agentManager.listAgents({ includeInternal: true })) {
+      if (!agent.workspaceId) continue;
+      if (agent.lifecycle !== "closed") loadedWorkspaceIds.add(agent.workspaceId);
+      if (hasOpenAgentTab(agent.labels)) openTabWorkspaceIds.add(agent.workspaceId);
+    }
+    return { loadedWorkspaceIds, openTabWorkspaceIds };
+  }
+
+  private async listLiveTerminalWorkspaceIds(): Promise<ReadonlySet<string>> {
+    const terminalManager = this.terminalManager;
+    const workspaceIds = new Set<string>();
+    if (!terminalManager) return workspaceIds;
+    const terminals = await Promise.all(
+      terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
+    );
+    for (const terminal of terminals.flat()) {
+      if (terminal.workspaceId) workspaceIds.add(terminal.workspaceId);
+    }
+    return workspaceIds;
+  }
+
+  private hasRunningWorkspaceScript(workspaceId: string): boolean {
+    const scripts = this.scriptRuntimeStore?.listForWorkspace(workspaceId) ?? [];
+    return scripts.some((script) => script.lifecycle === "running");
+  }
+
+  private hasKnownOpenPullRequest(cwd: string): boolean {
+    const pullRequest = this.workspaceRuntimeStore.get(cwd)?.forge.pullRequest;
+    return pullRequest?.state.toLowerCase() === "open";
+  }
+
+  /**
+   * Terminal title and activity changes arrive on the same event as terminal
+   * lifecycle changes. Only a change in which workspaces own terminals can change
+   * liveness, so return whether that happened.
+   */
+  private terminalLivenessChanged(event: TerminalsChangedEvent): boolean {
+    const previous = this.liveTerminalWorkspaceIdsByCwd.get(event.cwd);
+    const next = new Set<string>();
+    for (const terminal of event.terminals) {
+      if (terminal.workspaceId) next.add(terminal.workspaceId);
+    }
+    this.liveTerminalWorkspaceIdsByCwd.set(event.cwd, next);
+    if (previous && sameWorkspaceIdSet(previous, next)) return false;
+    return true;
+  }
+
+  /**
+   * Loaded agents and open-tab labels are the liveness signals that ride agent
+   * events. Reconcile only when the workspaces they cover change.
+   */
+  private reconcileObserversAfterAgentChange(): void {
+    const liveness = this.listAgentWorkspaceLiveness();
+    const next = liveness.loadedWorkspaceIds;
+    const previous = this.loadedAgentWorkspaceIds;
+    this.loadedAgentWorkspaceIds = next;
+    const openTabChanged =
+      this.openAgentTabWorkspaceIds !== null &&
+      !sameWorkspaceIdSet(this.openAgentTabWorkspaceIds, liveness.openTabWorkspaceIds);
+    this.openAgentTabWorkspaceIds = liveness.openTabWorkspaceIds;
+    if (previous && !openTabChanged && sameWorkspaceIdSet(previous, next)) return;
+    void this.reconcileWorkspaceGitObservers().catch((error) => {
+      this.sessionLogger.warn(
+        { err: error },
+        "Failed to re-evaluate workspace git observation after agent change",
+      );
+    });
   }
 
   private seedWorkspaceSubscriptionSnapshot(
@@ -9362,6 +9520,8 @@ export class Session {
       this.unsubscribeTerminalWorkspaceContributionEvents();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
+    this.unsubscribeTerminalsChanged?.();
+    this.unsubscribeTerminalsChanged = null;
     this.providerCatalogSession.dispose();
 
     this.terminalController.dispose();

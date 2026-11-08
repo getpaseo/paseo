@@ -3,6 +3,8 @@ import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
+  asDaemonConfigStore,
+  asTerminalManager,
 } from "./test-utils/session-stubs.js";
 import { describe, expect, test, vi } from "vitest";
 import path from "node:path";
@@ -129,6 +131,14 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   ) => void;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+  agents?: Array<{
+    workspaceId?: string;
+    lifecycle: "initializing" | "idle" | "running" | "error" | "closed";
+    labels: Record<string, string>;
+  }>;
+  terminalManager?: SessionOptions["terminalManager"];
+  workspaceRuntimeStore?: ReturnType<typeof createWorkspaceRuntimeStore>;
+  autoArchiveAfterMerge?: boolean;
 }): {
   session: Session;
   emitted: Array<{ type: string; payload: unknown }>;
@@ -143,6 +153,8 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     scheduleRefreshForCwd: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   };
+  workspaceRuntimeStore: ReturnType<typeof createWorkspaceRuntimeStore>;
+  agentEventListeners: Array<(event: unknown) => void>;
   subscriptions: Array<{
     params: { cwd: string };
     listener: WorkspaceGitListener;
@@ -189,8 +201,11 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     dispose: vi.fn(),
   };
 
+  const workspaceRuntimeStore = options?.workspaceRuntimeStore ?? createWorkspaceRuntimeStore();
+  const agentEventListeners: Array<(event: unknown) => void> = [];
+
   const session = new Session({
-    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
+    workspaceRuntimeStore,
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
@@ -202,8 +217,11 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     pushNotifications: createStub<SessionOptions["pushNotifications"]>({}),
     paseoHome: "/tmp/paseo-test",
     agentManager: createStub<SessionOptions["agentManager"]>({
-      subscribe: () => () => {},
-      listAgents: () => [],
+      subscribe: (listener: (event: unknown) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      },
+      listAgents: () => options?.agents ?? [],
       listProviderSubagentActivity: () => [],
       getAgent: () => null,
     }),
@@ -273,11 +291,14 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     stt: null,
     tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-    terminalManager: null,
+    terminalManager: options?.terminalManager ?? null,
     serviceProxy: options?.serviceProxy,
     scriptRuntimeStore: options?.scriptRuntimeStore,
     onBranchChanged: options?.onBranchChanged,
     getDaemonTcpPort: () => 6767,
+    daemonConfigStore: asDaemonConfigStore({
+      get: () => ({ autoArchiveAfterMerge: options?.autoArchiveAfterMerge ?? false }),
+    }),
   });
 
   asInternals<SessionInternals>(session).listAgentPayloads = async () => [];
@@ -288,6 +309,8 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     projects,
     workspaces,
     workspaceGitService,
+    workspaceRuntimeStore,
+    agentEventListeners,
     subscriptions,
   };
 }
@@ -299,6 +322,8 @@ function seedGitWorkspace(input: {
   workspaceId: string;
   cwd: string;
   name: string;
+  updatedAt?: string;
+  isPaseoOwnedWorktree?: boolean;
 }) {
   input.projects.set(
     input.projectId,
@@ -319,8 +344,9 @@ function seedGitWorkspace(input: {
       cwd: input.cwd,
       displayName: input.name,
       kind: "local_checkout",
+      isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
       createdAt: "2026-03-01T12:00:00.000Z",
-      updatedAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: input.updatedAt ?? "2026-03-01T12:00:00.000Z",
     }),
   );
 }
@@ -784,5 +810,216 @@ describe("workspace git watch targets", () => {
     expect(workspaceGitService.refresh).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REPO_CWD);
     expect(emitted.find((message) => message.type === "checkout_pr_status_response")).toBeDefined();
+  });
+});
+
+describe("live workspace observation", () => {
+  const OLD = "2026-03-01T00:00:00.000Z";
+
+  function watchedCwds(workspaceGitService: {
+    registerWorkspace: ReturnType<typeof vi.fn>;
+  }): string[] {
+    return workspaceGitService.registerWorkspace.mock.calls
+      .map((call) => (call[0] as { cwd: string }).cwd)
+      .sort();
+  }
+
+  function createTerminalManager(input: {
+    cwd: string;
+    workspaceId: string;
+  }): SessionOptions["terminalManager"] {
+    const terminal = {
+      id: "terminal-1",
+      cwd: input.cwd,
+      workspaceId: input.workspaceId,
+      getActivity: () => null,
+    };
+    return asTerminalManager({
+      listDirectories: () => [input.cwd],
+      getTerminals: async (cwd: string) => (cwd === input.cwd ? [terminal] : []),
+      subscribeTerminalsChanged: () => () => {},
+    });
+  }
+
+  test("an unfiltered workspace list subscribes to nothing and checkout status watches only live workspaces", async () => {
+    const terminalCwd = "/tmp/terminal-workspace";
+    const terminalManager = createTerminalManager({
+      cwd: terminalCwd,
+      workspaceId: "ws-terminal",
+    });
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({
+        terminalManager,
+        agents: [{ workspaceId: "ws-agent", lifecycle: "idle", labels: {} }],
+      });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-agent",
+      cwd: "/tmp/agent-workspace",
+      name: "agent",
+      updatedAt: OLD,
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-terminal",
+      cwd: terminalCwd,
+      name: "terminal",
+      updatedAt: OLD,
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-fresh",
+      cwd: "/tmp/fresh-workspace",
+      name: "fresh",
+      updatedAt: new Date().toISOString(),
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-idle",
+      cwd: "/tmp/idle-workspace",
+      name: "idle",
+      updatedAt: OLD,
+    });
+
+    const explicitSubscriptions = asInternals<{
+      listExplicitWorkspaceSubscriptions: () => Array<{ id: string }>;
+    }>(session);
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: {},
+    });
+    expect(explicitSubscriptions.listExplicitWorkspaceSubscriptions()).toEqual([]);
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual(
+      ["/tmp/agent-workspace", terminalCwd, "/tmp/fresh-workspace"].sort(),
+    );
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "filtered-list",
+      subscribe: {},
+      filter: { query: "idle" },
+    });
+    expect(
+      explicitSubscriptions.listExplicitWorkspaceSubscriptions().map((workspace) => workspace.id),
+    ).toEqual(["ws-idle"]);
+
+    await session.cleanup();
+  });
+
+  test("picks up a workspace that becomes live without a fresh checkout request", async () => {
+    const agents: Array<{
+      workspaceId?: string;
+      lifecycle: "initializing" | "idle" | "running" | "error" | "closed";
+      labels: Record<string, string>;
+    }> = [];
+    const { session, projects, workspaces, workspaceGitService, agentEventListeners } =
+      createSessionForWorkspaceGitWatchTests({ agents });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-idle",
+      cwd: "/tmp/idle-workspace",
+      name: "idle",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+
+    const agent = { workspaceId: "ws-idle", lifecycle: "running" as const, labels: {} };
+    agents.push(agent);
+    for (const listener of agentEventListeners) {
+      listener({ type: "agent_state", agent });
+    }
+
+    await vi.waitFor(() =>
+      expect(watchedCwds(workspaceGitService)).toEqual(["/tmp/idle-workspace"]),
+    );
+
+    await session.cleanup();
+  });
+
+  test("keeps auto-archive worktrees and known open pull requests watched", async () => {
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot("/tmp/pull-request-workspace", {
+        forge: {
+          pullRequest: {
+            url: "https://github.com/acme/repo/pull/7",
+            title: "Open work",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: false,
+          },
+        },
+      }),
+    );
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({
+        workspaceRuntimeStore,
+        autoArchiveAfterMerge: true,
+      });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-worktree",
+      cwd: "/tmp/paseo-worktree",
+      name: "worktree",
+      updatedAt: OLD,
+      isPaseoOwnedWorktree: true,
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-pull-request",
+      cwd: "/tmp/pull-request-workspace",
+      name: "pull-request",
+      updatedAt: OLD,
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-idle",
+      cwd: "/tmp/idle-workspace",
+      name: "idle",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+
+    expect(watchedCwds(workspaceGitService)).toEqual(
+      ["/tmp/paseo-worktree", "/tmp/pull-request-workspace"].sort(),
+    );
+
+    await session.cleanup();
   });
 });
