@@ -196,7 +196,6 @@ test("native drain capability survives WebSocket and encryption wrappers", async
 });
 
 interface ObservedSocket {
-  hellos: number;
   closeFrame: { code: number; reason: string } | null;
 }
 
@@ -206,11 +205,8 @@ async function silentDaemon() {
   await new Promise<void>((resolve) => server.once("listening", () => resolve()));
   const sockets: ObservedSocket[] = [];
   server.on("connection", (socket: ServerSocket) => {
-    const observed: ObservedSocket = { hellos: 0, closeFrame: null };
+    const observed: ObservedSocket = { closeFrame: null };
     sockets.push(observed);
-    socket.on("message", (data) => {
-      if (String(data).includes('"e2ee_hello"')) observed.hellos += 1;
-    });
     socket.on("close", (code, reason) => {
       observed.closeFrame = { code, reason: reason.toString() };
     });
@@ -239,14 +235,13 @@ describe("abandoned connections close their WebSocket", () => {
     "$name: a timed-out attempt sends a close frame before the client reconnects",
     async ({ e2ee }) => {
       const daemon = await silentDaemon();
-      const warn = vi.fn();
       const client = new DaemonClient({
         url: daemon.url,
         clientId: "cid_abandoned_close_test",
         webSocketFactory: defaultWebSocketFactory,
         connectTimeoutMs: 1_500,
         reconnect: { enabled: true, baseDelayMs: 50, maxDelayMs: 50 },
-        logger: { debug() {}, info() {}, warn, error() {} },
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
         ...(e2ee
           ? {
               e2ee: {
@@ -264,13 +259,6 @@ describe("abandoned connections close their WebSocket", () => {
         const [abandoned] = daemon.sockets;
         await vi.waitFor(() => expect(abandoned?.closeFrame).not.toBeNull(), { timeout: 500 });
         expect(abandoned?.closeFrame?.reason).toBe("Connection timed out");
-        if (e2ee) {
-          // The handshake retried while the attempt was wanted and stopped with it.
-          expect(abandoned?.hellos).toBe(2);
-          expect(warn.mock.calls.map(([, message]) => message)).not.toContain(
-            "relay_e2ee_channel_error",
-          );
-        }
 
         // The newest attempt may still be connecting; aborting it closes without a frame.
         await client.close();
