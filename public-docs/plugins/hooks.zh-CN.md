@@ -92,7 +92,7 @@ type PluginTurnOutcome =
 
 | 字段         | 结构 / 含义                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------- |
-| `turnId`     | Provider 报告的 `string` 或 `null`；会话重新打开后可能重复                               |
+| `turnId`     | Provider 报告的 `string` 或 `null`；在会话恢复后仍保持唯一                               |
 | `timeline`   | 已弃用，始终为 `[]`；通过 SDK 获取历史。                                                 |
 | `request`    | SDK 的 `AgentPermissionRequest`；`kind` 为 `tool`、`plan`、`question`、`mode` 或 `other` |
 | `resolution` | SDK 的 `AgentPermissionResponse`                                                         |
