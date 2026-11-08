@@ -45,7 +45,8 @@
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
     "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "measure:diff-materialization": "tsx scripts/measure-diff-materialization.ts"
   },
   "dependencies": {
     "@getpaseo/protocol": "0.15.3",

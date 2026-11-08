@@ -8,7 +8,11 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  openChangesPanel,
+  openChangesTreePanel,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
@@ -262,6 +266,126 @@ test.afterEach(async () => {
   }
 });
 
+test("Changes without a comparison base explains how to view pending changes", async ({ page }) => {
+  const workspace = await createWorkspaceWithManyTinyDiffs(2, "dev");
+  await openWorkspaceChangesTree(page, workspace);
+  await expect(
+    page.getByText("Comparison base is unavailable. Select Uncommitted to view pending changes."),
+  ).toBeVisible();
+  await selectChangesComparison(page, "Uncommitted");
+  await expect(changesTree(page).getByText("file-0000.ts", { exact: true })).toBeVisible();
+});
+async function openWorkspaceChangesTree(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
+}
+
+test("streamed Changes shows the tree before completion and applies a one-file refresh", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const workspace = await createLargeStreamedWorkspace();
+  await addOversizedSibling(workspace);
+  const stream = await holdDiffCompletion(page);
+  await openWorkspaceChangesSurface(page, workspace, 90_000);
+  await expectAnnouncedTreeAndLoader(page);
+  await page.screenshot({ path: testInfo.outputPath("tree-loading.png") });
+  stream.finish();
+  await expect.poll(() => stream.completed, { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  const connections = stream.connections;
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +90, -1");
+  await addOneLineToFirstFile(workspace);
+  await expect.poll(() => stream.changedBodies.at(-1), { timeout: 30_000 }).toBe(1);
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +91, -1");
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  expect(stream.connections).toBe(connections);
+  await page.screenshot({ path: testInfo.outputPath("refreshed.png") });
+});
+
+async function createLargeStreamedWorkspace(): Promise<DirtyWorkspace> {
+  const workspace = await createWorkspaceWithManyTinyDiffs(252);
+  await Promise.all(
+    Array.from({ length: 252 }, (_, file) =>
+      writeFile(
+        path.join(workspace.repoPath, `src/file-${String(file).padStart(4, "0")}.ts`),
+        Array.from(
+          { length: 90 },
+          (_unused, line) =>
+            `export const fn${line} = (param: string) => ({ key: param, value: ${file} });`,
+        ).join("\n") + "\n",
+      ),
+    ),
+  );
+  return workspace;
+}
+async function addOversizedSibling(workspace: DirtyWorkspace): Promise<void> {
+  await writeFile(path.join(workspace.repoPath, "zz-too-large.txt"), "x".repeat(1024 * 1024 + 1));
+}
+async function addOneLineToFirstFile(workspace: DirtyWorkspace): Promise<void> {
+  const file = path.join(workspace.repoPath, "src/file-0000.ts");
+  await writeFile(file, (await readFile(file, "utf8")) + "export const refreshed = true;\n");
+}
+async function holdDiffCompletion(page: Page) {
+  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
+  let holding = true;
+  let connections = 0;
+  let completed = 0;
+  const completions: Array<() => void> = [];
+  const changedBodies: number[] = [];
+  const bodyCounts = new Map<number, number>();
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    connections++;
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (
+        typeof message !== "string" &&
+        message[0] >= DiffOpcode.Begin &&
+        message[0] <= DiffOpcode.End
+      ) {
+        const frame = decodeDiffFrame(message);
+        if (frame.opcode === DiffOpcode.Begin) bodyCounts.set(frame.slot, 0);
+        else if (frame.opcode === DiffOpcode.Bodies)
+          bodyCounts.set(frame.slot, (bodyCounts.get(frame.slot) ?? 0) + frame.files.length);
+        else {
+          completed++;
+          changedBodies.push(bodyCounts.get(frame.slot) ?? 0);
+        }
+      }
+      if (holding && typeof message !== "string" && message[0] === DiffOpcode.End) {
+        completions.push(() => browserSocket.send(message));
+        return;
+      }
+      browserSocket.send(message);
+    });
+  });
+  return {
+    changedBodies,
+    get connections() {
+      return connections;
+    },
+    get completed() {
+      return completed;
+    },
+    finish: () => {
+      holding = false;
+      completions.splice(0).forEach((send) => send());
+    },
+  };
+}
+async function expectWorkingDiffLoaded(page: Page, timeout: number): Promise<void> {
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toBeAttached({ timeout });
+}
+async function expectAnnouncedTreeAndLoader(page: Page): Promise<void> {
+  await expect(changesTree(page).first()).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "Loading..." }).first()).toBeVisible();
+}
+
 test("Changes opens All changes for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
 
@@ -498,6 +622,35 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await expect(mode).toContainText("Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
+
+test("legacy diff hosts keep All, Committed and Uncommitted comparisons", async ({ page }) => {
+  await useLegacyDiffHost(page);
+  const workspace = await createWorkspaceWithScrollableComparisons();
+  await openWorkspaceChangesSurface(page, workspace);
+  await expect(changesTree(page).getByText("committed", { exact: true })).toBeVisible();
+  await expect(changesTree(page).getByText("uncommitted", { exact: true })).toBeVisible();
+  await selectChangesComparison(page, "Committed");
+  await expectWorkingComparisonFiles(page, "committed");
+  await selectChangesComparison(page, "Uncommitted");
+  await expectWorkingComparisonFiles(page, "uncommitted");
+});
+async function useLegacyDiffHost(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (envelope.message?.payload?.status === "server_info") {
+          delete envelope.message.payload.features.diffSubscription;
+          browserSocket.send(JSON.stringify(envelope));
+          return;
+        }
+      }
+      browserSocket.send(message);
+    });
+  });
+}
 
 test("Changes comparison controls the working diff and tree selection focuses its file", async ({
   page,
@@ -1311,11 +1464,13 @@ test("canvas diff uses the overlay scrollbar and its thumb controls vertical scr
 test("canvas headers keep a many-file diff bounded while scrolling end to end", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const workspace = await createWorkspaceWithManyTinyDiffs(2_000);
   await useUnwrappedDiffLines(page);
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
+  // Measure document bounds after delivery, independently of the cold Git read.
+  await expectWorkingDiffLoaded(page, 240_000);
   const root = page.getByTestId("git-diff-canvas-root");
   const scroller = page.getByTestId("git-diff-scroll");
   await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
@@ -1894,12 +2049,16 @@ async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
-async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<DirtyWorkspace> {
+async function createWorkspaceWithManyTinyDiffs(
+  fileCount: number,
+  branch = "main",
+): Promise<DirtyWorkspace> {
   const files = Array.from({ length: fileCount }, (_, index) => ({
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
     content: "export const value = 0;\n",
   }));
   const repo = await createTempGitRepo("changes-canvas-many-files-", { files });
+  if (branch !== "main") execFileSync("git", ["branch", "-m", branch], { cwd: repo.path });
   await Promise.all(
     files.map((file, index) =>
       writeFile(path.join(repo.path, file.path), `export const value = ${index + 1};\n`),

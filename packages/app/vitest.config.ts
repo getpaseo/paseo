@@ -261,12 +261,12 @@ export default defineConfig({
           "@floating-ui/react-native/dist/floating-ui.react-native.esm.js",
         ),
       },
-      // Point to the ESM build so Vite can transform its imports and apply the
+      // Point to react-native-web's ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
-      // Vite alias resolution).
+      // Vite alias resolution). The stub re-exports it and adds what web lacks.
       {
         find: "react-native",
-        replacement: path.resolve(rootNodeModules, "react-native-web/dist/index.js"),
+        replacement: path.resolve(__dirname, "test-stubs/react-native.mjs"),
       },
       { find: "react", replacement: resolvePackageEntry("react") },
       {

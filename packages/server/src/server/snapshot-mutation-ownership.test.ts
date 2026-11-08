@@ -1,3 +1,4 @@
+import { DiffSubscriptions } from "./diff/index.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
@@ -105,6 +106,13 @@ describe("snapshot mutation ownership boundary", () => {
 
     const session = asInternals<SessionInternals>(
       new Session({
+        checkoutDiffManager: createStub<SessionOptions["checkoutDiffManager"]>({
+          streams: new DiffSubscriptions({
+            async requestWorkingTreeWatch() {
+              throw new Error("Unexpected diff observation");
+            },
+          }),
+        }),
         workspaceRuntimeStore: createWorkspaceRuntimeStore(),
         messageReceipts: createMessageReceiptsStub(),
         agentMessages: createAgentMessageDeliveryStub(),

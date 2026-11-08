@@ -27,15 +27,22 @@ async function holdBranchSuggestions(page: Page) {
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((message) => {
-      const envelope = JSON.parse(message.toString());
-      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_request")
-        requestCount++;
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_request")
+          requestCount++;
+      }
       server.send(message);
     });
     server.onMessage(async (message) => {
-      const envelope = JSON.parse(message.toString());
-      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_response") {
-        await gate;
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (
+          envelope.type === "session" &&
+          envelope.message?.type === "branch_suggestions_response"
+        ) {
+          await gate;
+        }
       }
       browser.send(message);
     });

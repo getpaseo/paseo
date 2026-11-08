@@ -17,6 +17,7 @@ import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
+import { buildFillFixture, verifyReactFormFill } from "./browser-fill.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -216,7 +217,13 @@ async function settleDesktopStartup(page) {
 const CSP_PAGE_PATH = "/csp-no-eval";
 
 async function startTargetPage() {
+  const fillFixture = await buildFillFixture();
   const server = createServer((request, response) => {
+    if (request.url === "/react-fill") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(fillFixture);
+      return;
+    }
     if (request.url === CSP_PAGE_PATH) {
       response.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
@@ -782,6 +789,7 @@ async function runRegression({
     document.body.appendChild(overlayRoot);
   });
 
+  await verifyReactFormFill((name, args) => callBrowserTool(client, name, args), targetUrl);
   await verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl);
 
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });

@@ -146,6 +146,10 @@ export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
     exitCode: null,
     signalCode: null,
   }) as CodexAppServerChildProcess;
+  // A real ChildProcess closes its stdio after exit, then emits close.
+  child.once("exit", (code, signal) => {
+    queueMicrotask(() => child.emit("close", code, signal));
+  });
   child.kill = ((signal?: NodeJS.Signals | number) => {
     queueMicrotask(() => child.emit("exit", null, signal ?? null));
     return true;
