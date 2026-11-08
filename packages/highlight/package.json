@@ -5,7 +5,8 @@
   "files": [
     "dist",
     "!dist/**/*.map",
-    "src/astro/LICENSE"
+    "src/astro/LICENSE",
+    "src/hcl/LICENSE"
   ],
   "type": "module",
   "main": "./dist/index.js",
