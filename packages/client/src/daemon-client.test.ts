@@ -2946,14 +2946,38 @@ test("a latency measurement that joined a heartbeat probe survives the foregroun
   await vi.advanceTimersByTimeAsync(1_000);
   client.ensureConnected({ verify: true });
   expect(daemon.pingTimestamps()).toEqual(["10s", "11s"]);
-  // The heartbeat's pong lands at 12s and answers the fresh window; pongs are not correlated.
+  // The heartbeat's pong lands at 12s and answers the measurement that joined it.
   await vi.advanceTimersByTimeAsync(1_000);
-  await expect(measurement).resolves.toBe(1000);
+  await expect(measurement).resolves.toBe(2000);
   await vi.advanceTimersByTimeAsync(19_000);
   expect(client.getConnectionState()).toEqual({ status: "connected" });
   expect(daemon.closesFromClient()).toEqual([]);
   expect(attempts()).toBe(1);
   expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "22s"]);
+});
+
+test("a joined latency measurement outlives a silent foreground window until its own deadline", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("7s");
+  const { client, attempts } = connectThroughReplacements("latency-outlives-window", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // the first heartbeat ping is outstanding
+  const measurement = client.measureLatency({ timeoutMs: 10_000 });
+  await vi.advanceTimersByTimeAsync(1_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // the first window closes silent at 16s
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "16s"]);
+  // The heartbeat's pong lands at 17s, inside the second window and before the 20s deadline.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(measurement).resolves.toBe(7000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(attempts()).toBe(1);
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "16s", "27s"]);
 });
 
 // Fake timers cannot suspend: a suspension is modelled as the wall clock jumping forward while
