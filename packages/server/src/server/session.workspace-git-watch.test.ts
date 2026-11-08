@@ -841,6 +841,58 @@ describe("live workspace observation", () => {
     });
   }
 
+  /**
+   * Captures the terminal list at call time and can delay the next lookup, so a test can
+   * resolve a reconcile with the terminals that existed before a later change.
+   */
+  function createSlowTerminalManager(cwd: string): {
+    terminalManager: SessionOptions["terminalManager"];
+    addTerminal: (workspaceId: string) => void;
+    delayNextLookup: (delayMs: number) => void;
+    lookupCount: () => number;
+  } {
+    let terminals: Array<{
+      id: string;
+      cwd: string;
+      workspaceId: string;
+      getActivity: () => null;
+    }> = [];
+    let nextLookupDelayMs = 0;
+    let lookups = 0;
+
+    const terminalManager = asTerminalManager({
+      listDirectories: () => [cwd],
+      getTerminals: async (lookupCwd: string) => {
+        const snapshot = lookupCwd === cwd ? [...terminals] : [];
+        lookups += 1;
+        const delayMs = nextLookupDelayMs;
+        nextLookupDelayMs = 0;
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return snapshot;
+      },
+      subscribeTerminalsChanged: () => () => {},
+    });
+
+    return {
+      terminalManager,
+      addTerminal(workspaceId) {
+        terminals = [...terminals, { id: "terminal-1", cwd, workspaceId, getActivity: () => null }];
+      },
+      delayNextLookup(delayMs) {
+        nextLookupDelayMs = delayMs;
+      },
+      lookupCount() {
+        return lookups;
+      },
+    };
+  }
+
+  function reconcileObservers(session: Session): Promise<void> {
+    return asInternals<{ reconcileWorkspaceGitObservers: () => Promise<void> }>(
+      session,
+    ).reconcileWorkspaceGitObservers();
+  }
+
   test("an unfiltered workspace list subscribes to nothing and checkout status watches only live workspaces", async () => {
     const terminalCwd = "/tmp/terminal-workspace";
     const terminalManager = createTerminalManager({
@@ -1022,4 +1074,43 @@ describe("live workspace observation", () => {
 
     await session.cleanup();
   });
+
+  test("a reconcile that resolves late cannot remove a workspace a later reconcile added", async () => {
+    const terminalCwd = "/tmp/reconcile-race-workspace";
+    const slowTerminals = createSlowTerminalManager(terminalCwd);
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({ terminalManager: slowTerminals.terminalManager });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-race",
+      cwd: terminalCwd,
+      name: "race",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+
+    // The first reconcile reads the terminal list before the workspace has a terminal and holds
+    // that snapshot until after the second reconcile has made the workspace live.
+    const lookupsBeforeRace = slowTerminals.lookupCount();
+    slowTerminals.delayNextLookup(50);
+    const staleReconcile = reconcileObservers(session);
+    await vi.waitFor(() => expect(slowTerminals.lookupCount()).toBe(lookupsBeforeRace + 1));
+    slowTerminals.addTerminal("ws-race");
+    const freshReconcile = reconcileObservers(session);
+    await Promise.all([staleReconcile, freshReconcile]);
+
+    expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]);
+    expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
+
+    await session.cleanup();
+  });
+
 });
