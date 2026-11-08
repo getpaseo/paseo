@@ -1211,8 +1211,6 @@ class PluginAgentSession implements AgentSession {
   private readonly committedOptions: Record<string, JsonValue>;
   /** While `applyOptions` waits on the plugin, its `session.config` answers that call. */
   private applyingOptions = false;
-  /** One apply at a time: each reconciles against the settings the one before it left. */
-  private applying: Promise<unknown> = Promise.resolve();
   private currentTurnId: string | null = null;
   private closed = false;
   private replay: {
@@ -1422,13 +1420,8 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.configure({ thinkingOption: thinkingOptionId });
   }
 
-  applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
-    const run = this.applying.then(() => this.applyOptionsNow(options));
-    this.applying = run.catch(() => undefined);
-    return run;
-  }
-
-  private async applyOptionsNow(options: ProviderOptions): Promise<Record<string, JsonValue>> {
+  /** The agent manager sends one apply at a time per session. */
+  async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentOptions();
     const { legacySettings } = readPluginOptionState(this.bridge.config);

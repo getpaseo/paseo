@@ -1965,19 +1965,6 @@ describe("ACPAgentSession options against an ACP agent", () => {
     ]);
   });
 
-  test("overlapping applies that both fail still report what the agent moved", async () => {
-    const { session, optionEvents } = await openSession({ scenario: { onWrite: "slow-reject" } });
-
-    const first = session.applyOptions({ agent: "Probe Agent" });
-    const second = session.applyOptions({ agent: null });
-
-    await expect(first).rejects.toThrow(/write refused/);
-    await expect(second).rejects.toThrow(/write refused/);
-    expect(optionEvents).toEqual([
-      { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
-    ]);
-  });
-
   test("a removal writes the select's empty choice and returns it, since the options hold what the session runs", async () => {
     const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
 

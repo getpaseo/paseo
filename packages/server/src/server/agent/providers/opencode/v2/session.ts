@@ -386,14 +386,8 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = await this.client.session.get({ sessionID: this.id });
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
-  /** Overlapping applies run one after another, so a failed one restores exactly what it changed. */
-  private applying: Promise<unknown> = Promise.resolve();
-  applyOptions(options: ProviderOptions): Promise<void> {
-    const run = this.applying.then(() => this.applyOptionsNow(options));
-    this.applying = run.catch(() => undefined);
-    return run;
-  }
-  private async applyOptionsNow(options: ProviderOptions): Promise<void> {
+  /** The agent manager sends one apply at a time, so a failed one restores exactly what it changed. */
+  async applyOptions(options: ProviderOptions): Promise<void> {
     assertChangesAreLive({
       provider: "opencode",
       patch: options,

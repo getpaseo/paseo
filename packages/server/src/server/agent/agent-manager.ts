@@ -2363,111 +2363,123 @@ export class AgentManager {
     });
   }
 
+  // Mode, model, thinking and options change inside the agent's lifecycle lane, like every other
+  // mutation of one agent. A provider session therefore never has two of `setMode`, `setModel`,
+  // `setThinkingOption` and `applyOptions` in flight at once, and none of them overlaps an open,
+  // reload or close; providers do no sequencing of their own.
+
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
-    const agent = await this.ensureInteractiveSession(agentId);
-    const notice = (await agent.session.setMode(modeId)) ?? null;
-    await this.drainSessionEvents(agentId);
-    const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
-    agent.config.modeId = currentMode ?? undefined;
-    agent.currentModeId = currentMode;
-    // Update runtimeInfo to reflect the new mode
-    if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
-    }
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
-    return notice;
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = await this.ensureInteractiveSessionUnlocked(agentId);
+      const notice = (await agent.session.setMode(modeId)) ?? null;
+      await this.drainSessionEvents(agentId);
+      const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
+      agent.config.modeId = currentMode ?? undefined;
+      agent.currentModeId = currentMode;
+      // Update runtimeInfo to reflect the new mode
+      if (agent.runtimeInfo) {
+        agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
+      }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      return notice;
+    });
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
-    const agent = await this.ensureInteractiveSession(agentId);
-    const normalizedModelId =
-      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = await this.ensureInteractiveSessionUnlocked(agentId);
+      const normalizedModelId =
+        typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
 
-    const selection = await agent.session.setModel?.(normalizedModelId);
-    await this.drainSessionEvents(agentId);
+      const selection = await agent.session.setModel?.(normalizedModelId);
+      await this.drainSessionEvents(agentId);
 
-    // A reset clears the preference even when the provider retains its active model.
-    let effectiveModelId = normalizedModelId;
-    if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
+      // A reset clears the preference even when the provider retains its active model.
+      let effectiveModelId = normalizedModelId;
+      if (normalizedModelId !== null && selection) effectiveModelId = selection.model;
 
-    agent.config.model = effectiveModelId ?? undefined;
-    if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
-    }
-    this.refreshSessionPersistence(agent);
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
+      agent.config.model = effectiveModelId ?? undefined;
+      if (agent.runtimeInfo) {
+        agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId };
+      }
+      this.refreshSessionPersistence(agent);
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    });
   }
 
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
-    const agent = await this.ensureInteractiveSession(agentId);
-    const normalizedThinkingOptionId =
-      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
-        ? thinkingOptionId
-        : null;
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = await this.ensureInteractiveSessionUnlocked(agentId);
+      const normalizedThinkingOptionId =
+        typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+          ? thinkingOptionId
+          : null;
 
-    let notice: AgentProviderNotice | null = null;
-    if (agent.session.setThinkingOption) {
-      notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
-    }
-    await this.drainSessionEvents(agentId);
+      let notice: AgentProviderNotice | null = null;
+      if (agent.session.setThinkingOption) {
+        notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
+      }
+      await this.drainSessionEvents(agentId);
 
-    let effectiveThinkingOptionId = normalizedThinkingOptionId;
-    const runtimeInfo = await agent.session.getRuntimeInfo();
-    if (runtimeInfo.thinkingOptionId !== undefined) {
-      effectiveThinkingOptionId = runtimeInfo.thinkingOptionId;
-    }
+      let effectiveThinkingOptionId = normalizedThinkingOptionId;
+      const runtimeInfo = await agent.session.getRuntimeInfo();
+      if (runtimeInfo.thinkingOptionId !== undefined) {
+        effectiveThinkingOptionId = runtimeInfo.thinkingOptionId;
+      }
 
-    agent.config.thinkingOptionId = effectiveThinkingOptionId ?? undefined;
-    if (agent.runtimeInfo) {
-      agent.runtimeInfo = {
-        ...agent.runtimeInfo,
-        thinkingOptionId: effectiveThinkingOptionId,
-      };
-    }
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
-    return notice;
+      agent.config.thinkingOptionId = effectiveThinkingOptionId ?? undefined;
+      if (agent.runtimeInfo) {
+        agent.runtimeInfo = {
+          ...agent.runtimeInfo,
+          thinkingOptionId: effectiveThinkingOptionId,
+        };
+      }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      return notice;
+    });
   }
 
   /**
    * Applies an options patch to a running agent (see `AgentSession.applyOptions`). The provider
    * gets each key the patch touches, resolved against the `config.json` defaults, with `null`
    * where nothing is set. The patch and whatever the provider says it ended up with are stored in
-   * one step once the provider accepts, over the options as they are at that moment, so concurrent
-   * writes to one agent resolve by arrival order.
+   * one step once the provider accepts. Patches to one agent run one at a time, in arrival order.
    */
   async setAgentOptions(agentId: string, requested: ProviderOptionsPatch): Promise<void> {
-    const agent = await this.ensureInteractiveSession(agentId);
-    const patch = this.convertLegacyOptions(agent.provider, requested);
-    let ended: ProviderOptionsPatch = {};
-    let sent: ProviderOptionsPatch = {};
-    if (Object.keys(patch).length > 0) {
-      // A provider that cannot apply options to a running agent must not store them either.
-      if (!agent.session.applyOptions) {
-        throw new ProviderOptionsValidationError(
-          agent.provider,
-          Object.keys(patch).map((key) => ({
-            path: [key],
-            message: "cannot change on a running session; it applies when the agent is opened",
-          })),
-        );
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = await this.ensureInteractiveSessionUnlocked(agentId);
+      const patch = this.convertLegacyOptions(agent.provider, requested);
+      let ended: ProviderOptionsPatch = {};
+      let sent: ProviderOptionsPatch = {};
+      if (Object.keys(patch).length > 0) {
+        // A provider that cannot apply options to a running agent must not store them either.
+        if (!agent.session.applyOptions) {
+          throw new ProviderOptionsValidationError(
+            agent.provider,
+            Object.keys(patch).map((key) => ({
+              path: [key],
+              message: "cannot change on a running session; it applies when the agent is opened",
+            })),
+          );
+        }
+        const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
+        const resolved = this.effectiveOptionsFor(agent.provider, set);
+        sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
+        ended = (await agent.session.applyOptions(sent)) ?? {};
+        // Changes the provider made on its own while applying are older than its final answer.
+        await this.drainSessionEvents(agentId);
       }
-      const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
-      const resolved = this.effectiveOptionsFor(agent.provider, set);
-      sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
-      ended = (await agent.session.applyOptions(sent)) ?? {};
-      // Changes the provider made on its own while applying are older than its final answer.
-      await this.drainSessionEvents(agentId);
-    }
-    this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
-    this.updateEffectiveOptions({ agent, sent, reported: ended });
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
+      this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
+      this.updateEffectiveOptions({ agent, sent, reported: ended });
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    });
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */
@@ -3061,18 +3073,21 @@ export class AgentManager {
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
-      await this.trackAgentRegistrationOperation(
-        this.runLifecycleMutation(agentId, async () => {
-          const record = await this.registry?.get(agentId);
-          if (record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
-          const current = this.requireSessionAgent(agentId);
-          if (this.historySessions.has(current.session)) {
-            // Recheck inside the lane: another prompt may already have upgraded it.
-            // Reload validates the directory before releasing readable history.
-            await this.reloadAgentSessionInternal(agentId);
-          }
-        }),
+      await this.runLifecycleMutation(agentId, () =>
+        this.ensureInteractiveSessionUnlocked(agentId),
       );
+    }
+    return this.requireSessionAgent(agentId);
+  }
+
+  /** Inside the agent's lane: a history session is upgraded before anything is applied to it. */
+  private async ensureInteractiveSessionUnlocked(agentId: string): Promise<ActiveManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      const record = await this.registry?.get(agentId);
+      if (record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+      // Reload validates the directory before releasing readable history.
+      await this.trackAgentRegistrationOperation(this.reloadAgentSessionInternal(agentId));
     }
     return this.requireSessionAgent(agentId);
   }

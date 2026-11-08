@@ -58,11 +58,6 @@ interface ProviderHarnessOptions {
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
-/** Long enough for a request that is free to run to have run. */
-function pause(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
-}
-
 function controlKey(control: { key: string }): string {
   return control.key;
 }
@@ -1157,10 +1152,7 @@ describe("PluginAgentClientRegistry", () => {
     // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
     async function openStubbornVoiceSession(
       given: Record<string, boolean | string>,
-      {
-        refuseAfterChanging = false,
-        holdLoudChange,
-      }: { refuseAfterChanging?: boolean; holdLoudChange?: Promise<void> } = {},
+      { refuseAfterChanging = false }: { refuseAfterChanging?: boolean } = {},
     ) {
       const state: { voice: string; loud: boolean; tokenBudget?: number } = {
         voice: "direct",
@@ -1259,16 +1251,6 @@ describe("PluginAgentClientRegistry", () => {
             // Going loud returns an unrequested token budget to its default, by leaving it out.
             if (loud === true && tokenBudget === undefined) state.tokenBudget = undefined;
             emitConfig(emit, input.sessionId);
-            // A change that has taken effect but whose request is still pending.
-            if (typeof loud === "boolean" && holdLoudChange) {
-              await holdLoudChange;
-              emit({
-                type: "request.failed",
-                requestId: input.requestId,
-                error: { message: "no" },
-              });
-              return true;
-            }
             emit(
               refuseAfterChanging
                 ? { type: "request.failed", requestId: input.requestId, error: { message: "no" } }
@@ -1352,32 +1334,6 @@ describe("PluginAgentClientRegistry", () => {
 
       await expect(session.applyOptions?.({ loud: true })).rejects.toThrow("no");
 
-      expect(eventsOfType(events, "options_changed")).toEqual([
-        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
-      ]);
-      await session.close();
-    });
-
-    test("overlapping applies resolve one at a time: a request that fails after its change took still reports it", async () => {
-      let release: () => void = () => undefined;
-      const holdLoudChange = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const { harness, session, events } = await openStubbornVoiceSession({}, { holdLoudChange });
-
-      const first = session.applyOptions?.({ loud: true });
-      const firstFailed = expect(first).rejects.toThrow("no");
-      await pause();
-      expect(lastConfigure(harness.inputs)).toMatchObject({
-        changes: { providerOptions: { loud: true } },
-      });
-      const second = session.applyOptions?.({ voice: "other" });
-      // The second request does not start until the first has ended, so it cannot settle first.
-      await pause();
-      release();
-
-      await firstFailed;
-      await expect(second).resolves.toEqual({ voice: "direct" });
       expect(eventsOfType(events, "options_changed")).toEqual([
         { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
       ]);

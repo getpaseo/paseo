@@ -13449,6 +13449,7 @@ describe("agent options", () => {
   class OptionsSession extends TestAgentSession {
     readonly applied: ProviderOptions[] = [];
     rejectWith: Error | null = null;
+    /** Holds the next apply only; the one after it is answered at once. */
     applyGate: Promise<void> | null = null;
     /** What the session says it ended up with after the next apply. */
     ended: Record<string, unknown> = {};
@@ -13456,7 +13457,9 @@ describe("agent options", () => {
 
     async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
       if (this.rejectWith) throw this.rejectWith;
-      await this.applyGate;
+      const gate = this.applyGate;
+      this.applyGate = null;
+      await gate;
       this.applied.push(options);
       return this.ended;
     }
@@ -13681,7 +13684,7 @@ describe("agent options", () => {
     });
   });
 
-  test("concurrent patches both land: each is applied to the options as they are when its provider call resolves", async () => {
+  test("overlapping patches reach the provider one after the other, and both land", async () => {
     const { manager, client, agentId } = await createOptionsAgent();
     let release!: () => void;
     client.session!.applyGate = new Promise<void>((resolve) => {
@@ -13689,11 +13692,14 @@ describe("agent options", () => {
     });
 
     const slow = manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
-    client.session!.applyGate = null;
-    await manager.setAgentOptions(agentId, { web_search: true });
+    const next = manager.setAgentOptions(agentId, { web_search: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    // The second patch waits for the first to be answered: the provider never sees two at once.
+    expect(client.session?.applied).toEqual([]);
     release();
-    await slow;
+    await Promise.all([slow, next]);
 
+    expect(client.session?.applied).toEqual([{ sandbox_mode: "read-only" }, { web_search: true }]);
     expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
       sandbox_mode: "read-only",
       web_search: true,
