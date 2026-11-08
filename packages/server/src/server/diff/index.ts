@@ -50,6 +50,9 @@ interface Target {
   omitted: string[];
   refresh: Promise<void> | null;
   dirty: boolean;
+  checkInterpretation: (() => Promise<boolean>) | null;
+  interpretationCheck: Promise<void> | null;
+  interpretationDirty: boolean;
   release: (() => Promise<void>) | null;
   opening: Promise<void> | null;
   closed: boolean;
@@ -146,6 +149,9 @@ export class DiffSubscriptions {
         omitted: [],
         refresh: null,
         dirty: false,
+        checkInterpretation: null,
+        interpretationCheck: null,
+        interpretationDirty: false,
         release: null,
         opening: null,
         closed: false,
@@ -166,7 +172,10 @@ export class DiffSubscriptions {
               index: compare.base.kind === "index" || compare.head.kind !== "rev",
               worktree: compare.head.kind === "worktree",
             },
-            () => this.invalidate(captured),
+            (kind) => {
+              if (kind === "interpretation") this.invalidateInterpretation(captured);
+              else this.invalidate(captured);
+            },
           )
           .then((release) => {
             captured.release = release;
@@ -212,6 +221,7 @@ export class DiffSubscriptions {
         this.targets.delete(key);
         await current.release?.();
         await current.refresh;
+        await current.interpretationCheck;
       },
     };
   }
@@ -226,6 +236,28 @@ export class DiffSubscriptions {
     const matches = createRealpathAwarePathMatcher(root);
     for (const target of this.targets.values())
       if (matches(target.compare.cwd)) this.invalidate(target);
+  }
+  private invalidateInterpretation(target: Target): void {
+    if (target.closed) return;
+    target.interpretationDirty = true;
+    target.interpretationCheck ??= this.checkInterpretation(target).finally(() => {
+      target.interpretationCheck = null;
+    });
+  }
+  private async checkInterpretation(target: Target): Promise<void> {
+    do {
+      target.interpretationDirty = false;
+      try {
+        if (!target.checkInterpretation || (await target.checkInterpretation())) {
+          this.invalidate(target);
+          return;
+        }
+      } catch {
+        // A normal revision owns error delivery and recovery.
+        this.invalidate(target);
+        return;
+      }
+    } while (target.interpretationDirty && !target.closed);
   }
   private invalidate(target: Target): void {
     if (target.closed) return;
@@ -298,6 +330,7 @@ export class DiffSubscriptions {
       try {
         this.computations++;
         comparison = await listComparison(target.compare);
+        target.checkInterpretation = comparison.hasInterpretationChanged;
         const resolved = {
           baseSha: comparison.baseSha,
           headSha: comparison.headSha,
@@ -419,6 +452,7 @@ export class DiffSubscriptions {
       await target.opening;
       await target.release?.();
       await target.refresh;
+      await target.interpretationCheck;
     }
     this.targets.clear();
     await this.dependencies.close();

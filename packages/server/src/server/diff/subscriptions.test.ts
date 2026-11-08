@@ -865,3 +865,72 @@ test("pinned comparisons refresh Git interpretation before replaying to a joinin
     await rm(cwd, { recursive: true, force: true });
   }
 }, 30000);
+
+test.each(["pinned", "HEAD"] as const)(
+  "%s revision comparisons observe worktree attributes and replay their current result",
+  async (endpoint) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-worktree-attributes-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const observer = createFileObserver();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root, changed) {
+        const watch = await observer.subscribe(root, () => changed(), {
+          ignore: [join(root, ".git")],
+        });
+        return { repoRoot: root, unsubscribe: () => watch.unsubscribe() };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    const joined: DiffFrame[] = [];
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, "a.ts"), "export const value = 1;\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      await writeFile(join(cwd, "a.ts"), "export const value = 2;\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+      const compare = {
+        cwd,
+        base: { kind: "rev" as const, rev: base },
+        head: {
+          kind: "rev" as const,
+          rev: endpoint === "HEAD" ? "HEAD" : git("rev-parse", "HEAD"),
+        },
+      };
+      const first = await streams.subscribe(compare, async (frame) => {
+        frames.push(frame);
+      });
+      await first.start();
+      frames.length = 0;
+      await writeFile(join(cwd, ".gitattributes"), "a.ts -diff\n");
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 10000 })
+        .toBe(true);
+      expect(frames.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+        entries: [{ path: "a.ts", content: "binary" }],
+      });
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      const computations = streams.getMetrics().computations;
+      const second = await streams.subscribe(compare, async (frame) => {
+        joined.push(frame);
+      });
+      await second.start();
+      expect(joined.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+        entries: [{ path: "a.ts", content: "binary" }],
+      });
+      expect(joined.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      expect(streams.getMetrics().computations).toBe(computations);
+      await second.release();
+      await first.release();
+    } finally {
+      await streams.close();
+      await observer.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+  30000,
+);

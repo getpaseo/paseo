@@ -665,3 +665,55 @@ test("replacing a submodule with a regular file preserves its replacement body",
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { ignoreWhitespace: false, after: "export const value = 2;\n", files: ["a.ts"] },
+  { ignoreWhitespace: true, after: "export  const value = 1;\n", files: [] },
+])(
+  "interpretation checks ignore content edits but detect new binary attributes, whitespace=$ignoreWhitespace",
+  async ({ ignoreWhitespace, after, files }) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-interpretation-check-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      git("config", "core.autocrlf", "false");
+      await writeFile(join(cwd, "a.ts"), "export const value = 1;\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      await writeFile(join(cwd, "a.ts"), after);
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+      const compare = {
+        cwd,
+        base: { kind: "rev" as const, rev: base },
+        head: { kind: "rev" as const, rev: git("rev-parse", "HEAD") },
+        ignoreWhitespace,
+        highlight: false,
+      };
+      const comparison = await listComparison(compare);
+      try {
+        expect(comparison.files.map((file) => file.entry.path)).toEqual(files);
+        expect(await comparison.hasInterpretationChanged()).toBe(false);
+        await writeFile(join(cwd, "a.ts"), "uncommitted content\n");
+        expect(await comparison.hasInterpretationChanged()).toBe(false);
+        await writeFile(join(cwd, ".gitattributes"), "a.ts -diff\n");
+        expect(await comparison.hasInterpretationChanged()).toBe(true);
+        const fresh = await listComparison(compare);
+        try {
+          expect(fresh.files.map((file) => file.entry)).toEqual([
+            expect.objectContaining({ path: "a.ts", content: "binary" }),
+          ]);
+        } finally {
+          await fresh.close();
+        }
+      } finally {
+        await comparison.close();
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

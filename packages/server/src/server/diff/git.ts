@@ -1,5 +1,5 @@
 import { parseGitRevParsePath } from "../../utils/git-rev-parse-path.js";
-import { readGitInputIdentities } from "./inputs.js";
+import { readGitInputs } from "./inputs.js";
 import { Patches } from "./patches.js";
 import { HighlightSources } from "./sources.js";
 import {
@@ -42,6 +42,7 @@ export interface Comparison extends Pick<
   metrics: { highlightCalls: number };
   close(): Promise<void>;
   selectBodies(paths: ReadonlySet<string>): void;
+  hasInterpretationChanged(): Promise<boolean>;
   read(
     file: ListedFile,
     budget?: { remainingBytes?: number; maxPatchBytes?: number },
@@ -194,11 +195,20 @@ async function readComparisonList(
       ...(privateIndex ? { GIT_INDEX_FILE: privateIndex.indexFile } : {}),
     },
   };
-  const { files, worktreeFiles } = await readTrackedFiles(compare, args, options);
+  const { files, worktreeFiles, interpretationPaths } = await readTrackedFiles(
+    compare,
+    args,
+    options,
+  );
   if (compare.head.kind === "worktree") files.push(...(await listUntrackedFiles(options)));
   files.sort((a, b) => a.entry.path.localeCompare(b.entry.path));
-  const gitInputs = await readGitInputIdentities(files, worktreeFiles, options);
-  for (const file of files) file.identity += `:${gitInputs.get(file.entry.path) ?? ""}`;
+  for (const file of files) interpretationPaths.add(file.entry.path);
+  const gitInputs = await readGitInputs([...interpretationPaths].sort(), worktreeFiles, options);
+  for (const file of files)
+    file.identity += JSON.stringify([
+      gitInputs.identities.get(file.entry.path),
+      gitInputs.identities.get(file.entry.oldPath ?? file.entry.path),
+    ]);
   const metrics = { highlightCalls: 0 };
   const patches = new Patches(args, options, files);
   const sources = new HighlightSources({
@@ -214,6 +224,7 @@ async function readComparisonList(
     files,
     metrics,
     selectBodies: (paths) => patches.select(paths),
+    hasInterpretationChanged: gitInputs.hasInterpretationChanged,
     close: async () => {
       await privateIndex?.cleanup();
     },
@@ -282,9 +293,9 @@ async function readTrackedFiles(
   compare: Compare,
   args: string[],
   options: GitCommandOptions,
-): Promise<{ files: ListedFile[]; worktreeFiles: Set<string> }> {
+): Promise<{ files: ListedFile[]; worktreeFiles: Set<string>; interpretationPaths: Set<string> }> {
   const [raw, stat] = await Promise.all([
-    runGitCommand([...args, "--raw", "--no-abbrev", "-z"], options),
+    runGitCommand([...args.filter((arg) => arg !== "-w"), "--raw", "--no-abbrev", "-z"], options),
     runGitCommand([...args, "--numstat", "-z"], options),
   ]);
   if (raw.truncated || stat.truncated)
@@ -293,6 +304,7 @@ async function readTrackedFiles(
   const fields = raw.stdout.split("\0");
   const files: ListedFile[] = [];
   const worktreeFiles = new Set<string>();
+  const interpretationPaths = new Set<string>();
   for (let index = 0; index < fields.length - 1; index++) {
     const header = fields[index].split(" ");
     const code = header[4]?.[0];
@@ -302,6 +314,8 @@ async function readTrackedFiles(
       oldPath = path;
       path = fields[++index];
     }
+    interpretationPaths.add(path);
+    if (oldPath !== null) interpretationPaths.add(oldPath);
     const counts = stats.get(path);
     // With -w, a raw metadata entry need not have a numstat record.
     if (!counts && compare.ignoreWhitespace) continue;
@@ -314,7 +328,7 @@ async function readTrackedFiles(
     if (compare.head.kind === "worktree" && code !== "D") {
       const worktree = await readWorktreeIdentity(path, header, options);
       identity += `:${worktree.identity}`;
-      if (worktree.regular) worktreeFiles.add(path);
+      if (worktree.regular && !counts.binary) worktreeFiles.add(path);
     }
 
     files.push({
@@ -331,7 +345,7 @@ async function readTrackedFiles(
       source: { kind: "tracked" },
     });
   }
-  return { files, worktreeFiles };
+  return { files, worktreeFiles, interpretationPaths };
 }
 
 async function readWorktreeIdentity(

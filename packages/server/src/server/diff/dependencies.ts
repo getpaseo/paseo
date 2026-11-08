@@ -20,7 +20,7 @@ export class DiffDependencyObserver {
   constructor(private workspaceGit: Pick<WorkspaceGitService, "requestWorkingTreeWatch">) {}
   async declareDependencies(
     input: DiffDependencies,
-    changed: () => void,
+    changed: (kind: "endpoints" | "interpretation") => void,
   ): Promise<() => Promise<void>> {
     const hasMutableEndpoints = input.refs.length > 0 || input.index || input.worktree;
     let polling: ReturnType<typeof setInterval> | null = null;
@@ -48,25 +48,29 @@ export class DiffDependencyObserver {
           root,
           (error, events) => {
             if (error) {
-              changed();
-              polling ??= setInterval(changed, 5000);
+              changed("endpoints");
+              polling ??= setInterval(() => changed("endpoints"), 5000);
               return;
             }
-            const affectsInput = events.some((event) => {
+            let interpretation = false;
+            const endpoints = events.some((event) => {
               const path = event.path.slice(root.length + 1).replaceAll("\\", "/");
-              if (scopes.some((scope) => affectsGitDiffInterpretation(scope, path))) return true;
+              if (scopes.some((scope) => affectsGitDiffInterpretation(scope, path)))
+                interpretation = true;
               if (!hasMutableEndpoints) return false;
               if (path === "index") return input.index;
               return scopes.some((scope) => classifyGitMetadataPath(scope, path).kind !== "ignore");
             });
-            if (affectsInput) changed();
+            if (endpoints) changed("endpoints");
+            else if (interpretation) changed("interpretation");
           },
           { ignore: [resolve(root, "objects"), resolve(root, "logs"), resolve(root, "hooks")] },
         );
         subscriptions.push(subscription);
       }
-      if (input.worktree)
-        workingTree = await this.workspaceGit.requestWorkingTreeWatch(input.cwd, changed);
+      workingTree = await this.workspaceGit.requestWorkingTreeWatch(input.cwd, () =>
+        changed(input.worktree ? "endpoints" : "interpretation"),
+      );
       return async () => {
         if (polling) clearInterval(polling);
         await workingTree?.unsubscribe();
