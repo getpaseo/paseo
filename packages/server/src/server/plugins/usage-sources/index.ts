@@ -45,6 +45,11 @@ interface DiscoverOptions {
   previous?: ReadonlyMap<string, KnownReport>;
 }
 
+interface PresentReportOptions {
+  entry: UsageReportEntry;
+  known: KnownReport;
+}
+
 interface MergeReportsOptions {
   into: Map<string, KnownReport>;
   reports: Iterable<[string, KnownReport]>;
@@ -157,8 +162,9 @@ export class UsageSourceRegistry {
         if (!known) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
-            options.onReport?.(entry);
-            return entry;
+            const report = presentReport({ entry, known });
+            options.onReport?.(report);
+            return report;
           }),
         ];
       }),
@@ -452,10 +458,6 @@ function sameLogin(a: Login, b: Login): boolean {
   return canonicalJson(a.input) === canonicalJson(b.input);
 }
 
-function loginKey(login: Login): string {
-  return canonicalJson(login);
-}
-
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, nested) =>
     nested !== null && typeof nested === "object" && !Array.isArray(nested)
@@ -466,6 +468,25 @@ function canonicalJson(value: unknown): string {
 
 function cacheIdentity(id: string, known: KnownReport): string {
   return `${id}:${createHash("sha256")
-    .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
+    .update(canonicalJson(known.logins.map((login) => login.input)))
     .digest("hex")}`;
+}
+
+// Labels describe the current discovery, while cached polls and history belong to login inputs.
+function presentReport({ entry, known }: PresentReportOptions): UsageReportEntry {
+  return {
+    ...entry,
+    sourceLabel: known.source.label,
+    icon: known.source.icon,
+    account: { label: known.label },
+    ...(entry.loginErrors
+      ? {
+          // Errors are emitted only when every ordered login failed, so positions match inputs.
+          loginErrors: entry.loginErrors.map((error, index) => ({
+            ...error,
+            harness: known.logins[index]!.harness,
+          })),
+        }
+      : {}),
+  };
 }

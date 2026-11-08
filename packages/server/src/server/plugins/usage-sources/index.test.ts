@@ -175,7 +175,7 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
   const second = registry.listReports();
   finish({ status: "available", windows: [] });
   const [one, two] = await Promise.all([first, second]);
-  expect(one[0]).toBe(two[0]);
+  expect(one[0]).toEqual(two[0]);
   expect(fetches).toBe(1);
 });
 
@@ -962,4 +962,43 @@ test("unregistering a source drops the accounts each host scope kept for it", as
   registry.register(claude);
   fails = true;
   expect(await registry.listReports()).toEqual([]);
+});
+
+test("#3589: renaming a provider preserves cached usage and recovery history while updating error labels", async () => {
+  let label = "Before";
+  let available = true;
+  let polls = 0;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label, env: { CLAUDE_CONFIG_DIR: "/work" } },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) =>
+      scope.kind === "global" ? [] : [{ key: "work", input: { path: "/work" } }],
+    fetch: async () => {
+      polls++;
+      return available
+        ? { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] }
+        : { status: "error", error: "offline" };
+    },
+  });
+  const [success] = await registry.listReports();
+  available = false;
+  label = "After";
+  const [cached] = await registry.listReports();
+  expect(cached?.report).toEqual(success?.report);
+  expect(polls).toBe(1);
+  const [failed] = await registry.listReports({ forceRefresh: true });
+  expect(failed?.lastSuccessful?.report).toEqual(success?.report);
+  expect(failed?.loginErrors?.map((login) => login.harness)).toEqual(["After"]);
+  label = "Renamed again";
+  const [relabeled] = await registry.listReports();
+  expect(polls).toBe(2);
+  expect(relabeled?.lastSuccessful).toEqual(failed?.lastSuccessful);
+  expect(relabeled?.loginErrors?.map((login) => login.harness)).toEqual(["Renamed again"]);
 });
