@@ -1127,6 +1127,48 @@ describe("archiveByScope", () => {
     });
   });
 
+  test("a removal failure after the point of no return still refreshes the main repo", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-failure-refresh");
+    const workspaceId = "ws-removal-failure-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    // The last-reference read inside removal fails after the records are already archived.
+    deps.listActiveWorkspaces = vi.fn(async () => {
+      throw new Error("registry unavailable");
+    });
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-removal-failure-refresh",
+        activeWorkspaces: deps.activeWorkspaces,
+      }),
+    ).rejects.toThrow("registry unavailable");
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).not.toContain(
+      workspaceId,
+    );
+
+    await vi.waitFor(() => {
+      expect(deps.workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree",
+      });
+    });
+  });
+
   test("reuses the caller's active-workspace snapshot and still reads fresh before deleting", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
