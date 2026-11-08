@@ -1143,6 +1143,12 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
+// Window of each check after the app returns to the foreground. A socket that silently died
+// while the app was suspended stays OPEN and accepts sends, so only inbound frames prove it.
+const FOREGROUND_LIVENESS_TIMEOUT_MS = 5_000;
+// A foreground window whose timer fires this much later than scheduled (wall clock) spanned
+// another suspension or a blocked JS thread, so its silence is no evidence either way.
+const SUSPENDED_WINDOW_SLACK_MS = 2_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
@@ -1305,12 +1311,26 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  // Wall clock, which keeps running while the OS has JS suspended; perfNow may not.
+  startedAtWallMs: number;
   receivedActivity: boolean;
-  // Whether a timeout on this ping should be recorded as a liveness failure. Only the
-  // heartbeat sets this; a latency measurement never drives teardown, even when a
-  // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
-  drivesLivenessFailure: boolean;
+  role: PingProbeRole;
 }
+
+// A latency measurement waits for the next pong, not for a particular probe: the liveness
+// cycle may replace the probe the measurement joined, and a pong that answers an expired window
+// still proves the socket. It settles on a pong, a connection failure, or its own deadline.
+interface PongWaiter {
+  startedAt: number;
+  resolve: (rttMs: number) => void;
+  reject: (error: Error) => void;
+}
+
+// Who started the probe. A "latency" probe never drives teardown, even when a heartbeat
+// tick shares (dedupes onto) it. A "heartbeat" probe runs the regular cadence. A
+// "foreground" probe belongs to the verification cycle that ensureConnected({ verify })
+// runs after the app resumes: short window, immediate second check, reconnect at once.
+type PingProbeRole = "latency" | "heartbeat" | "foreground";
 
 // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
 export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
@@ -1463,6 +1483,7 @@ export class DaemonClient {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
+  private readonly pongWaiters = new Set<PongWaiter>();
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
@@ -1788,6 +1809,7 @@ export class DaemonClient {
     this.creations.close();
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
+    this.rejectPongWaiters(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
@@ -1810,7 +1832,7 @@ export class DaemonClient {
       this.shouldReconnect = true;
     }
     if (this.connectionState.status === "connected") {
-      if (options?.verify) this.tickLivenessHeartbeat();
+      if (options?.verify) this.verifyConnectionOnForeground();
       return;
     }
     if (this.connectionState.status === "connecting") return;
@@ -2561,43 +2583,41 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    let deadline: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
-    });
-    return Promise.race([
-      this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }),
-      timeout,
-    ])
-      .catch((error) => {
-        throw toTimeoutError(error, "Latency measurement", timeoutMs);
-      })
-      .finally(() => clearTimeout(deadline));
-  }
-
-  private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
-    const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    try {
-      const rttMs = await this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: true });
-      this.lastLivenessRttMs = rttMs;
-      return rttMs;
-    } catch (error) {
-      throw toTimeoutError(error, "Liveness check", timeoutMs);
-    }
-  }
-
-  private sendPingAwaitRtt(params: {
-    timeoutMs: number;
-    drivesLivenessFailure: boolean;
-  }): Promise<number> {
     if (this.connectionState.status !== "connected" || !this.transport) {
       return Promise.reject(
         new Error(`Transport not connected (status: ${this.connectionState.status})`),
       );
     }
+    const waiter: PongWaiter = { startedAt: perfNow(), resolve: () => {}, reject: () => {} };
+    const pong = new Promise<number>((resolve, reject) => {
+      waiter.resolve = resolve;
+      waiter.reject = reject;
+    });
+    let deadline: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
+    });
+    this.pongWaiters.add(waiter);
+    // The probe only puts a ping on the wire; its own outcome is the heartbeat's concern. A
+    // measurement that joins an in-flight ping reports that ping's round trip, so the clock
+    // starts at the send, not at the join.
+    const probe = this.ensurePingProbe({ timeoutMs, role: "latency" });
+    void probe.promise.catch(() => {});
+    waiter.startedAt = probe.startedAt;
+    return Promise.race([pong, timeout])
+      .catch((error) => {
+        throw toTimeoutError(error, "Latency measurement", timeoutMs);
+      })
+      .finally(() => {
+        clearTimeout(deadline);
+        this.pongWaiters.delete(waiter);
+      });
+  }
 
+  // One ping is outstanding at a time; a caller that finds one shares it.
+  private ensurePingProbe(params: { timeoutMs: number; role: PingProbeRole }): PingProbe {
     if (this.pingProbe) {
-      return this.pingProbe.promise;
+      return this.pingProbe;
     }
 
     const startedAt = perfNow();
@@ -2613,10 +2633,20 @@ export class DaemonClient {
       this.pingProbe = null;
       const error = new PingTimeoutError(timeoutMs);
       probe.reject(error);
+      if (
+        probe.role === "foreground" &&
+        Date.now() - probe.startedAtWallMs > timeoutMs + SUSPENDED_WINDOW_SLACK_MS
+      ) {
+        // The app was suspended again inside this window. Discard it, any frame it saw and
+        // the misses before it; the heartbeat tick that owns this probe starts the cycle over.
+        probe.receivedActivity = false;
+        this.consecutiveLivenessFailures = 0;
+        return;
+      }
       // Keep the deadline fixed so subsequent pings renew the daemon socket lease
       // during a long download. Progress proves life even when its pong is queued.
-      if (probe.drivesLivenessFailure && !probe.receivedActivity) {
-        this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
+      if (probe.role !== "latency" && !probe.receivedActivity) {
+        this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs), probe.role);
       }
     };
     const probe: PingProbe = {
@@ -2626,7 +2656,8 @@ export class DaemonClient {
       timeoutHandle: setTimeout(expire, timeoutMs),
       receivedActivity: false,
       startedAt,
-      drivesLivenessFailure: params.drivesLivenessFailure,
+      startedAtWallMs: Date.now(),
+      role: params.role,
     };
     this.pingProbe = probe;
 
@@ -2634,7 +2665,8 @@ export class DaemonClient {
       if (this.pingProbe !== probe) return;
       const sendError = error instanceof Error ? error : new Error(String(error));
       this.rejectPingProbe(sendError);
-      if (probe.drivesLivenessFailure) this.recordLivenessFailure(sendError);
+      this.rejectPongWaiters(sendError);
+      if (probe.role !== "latency") this.recordLivenessFailure(sendError, probe.role);
     };
     try {
       void this.sendJsonMessage("ping", "ping", { type: "ping" }).catch(rejectSend);
@@ -2642,7 +2674,7 @@ export class DaemonClient {
       rejectSend(error);
     }
 
-    return promise;
+    return probe;
   }
 
   private startLivenessHeartbeat(): void {
@@ -2669,14 +2701,55 @@ export class DaemonClient {
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
   }
 
-  private tickLivenessHeartbeat(): void {
+  /**
+   * The app came back to the foreground. Start a fresh verification cycle: two
+   * FOREGROUND_LIVENESS_TIMEOUT_MS windows back to back, then teardown and an immediate
+   * reconnect. Misses recorded before the app was suspended do not count, and a heartbeat
+   * probe that straddled the suspension measured the suspension, not the socket, so it is
+   * dropped without a miss. Latency measurements wait for the next pong, so replacing the
+   * probe they joined does not fail them.
+   */
+  private verifyConnectionOnForeground(): void {
+    // A cycle already running keeps its deadline and its window count.
+    if (this.pingProbe?.role === "foreground") return;
+    if (this.pingProbe?.role === "heartbeat") {
+      this.rejectPingProbe(new Error("Heartbeat superseded by foreground check"));
+    }
+    // A shared latency probe keeps its deadline, but only frames that arrive from now on count
+    // for this check; a latency probe never reads this flag for itself.
+    if (this.pingProbe) this.pingProbe.receivedActivity = false;
+    this.consecutiveLivenessFailures = 0;
+    this.tickLivenessHeartbeat("foreground");
+  }
+
+  private tickLivenessHeartbeat(check: "heartbeat" | "foreground" = "heartbeat"): void {
     this.stopLivenessHeartbeat();
     const transport = this.transport;
-    const tick = this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS });
-    void tick
-      .catch(() => {})
-      .finally(() => {
-        if (this.transport === transport) this.scheduleNextLivenessHeartbeat();
+    if (this.connectionState.status !== "connected" || !transport) return;
+    const probe = this.ensurePingProbe({
+      timeoutMs:
+        check === "foreground" ? FOREGROUND_LIVENESS_TIMEOUT_MS : LIVENESS_HEARTBEAT_TIMEOUT_MS,
+      role: check,
+    });
+    void probe.promise
+      .then(
+        (rttMs) => {
+          this.lastLivenessRttMs = rttMs;
+          return true;
+        },
+        () => probe.receivedActivity,
+      )
+      .then((alive) => {
+        // A replaced transport, or a probe that superseded this one, owns the next step.
+        if (this.transport !== transport || this.pingProbe) return;
+        if (!alive && check === "foreground") {
+          // Zero inbound frames in a foreground window: check again now. The second silent
+          // window reaches the threshold inside recordLivenessFailure.
+          this.tickLivenessHeartbeat("foreground");
+          return;
+        }
+        this.scheduleNextLivenessHeartbeat();
+        return;
       });
   }
 
@@ -7197,6 +7270,7 @@ export class DaemonClient {
         messageType: "pong",
       });
       this.resolvePingProbe();
+      this.resolvePongWaiters();
       this.runtimeMetrics?.recordMessage("pong", bytes, perfNow() - startMs);
       return;
     }
@@ -7446,6 +7520,8 @@ export class DaemonClient {
     reason?: string;
     event?: string;
     reasonCode?: string;
+    // Attempt now instead of after the backoff delay. Failures of that attempt back off as usual.
+    immediate?: boolean;
   }): void {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -7476,6 +7552,7 @@ export class DaemonClient {
     this.clearWaiters(connectionError, true);
     this.rejectPendingSendQueue(connectionError);
     this.rejectPingProbe(connectionError);
+    this.rejectPongWaiters(connectionError);
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
 
@@ -7495,6 +7572,10 @@ export class DaemonClient {
       return;
     }
 
+    if (input?.immediate) {
+      void this.attemptConnect();
+      return;
+    }
     this.armReconnectTimer();
   }
 
@@ -7569,7 +7650,18 @@ export class DaemonClient {
     probe.reject(error);
   }
 
-  private recordLivenessFailure(error: Error): void {
+  private resolvePongWaiters(): void {
+    const now = perfNow();
+    for (const waiter of this.pongWaiters) waiter.resolve(now - waiter.startedAt);
+    this.pongWaiters.clear();
+  }
+
+  private rejectPongWaiters(error: Error): void {
+    for (const waiter of this.pongWaiters) waiter.reject(error);
+    this.pongWaiters.clear();
+  }
+
+  private recordLivenessFailure(error: Error, role: PingProbeRole): void {
     this.consecutiveLivenessFailures += 1;
     if (this.consecutiveLivenessFailures < LIVENESS_FAILURE_RECONNECT_THRESHOLD) {
       return;
@@ -7581,6 +7673,8 @@ export class DaemonClient {
       reason: error.message,
       event: "LIVENESS_TIMEOUT",
       reasonCode: "liveness_timeout",
+      // The foreground cycle already waited two windows; the user is looking at the app.
+      immediate: role === "foreground",
     });
   }
 
