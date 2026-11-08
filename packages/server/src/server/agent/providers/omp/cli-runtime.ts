@@ -3,7 +3,10 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import {
+  resolveProviderCommandPrefix,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -57,22 +60,33 @@ export interface OmpCliRuntimeOptions {
   readyTimeoutMs?: number;
   requestTimeoutMs?: number;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  /**
+   * Resolves the binary to launch when the provider can name one. A bare name only
+   * works if the spawned shell searches the same PATH the diagnostic did, which is
+   * not guaranteed for a daemon child (#8920). Consulted only when the configured
+   * command is not a `replace` override, whose argv always wins. A rejected
+   * resolver aborts the session start.
+   */
+  resolveDefaultCommand?: () => Promise<string | null>;
 }
 
 export class OmpCliRuntime implements OmpRuntime {
   private readonly command: [string, ...string[]];
   private readonly commandsRpcName: "get_available_commands";
   private readonly spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  private readonly resolveDefaultCommand?: () => Promise<string | null>;
 
   constructor(private readonly options: OmpCliRuntimeOptions) {
     this.command = options.command ?? DEFAULT_OMP_COMMAND;
     this.commandsRpcName = options.commandsRpcName ?? DEFAULT_COMMANDS_RPC_NAME;
     this.spawnProcess = options.spawnProcess;
+    this.resolveDefaultCommand = options.resolveDefaultCommand;
   }
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+    const commandPrefix = this.resolveCommand();
     const launch = buildOmpLaunch({
-      command: this.command,
+      command: Array.isArray(commandPrefix) ? commandPrefix : await commandPrefix,
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
@@ -109,6 +123,25 @@ export class OmpCliRuntime implements OmpRuntime {
     } finally {
       input.signal?.removeEventListener("abort", handleAbort);
     }
+  }
+
+  /** Launch the resolved binary when the provider can name one. */
+  private resolveCommand(): [string, ...string[]] | Promise<[string, ...string[]]> {
+    if (this.options.runtimeSettings?.command?.mode === "replace" || !this.resolveDefaultCommand) {
+      return this.command;
+    }
+    return this.resolveDefaultCommandAndArgs();
+  }
+
+  private async resolveDefaultCommandAndArgs(): Promise<[string, ...string[]]> {
+    const prefix = await resolveProviderCommandPrefix(
+      this.options.runtimeSettings?.command,
+      async () => {
+        const resolved = await this.resolveDefaultCommand?.();
+        return resolved ?? this.command[0];
+      },
+    );
+    return [prefix.command, ...prefix.args, ...this.command.slice(1)];
   }
 }
 

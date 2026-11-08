@@ -52,13 +52,17 @@ function createOmpChild(options?: {
 function createRuntime(
   child: OmpChild,
   launches: OmpRuntimeLaunch[] = [],
-  options?: { requestTimeoutMs?: number },
+  options?: {
+    requestTimeoutMs?: number;
+    resolveDefaultCommand?: () => Promise<string | null>;
+  },
 ): OmpCliRuntime {
   return new OmpCliRuntime({
     logger: pino({ level: "silent" }),
     command: ["omp"],
     commandsRpcName: "get_available_commands",
     requestTimeoutMs: options?.requestTimeoutMs,
+    resolveDefaultCommand: options?.resolveDefaultCommand,
     spawnProcess: (launch) => {
       launches.push(launch);
       return child;
@@ -121,6 +125,77 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test("launches the resolved binary instead of the bare default command", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({}));
+    const launches: OmpRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches, {
+      resolveDefaultCommand: async () => "/resolved/bin/omp",
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["/resolved/bin/omp", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
+  test("keeps an explicitly configured command over the resolved binary", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({}));
+    const launches: OmpRuntimeLaunch[] = [];
+    let resolveCalls = 0;
+    const runtime = new OmpCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["omp"],
+      runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: ["custom-omp"],
+        },
+      },
+      resolveDefaultCommand: async () => {
+        resolveCalls += 1;
+        return "/resolved/bin/omp";
+      },
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return child;
+      },
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["custom-omp", "--mode", "rpc"],
+      }),
+    ]);
+    expect(resolveCalls).toBe(0);
+  });
+
+  test("falls back to the configured default command when the binary does not resolve", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({}));
+    const launches: OmpRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches, {
+      resolveDefaultCommand: async () => null,
+    });
+
+    await runtime.startSession({ cwd: "/workspace/project" });
+
+    expect(launches).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace/project",
+        argv: ["omp", "--mode", "rpc"],
+      }),
+    ]);
+  });
+
   test("steer waits for OMP's response and surfaces rejection", async () => {
     const child = createOmpChild();
     let pending: Record<string, unknown> | null = null;

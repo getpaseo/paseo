@@ -41,6 +41,7 @@ import {
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
@@ -595,7 +596,33 @@ function isOmpAgentSessionEvent(event: OmpRuntimeEvent): event is OmpAgentSessio
   }
 }
 
-function createRuntime(
+const OMP_BINARY_COMMAND = process.env.OMP_COMMAND ?? "omp";
+
+let cachedOmpBinaryPath: string | null = null;
+
+/**
+ * Resolve the OMP binary to a concrete path (#8920). Diagnostics already resolve
+ * one; launching that same path keeps the runtime and the diagnostic in
+ * agreement instead of relying on the spawned shell to re-resolve a bare name,
+ * which is subject to cmd.exe's 8,191-character command-line limit on Windows.
+ * A hit is cached and revalidated so an OMP that moved or was reinstalled is
+ * resolved again instead of launching a stale path; a miss is retried so an OMP
+ * installed after the daemon started is picked up without a restart.
+ */
+async function resolveOmpBinaryPath(): Promise<string | null> {
+  if (cachedOmpBinaryPath && existsSync(cachedOmpBinaryPath)) {
+    return cachedOmpBinaryPath;
+  }
+  cachedOmpBinaryPath = null;
+  try {
+    cachedOmpBinaryPath = await findExecutable(OMP_BINARY_COMMAND);
+  } catch {
+    return null;
+  }
+  return cachedOmpBinaryPath;
+}
+
+export function createOmpRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
   providerOptions: OmpRuntimeOptions,
@@ -603,10 +630,11 @@ function createRuntime(
   return new OmpCliRuntime({
     logger,
     runtimeSettings,
-    command: ["omp"],
+    command: [OMP_BINARY_COMMAND],
     commandsRpcName: "get_available_commands",
     readyTimeoutMs: providerOptions.readyTimeoutMs,
     requestTimeoutMs: providerOptions.rpcTimeoutMs,
+    resolveDefaultCommand: resolveOmpBinaryPath,
   });
 }
 
@@ -2635,13 +2663,13 @@ export class OmpAgentClient implements AgentClient {
 
   private resolveRuntime(providerOptions: Record<string, unknown> | undefined): OmpRuntime {
     const { runtimeOptions } = resolveOmpProviderOptions(providerOptions);
-    return this.runtime ?? createRuntime(this.logger, this.runtimeSettings, runtimeOptions);
+    return this.runtime ?? createOmpRuntime(this.logger, this.runtimeSettings, runtimeOptions);
   }
 
   private async resolveOmpLaunch(): Promise<ResolvedProviderLaunch> {
     return resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
-      defaultBinary: "omp",
+      defaultBinary: OMP_BINARY_COMMAND,
     });
   }
 }
