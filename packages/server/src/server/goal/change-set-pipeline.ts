@@ -695,6 +695,10 @@ export class ChangeSetPipeline {
       const original = goal.tasks.find((t) => t.id === cs.taskId);
       if (!original) return;
       const base = rootTaskId(cs.taskId);
+      // Other tasks' changes already merged: the base moved under this one after its review.
+      const merged = goal.changeSets.filter(
+        (c) => c.status === "integrated" && rootTaskId(c.taskId) !== base,
+      );
       const added = await this.host.dispatch(goalId, {
         id: `${cs.id}:rework`,
         goalId,
@@ -702,7 +706,7 @@ export class ChangeSetPipeline {
         task: {
           id: `${base}-rw${round}`,
           title: `Rework (${reason}): ${original.title}`,
-          description: describeRework(cs, reason),
+          description: describeRework(cs, reason, merged),
           kind: "implement",
           dependsOn: [],
           ...(original.provider ? { provider: original.provider } : {}),

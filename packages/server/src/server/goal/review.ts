@@ -76,20 +76,57 @@ export function buildReviewCorrectionPrompt(problem: string): string {
   return `Your reply could not be used: ${problem}\nReply again with one fenced \`\`\`json block in the format requested.`;
 }
 
-/** Describes what needs fixing, for the rework task's description. */
-export function describeRework(changeSet: ChangeSet, reason: ReworkReason): string {
+const MOVED_BASE_LIMIT = 8;
+const MOVED_BASE_FILES = 6;
+
+/**
+ * The changes merged into the integration branch before this one, as lines for a rework task.
+ * Each was reviewed and tested against an older base, so one of them is the likely reason a merge
+ * conflicted or the tests failed now.
+ */
+function describeMovedBase(merged: readonly ChangeSet[]): string {
+  if (merged.length === 0) return "";
+  const shown = merged.slice(-MOVED_BASE_LIMIT).map((c) => {
+    const files = c.files.slice(0, MOVED_BASE_FILES).map((f) => f.path);
+    const more = c.files.length - files.length;
+    const list = files.join(", ") + (more > 0 ? `, and ${more} more` : "");
+    return `- ${c.id} (task ${c.taskId}): ${list || "no files"}`;
+  });
+  const omitted = merged.length - shown.length;
+  return [
+    "",
+    "These changes were merged into the integration branch after yours was written. Yours was reviewed against the older base, so read them before deciding what to fix:",
+    ...(omitted > 0 ? [`(${omitted} earlier ones not listed)`] : []),
+    ...shown,
+  ].join("\n");
+}
+
+/**
+ * Describes what needs fixing, for the rework task's description. `merged` is every change
+ * already integrated by other tasks; it is named for conflicts and test failures, where the
+ * base moving under the change is the likely cause.
+ */
+export function describeRework(
+  changeSet: ChangeSet,
+  reason: ReworkReason,
+  merged: readonly ChangeSet[] = [],
+): string {
   switch (reason) {
     case "review":
       return quoteData("A reviewer asked for changes:", changeSet.findings ?? "(no details)");
     case "conflict":
-      return quoteData(
-        "Merging this change into the goal's integration branch conflicted:",
-        changeSet.error ?? "(no details)",
+      return (
+        quoteData(
+          "Merging this change into the goal's integration branch conflicted:",
+          changeSet.error ?? "(no details)",
+        ) + describeMovedBase(merged)
       );
     case "tests":
-      return quoteData(
-        "The test command failed after merging this change into the goal's integration branch:",
-        changeSet.testSummary ?? changeSet.error ?? "(no details)",
+      return (
+        quoteData(
+          "The test command failed after merging this change into the goal's integration branch:",
+          changeSet.testSummary ?? changeSet.error ?? "(no details)",
+        ) + describeMovedBase(merged)
       );
   }
 }
