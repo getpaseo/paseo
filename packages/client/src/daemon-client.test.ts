@@ -2909,6 +2909,105 @@ test("a latency measurement outstanding at foreground keeps its own deadline, th
   expect(attempts()).toBe(2);
 });
 
+test("a shared latency probe's activity from before foreground does not satisfy the fresh check", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("stale-activity", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  void client.measureLatency({ timeoutMs: 5_000 }).catch(() => {});
+  first.receiveChunk(true); // a frame arrived while the measurement was outstanding, then the socket died
+  client.ensureConnected({ verify: true });
+  expect(first.pingTimestamps()).toEqual(["0s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  // The measurement's own deadline passed; the foreground cycle starts its first fresh window now.
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+// Fake timers cannot suspend: a suspension is modelled as the wall clock jumping forward while
+// the pending window timer stays queued, then firing late on resume.
+async function suspendFor(ms: number): Promise<void> {
+  vi.setSystemTime(Date.now() + ms);
+}
+
+test("a foreground window that spanned a second suspension is discarded when the timer fires first", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-timer", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // window 1 silent, window 2 outstanding
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
+  await suspendFor(60_000);
+  daemon.daemonAnswersPingsAfter("fast"); // the socket is healthy on resume
+  await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
+  client.ensureConnected({ verify: true }); // then AppState lands
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("a foreground window that spanned a second suspension is discarded when AppState fires first", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-appstate", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
+  await suspendFor(60_000);
+  daemon.daemonAnswersPingsAfter("fast");
+  client.ensureConnected({ verify: true }); // AppState lands before the queued timer
+  await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("a dead socket after a second suspension mid-cycle still gets two fresh windows", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-dead", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  first.receiveChunk(true); // a frame before the second suspension is not evidence after it
+  await suspendFor(60_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // the late timer discards window 2 and starts over
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s", "15s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
 test("repeated foreground events share one cycle and do not restart its windows", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();

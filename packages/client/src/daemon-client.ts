@@ -1146,6 +1146,9 @@ const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 // Window of each check after the app returns to the foreground. A socket that silently died
 // while the app was suspended stays OPEN and accepts sends, so only inbound frames prove it.
 const FOREGROUND_LIVENESS_TIMEOUT_MS = 5_000;
+// A foreground window whose timer fires this much later than scheduled (wall clock) spanned
+// another suspension or a blocked JS thread, so its silence is no evidence either way.
+const SUSPENDED_WINDOW_SLACK_MS = 2_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
@@ -1308,6 +1311,8 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  // Wall clock, which keeps running while the OS has JS suspended; perfNow may not.
+  startedAtWallMs: number;
   receivedActivity: boolean;
   role: PingProbeRole;
 }
@@ -2606,6 +2611,16 @@ export class DaemonClient {
       this.pingProbe = null;
       const error = new PingTimeoutError(timeoutMs);
       probe.reject(error);
+      if (
+        probe.role === "foreground" &&
+        Date.now() - probe.startedAtWallMs > timeoutMs + SUSPENDED_WINDOW_SLACK_MS
+      ) {
+        // The app was suspended again inside this window. Discard it, any frame it saw and
+        // the misses before it; the heartbeat tick that owns this probe starts the cycle over.
+        probe.receivedActivity = false;
+        this.consecutiveLivenessFailures = 0;
+        return;
+      }
       // Keep the deadline fixed so subsequent pings renew the daemon socket lease
       // during a long download. Progress proves life even when its pong is queued.
       if (probe.role !== "latency" && !probe.receivedActivity) {
@@ -2619,6 +2634,7 @@ export class DaemonClient {
       timeoutHandle: setTimeout(expire, timeoutMs),
       receivedActivity: false,
       startedAt,
+      startedAtWallMs: Date.now(),
       role: params.role,
     };
     this.pingProbe = probe;
@@ -2675,6 +2691,9 @@ export class DaemonClient {
     if (this.pingProbe?.role === "heartbeat") {
       this.rejectPingProbe(new Error("Heartbeat superseded by foreground check"));
     }
+    // A shared latency measurement keeps its deadline, but only frames that arrive from now on
+    // count for this check; a latency probe never reads this flag for itself.
+    if (this.pingProbe) this.pingProbe.receivedActivity = false;
     this.consecutiveLivenessFailures = 0;
     this.tickLivenessHeartbeat("foreground");
   }
