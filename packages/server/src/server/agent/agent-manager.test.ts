@@ -19,10 +19,10 @@ import {
   type AgentManagerEvent,
   type ManagedAgent,
 } from "./agent-manager.js";
-import { AgentStorage } from "./agent-storage.js";
+import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { toAgentPayload } from "./agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -13562,6 +13562,42 @@ describe("agent options", () => {
     expect(agent?.config.providerOptions).toEqual({ web_search: true });
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
     expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("a stored legacy Codex record reads its saved Fast speed as the speed its control selects", () => {
+    const manager = new AgentManager({ clients: { codex: new OptionsClient() }, logger });
+    // Written by a daemon that took `fast_mode`; never reopened since the upgrade.
+    const record = parseStoredAgentRecord({
+      id: "agent-legacy-fast",
+      provider: "codex",
+      cwd: "/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: "closed",
+      config: { featureValues: { fast_mode: true } },
+      features: [
+        {
+          type: "select",
+          id: "service_tier",
+          label: "Speed",
+          value: "fast",
+          options: [
+            { id: "default", label: "Normal", isDefault: true },
+            { id: "fast", label: "Fast" },
+          ],
+        },
+      ],
+      persistence: { provider: "codex", sessionId: "thread-1" },
+    });
+
+    const payload = buildStoredAgentPayload(record, ["codex"], (provider, own) =>
+      manager.effectiveOptionsFor(provider, own),
+    );
+
+    expect(payload.options).toEqual({ service_tier: "fast" });
+    expect(payload.features).toEqual([
+      expect.objectContaining({ id: "service_tier", value: "fast" }),
+    ]);
   });
 
   test("setAgentOptions hands the provider only the keys the patch sets", async () => {

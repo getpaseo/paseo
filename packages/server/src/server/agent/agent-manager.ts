@@ -2575,10 +2575,15 @@ export class AgentManager {
     return input.client.effectiveOptions?.(input.own) ?? input.own ?? {};
   }
 
-  /** What an agent of this provider runs with, given its own options: the defaults under them. */
+  /**
+   * What an agent of this provider runs with, given its own options: the defaults under them.
+   * Stored records are read through here before they are reopened, so the legacy conversion
+   * runs here too; a record converted on open passes through unchanged.
+   */
   effectiveOptionsFor(provider: AgentProvider, own: ProviderOptions | undefined): ProviderOptions {
     const client = this.clients.get(provider);
-    return client ? this.launchOptionsFor({ client, own }) : (own ?? {});
+    const converted = this.convertLegacyOptions(provider, own);
+    return client ? this.launchOptionsFor({ client, own: converted }) : (converted ?? {});
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
