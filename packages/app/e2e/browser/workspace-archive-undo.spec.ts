@@ -18,6 +18,7 @@ import {
   createGatedTeardown,
   expectDirectoryPresence,
   expectHostWorkspaceSettledActive,
+  holdNextArchiveRequest,
   outlastUndoWindow,
   pressArchiveShortcut,
   pressUndoShortcut,
@@ -109,6 +110,30 @@ test.describe("Workspace archive undo", () => {
 
     await expect(page.getByTestId("app-toast-message")).toHaveCSS("cursor", "auto");
     await expect(undoButton(page)).toHaveCSS("cursor", "pointer");
+
+    const [labelBox, shortcutBox] = await Promise.all([
+      undoButton(page).getByText("Undo", { exact: true }).boundingBox(),
+      undoButton(page).getByText(/Z$/).boundingBox(),
+    ]);
+    if (!labelBox || !shortcutBox) throw new Error("Undo button is not laid out");
+    expect(shortcutBox.x - (labelBox.x + labelBox.width)).toBeLessThanOrEqual(8.5);
+  });
+
+  test("an archive that fails after the sidebar was replaced still shows its error", async ({
+    page,
+  }) => {
+    const archive = await holdNextArchiveRequest(page);
+    const worktree = await seedWorktree(page, "archive-late-failure");
+
+    await archiveFromRowButton(page, worktree.workspaceId);
+    await archive.waitForHeld();
+    // Crossing the compact breakpoint swaps the sidebar, unmounting the toast's host.
+    await page.setViewportSize({ width: 400, height: 720 });
+    await expect(undoButton(page)).toHaveCount(0);
+
+    archive.fail("Injected archive failure.");
+
+    await expect(page.getByTestId("app-toast-message")).toHaveText("Injected archive failure.");
   });
 
   test("the archived toast keeps Undo inside the card at the narrowest sidebar", async ({

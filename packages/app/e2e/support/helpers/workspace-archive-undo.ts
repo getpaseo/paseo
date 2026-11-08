@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect } from "../fixtures";
 import type { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { daemonWsRoutePattern } from "./daemon-port";
 import { getServerId } from "./server-id";
 import { expectWorkspaceAbsentFromSidebar } from "./sidebar";
 
@@ -95,6 +96,60 @@ export async function expectHostWorkspaceSettledActive(
 
 export async function expectDirectoryPresence(directory: string, present: boolean): Promise<void> {
   await expect.poll(() => existsSync(directory), { timeout: 30_000 }).toBe(present);
+}
+
+export interface HeldArchiveRequest {
+  waitForHeld(): Promise<void>;
+  fail(error: string): void;
+}
+
+/** Keeps the next archive request from the host and lets the test answer it with a failure. */
+export async function holdNextArchiveRequest(page: Page): Promise<HeldArchiveRequest> {
+  let held: { requestId: string; workspaceId: string; respond: (raw: string) => void } | null =
+    null;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => {
+      const request = parseSessionRequest(message);
+      if (!held && request?.type === "archive_workspace_request") {
+        held = {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          respond: (raw) => browser.send(raw),
+        };
+        return;
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => browser.send(message));
+  });
+  return {
+    waitForHeld: () => expect.poll(() => held !== null).toBe(true),
+    fail: (error) => {
+      if (!held) throw new Error("No archive request is held");
+      const { requestId, workspaceId, respond } = held;
+      respond(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "archive_workspace_response",
+            payload: { requestId, workspaceId, archivedAt: null, error },
+          },
+        }),
+      );
+    },
+  };
+}
+
+function parseSessionRequest(
+  message: string | Buffer,
+): { type: string; requestId: string; workspaceId: string } | null {
+  try {
+    const envelope = JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
+    return envelope?.type === "session" ? envelope.message : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface GatedTeardown {
