@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 import {
   type ACPDelegationExtension,
   type ACPDelegationRow,
-  type ACPDelegationTree,
   type ACPClientCapabilityMeta,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
@@ -98,8 +97,7 @@ interface MiniMaxCodeDelegationMember {
  * MiniMax Code reports `running`, `completed`, `failed` and `stopped` for
  * a delegated member. A member it reports with a status Paseo does not know -
  * `queued` for one - has no row: the subagent store has no state for it, and
- * reporting it as running would claim work the provider did not report. The
- * member stays in the tree, so a row it had keeps its place.
+ * reporting it as running would claim work the provider did not report.
  */
 function readMiniMaxCodeMemberStatus(status: string): ProviderSubagentStatus | null {
   switch (status) {
@@ -154,19 +152,19 @@ function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | 
 /**
  * Turns a delegation tree into the rows the track shows.
  */
-function readMiniMaxCodeTree(tree: unknown): ACPDelegationTree | null {
+function readMiniMaxCodeRows(tree: unknown): ACPDelegationRow[] | null {
   const members = readMiniMaxCodeMembers(tree);
   if (!members) {
     return null;
   }
-  const memberIds = members.map((member) => member.sessionId);
-  const memberIdSet = new Set(memberIds);
+  const memberIdSet = new Set(members.map((member) => member.sessionId));
   const rows: ACPDelegationRow[] = [];
   for (const member of members) {
     const status = readMiniMaxCodeMemberStatus(member.status);
     if (!status) {
-      // The provider reports a status Paseo cannot show. The member stays in
-      // the tree, so the row it had is not removed.
+      // The provider reports a status Paseo cannot show. The member has no
+      // row: the row it had is taken away rather than left showing a state
+      // the provider has taken back.
       continue;
     }
     const row: ACPDelegationRow = {
@@ -185,7 +183,7 @@ function readMiniMaxCodeTree(tree: unknown): ACPDelegationTree | null {
     }
     rows.push(row);
   }
-  return { rows, memberIds };
+  return rows;
 }
 
 /**
@@ -202,10 +200,10 @@ export const MINIMAX_CODE_DELEGATION_EXTENSION: ACPDelegationExtension = {
     return isRecord(response) ? response.snapshot : null;
   },
   parseReadResult(result) {
-    return readMiniMaxCodeTree(result);
+    return readMiniMaxCodeRows(result);
   },
   parseUpdate(params) {
-    return readMiniMaxCodeTree(params.snapshot);
+    return readMiniMaxCodeRows(params.snapshot);
   },
 };
 

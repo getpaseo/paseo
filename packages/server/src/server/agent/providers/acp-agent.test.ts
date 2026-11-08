@@ -26,7 +26,6 @@ import {
   ACPAgentSession,
   type ACPDelegationExtension,
   type ACPDelegationRow,
-  type ACPDelegationTree,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -5173,6 +5172,19 @@ new AgentSideConnection(
       if (scenario === "held") {
         return shownTree;
       }
+      if (scenario === "sequence") {
+        return shownTree;
+      }
+      if (scenario === "malformed-during-read") {
+        // The provider sends a tree it cannot read while the read is in
+        // flight, and then answers the read.
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...malformedTree,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return firstTree;
+      }
       return scenario === "tree" || scenario === "other-session" || scenario === "malformed"
         ? firstTree
         : secondTree;
@@ -5196,6 +5208,16 @@ new AgentSideConnection(
           ...heldTree,
         });
       }
+      if (scenario === "sequence") {
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...heldTree,
+        });
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...firstTree,
+        });
+      }
       if (scenario === "malformed") {
         await connection.extNotification("test/delegation_update", {
           sessionId: "delegation-session",
@@ -5217,7 +5239,7 @@ new AgentSideConnection(
 );
 `;
 
-function readTestDelegationTree(payload: unknown): ACPDelegationTree | null {
+function readTestDelegationRows(payload: unknown): ACPDelegationRow[] | null {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -5225,7 +5247,6 @@ function readTestDelegationTree(payload: unknown): ACPDelegationTree | null {
   if (!Array.isArray(members)) {
     return null;
   }
-  const memberIds: string[] = [];
   const rows: ACPDelegationRow[] = [];
   for (const member of members) {
     if (!member || typeof member !== "object") {
@@ -5235,10 +5256,9 @@ function readTestDelegationTree(payload: unknown): ACPDelegationTree | null {
     if (typeof entry.id !== "string") {
       return null;
     }
-    memberIds.push(entry.id);
     if (entry.status !== "running" && entry.status !== "completed") {
       // A member the provider reports with a status the extension cannot show
-      // stays in the tree without a row.
+      // has no row.
       continue;
     }
     rows.push({
@@ -5249,7 +5269,7 @@ function readTestDelegationTree(payload: unknown): ACPDelegationTree | null {
       parentSubagentId: null,
     });
   }
-  return { rows, memberIds };
+  return rows;
 }
 
 // A vendor extension of the test's own: the generic session must publish the
@@ -5262,10 +5282,10 @@ const testDelegationExtension: ACPDelegationExtension = {
     return connection.extMethod("test/delegation/get", { sessionId });
   },
   parseReadResult(result) {
-    return readTestDelegationTree(result);
+    return readTestDelegationRows(result);
   },
   parseUpdate(params) {
-    return readTestDelegationTree(params);
+    return readTestDelegationRows(params);
   },
 };
 
@@ -5370,7 +5390,7 @@ describe("ACP delegation extension", () => {
     ]);
   });
 
-  test("keeps the row of a member the tree reports without a row", async () => {
+  test("takes away the row of a member the tree reports without a row", async () => {
     const client = createClient({ scenario: "held" });
     session = await client.createSession({ provider: "acp", cwd: dir });
     const events: AgentStreamEvent[] = [];
@@ -5379,11 +5399,48 @@ describe("ACP delegation extension", () => {
     await session.startTurn("go");
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // The member the tree holds without a row of its own keeps the row it
-    // had: a member without a row is not a member that is gone.
+    // The provider reports a state the track cannot show. The row goes with
+    // it: a row that keeps its last known state would claim a state the
+    // provider has taken back.
     expect(delegationRows(events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "waiting", title: "Wait in the queue", status: "running" },
+      { type: "remove", id: "waiting", title: undefined, status: undefined },
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+    ]);
+  });
+
+  test("takes away the row of a member the tree stops reporting", async () => {
+    const client = createClient({ scenario: "sequence" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // The member is running, then reported with a state the track cannot
+    // show, then gone from the tree. Its row goes with the state it cannot
+    // show, and the tree that no longer holds it leaves nothing behind.
+    expect(delegationRows(events)).toEqual([
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+      { type: "upsert", id: "waiting", title: "Wait in the queue", status: "running" },
+      { type: "remove", id: "waiting", title: undefined, status: undefined },
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+    ]);
+  });
+
+  test("keeps a valid read that a malformed notification interrupted", async () => {
+    const client = createClient({ scenario: "malformed-during-read" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // A tree that cannot be read publishes nothing, so it cancels nothing:
+    // the read that answers for a tree the provider can read still counts.
+    expect(delegationRows(events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
     ]);
   });
