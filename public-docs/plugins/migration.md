@@ -73,6 +73,7 @@ Use this table as the complete registration checklist.
 | `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                          |
 | `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items) |
 | New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                               |
+| New sidebar replacement view                                                                  | `client.addSidebarView({ id, title, Component })` in `index.client.tsx`; see [sidebar views](sidebar-views)                 |
 | New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                          |
 | `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                     |
 | Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                         |
@@ -144,8 +145,8 @@ pill.remove();
 ```
 
 Move dynamic text from the former component into updates from your model or SDK subscription.
-Custom icon components may still use hooks. Composer pills always show icon and label and never
-show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
+Custom icon components may still use hooks. Composer pills always show icon and label; menus and
+popovers add a chevron. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
 
 ## 4. Separate imports
 

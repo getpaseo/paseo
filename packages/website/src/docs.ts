@@ -186,7 +186,13 @@ function insertDocByPath(nodes: DocsNavNode[], doc: Doc, stripTopDirectory = fal
 
   // A section's top-level directory and its category name the same thing, so
   // only directories below it become collapsible groups.
-  if (stripTopDirectory) directories.shift();
+  if (
+    stripTopDirectory &&
+    directories[0] &&
+    doc.frontmatter.category?.toLowerCase().endsWith(directories[0].toLowerCase())
+  ) {
+    directories.shift();
+  }
 
   let current = nodes;
   let parent: Extract<DocsNavNode, { type: "group" }> | undefined;

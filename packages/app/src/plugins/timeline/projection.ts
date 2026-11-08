@@ -22,13 +22,14 @@ function cloneAndFreeze<T>(value: T): T {
 }
 
 function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
-  const { callId, name, status, error, detail, metadata } = data;
+  const { callId, name, status, error, detail, metadata, agentMessage } = data;
   const base = {
     type: "tool_call" as const,
     callId,
     name,
     detail,
     ...(metadata ? { metadata } : {}),
+    ...(agentMessage ? { agentMessage } : {}),
   };
   switch (status) {
     case "running":
@@ -75,6 +76,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
     case "plugin":
+    case "turn_summary":
       return null;
   }
 }
@@ -105,6 +107,7 @@ function transformSourceItem(
       kind: "plugin",
       id: `${pluginItem.pluginId}/${pluginItem.id}`,
       sourceId: item.id,
+      sourceKind: item.kind,
       timestamp: item.timestamp,
       pluginId: pluginItem.pluginId,
       pluginItemId: pluginItem.id,

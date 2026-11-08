@@ -172,9 +172,15 @@ export function createHostTransportFactory(
       close();
     });
     return {
+      get supportsDrain() {
+        return transport?.supportsDrain;
+      },
+      get maxFrameBytes() {
+        return transport?.maxFrameBytes;
+      },
       send(data) {
         if (closed || !transport) throw new Error("Host transport is unavailable");
-        transport.send(data);
+        return transport.send(data);
       },
       close,
       onOpen(handler) {
@@ -198,15 +204,16 @@ export function createHostTransportFactory(
 }
 export function createHostClient(
   connection: string,
-  config: Omit<DaemonClientConfig, "url" | "transportFactory"> & HostTransportOptions,
+  config: Omit<DaemonClientConfig, "url"> & HostTransportOptions,
   budget?: HostTransportBudget,
 ): DaemonClient {
   const target = parseHostTarget(connection);
-  const { webSocketAgent, ...clientConfig } = config;
+  const { webSocketAgent, transportFactory, ...clientConfig } = config;
   return new DaemonClient({
     ...clientConfig,
     url: "ws://host-connector/ws",
     ...(target.password ? { password: target.password } : {}),
-    transportFactory: createHostTransportFactory(connection, budget, { webSocketAgent }),
+    transportFactory:
+      transportFactory ?? createHostTransportFactory(connection, budget, { webSocketAgent }),
   });
 }

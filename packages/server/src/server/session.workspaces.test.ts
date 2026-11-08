@@ -1,3 +1,5 @@
+import { AgentDirectory } from "./agent/directory.js";
+import { buildStoredAgentPayload } from "./agent/agent-projections.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -57,7 +59,7 @@ import {
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
-import type pino from "pino";
+import pino from "pino";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -125,7 +127,7 @@ interface SessionTestAccess {
     remove(projectId: string): Promise<void>;
   };
   agentStorage: {
-    list(...args: unknown[]): Promise<unknown[]>;
+    listAll(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
     upsert(record: unknown): Promise<void>;
   };
@@ -149,7 +151,8 @@ interface SessionTestAccess {
     setTitle(agentId: string, title: string): Promise<unknown>;
   };
   workspaceRegistry: {
-    list(...args: unknown[]): Promise<unknown[]>;
+    listActive(...args: unknown[]): Promise<unknown[]>;
+    listAll(...args: unknown[]): Promise<unknown[]>;
     archive(workspaceId: string, archivedAt: string): Promise<void>;
     get(workspaceId: string): Promise<unknown>;
     update(
@@ -610,7 +613,10 @@ function createSessionForWorkspaceTests(
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => [
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => [
       createPersistedWorkspaceRecord({
         workspaceId: "ws-repo-running",
         projectId: "proj-repo-running",
@@ -621,18 +627,9 @@ function createSessionForWorkspaceTests(
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
     ],
-    get: async (workspaceId: string) =>
-      workspaceId === "ws-repo-running"
-        ? createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          })
-        : null,
+    get: async function (workspaceId: string) {
+      return (await this.listAll()).find((record) => record.workspaceId === workspaceId) ?? null;
+    },
     update: async (workspaceId, updater) => {
       if (workspaceId !== "ws-repo-running") {
         return null;
@@ -674,7 +671,7 @@ function createSessionForWorkspaceTests(
       worktreesRoot: options.worktreesRoot,
       agentManager,
       agentStorage: asAgentStorage({
-        list: async () => [
+        listAll: async () => [
           createPersistedWorkspaceRecord({
             workspaceId: "ws-repo-running",
             projectId: "proj-repo-running",
@@ -1266,25 +1263,19 @@ test("create_agent_request launches from an exact subdirectory in a created work
 test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
+  const errors: string[] = [];
+  const logger = pino({ level: "error" }, { write: (entry) => errors.push(entry) });
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  const agentManager = new AgentManager({
+    clients: { codex: new CreateAgentTestClient() },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => "00000000-0000-4000-8000-000000000552",
+  });
   try {
     const cwd = path.join(workdir, "repo");
     mkdirSync(cwd, { recursive: true });
 
-    const logger = {
-      child: () => logger,
-      trace: vi.fn(),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
-    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
-      registry: agentStorage,
-      logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000552",
-    });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
       asSessionLogger(logger),
@@ -1388,6 +1379,141 @@ test("create_agent_request does not title an existing workspace from the agent p
       updatedAt: "2026-05-07T00:00:00.000Z",
     });
   } finally {
+    // Fake timers do not drain filesystem writes started by the initial prompt.
+    await agentManager.flush();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+  // Also catch writes that teardown would otherwise abandon after deleting their directory.
+  await agentManager.flush();
+  expect(errors).toEqual([]);
+});
+
+test("create_agent_request does not publish the pre-prompt snapshot after the prompt starts", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-live-state-"));
+  const logger = createTestLogger();
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  // The test session's turn starts and then reports nothing, like a provider
+  // that stays quiet until its turn ends.
+  const agentManager = new AgentManager({
+    clients: { codex: new CreateAgentTestClient() },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => "00000000-0000-4000-8000-000000000553",
+  });
+  try {
+    const cwd = path.join(workdir, "repo");
+    mkdirSync(cwd, { recursive: true });
+
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "proj-live-state",
+        rootPath: cwd,
+        kind: "git",
+        displayName: "repo",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-live-state",
+        projectId: "proj-live-state",
+        cwd,
+        kind: "local_checkout",
+        displayName: "repo",
+        title: null,
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+
+    const agentUpdates: Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"][] = [];
+    const session = asTestSession(
+      new Session({
+        workspaceRuntimeStore: createWorkspaceRuntimeStore(),
+        messageReceipts: createMessageReceiptsStub(),
+        agentMessages: createAgentMessageDeliveryStub(),
+        creationService: createTestCreationService(),
+        clientId: "test-client",
+        permissions: OWNER_PERMISSIONS,
+        appVersion: null,
+        onMessage: (message) => {
+          if (message.type === "agent_update") agentUpdates.push(message.payload);
+        },
+        logger: asSessionLogger(logger),
+        downloadTokenStore: asDownloadTokenStore(),
+        pushNotifications: asPushNotifications(),
+        paseoHome: path.join(workdir, "paseo-home"),
+        agentManager,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        scheduleService: asScheduleService(),
+        checkoutDiffManager: asCheckoutDiffManager({
+          subscribe: async () => ({
+            initial: { cwd, files: [], error: null },
+            unsubscribe: () => {},
+          }),
+          scheduleRefreshForCwd: () => {},
+          onWorkspaceStateMayHaveChanged: () => {},
+          invalidateForge: () => {},
+          getMetrics: () => ({
+            checkoutDiffTargetCount: 0,
+            checkoutDiffSubscriptionCount: 0,
+            checkoutDiffWatcherCount: 0,
+            checkoutDiffFallbackRefreshTargetCount: 0,
+          }),
+          dispose: () => {},
+        }),
+        workspaceGitService: createNoopWorkspaceGitService(),
+        daemonConfigStore: asDaemonConfigStore({
+          get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+          onChange: () => () => {},
+        }),
+        mcpBaseUrl: null,
+        stt: null,
+        tts: null,
+        generateWorkspaceName: async () => null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        terminalManager: null,
+      }),
+    );
+    await activateAgentUpdatesSubscription(session, "sub-live-state");
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-live-state",
+      workspaceId: "ws-live-state",
+      config: { provider: "codex", cwd },
+      initialPrompt: "Print the report",
+      attachments: [],
+    });
+    await vi.runAllTimersAsync();
+
+    const [createdAgent] = agentManager.listAgents();
+    expect(createdAgent?.lifecycle).toBe("running");
+    const upserts = agentUpdates.flatMap((update) =>
+      update.kind === "upsert" && update.agent.id === createdAgent?.id ? [update.agent] : [],
+    );
+    expect(upserts.length).toBeGreaterThan(0);
+    // A client keeps the last update it hears, so the latest one must be the running agent.
+    expect(upserts.at(-1)).toMatchObject({ status: "running" });
+    const updatedAt = upserts.map((agent) => Date.parse(agent.updatedAt));
+    expect(updatedAt).toEqual([...updatedAt].sort((left, right) => left - right));
+  } finally {
+    // Drain snapshot writes before removing their storage directory.
+    await agentManager.flush();
     vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -1425,7 +1551,7 @@ test("unsupported persisted agents are excluded from active lists but preserved 
     archivedAt: "2026-04-13T10:16:06.514Z",
   };
 
-  session.agentStorage.list = async () => [storedRecord];
+  session.agentStorage.listAll = async () => [storedRecord];
   session.agentStorage.get = async (agentId: string) =>
     agentId === storedRecord.id ? storedRecord : null;
 
@@ -1490,7 +1616,9 @@ test("agent_update placement does not refresh git snapshots", async () => {
   });
 
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   await activateAgentUpdatesSubscription(session, "sub-agents", {});
@@ -1622,7 +1750,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [archivedRecord],
+        listAll: async () => [archivedRecord],
         get: async (agentId: string) => (agentId === archivedRecord.id ? archivedRecord : null),
         upsert: async (record: typeof archivedRecord) => {
           Object.assign(archivedRecord, record);
@@ -1660,7 +1788,10 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
         return {
           initialize: async () => {},
           existsOnDisk: async () => true,
-          list: async () => [ws],
+          listActive: async function () {
+            return (await this.listAll()).filter((record) => !record.archivedAt);
+          },
+          listAll: async () => [ws],
           get: async (id: string) => (id === "ws-1" ? ws : null),
           upsert: async () => {},
           archive: async () => {},
@@ -1744,7 +1875,9 @@ test("workspace clear attention clears stored-only agents and responds", async (
   });
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
 
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   session.projectRegistry.list = async () => [project];
@@ -1859,7 +1992,9 @@ test("workspace mark unread selects the newest finished workspace root", async (
     },
   });
 
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   session.projectRegistry.list = async () => [project];
@@ -1895,7 +2030,146 @@ test("workspace mark unread selects the newest finished workspace root", async (
   });
 });
 
-test("workspace mark unread rejects workspaces without a finished root agent", async () => {
+test("workspace mark unread selects a finished cross-workspace child with scoped parent context", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const storedRecords = new Map<string, StoredAgentRecord>([
+    [
+      "root-agent",
+      makeStoredAgent({
+        id: "root-agent",
+        cwd: REPO_CWD,
+        workspaceId: "parent-workspace",
+        updatedAt: "2026-03-30T16:00:00.000Z",
+      }),
+    ],
+    [
+      "newer-child",
+      makeStoredAgent({
+        id: "newer-child",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        updatedAt: "2026-03-30T17:00:00.000Z",
+        labels: { "paseo.parent-agent-id": "root-agent" },
+      }),
+    ],
+  ]);
+  const markedAgentIds: string[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      markAgentUnread: async (agentId: string) => {
+        markedAgentIds.push(agentId);
+      },
+    },
+  });
+
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  const home = mkdtempSync(path.join(tmpdir(), "mark-unread-parent-"));
+  const storage = new AgentStorage(path.join(home, "agents"), pino({ level: "silent" }));
+  for (const record of storedRecords.values()) await storage.upsert(record);
+  const directory = new AgentDirectory({
+    storage,
+    manager: { listAgents: () => [] },
+    workspaces: { get: async () => null },
+    projectLive: async () => {
+      throw new Error("No live agents");
+    },
+    projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+    isProviderVisible: () => true,
+    isStoredProviderAvailable: () => true,
+  });
+  session.listAgentPayloads = (filter) =>
+    directory.list(filter as Parameters<AgentDirectory["list"]>[0]);
+  try {
+    await session.handleMessage({
+      type: "workspace.mark_unread.request",
+      workspaceId: workspace.workspaceId,
+      requestId: "req-mark-unread",
+    });
+
+    expect(markedAgentIds).toEqual(["newer-child"]);
+    expect(findByType(emitted, "workspace.mark_unread.response").payload).toEqual({
+      requestId: "req-mark-unread",
+      workspaceId: workspace.workspaceId,
+      markedAgentId: "newer-child",
+      success: true,
+      error: null,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("workspace mark unread marks a read errored root agent", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const markedAgentIds: string[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      markAgentUnread: async (agentId: string) => {
+        markedAgentIds.push(agentId);
+      },
+    },
+  });
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "errored-agent",
+      cwd: REPO_CWD,
+      workspaceId: workspace.workspaceId,
+      status: "error",
+      updatedAt: "2026-03-30T16:00:00.000Z",
+      requiresAttention: false,
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "workspace.mark_unread.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-mark-unread",
+  });
+
+  expect(markedAgentIds).toEqual(["errored-agent"]);
+  expect(findByType(emitted, "workspace.mark_unread.response").payload).toMatchObject({
+    markedAgentId: "errored-agent",
+    success: true,
+  });
+});
+
+test("workspace mark unread rejects workspaces without a read root agent", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: REPO_CWD,
@@ -1922,7 +2196,7 @@ test("workspace mark unread rejects workspaces without a finished root agent", a
     workspaceId: workspace.workspaceId,
     markedAgentId: null,
     success: false,
-    error: `Workspace has no finished agent to mark unread: ${workspace.workspaceId}`,
+    error: `Workspace has no read agent to mark unread: ${workspace.workspaceId}`,
   });
 });
 
@@ -1972,7 +2246,7 @@ test("workspace clear attention can clear multiple workspaces in one request", a
   );
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
 
-  session.workspaceRegistry.list = async () => workspaces;
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => workspaces;
   session.workspaceRegistry.get = async (id: string) =>
     workspaces.find((workspace) => workspace.workspaceId === id) ?? null;
   session.projectRegistry.list = async () => projects;
@@ -2099,7 +2373,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
+        listAll: async () => [],
         get: async (agentId: string) => {
           if (agentId !== "agent-1") {
             return null;
@@ -2141,7 +2415,10 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         return {
           initialize: async () => {},
           existsOnDisk: async () => true,
-          list: async () => [ws],
+          listActive: async function () {
+            return (await this.listAll()).filter((record) => !record.archivedAt);
+          },
+          listAll: async () => [ws],
           get: async (id: string) => (id === "ws-close" ? ws : null),
           upsert: async () => {},
           archive: async () => {},
@@ -2286,7 +2563,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
+        listAll: async () => [],
         get: async (agentId: string) => {
           if (agentId === "agent-live") {
             return liveRecord;
@@ -2330,7 +2607,10 @@ test("close_items_request archives stored agents that are not currently loaded",
         return {
           initialize: async () => {},
           existsOnDisk: async () => true,
-          list: async () => [ws],
+          listActive: async function () {
+            return (await this.listAll()).filter((record) => !record.archivedAt);
+          },
+          listAll: async () => [ws],
           get: async (id: string) => (id === "ws-stored" ? ws : null),
           upsert: async () => {},
           archive: async () => {},
@@ -2439,7 +2719,7 @@ test("close_items_request continues after an archive failure", async () => {
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
+        listAll: async () => [],
         get: async (agentId: string) => {
           if (agentId !== "agent-good") {
             return null;
@@ -2481,7 +2761,10 @@ test("close_items_request continues after an archive failure", async () => {
         return {
           initialize: async () => {},
           existsOnDisk: async () => true,
-          list: async () => [ws],
+          listActive: async function () {
+            return (await this.listAll()).filter((record) => !record.archivedAt);
+          },
+          listAll: async () => [ws],
           get: async (id: string) => (id === "ws-err" ? ws : null),
           upsert: async () => {},
           archive: async () => {},
@@ -2548,7 +2831,7 @@ test("close_items_request continues after an archive failure", async () => {
 
 test("non-git workspace uses deterministic directory name and no unknown branch fallback", async () => {
   const session = createSessionForWorkspaceTests();
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     createPersistedWorkspaceRecord({
       workspaceId: "ws-non-git",
       projectId: "proj-non-git",
@@ -2716,7 +2999,7 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
   session.projectRegistry.list = async () => [activeProject, archivedProject];
   session.projectRegistry.get = async (projectId: string) =>
     [activeProject, archivedProject].find((project) => project.projectId === projectId) ?? null;
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     activeWorkspace,
     archivedWorkspace,
     workspaceInArchivedProject,
@@ -2814,7 +3097,11 @@ test("active-scoped fetch_agents pages within active scope instead of global his
 
   session.projectRegistry.list = async () => [project];
   session.projectRegistry.get = async () => project;
-  session.workspaceRegistry.list = async () => [activeOne, activeTwo, archivedWorkspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    activeOne,
+    activeTwo,
+    archivedWorkspace,
+  ];
   session.listAgentPayloads = async () => [
     makeAgent({
       id: "active-one",
@@ -2892,7 +3179,10 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
   });
 
   session.projectRegistry.get = async () => project;
-  session.workspaceRegistry.list = async () => [activeWorkspace, archivedWorkspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    activeWorkspace,
+    archivedWorkspace,
+  ];
   session.workspaceRegistry.get = async (workspaceId: string) =>
     [activeWorkspace, archivedWorkspace].find(
       (workspace) => workspace.workspaceId === workspaceId,
@@ -2952,7 +3242,9 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     if (isSessionOutboundMessage(message)) emitted.push(message);
   };
   session.projectRegistry.get = async () => project;
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
     {
@@ -3020,7 +3312,9 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     if (isSessionOutboundMessage(message)) emitted.push(message);
   };
   session.projectRegistry.get = async () => project;
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
     // Search keeps chronological order, skipping unrelated rows between pages.
@@ -3106,7 +3400,9 @@ test("fetch_agent_history_request rejects a malformed search cursor", async () =
     if (isSessionOutboundMessage(message)) emitted.push(message);
   };
   session.projectRegistry.get = async () => project;
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
     {
@@ -3326,7 +3622,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       providerErrors: [],
     };
   };
-  session.agentStorage.list = async () => [
+  session.agentStorage.listAll = async () => [
     {
       id: "stored-agent",
       provider: "codex",
@@ -3393,7 +3689,7 @@ test("fetch_recent_provider_sessions_request forwards providerFilter to agent ma
 
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
   session.agentManager.listAgents = () => [];
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAll = async () => [];
   session.agentManager.listImportableSessions = async (options?: unknown) => {
     capturedOptions = options as { providerFilter?: Set<string>; limit?: number };
     return {
@@ -3438,7 +3734,7 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
       },
     },
   ];
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAll = async () => [];
   session.agentManager.listImportableSessions = async () => ({
     sessions: [
       {
@@ -3532,7 +3828,7 @@ test("fetch_agent_request still resolves archived historical agents", async () =
 
 test("git branch workspace uses branch as canonical name", async () => {
   const session = createSessionForWorkspaceTests();
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     createPersistedWorkspaceRecord({
       workspaceId: "ws-repo-branch",
       projectId: "proj-repo-branch",
@@ -3575,7 +3871,7 @@ test("git branch workspace uses branch as canonical name", async () => {
 
 test("branch/detached policies and dominant status bucket are deterministic", async () => {
   const session = createSessionForWorkspaceTests();
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     createPersistedWorkspaceRecord({
       workspaceId: "ws-repo-status",
       projectId: "proj-repo-status",
@@ -3622,7 +3918,7 @@ test("branch/detached policies and dominant status bucket are deterministic", as
 
 test("subdirectory agents contribute to their owning workspace descriptor", async () => {
   const session = createSessionForWorkspaceTests();
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     createPersistedWorkspaceRecord({
       workspaceId: "ws-repo-subdir",
       projectId: "proj-repo-subdir",
@@ -3688,7 +3984,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
         getAgent: () => null,
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
+        listAll: async () => [],
         get: async () => null,
       }),
       projectRegistry: {
@@ -3703,7 +3999,10 @@ test("workspace update stream keeps persisted workspace visible after agents sto
       workspaceRegistry: {
         initialize: async () => {},
         existsOnDisk: async () => true,
-        list: async () => [
+        listActive: async function () {
+          return (await this.listAll()).filter((record) => !record.archivedAt);
+        },
+        listAll: async () => [
           createPersistedWorkspaceRecord({
             workspaceId: "ws-repo-running",
             projectId: "proj-repo-running",
@@ -3850,7 +4149,9 @@ test("archiving the last workspace emits a remove carrying the now-empty project
   });
 
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [archivedWorkspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    archivedWorkspace,
+  ];
   session.workspaceRegistry.get = async (workspaceId: string) =>
     workspaceId === archivedWorkspace.workspaceId ? archivedWorkspace : null;
 
@@ -3918,7 +4219,8 @@ test("project.remove.request archives active workspaces and removes the project 
   };
   session.workspaceRegistry.get = async (workspaceId: string) =>
     workspaces.get(workspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.archive = async (workspaceId: string, archivedAt: string) => {
     const existing = workspaces.get(workspaceId);
     if (!existing) return;
@@ -4014,7 +4316,8 @@ test("project.remove.request removes an already-empty project", async () => {
   };
   session.workspaceRegistry.get = async (workspaceId: string) =>
     workspaces.get(workspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.archive = async (workspaceId: string, archivedAt: string) => {
     const existing = workspaces.get(workspaceId);
     if (!existing) return;
@@ -4130,7 +4433,8 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
   session.paseoHome = paseoHome;
   session.workspaceRegistry.get = async (lookupWorkspaceId: string) =>
     workspaces.get(lookupWorkspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.upsert = async (
     record: ReturnType<typeof createPersistedWorkspaceRecord>,
   ) => {
@@ -4210,7 +4514,7 @@ test("workspace updates stay scoped to the matching cwd", async () => {
   const mainCwd = path.join(missingRoot, "main");
   const featureCwd = path.join(missingRoot, "feature");
   const session = createSessionForWorkspaceTests();
-  session.workspaceRegistry.list = async () => [
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
     createPersistedWorkspaceRecord({
       workspaceId: "ws-repo-main",
       projectId: "proj-repo-main",
@@ -4311,7 +4615,8 @@ test("open_project_request registers a workspace before any agent exists", async
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.buildProjectPlacement = async (cwd: string) => ({
     projectKey: cwd,
     projectName: "repo",
@@ -4366,7 +4671,8 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.buildProjectPlacement = async (cwd: string) => ({
     projectKey: cwd,
     projectName: "imported",
@@ -4391,7 +4697,7 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   session.agentManager.importProviderSession = async () => managed;
   session.agentManager.getTimeline = () => [];
   session.agentManager.setTitle = async () => undefined;
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAll = async () => [];
   session.agentStorage.get = async () => null;
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -4480,7 +4786,7 @@ test("import_agent_request imports into the workspace that opened the import she
     });
   };
   session.agentManager.getTimeline = () => [];
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAll = async () => [];
   session.agentStorage.get = async () => null;
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -4511,7 +4817,7 @@ test("import_agent_request maps an import failure to agent_create_failed", async
       createdAt: "2026-03-01T12:00:00.000Z",
       updatedAt: "2026-03-01T12:00:00.000Z",
     });
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAll = async () => [];
   session.agentManager.importProviderSession = async () => {
     throw new Error("provider session is unavailable");
   };
@@ -4556,7 +4862,8 @@ test("open_project_response returns immediately even when the GitHub fetch is sl
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceGitService.getCheckout = async (requestedCwd: string) => ({
     cwd: requestedCwd,
     isGit: true,
@@ -4632,7 +4939,8 @@ test("open_project_request emits a workspace_update with githubRuntime once the 
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceGitService.getCheckout = async (requestedCwd: string) => ({
     cwd: requestedCwd,
     isGit: true,
@@ -4743,7 +5051,8 @@ test("open_project_request does not match a new child directory to an existing p
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   await session.handleMessage({
     type: "open_project_request",
@@ -4812,7 +5121,8 @@ test("open_project_request does not unarchive an archived parent workspace for a
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   await session.handleMessage({
     type: "open_project_request",
@@ -4887,7 +5197,8 @@ test("open_project_request reclassifies an archived directory workspace when git
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceGitService.getCheckout = async () => ({
     cwd,
     isGit: true,
@@ -5003,7 +5314,8 @@ test("open_project_request reclassifies an active directory workspace when git m
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceGitService.getCheckout = async (requestedCwd: string) => ({
     cwd: requestedCwd,
     isGit: true,
@@ -5093,7 +5405,8 @@ test("open_project_request gives a plain git worktree its own exact-root project
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceGitService.getCheckout = async (requestedCwd: string) => ({
     cwd: requestedCwd,
     isGit: true,
@@ -5182,7 +5495,8 @@ test("open_project_request keeps archived records and allocates a fresh workspac
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   await session.handleMessage({
     type: "open_project_request",
@@ -5237,7 +5551,8 @@ test("open_project_request does not repurpose an orphaned archived workspace", a
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   await session.handleMessage({
     type: "open_project_request",
@@ -5297,7 +5612,9 @@ test("workspace recovery stays accepted when git observer warming fails", async 
   };
   session.workspaceRegistry.get = async (workspaceId: string) =>
     workspaceId === workspace.workspaceId ? workspace : null;
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.upsert = async (record: PersistedWorkspaceRecord) => {
     workspace = record;
   };
@@ -5388,7 +5705,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
@@ -5486,7 +5804,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
@@ -5577,7 +5896,8 @@ test("refresh_agent_request does not recreate or unarchive a deleted worktree", 
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
@@ -5676,7 +5996,8 @@ test("refresh_agent_request does not inspect an archived worktree branch", async
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
@@ -5806,7 +6127,8 @@ test("legacy refresh_agent_request restores a real deleted worktree", async () =
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.agentStorage.get = async (id: string) => (id === agentId ? storedAgent : null);
   session.agentStorage.upsert = async () => {};
 
@@ -5864,7 +6186,8 @@ test.skip("open_project_request collapses a git subdirectory onto the repo root 
     workspaces.set(record.workspaceId, record);
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.buildProjectPlacement = async (cwd: string) => ({
     projectKey: repoRoot,
     projectName: "repo",
@@ -5940,7 +6263,9 @@ test("archive_workspace_request hides non-destructive workspace records", async 
   session.workspaceRegistry.archive = async (_workspaceId: string, archivedAt: string) => {
     workspace.archivedAt = archivedAt;
   };
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.projectRegistry.archive = async () => {};
 
   await session.handleMessage({
@@ -6040,7 +6365,9 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
     if (isSessionOutboundMessage(message)) emitted.push(message);
   };
   session.workspaceRegistry.get = async () => workspace;
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.archive = async (_id: string, archivedAt: string) => {
     workspace.archivedAt = archivedAt;
   };
@@ -6126,7 +6453,8 @@ test.skip("opening a new worktree reconciles older local workspaces into the rem
   };
   session.workspaceRegistry.get = async (lookupWorkspaceId: string) =>
     workspaces.get(lookupWorkspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.upsert = async (
     record: ReturnType<typeof createPersistedWorkspaceRecord>,
   ) => {
@@ -6232,7 +6560,8 @@ test.skip("fetch_workspaces_request reconciles remote URL changes for existing w
   };
   session.workspaceRegistry.get = async (lookupWorkspaceId: string) =>
     workspaces.get(lookupWorkspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.upsert = async (
     record: ReturnType<typeof createPersistedWorkspaceRecord>,
   ) => {
@@ -6328,7 +6657,8 @@ test.skip("reconcile archives stale subdirectory workspace records when collapsi
   };
   session.workspaceRegistry.get = async (lookupWorkspaceId: string) =>
     workspaces.get(lookupWorkspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.upsert = async (
     record: ReturnType<typeof createPersistedWorkspaceRecord>,
   ) => {
@@ -6388,7 +6718,9 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
 
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
 
   const baselineDescriptor = {
     id: workspace.workspaceId,
@@ -6450,7 +6782,9 @@ test("lists Git runtime for a checkout explicitly owned by a non-Git project", a
   });
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRuntimeStore.get = () => createWorkspaceRuntimeSnapshot(REPO_CWD);
 
   const descriptors = Array.from(
@@ -6484,7 +6818,9 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       updatedAt: "2026-03-01T12:00:00.000Z",
     });
     session.projectRegistry.list = async () => [project];
-    session.workspaceRegistry.list = async () => [workspace];
+    session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+      workspace,
+    ];
     return { session, workspace };
   };
 
@@ -6711,7 +7047,10 @@ test("same-cwd workspace descriptors compute agent status per workspaceId", asyn
     updatedAt: "2026-03-01T12:00:01.000Z",
   });
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspaceA, workspaceB];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspaceA,
+    workspaceB,
+  ];
 
   // A running agent owned by A leaves the sibling B done — status is per id.
   session.listAgentPayloads = async () => [
@@ -6768,7 +7107,9 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
   const archivedAt = "2026-05-12T09:45:00.000Z";
 
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.listAgentPayloads = async () => [
     makeAgent({
       id: "agent-done",
@@ -6826,7 +7167,9 @@ test("buildWorkspaceDescriptorMap stamps workspace archiving state", async () =>
 
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
 
   const readArchivingAt = async () =>
     (
@@ -6874,7 +7217,9 @@ test("emitWorkspaceUpdatesForWorkspaceIds includes archiving state and dedupes u
   });
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
 
   emitted.length = 0;
   session.markWorkspaceArchiving([workspace.workspaceId], archivingAt);
@@ -6930,7 +7275,7 @@ test("external workspace updates emit one deduplicated batch", async () => {
     snapshotReads.projects += 1;
     return [project];
   };
-  session.workspaceRegistry.list = async () => {
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => {
     snapshotReads.workspaces += 1;
     return [main, feature];
   };
@@ -6981,7 +7326,8 @@ test("external workspace updates emit one deduplicated batch", async () => {
       },
     },
   ]);
-  expect(snapshotReads).toEqual({ projects: 1, workspaces: 1 });
+  // Scoped projection reads each of the two requested workspace IDs once.
+  expect(snapshotReads).toEqual({ projects: 1, workspaces: 2 });
 });
 
 test("fetch_workspaces_response reads runtime fields from passive workspace git service snapshots", async () => {
@@ -7042,7 +7388,9 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
   };
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.buildProjectPlacement = async (cwd: string) => ({
     projectKey: cwd,
     projectName: "repo",
@@ -7141,7 +7489,9 @@ test("fetch_workspaces_response emits before cold registration-triggered git wor
 
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
 
   await session.handleMessage({
     type: "fetch_workspaces_request",
@@ -7209,7 +7559,9 @@ test("workspace_update includes updated runtime fields", async () => {
   });
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.buildProjectPlacement = async (cwd: string) => ({
     projectKey: cwd,
     projectName: "repo",
@@ -7322,7 +7674,10 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   };
   session.listAgentPayloads = async () => [];
   session.projectRegistry.list = async () => [gitProject, directoryProject];
-  session.workspaceRegistry.list = async () => [gitWorkspace, directoryWorkspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    gitWorkspace,
+    directoryWorkspace,
+  ];
   const describeWorkspaceRecordSubscribed = vi.fn(
     async (workspace: typeof gitWorkspace, project: unknown) => {
       if (workspace.workspaceId === gitWorkspace.workspaceId) {
@@ -7383,7 +7738,10 @@ test("workspace mutation handling does not let a delayed upsert recreate an arch
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => listedWorkspaces,
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => listedWorkspaces,
     get: async (workspaceId: string) => (workspaceId === workspace.workspaceId ? workspace : null),
     update: async () => null,
     upsert: async () => {},
@@ -7428,14 +7786,16 @@ test("workspace mutation handling does not let a delayed upsert recreate an arch
   });
   listedWorkspaces = [workspace];
 
+  const getWorkspace = workspaceRegistry.get.bind(workspaceRegistry);
   let resumeDescribe!: () => void;
   const describeStarted = new Promise<void>((resolveStarted) => {
-    workspaceRegistry.list = async () => {
+    workspaceRegistry.get = async (workspaceId) => {
+      workspaceRegistry.get = getWorkspace;
       resolveStarted();
       await new Promise<void>((resolveResume) => {
         resumeDescribe = resolveResume;
       });
-      return listedWorkspaces;
+      return listedWorkspaces.find((record) => record.workspaceId === workspaceId) ?? null;
     };
   });
 
@@ -7505,7 +7865,10 @@ test("workspace mutations outside a filtered subscription neither watch nor emit
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => [workspace],
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => [workspace],
     get: async (workspaceId: string) => (workspaceId === workspace.workspaceId ? workspace : null),
     update: async () => null,
     upsert: async () => {},
@@ -7621,7 +7984,10 @@ test("project removal mutation broadcasts the final delta to another subscribed 
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
-      list: async () => [workspace],
+      listActive: async function () {
+        return (await this.listAll()).filter((record) => !record.archivedAt);
+      },
+      listAll: async () => [workspace],
       get: async (workspaceId) => (workspaceId === workspace.workspaceId ? workspace : null),
       update: async () => null,
       upsert: async () => {},
@@ -7695,7 +8061,10 @@ test("workspace mutation handling drops queued observer sync after session clean
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => listedWorkspaces,
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => listedWorkspaces,
     get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
     update: async () => null,
     upsert: async () => {},
@@ -7960,7 +8329,7 @@ test("project.icon.set.request publishes a custom icon that project.icon.get ser
     projects.set(id, updated);
     return updated;
   };
-  session.workspaceRegistry.list = async () => [];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [];
 
   await session.handleMessage({
     type: "project.icon.set.request",
@@ -8050,7 +8419,9 @@ test("project.rename.request stores customName and emits an updated workspace de
     const parsed = record as typeof project;
     projects.set(parsed.projectId, parsed);
   };
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
 
@@ -8106,7 +8477,7 @@ test("project.rename.request updates a project with no workspaces", async () => 
   });
   session.projectRegistry.get = async () => project;
   session.projectRegistry.upsert = async () => project;
-  session.workspaceRegistry.list = async () => [];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [];
 
   await session.handleMessage({
     type: "project.rename.request",
@@ -8148,7 +8519,7 @@ test("project.rename.request with whitespace-only customName clears the override
     const parsed = record as typeof project;
     projects.set(parsed.projectId, parsed);
   };
-  session.workspaceRegistry.list = async () => [];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [];
 
   await session.handleMessage({
     type: "project.rename.request",
@@ -8219,7 +8590,8 @@ test("workspace.title.set.request stores the title and emits an updated descript
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
   session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
   session.projectRegistry.list = async () => Array.from(projects.values());
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
   session.workspaceRegistry.update = async (id, updater) => {
     const existing = workspaces.get(id);
@@ -8289,7 +8661,8 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
   session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.update = async (id, updater) => {
     const existing = workspaces.get(id);
     if (!existing) return null;
@@ -8346,7 +8719,8 @@ test("workspace.title.set.request with whitespace-only title clears the title", 
   });
 
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
   session.workspaceRegistry.update = async (id, updater) => {
     const existing = workspaces.get(id);
@@ -8420,7 +8794,10 @@ async function createSessionWithTerminalManager(options: {
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => options.workspaces,
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => options.workspaces,
     get: async (workspaceId: string) =>
       options.workspaces.find((workspace) => workspace.workspaceId === workspaceId) ?? null,
     upsert: async () => {},
@@ -8477,7 +8854,7 @@ test("overlapping workspace rebuilds publish the newest provider subagent status
   let listener: ((event: AgentManagerEvent) => void) | null = null;
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => emitted.push(message),
-    agentStorage: { list: async () => [] },
+    agentStorage: { listAll: async () => [] },
     agentManager: {
       subscribe: (nextListener: (event: AgentManagerEvent) => void) => {
         listener = nextListener;
@@ -9024,7 +9401,10 @@ test("workspace.create worktree source checks out a GitHub PR from githubPrNumbe
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => Array.from(workspaces.values()),
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => Array.from(workspaces.values()),
     get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
     upsert: async (record) => {
       workspaces.set(record.workspaceId, record);
@@ -9348,7 +9728,8 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
 
   const workspaces = new Map([[workspace.workspaceId, workspace]]);
   const upsertedRecords: Array<typeof workspace> = [];
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
   session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
   session.workspaceRegistry.upsert = async (record: unknown) => {
     const parsed = record as typeof workspace;
@@ -9388,7 +9769,10 @@ test("workspace.create.response persists the first prompt as the initial title",
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
-      list: async () => Array.from(workspaces.values()),
+      listActive: async function () {
+        return (await this.listAll()).filter((record) => !record.archivedAt);
+      },
+      listAll: async () => Array.from(workspaces.values()),
       get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
       upsert: async (workspace) => {
         workspaces.set(workspace.workspaceId, workspace);
@@ -9429,7 +9813,10 @@ test("workspace create emits through a matching workspace subscription", async (
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
-      list: async () => Array.from(workspaces.values()),
+      listActive: async function () {
+        return (await this.listAll()).filter((record) => !record.archivedAt);
+      },
+      listAll: async () => Array.from(workspaces.values()),
       get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
       upsert: async (workspace, context) => {
         workspaces.set(workspace.workspaceId, workspace);
@@ -9481,7 +9868,10 @@ test("workspace create stays out of a non-matching workspace subscription", asyn
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
-      list: async () => Array.from(workspaces.values()),
+      listActive: async function () {
+        return (await this.listAll()).filter((record) => !record.archivedAt);
+      },
+      listAll: async () => Array.from(workspaces.values()),
       get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
       upsert: async (workspace) => {
         workspaces.set(workspace.workspaceId, workspace);
@@ -9563,7 +9953,8 @@ test("workspace.create.request with background persists a hidden workspace that 
   };
   session.workspaceRegistry.get = async (workspaceId: string) =>
     workspaces.get(workspaceId) ?? null;
-  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+    Array.from(workspaces.values());
 
   await session.handleMessage({
     type: "workspace.create.request",
@@ -9758,7 +10149,10 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => [workspace],
+    listActive: async function () {
+      return (await this.listAll()).filter((record) => !record.archivedAt);
+    },
+    listAll: async () => [workspace],
     get: async (id) => (id === workspace.workspaceId ? workspace : null),
     update: async (id, updater) => (id === workspace.workspaceId ? updater(workspace) : null),
     upsert: async () => {},
@@ -9927,5 +10321,79 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
   } finally {
     await session2.cleanup();
     await gitService.dispose();
+  }
+});
+
+test("path archive of an archived exact child leaves its active parent untouched", async () => {
+  const now = "2026-03-30T15:00:00.000Z";
+  const root = mkdtempSync(path.join(tmpdir(), "archive-exact-child-"));
+  const childPath = path.join(root, "sub");
+  mkdirSync(childPath);
+  const parent = createPersistedWorkspaceRecord({
+    workspaceId: "parent",
+    projectId: "project",
+    cwd: root,
+    kind: "directory",
+    displayName: "parent",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const child = createPersistedWorkspaceRecord({
+    workspaceId: "child",
+    projectId: "project",
+    cwd: childPath,
+    kind: "directory",
+    displayName: "child",
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: now,
+  });
+  const records = [parent, child];
+  const archivedAgents: string[] = [];
+  const archivedWorkspaces: string[] = [];
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      listAgents: () => [
+        makeManagedAgent({
+          id: "parent-agent",
+          cwd: root,
+          workspaceId: parent.workspaceId,
+          lifecycle: "idle",
+          updatedAt: now,
+        }),
+      ],
+      archiveAgent: async (id: string) => {
+        archivedAgents.push(id);
+        return { archivedAt: now };
+      },
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records.filter((record) => !record.archivedAt),
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async (id) => {
+        archivedWorkspaces.push(id);
+      },
+    },
+  });
+  try {
+    await session.handleMessage({
+      type: "paseo_worktree_archive_request",
+      requestId: "archive-exact",
+      worktreePath: childPath,
+    });
+    expect(archivedAgents).toEqual([]);
+    expect(archivedWorkspaces).toEqual([]);
+    expect(parent.archivedAt).toBeNull();
+    expect(existsSync(root)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

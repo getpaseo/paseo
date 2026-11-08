@@ -21,10 +21,16 @@ The invariants are:
 > agent establishes the daemon's current tail in one complete-turn request, with older history reachable
 > through backward pagination.
 
-Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
-to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
-Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
-tool payload.
+Every item is bounded before it enters either delivery path, because a timeline page is one
+WebSocket message and the daemon closes a socket whose outbound buffer passes 64 MiB. Tool calls get
+64 KiB and other items 256 KiB. Over budget, the largest strings are cut to a shared length with a
+`…[truncated 12.3 MB]` marker, and an oversized `data:` URL is replaced by the marker. Strings up
+to 1 KiB stay whole, so ids and paths survive. Arrays drop their trailing elements without a marker
+element, so typed arrays still match the wire schema. Limiting an item twice gives the same item. The
+budget does not bound wide objects or multi-byte text. The same
+bounded item is used for runtime timeline rows and live stream events. Provider history hydration
+applies the same rule so reopening an agent cannot restore an oversized payload. Fetches apply it
+again to assistant and reasoning rows the projection merges from many chunks.
 
 ## Presence is not delivery
 
@@ -63,8 +69,8 @@ Source coverage still includes interleaved tool updates.
 
 Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
 agent messages each start a fallback turn. This deterministic fallback is shared by paging
-and presentation; it cannot recover historical batching or steering. Older history remains
-user-driven by scrolling upward.
+and presentation; it cannot recover historical batching or steering. An underfilled viewport
+loads older history until it fills or history is exhausted. Further history is user-driven.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
@@ -89,9 +95,10 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
 The daemon validates the epoch and locates the projected item at the selected position. A fork
-includes projected items through that checkpoint. If an item spans the checkpoint and changed
-afterward, the daemon refuses that fork with an actionable error: discarded historical payloads
-cannot be reconstructed from sequence metadata. Forking the current context remains available.
+includes projected items through that checkpoint. If an item the fork copies spans the checkpoint
+and changed afterward, the daemon refuses that fork with an actionable error: discarded historical
+payloads cannot be reconstructed from sequence metadata. Plugin cards are not copied, so a card
+updated after the checkpoint does not block it. Forking the current context remains available.
 
 ## Resume behavior
 

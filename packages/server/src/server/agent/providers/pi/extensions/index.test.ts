@@ -210,7 +210,7 @@ describe("Pi extension host", () => {
           type: "sub_agent",
           subAgentType: "scout",
           description: "Inspect files",
-          log: "Found two files",
+          log: "",
         },
       }),
     );
