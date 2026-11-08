@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { execCommand } from "../../utils/spawn.js";
@@ -34,22 +34,34 @@ async function followsGitButler(cwd: string): Promise<boolean> {
   }
 }
 
-/** Paths git lists as changed or untracked, from `status --porcelain -z`. */
+/**
+ * Paths git lists as changed or untracked, relative to `cwd`. `status --porcelain` names them
+ * from the repository root, so a goal started in a subdirectory gets them converted; a file
+ * above `cwd` comes back as `../file`. A rename lists both sides, so the commit takes the
+ * deleted source with the new file.
+ */
 async function gitUncommittedPaths(cwd: string): Promise<string[]> {
+  const root = (await runGitCommand(["rev-parse", "--show-toplevel"], { cwd })).stdout.trim();
   const { stdout } = await runGitCommand(
     ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    {
-      cwd,
-    },
+    { cwd },
   );
+  const fromRoot = (filePath: string): string =>
+    path.relative(cwd, path.join(root, filePath)).replaceAll("\\", "/");
   const parts = stdout.split("\0");
   const paths: string[] = [];
   for (let i = 0; i < parts.length; i += 1) {
     const entry = parts[i] ?? "";
     if (entry.length < 4) continue;
-    paths.push(entry.slice(3));
-    // A rename or copy lists the old path next.
-    if (entry[0] === "R" || entry[0] === "C") i += 1;
+    paths.push(fromRoot(entry.slice(3)));
+    // A rename or copy lists the old path next. A copy leaves its source alone.
+    if (entry[0] === "R" || entry[1] === "R") {
+      i += 1;
+      const source = parts[i];
+      if (source) paths.push(fromRoot(source));
+    } else if (entry[0] === "C" || entry[1] === "C") {
+      i += 1;
+    }
   }
   return paths;
 }
@@ -163,7 +175,26 @@ async function commitWithGitButler(
 async function commitWithGit(input: WorkspaceCommitInput): Promise<WorkspaceCommitResult | null> {
   const changed = await changedSince(input, await gitUncommittedPaths(input.cwd));
   if (changed.length === 0) return null;
-  await runGitCommand(["add", "--all", "--", ...changed], { cwd: input.cwd });
+  // `add` refuses a path that is gone from both the tree and the index, such as the source of a
+  // rename that is already staged; deleted files are staged by `rm --cached` instead.
+  const exists = await Promise.all(
+    changed.map((filePath) =>
+      access(path.join(input.cwd, filePath)).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+  const present = changed.filter((_, i) => exists[i]);
+  const gone = changed.filter((_, i) => !exists[i]);
+  if (present.length > 0) {
+    await runGitCommand(["add", "--all", "--", ...present], { cwd: input.cwd });
+  }
+  if (gone.length > 0) {
+    await runGitCommand(["rm", "--cached", "-q", "--ignore-unmatch", "--", ...gone], {
+      cwd: input.cwd,
+    });
+  }
   // Paths after `--` commit only those files, so what you staged yourself stays staged.
   await runGitCommand(["commit", "--only", "-m", input.message, "--", ...changed], {
     cwd: input.cwd,

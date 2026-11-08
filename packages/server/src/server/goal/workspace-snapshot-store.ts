@@ -2,6 +2,11 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WorkspaceSnapshot } from "./workspace-commit.js";
 
+/** Keeps letters, digits, `_` and `-`; every other character becomes `%` and its hex code. */
+function safeName(id: string): string {
+  return id.replace(/[^A-Za-z0-9_-]/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+}
+
 /**
  * Keeps the pre-task snapshot of a goal that works in the checkout on disk, so a daemon that
  * restarts between a task's success and its capture can still tell the task's files from the
@@ -10,8 +15,9 @@ import type { WorkspaceSnapshot } from "./workspace-commit.js";
 export class WorkspaceSnapshotStore {
   constructor(private readonly dir: string) {}
 
+  /** Ids come from a Lead's task ids, which allow `/` and `..`; each becomes one safe file name. */
   private file(goalId: string, runId: string): string {
-    return path.join(this.dir, goalId, `${runId}.json`);
+    return path.join(this.dir, safeName(goalId), `${safeName(runId)}.json`);
   }
 
   async save(goalId: string, runId: string, snapshot: WorkspaceSnapshot): Promise<void> {

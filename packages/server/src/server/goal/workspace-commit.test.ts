@@ -84,6 +84,48 @@ describe("workspace commits in a plain git repository", () => {
     expect(readFileSync(path.join(cwd, "base.txt"), "utf8")).toBe("my edit\n");
   });
 
+  test("a goal started in a subdirectory commits that task's files", async () => {
+    mkdirSync(path.join(cwd, "pkg"));
+    writeFileSync(path.join(cwd, "pkg", "keep.ts"), "export {};\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "pkg");
+    const sub = path.join(cwd, "pkg");
+    const before = await snapshotWorkspace(sub);
+    expect(before).toEqual({});
+
+    mkdirSync(path.join(sub, "src"));
+    writeFileSync(path.join(sub, "src", "new.ts"), "export {};\n");
+    writeFileSync(path.join(sub, "keep.ts"), "export const a = 1;\n");
+    const result = await commitWorkspaceChanges({
+      cwd: sub,
+      before,
+      branch: "ignored/branch",
+      message: "Task t1: sub",
+    });
+    expect(result?.files.sort()).toEqual(["keep.ts", "src/new.ts"]);
+    expect(git("show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "pkg/keep.ts",
+      "pkg/src/new.ts",
+    ]);
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  test("a staged rename commits the deleted source with the new file", async () => {
+    const before = await snapshotWorkspace(cwd);
+    git("mv", "base.txt", "renamed.txt");
+    const result = await commitWorkspaceChanges({
+      cwd,
+      before,
+      branch: "ignored/branch",
+      message: "Task t1: rename",
+    });
+    expect(result?.files.sort()).toEqual(["base.txt", "renamed.txt"]);
+    expect(git("show", "--name-status", "--format=", "HEAD")).toMatch(
+      /^R\d*\s+base\.txt\s+renamed\.txt$/,
+    );
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
   test("commits only files inside what the task declared", async () => {
     const before = await snapshotWorkspace(cwd);
     mkdirSync(path.join(cwd, "a"));
