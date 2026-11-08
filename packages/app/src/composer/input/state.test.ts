@@ -4,6 +4,7 @@ import {
   computeCanStartDictation,
   type MessageInputEnterContext,
   resolveActiveSendBehavior,
+  resolveAgentRunning,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
@@ -195,6 +196,12 @@ describe("dictation transcript behavior", () => {
 });
 
 describe("composer send behavior", () => {
+  it("treats a running agent snapshot as active before the turn selector catches up", () => {
+    expect(resolveAgentRunning(false, "running")).toBe(true);
+    expect(resolveAgentRunning(true, null)).toBe(true);
+    expect(resolveAgentRunning(false, "idle")).toBe(false);
+  });
+
   it("sends immediately when queue mode cannot advance past a permission", () => {
     expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
     expect(resolveActiveSendBehavior("queue", false)).toBe("queue");
