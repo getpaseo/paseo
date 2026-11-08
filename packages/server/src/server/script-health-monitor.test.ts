@@ -400,6 +400,43 @@ describe("ScriptHealthMonitor", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("forgets a workspace's health state without waiting for the next poll", async () => {
+    vi.useFakeTimers();
+
+    const healthy = await startTcpServer();
+    servers.add(healthy.server);
+
+    const routeStore = new ScriptRouteStore();
+    const route = {
+      hostname: "route-b.example.localhost",
+      port: healthy.port,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    };
+    routeStore.registerRoute(route);
+
+    const monitor = new ScriptHealthMonitor({
+      serviceProxy: routeStore,
+      onChange: vi.fn(),
+      pollIntervalMs: 1_000,
+      probeTimeoutMs: 100,
+      graceMs: 0,
+      failuresBeforeStopped: 2,
+    });
+
+    monitor.start();
+    await advancePoll(1_000);
+    expect(monitor.getHealthForHostname(route.hostname)).toBe("healthy");
+
+    routeStore.removeWorkspaceService({ workspaceId: "workspace-a", scriptName: "api" });
+    monitor.removeWorkspace("workspace-a");
+    routeStore.registerRoute(route);
+
+    expect(monitor.getHealthForHostname(route.hostname)).toBe("pending");
+    monitor.stop();
+  });
+
   it("calls onChange with the full service list when multiple services change in one workspace", async () => {
     vi.useFakeTimers();
 

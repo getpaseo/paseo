@@ -86,6 +86,15 @@ export class ScriptHealthMonitor {
     this.onChange(workspaceId, scripts);
   }
 
+  removeWorkspace(workspaceId: string): void {
+    for (const [hostname, state] of this.routeStates) {
+      if (state.workspaceId === workspaceId) {
+        this.routeStates.delete(hostname);
+      }
+    }
+    this.lastEmittedSnapshots.delete(workspaceId);
+  }
+
   private async poll(): Promise<void> {
     if (this.pollInFlight) {
       return;

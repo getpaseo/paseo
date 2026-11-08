@@ -608,6 +608,7 @@ export class VoiceAssistantWebSocketServer {
   private getDaemonTcpHost!: (() => string | null) | null;
   private serviceProxyPublicBaseUrl!: string | null;
   private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
+  private forgetWorkspaceScriptHealth!: ((workspaceId: string) => void) | null;
   private dictation!: {
     finalTimeoutMs?: number;
   } | null;
@@ -696,6 +697,7 @@ export class VoiceAssistantWebSocketServer {
     getDaemonTcpPort?: () => number | null,
     getDaemonTcpHost?: () => string | null,
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
+    forgetWorkspaceScriptHealth?: (workspaceId: string) => void,
     workspaceGitService?: WorkspaceGitService,
     github?: ForgeService,
     pushNotificationSender?: PushNotificationSender,
@@ -812,6 +814,7 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost,
       serviceProxyPublicBaseUrl,
       resolveScriptHealth,
+      forgetWorkspaceScriptHealth,
     });
     if (!providerSnapshotManager) {
       throw new Error("providerSnapshotManager is required");
@@ -871,6 +874,7 @@ export class VoiceAssistantWebSocketServer {
     getDaemonTcpHost: (() => string | null) | undefined;
     serviceProxyPublicBaseUrl: string | null | undefined;
     resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | undefined;
+    forgetWorkspaceScriptHealth: ((workspaceId: string) => void) | undefined;
   }): void {
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
@@ -907,6 +911,7 @@ export class VoiceAssistantWebSocketServer {
     this.getDaemonTcpHost = params.getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = params.serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
+    this.forgetWorkspaceScriptHealth = params.forgetWorkspaceScriptHealth ?? null;
   }
 
   private createWebSocketServer(
@@ -1086,6 +1091,10 @@ export class VoiceAssistantWebSocketServer {
     for (const session of this.listSessions()) {
       session.emitServerMessage(message);
     }
+  }
+
+  public forgetWorkspaceSetupObservation(workspaceId: string): void {
+    this.workspaceSetupObservation.forgetWorkspace(workspaceId);
   }
 
   public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {
@@ -1727,6 +1736,7 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost: this.getDaemonTcpHost ?? undefined,
       serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
       resolveScriptHealth: this.resolveScriptHealth ?? undefined,
+      forgetWorkspaceScriptHealth: this.forgetWorkspaceScriptHealth ?? undefined,
       voice: {
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
       },
