@@ -16,3 +16,8 @@ export function useWindowLayout(): WindowLayout | null {
     ? layout
     : null;
 }
+
+/** The top band beside the system's status region, or null where the window has none. */
+export function useTopBand(): TopBand | null {
+  return useContext(TopBandContext);
+}

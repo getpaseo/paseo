@@ -19,8 +19,6 @@ import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { TOUCH_TARGET } from "@/components/ui/control-sizing";
-import { useTopBandRow } from "@/window-layout";
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
@@ -202,30 +200,13 @@ export function ToastViewport({
   const topOffset =
     placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
-  // A centred toast cannot trim one side, so it always moves below an occlusion it meets.
-  const topBand = useTopBandRow({
-    offset: 0,
-    height: TOUCH_TARGET,
-    minimumWidth: Number.POSITIVE_INFINITY,
-  });
-  const widthBoundaryStyle = useMemo(
-    () => [styles.widthBoundary, { paddingTop: topBand.top }],
-    [topBand.top],
-  );
-
   const content = (
     <View
       style={styles.container(placement, topOffset)}
       pointerEvents="box-none"
       collapsable={false}
     >
-      <View
-        ref={topBand.ref}
-        onLayout={topBand.onLayout}
-        style={widthBoundaryStyle}
-        pointerEvents="box-none"
-        collapsable={false}
-      >
+      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
         {toast ? (
           <Animated.View
             entering={toastEntering}

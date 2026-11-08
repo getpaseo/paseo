@@ -12,15 +12,21 @@ import {
   iconButtonChromeGlyphSize,
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
-import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
-import { SPACING } from "@/styles/theme";
-import { useTopBandRow } from "@/window-layout";
+import {
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  HEADER_TOP_PADDING_MOBILE,
+} from "@/constants/layout";
+import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { useTopBand } from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
+const HeaderSafeArea = withUnistyles(WindowChromeSafeArea, (theme) => ({
+  horizontalPadding: theme.spacing[3],
+}));
 
 const NO_SHORTCUT: ShortcutKey[] = [];
-const ROW_PADDING = SPACING[3];
 
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
@@ -42,7 +48,8 @@ interface CompactHeaderProps {
  * left-aligned between them. Neither the header nor its islands draw a background, so it reads the
  * same in flow and floating over content (see `FloatingHeaderLayout`, whose fade gives the icons
  * contrast). Its height matches the old flat header, so anything
- * offset by the header height still lines up.
+ * offset by the header height still lines up. In a window's top band it takes the top bar's
+ * place, like the full header, and keeps clear of the status region as it does of window controls.
  */
 export function CompactHeader({
   navigation,
@@ -54,30 +61,20 @@ export function CompactHeader({
   actions,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
-  // The trailing side gives way to the occlusion, so it needs no padding of its own.
-  const topBand = useTopBandRow({
-    offset: insets.top + HEADER_TOP_PADDING_MOBILE,
-    height: HEADER_INNER_HEIGHT_MOBILE,
-    // The header stays in the band in every sidebar state; the title gives up width instead.
-    minimumWidth: 0,
-  });
+  const inTopBand = useTopBand() !== null;
   const rootStyle = useMemo(
-    () => [
-      styles.root,
-      {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE + topBand.top,
-        paddingRight: Math.max(ROW_PADDING, topBand.trailing),
-        marginLeft: insets.left,
-        marginRight: insets.right,
-      },
-    ],
-    [insets.top, insets.left, insets.right, topBand.top, topBand.trailing],
+    () => ({
+      paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
+      marginLeft: insets.left,
+      marginRight: insets.right,
+    }),
+    [inTopBand, insets.top, insets.left, insets.right],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
-      <View ref={topBand.ref} onLayout={topBand.onLayout} style={rootStyle}>
-        <View style={styles.row}>
+      <HeaderSafeArea placement="inline" style={rootStyle}>
+        <View style={inTopBand ? styles.topBandRow : styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
           </View>
@@ -91,7 +88,7 @@ export function CompactHeader({
           </View>
           {actions ? <View style={styles.island}>{actions}</View> : null}
         </View>
-      </View>
+      </HeaderSafeArea>
     </IconButtonChromeProvider>
   );
 }
@@ -150,11 +147,14 @@ function BackButton({ onBack }: { onBack?: () => void }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  root: {
-    paddingLeft: ROW_PADDING,
-  },
   row: {
     height: HEADER_INNER_HEIGHT_MOBILE,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  topBandRow: {
+    height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],

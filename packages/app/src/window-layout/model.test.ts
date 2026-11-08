@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   resolveSafeAreaInsets,
   resolveTopBand,
-  resolveTopBandClearance,
   type WindowLayout,
   type WindowLayoutRect,
 } from "./model";
@@ -59,12 +58,11 @@ describe("resolveSafeAreaInsets", () => {
 });
 
 // Measured: iPhone Duo inner screen, portrait (669×951), iOS 27.1 simulator unfolded in
-// DeviceHub. The Live Activity width (202pt) is still an estimate from #7924's ActivityKit QA.
+// DeviceHub.
 const duo = {
   systemTop: 82,
   topBar: { x: 16, y: 26, width: 509, height: 44 },
   statusRegion: { x: 525, y: 0, width: 144, height: 82 },
-  liveActivityRegion: { x: 467, y: 0, width: 202, height: 82 },
 };
 
 function duoLayout(occlusions: WindowLayoutRect[]): WindowLayout {
@@ -76,10 +74,40 @@ function duoLayout(occlusions: WindowLayoutRect[]): WindowLayout {
 }
 
 describe("resolveTopBand", () => {
-  it("publishes the top bar's start and the occlusions when the band is in use", () => {
+  it("publishes the top bar's start and the status region past its trailing end", () => {
     expect(resolveTopBand(duo.systemTop, duoLayout([duo.statusRegion]))).toEqual({
       top: 26,
-      occlusions: [duo.statusRegion],
+      trailingObstruction: { width: 144, height: 56 },
+    });
+  });
+
+  it("reaches as low as the deepest occlusion beside the bar", () => {
+    const deeper = { x: 600, y: 0, width: 69, height: 96 };
+    expect(
+      resolveTopBand(duo.systemTop, duoLayout([duo.statusRegion, deeper]))?.trailingObstruction,
+    ).toEqual({ width: 144, height: 70 });
+  });
+
+  it("rounds a fractional obstruction up so controls never touch the status region", () => {
+    const fractional = layout({
+      bounds: { x: 0, y: 0, width: 669, height: 951 },
+      topBar: { x: 16, y: 26, width: 509.25, height: 44 },
+      occlusions: [{ x: 525.25, y: 0, width: 143.75, height: 82.5 }],
+    });
+    expect(resolveTopBand(duo.systemTop, fractional)?.trailingObstruction).toEqual({
+      width: 144,
+      height: 57,
+    });
+  });
+
+  it("has no trailing obstruction when the bar reaches the window's trailing edge", () => {
+    const fullWidth = layout({
+      bounds: { x: 0, y: 0, width: 669, height: 951 },
+      topBar: { x: 0, y: 26, width: 669, height: 44 },
+    });
+    expect(resolveTopBand(duo.systemTop, fullWidth)).toEqual({
+      top: 26,
+      trailingObstruction: null,
     });
   });
 
@@ -123,80 +151,5 @@ describe("resolveTopBand", () => {
 
   it("is null before the native layout arrives", () => {
     expect(resolveTopBand(duo.systemTop, null)).toBeNull();
-  });
-});
-
-describe("resolveTopBandClearance", () => {
-  // The full workspace header with the sidebar closed spans the window.
-  const fullHeader = { x: 0, y: duo.topBar.y, width: 669, height: 44 };
-  // A row beside a 320pt sidebar whose controls need more width than the status region leaves.
-  const narrowRow = { x: 320, y: duo.topBar.y + 8, width: 349, height: 56 };
-  const narrowMinimum = 300;
-
-  it("trims the trailing side to the status region", () => {
-    expect(
-      resolveTopBandClearance({
-        row: fullHeader,
-        occlusions: [duo.statusRegion],
-        minimumWidth: 300,
-      }),
-    ).toEqual({ trailing: 144, top: 0 });
-  });
-
-  it("trims further when a Live Activity widens the status region", () => {
-    expect(
-      resolveTopBandClearance({
-        row: fullHeader,
-        occlusions: [duo.liveActivityRegion],
-        minimumWidth: 300,
-      }),
-    ).toEqual({ trailing: 202, top: 0 });
-  });
-
-  it("starts below the status region when the controls no longer fit beside it", () => {
-    expect(
-      resolveTopBandClearance({
-        row: narrowRow,
-        occlusions: [duo.statusRegion],
-        minimumWidth: narrowMinimum,
-      }),
-    ).toEqual({ trailing: 0, top: 48 });
-  });
-
-  it("starts below the lowest of several overlapping occlusions", () => {
-    expect(
-      resolveTopBandClearance({
-        row: narrowRow,
-        occlusions: [duo.statusRegion, { x: 600, y: 0, width: 69, height: 96 }],
-        minimumWidth: narrowMinimum,
-      }),
-    ).toEqual({ trailing: 0, top: 62 });
-  });
-
-  it("leaves rows alone that do not overlap an occlusion", () => {
-    const sidebarRow = { x: 0, y: duo.topBar.y + 8, width: 320, height: 44 };
-    const rowBelow = { x: 0, y: 82, width: 669, height: 44 };
-    for (const row of [sidebarRow, rowBelow]) {
-      expect(
-        resolveTopBandClearance({ row, occlusions: [duo.statusRegion], minimumWidth: 0 }),
-      ).toEqual({ trailing: 0, top: 0 });
-    }
-  });
-
-  it("rounds a fractional clearance up so controls never touch the occlusion", () => {
-    expect(
-      resolveTopBandClearance({
-        row: { x: 0, y: 10, width: 669.5, height: 44 },
-        occlusions: [{ x: 525.25, y: 0, width: 144, height: 60.5 }],
-        minimumWidth: Number.POSITIVE_INFINITY,
-      }),
-    ).toEqual({ trailing: 0, top: 51 });
-    expect(
-      resolveTopBandClearance({
-        row: { x: 0, y: 10, width: 669.5, height: 44 },
-        occlusions: [{ x: 525.25, y: 0, width: 144, height: 60.5 }],
-        minimumWidth: 0,
-      }).trailing,
-    ).toBe(145);
   });
 });

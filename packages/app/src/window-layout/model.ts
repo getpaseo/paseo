@@ -23,18 +23,31 @@ export interface WindowLayout {
 
 /**
  * The band above the rectangular safe area that a top bar may use because the system
- * occupies only part of it. Content outside a top-edge row still keeps out of `occlusions`.
+ * occupies only its trailing end, like window controls on a desktop title bar.
  */
 export interface TopBand {
+  /** Where the top bar starts, in window points. */
   top: number;
-  occlusions: readonly WindowLayoutRect[];
+  /**
+   * The system region past the bar's trailing end, measured from the band's top, or null
+   * when the bar reaches the window's trailing edge.
+   */
+  trailingObstruction: { width: number; height: number } | null;
 }
 
 /** Null unless the top bar guide starts above the system's rectangular safe area. */
 export function resolveTopBand(systemTop: number, layout: WindowLayout | null): TopBand | null {
   const bar = layout?.topBar;
   if (!layout || !bar || bar.y >= systemTop) return null;
-  return { top: Math.max(0, bar.y), occlusions: layout.occlusions ?? [] };
+  const top = Math.max(0, bar.y);
+  const barEnd = bar.x + bar.width;
+  const width = Math.ceil(layout.bounds.width - barEnd);
+  if (width <= 0) return { top, trailingObstruction: null };
+  const beside = (layout.occlusions ?? []).filter(
+    (frame) => frame.x + frame.width > barEnd && frame.y < bar.y + bar.height,
+  );
+  const bottom = Math.max(bar.y + bar.height, ...beside.map((frame) => frame.y + frame.height));
+  return { top, trailingObstruction: { width, height: Math.ceil(bottom - top) } };
 }
 
 /**
@@ -51,45 +64,6 @@ export function resolveSafeAreaInsets<Insets extends { top: number; bottom: numb
   return top === systemInsets.top && bottom === systemInsets.bottom
     ? systemInsets
     : { ...systemInsets, top, bottom };
-}
-
-export interface TopBandClearance {
-  /** Points the row's trailing controls keep from its trailing edge. */
-  trailing: number;
-  /** Points the row moves down when its controls cannot fit beside the occlusions. */
-  top: number;
-}
-
-export const NO_TOP_BAND_CLEARANCE: TopBandClearance = { trailing: 0, top: 0 };
-
-/**
- * How a top-edge row keeps its controls out of the system occlusions it overlaps: trim its
- * trailing side to the leftmost occlusion, or, when `minimumWidth` no longer fits, start
- * below the occlusions. `row` is the row's frame without any clearance, in window points.
- */
-export function resolveTopBandClearance(input: {
-  row: WindowLayoutRect;
-  occlusions: readonly WindowLayoutRect[];
-  minimumWidth: number;
-}): TopBandClearance {
-  const { row, occlusions, minimumWidth } = input;
-  const overlapping = occlusions.filter((frame) => overlaps(frame, row));
-  if (overlapping.length === 0) return NO_TOP_BAND_CLEARANCE;
-  const trailing = Math.ceil(row.x + row.width - Math.min(...overlapping.map((frame) => frame.x)));
-  if (row.width - trailing >= minimumWidth) return { trailing, top: 0 };
-  const bottom = Math.max(...overlapping.map((frame) => frame.y + frame.height));
-  return { trailing: 0, top: Math.ceil(bottom - row.y) };
-}
-
-function overlaps(a: WindowLayoutRect, b: WindowLayoutRect): boolean {
-  return (
-    a.width > 0 &&
-    a.height > 0 &&
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
-  );
 }
 
 export interface DesktopDivisionLayout {

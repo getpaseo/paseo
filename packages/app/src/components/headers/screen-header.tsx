@@ -12,7 +12,6 @@ import {
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { useTopBandRow } from "@/window-layout";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -42,33 +41,17 @@ export function ScreenHeader({
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
-  const topBand = useTopBandRow({
-    offset: insets.top + topPadding,
-    height: isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT,
-    // The header stays in the band in every sidebar state; the title gives up width instead.
-    minimumWidth: 0,
-  });
   const innerStyle = useMemo(
-    () => [styles.inner, { paddingTop: insets.top + topPadding + topBand.top }],
-    [insets.top, topPadding, topBand.top],
+    () => [styles.inner, { paddingTop: insets.top + topPadding }],
+    [insets.top, topPadding],
   );
   const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
-  // The occlusion replaces the row's trailing padding rather than adding to it.
-  const rightCombinedStyle = useMemo(
-    () => [
-      styles.right,
-      rightStyle,
-      topBand.trailing > baseHorizontalPadding && {
-        marginRight: topBand.trailing - baseHorizontalPadding,
-      },
-    ],
-    [rightStyle, topBand.trailing, baseHorizontalPadding],
-  );
+  const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
     <ComposerDockBackground style={styles.header} testID="composer-dock-header">
-      <View ref={topBand.ref} onLayout={topBand.onLayout} style={innerStyle}>
+      <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
           horizontalPadding={baseHorizontalPadding}

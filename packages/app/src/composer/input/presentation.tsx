@@ -13,7 +13,6 @@ import {
   type ControlSizing,
 } from "@/components/ui/control-geometry";
 import { StyleSheet } from "react-native-unistyles";
-import { useTopBandRow } from "@/window-layout";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
 
@@ -84,12 +83,6 @@ export function ComposerInputPresentation({
   // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
   const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
   const exitStyle = useMemo(() => [styles.iconButton, { marginRight: railOffset }], [railOffset]);
-  const exitSize = TOOLBAR_CONTROL_SIZES[controlSizing];
-  const topBand = useTopBandRow({ offset: 0, height: exitSize, minimumWidth: exitSize });
-  const exitRowStyle = useMemo(
-    () => [styles.exitRow, { paddingTop: topBand.top, paddingRight: topBand.trailing }],
-    [topBand.top, topBand.trailing],
-  );
   return (
     <View
       ref={exitScopeRef}
@@ -97,7 +90,7 @@ export function ComposerInputPresentation({
       testID={fullscreen ? "composer-fullscreen" : undefined}
     >
       {fullscreen ? (
-        <View ref={topBand.ref} onLayout={topBand.onLayout} style={exitRowStyle}>
+        <View style={styles.exitRow}>
           <Button
             variant="ghost"
             size="sm"

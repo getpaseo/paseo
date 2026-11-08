@@ -163,7 +163,7 @@ import {
   WorkspaceExplorerSidebarToggle,
   WorkspaceHeaderExplorerToggle,
 } from "@/screens/workspace/workspace-explorer-toggle";
-import { useHasWindowChromeObstruction } from "@/utils/desktop-window";
+import { useHasWindowChromeObstruction, WindowChromeRegion } from "@/utils/desktop-window";
 import {
   resolveWorkspaceHeaderRenderState,
   type WorkspaceHeaderCheckoutState,
@@ -1022,6 +1022,23 @@ function useLastMainPane(input: {
     lastMainPaneRef.current.paneId = focusedPaneId;
   }
   return lastMainPaneRef;
+}
+
+/** The docked explorer beside the center column takes the top-right window-chrome corner. */
+function DesktopCenterColumnChrome({
+  explorerOpen,
+  focusModeEnabled,
+  children,
+}: {
+  explorerOpen: boolean;
+  focusModeEnabled: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <WindowChromeRegion corners={explorerOpen && !focusModeEnabled ? "top-left" : "both"}>
+      <View style={styles.centerColumn}>{children}</View>
+    </WindowChromeRegion>
+  );
 }
 
 function WorkspaceScreenContent({
@@ -3635,7 +3652,10 @@ function WorkspaceScreenContent({
       <SheetTabs onCloseTab={handleCloseTabById} />
     </View>
   ) : (
-    <View style={styles.centerColumn}>
+    <DesktopCenterColumnChrome
+      explorerOpen={isExplorerSidebarShowing}
+      focusModeEnabled={desktopFocusModeEnabled}
+    >
       {rendersDesktopSplitContent ? null : (
         <AdaptiveWorkspaceChrome compactHeader={compactWorkspaceHeader}>
           {fullWorkspaceActions}
@@ -3674,7 +3694,7 @@ function WorkspaceScreenContent({
       <View style={styles.centerContent}>
         <View style={styles.content}>{desktopContent}</View>
       </View>
-    </View>
+    </DesktopCenterColumnChrome>
   );
 
   const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);

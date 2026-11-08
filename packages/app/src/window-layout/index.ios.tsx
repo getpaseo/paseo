@@ -8,13 +8,13 @@ import { resolveSafeAreaInsets, resolveTopBand, type WindowLayout } from "./mode
 export { useWindowLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
-export { useTopBandRow, type TopBandRow } from "./top-band";
+export { useTopBand } from "./context";
 export {
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,
   resolveWorkspaceBarActions,
 } from "./model";
-export type { DesktopDivisionLayout, WindowLayout, WindowLayoutRect } from "./model";
+export type { DesktopDivisionLayout, TopBand, WindowLayout, WindowLayoutRect } from "./model";
 
 const GeometryProbe = requireNativeViewManager<
   ViewProps & {
@@ -44,7 +44,7 @@ export function WindowLayoutProvider({ children }: { children: ReactNode }) {
 
 /**
  * The one top and bottom inset every descendant reads through `useSafeAreaInsets()`, and
- * the top band whose occlusions top-edge rows clear with `useTopBandRow()`.
+ * the top band that `WindowChromeProvider` reads through `useTopBand()`.
  */
 function WindowSafeAreaInsets({ children }: { children: ReactNode }) {
   const systemInsets = useSafeAreaInsets();
