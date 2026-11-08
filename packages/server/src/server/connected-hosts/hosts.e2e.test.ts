@@ -2456,6 +2456,46 @@ test("a host channel waits for its downstream consumer without blocking sibling 
   await consumer.ping();
 });
 
+test("small host-channel responses fill the window before earlier forwarding completes", async () => {
+  const b = await daemon();
+  const destination = await api(b);
+  const channel = createHostChannelTransport(
+    destination.client,
+    b.daemon.getServerId()!,
+    "concurrent-consumer",
+    null,
+    true,
+  )({ url: "ws://host-link/ws" });
+  const first = Promise.withResolvers<void>();
+  const forward = Promise.withResolvers<void>();
+  let responses = 0;
+  channel.onMessage((data, binary) => {
+    if (binary || JSON.parse(String(data)).message?.type !== "pong") return;
+    responses++;
+    first.resolve();
+    return forward.promise;
+  });
+  const consumer = new DaemonClient({
+    url: "ws://host-link/ws",
+    clientId: "concurrent-consumer",
+    reconnect: { enabled: false },
+    transportFactory: () => channel,
+  });
+  cleanup.push(async () => {
+    forward.resolve();
+    await consumer.close();
+  });
+  await consumer.connect();
+  const requests = Promise.all(Array.from({ length: 10 }, () => consumer.ping()));
+  void requests.catch(() => {});
+  await first.promise;
+  await destination.client.ping();
+  await destination.client.ping();
+  expect(responses).toBe(10);
+  forward.resolve();
+  await requests;
+});
+
 test("legacy host links receive no acknowledgment messages", async () => {
   const b = await daemon();
   const wire = await hostWire(b, { legacyFlowControl: true });
@@ -2485,7 +2525,7 @@ test("legacy host links receive no acknowledgment messages", async () => {
     .filter((frame) => !frame.binary && frame.direction === "toB")
     .map((frame) => JSON.parse(frame.bytes.toString()).message?.type);
   expect(operations).toContain("hosts.link.open.request");
-  expect(operations).not.toContain("hosts.link.ack");
+  expect(operations).not.toContain("hosts.link.ack.request");
 });
 
 test("mixed asynchronous and synchronous receiver failures close only their host channel", async () => {

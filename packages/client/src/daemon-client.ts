@@ -1926,11 +1926,11 @@ export class DaemonClient {
   openHostLink(channelId: string): Promise<string>;
   openHostLink(
     channelId: string,
-    flowControl: true,
+    options: { flowControl: true },
   ): Promise<{ routeId: string; flowControl: boolean }>;
   async openHostLink(
     channelId: string,
-    flowControl?: true,
+    options?: { flowControl: true },
   ): Promise<string | { routeId: string; flowControl: boolean }> {
     this.requireConnectedHosts();
     if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
@@ -1941,16 +1941,16 @@ export class DaemonClient {
       message: {
         type: "hosts.link.open.request",
         channelId,
-        ...(flowControl ? { flowControl } : {}),
+        ...(options?.flowControl ? { flowControl: true } : {}),
       },
       responseType: "hosts.link.open.response",
     });
-    return flowControl
+    return options?.flowControl
       ? { routeId: response.routeId, flowControl: response.flowControl === true }
       : response.routeId;
   }
   acknowledgeHostLink(routeId: string, sequence: number): Promise<void> {
-    return this.sendSessionMessageStrict({ type: "hosts.link.ack", routeId, sequence });
+    return this.sendSessionMessageStrict({ type: "hosts.link.ack.request", routeId, sequence });
   }
   sendHostFrame(routeId: string, data: string | Uint8Array): Promise<void> {
     if (typeof data === "string") {

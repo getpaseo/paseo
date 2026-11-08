@@ -16,6 +16,7 @@ import type {
 /** A logical socket has no network resources or authority of its own. */
 export class VirtualHostSocket extends EventEmitter {
   readonly maxFrameBytes = MAX_HOST_CHANNEL_FRAME_BYTES;
+  readonly supportsConcurrentWrites = true;
   readyState = 1;
   constructor(
     private readonly output: (data: string | Uint8Array) => Promise<void>,
@@ -81,7 +82,7 @@ export class DaemonLinkEndpoint {
   handles(message: SessionInboundMessage): boolean {
     return (
       message.type === "hosts.link.open.request" ||
-      message.type === "hosts.link.ack" ||
+      message.type === "hosts.link.ack.request" ||
       (message.type === "hosts.route.frame.request" && this.channels.has(message.routeId)) ||
       (message.type === "hosts.route.close.request" &&
         ((!!message.routeId && this.channels.has(message.routeId)) ||
@@ -89,7 +90,7 @@ export class DaemonLinkEndpoint {
     );
   }
   async dispatch(message: SessionInboundMessage): Promise<void> {
-    if (message.type === "hosts.link.ack") {
+    if (message.type === "hosts.link.ack.request") {
       this.channels.get(message.routeId)?.flowControl?.acknowledge(message.sequence);
       return;
     }

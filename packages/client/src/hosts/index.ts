@@ -91,14 +91,15 @@ export function createHostChannelTransport(
     );
     let opening: Promise<string>;
     if (first) opening = Promise.resolve(first);
-    else
-      opening = link
-        ? origin.openHostLink(scopeId, true).then((opened) => {
-            // Older destinations omit flowControl and receive no acknowledgment messages.
-            flowControl = opened.flowControl;
-            return opened.routeId;
-          })
-        : origin.openHostRoute(serverId, scopeId);
+    else if (link) {
+      opening = origin.openHostLink(scopeId, { flowControl: true }).then((opened) => {
+        // COMPAT(hostLinkFlowControl): added after v0.15.3 (#9109); remove after
+        // 2027-05-08 once the daemon floor supports forwarding acknowledgments.
+        // Older destinations omit flowControl and receive no acknowledgment messages.
+        flowControl = opened.flowControl;
+        return opened.routeId;
+      });
+    } else opening = origin.openHostRoute(serverId, scopeId);
     first = null;
     void opening
       .then((id) => {

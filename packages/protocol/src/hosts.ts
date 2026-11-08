@@ -128,7 +128,7 @@ export const HostsLinkOpenResponseSchema = z.object({
 });
 
 export const HostsLinkAckSchema = z.object({
-  type: z.literal("hosts.link.ack"),
+  type: z.literal("hosts.link.ack.request"),
   routeId: z.string(),
   sequence: z.number().int().positive(),
 });

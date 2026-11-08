@@ -51,7 +51,7 @@ async function link() {
     return { socket: sockets.at(-1)!, id: response.payload.routeId };
   };
   const ack = (routeId: string, sequence: number) =>
-    dispatch({ type: "hosts.link.ack", routeId, sequence });
+    dispatch({ type: "hosts.link.ack.request", routeId, sequence });
   const frames = () =>
     messages
       .filter((message) => message.type === "hosts.route.frame")
