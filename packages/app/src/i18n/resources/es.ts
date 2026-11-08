@@ -2792,7 +2792,14 @@ export const es: TranslationResources = {
     },
     host: {
       password: {
-        guidance: "Elimina este host y vuelve a añadirlo con la contraseña que pide este daemon.",
+        password_required:
+          "{{host}} ({{connection}}): Este host ahora requiere una contraseña y no tiene ninguna guardada.",
+        incorrect_password:
+          "{{host}} ({{connection}}): Se ha rechazado la contraseña guardada. Es posible que haya cambiado.",
+        label: "Contraseña",
+        connect: "Conectar",
+        saving: "Guardando…",
+        saveError: "No se pudo guardar la contraseña. Inténtalo de nuevo.",
       },
       appearance: {
         title: "Apariencia",

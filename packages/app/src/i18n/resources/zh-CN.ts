@@ -2703,7 +2703,12 @@ export const zhCN: TranslationResources = {
     },
     host: {
       password: {
-        guidance: "移除此主机，然后使用此守护进程要求的密码重新添加。",
+        password_required: "{{host}}（{{connection}}）：此主机现在需要密码，但尚未保存密码。",
+        incorrect_password: "{{host}}（{{connection}}）：已保存的密码被拒绝，密码可能已更改。",
+        label: "密码",
+        connect: "连接",
+        saving: "正在保存…",
+        saveError: "无法保存密码，请重试。",
       },
       appearance: {
         title: "外观",

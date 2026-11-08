@@ -29,9 +29,8 @@ import {
   expectHostPageVisible,
   seedSavedSettingsHosts,
   selectSettingsHost,
-  expectHostRejectedWithReAddGuidance,
-  expectNoHostPasswordControls,
-  removeHostFromHostPage,
+  expectHostPasswordRecovery,
+  submitHostPassword,
   addDirectHostFromSettings,
   expectHostOnlineWithoutError,
   expectIdleAgentRelease,
@@ -111,7 +110,7 @@ test.describe("Settings host page", () => {
     await expect(updateButton).toBeEnabled();
   });
 
-  test("a host rejected for its password reconnects after being removed and added again with it", async ({
+  test("a host rejected for its password reconnects after entering it in place", async ({
     page,
   }) => {
     const password = "e2e host password";
@@ -136,16 +135,14 @@ test.describe("Settings host page", () => {
       await selectSettingsHost(page, daemon.serverId);
       await openHostSection(page, daemon.serverId, "host");
 
-      await test.step("the host page shows the reason and the re-add guidance, with no password UI", async () => {
-        await expectHostRejectedWithReAddGuidance(page, "Password required");
-        await expectNoHostPasswordControls(page);
+      await test.step("the alert identifies the host, rejected connection and missing password", async () => {
+        await expectHostPasswordRecovery(page, "Password host", `127.0.0.1:${daemon.port}`);
       });
 
-      await test.step("removing the host and adding it again with the password brings it online", async () => {
-        await removeHostFromHostPage(page, daemon.serverId);
-        await addDirectHostFromSettings(page, { host: "127.0.0.1", port: daemon.port, password });
-        await openHostSection(page, daemon.serverId, "host");
+      await test.step("entering the password in place brings the host online", async () => {
+        await submitHostPassword(page, password);
         await expectHostOnlineWithoutError(page);
+        await expect(page.getByText("Password host", { exact: true }).first()).toBeVisible();
       });
     } finally {
       await daemon.close();

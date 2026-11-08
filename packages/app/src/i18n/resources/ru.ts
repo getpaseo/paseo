@@ -2779,8 +2779,14 @@ export const ru: TranslationResources = {
     },
     host: {
       password: {
-        guidance:
-          "Удалите этот хост и добавьте его снова с паролем, который запрашивает этот демон.",
+        password_required:
+          "{{host}} ({{connection}}): Теперь для этого хоста требуется пароль, но он не сохранён.",
+        incorrect_password:
+          "{{host}} ({{connection}}): Сохранённый пароль отклонён. Возможно, он изменился.",
+        label: "Пароль",
+        connect: "Подключиться",
+        saving: "Сохранение…",
+        saveError: "Не удалось сохранить пароль. Попробуйте ещё раз.",
       },
       appearance: {
         title: "Оформление",

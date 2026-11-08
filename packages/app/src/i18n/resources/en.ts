@@ -2859,7 +2859,14 @@ export const en = {
     },
     host: {
       password: {
-        guidance: "Remove this host and add it again with the password this daemon asks for.",
+        password_required:
+          "{{host}} ({{connection}}): This host now requires a password, and none is saved for it.",
+        incorrect_password:
+          "{{host}} ({{connection}}): The saved password was rejected. It may have changed.",
+        label: "Password",
+        connect: "Connect",
+        saving: "Saving…",
+        saveError: "Unable to save the password. Try again.",
       },
       appearance: {
         title: "Appearance",

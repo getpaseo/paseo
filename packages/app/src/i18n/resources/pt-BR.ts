@@ -2773,7 +2773,14 @@ export const ptBR: TranslationResources = {
     },
     host: {
       password: {
-        guidance: "Remova este host e adicione-o novamente com a senha que este daemon pede.",
+        password_required:
+          "{{host}} ({{connection}}): Este host agora exige uma senha e nenhuma está salva para ele.",
+        incorrect_password:
+          "{{host}} ({{connection}}): A senha salva foi rejeitada. Ela pode ter mudado.",
+        label: "Senha",
+        connect: "Conectar",
+        saving: "Salvando…",
+        saveError: "Não foi possível salvar a senha. Tente novamente.",
       },
       appearance: {
         title: "Aparência",

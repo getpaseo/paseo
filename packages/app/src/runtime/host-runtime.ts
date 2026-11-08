@@ -143,6 +143,7 @@ export interface HostRuntimeSnapshot {
   client: DaemonClient | null;
   lastError: string | null;
   authFailureReason?: "password_required" | "incorrect_password" | null;
+  authFailureConnectionId?: string | null;
   lastOnlineAt: string | null;
   agentDirectoryStatus: HostRuntimeAgentDirectoryStatus;
   agentDirectoryError: string | null;
@@ -839,7 +840,7 @@ export class HostRuntimeController {
     if (passwordChanged) {
       this.probeRequestVersion += 1;
       this.authRejectedConnectionIds.clear();
-      this.updateSnapshot({ authFailureReason: null });
+      this.updateSnapshot({ authFailureReason: null, authFailureConnectionId: null });
     }
     const activeConnectionId = this.snapshot.activeConnectionId;
     const previousActiveConnection = findConnectionById(this.host, activeConnectionId);
@@ -988,6 +989,7 @@ export class HostRuntimeController {
 
     let remaining = connectionsToProbe.length;
     let probeAuthFailure: "password_required" | "incorrect_password" | null = null;
+    let probeAuthFailureConnectionId: string | null = null;
     let activationLock: Promise<void> | null = null;
 
     const publishProbeState = (): void => {
@@ -1047,6 +1049,7 @@ export class HostRuntimeController {
           this.updateSnapshot({
             ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
             authFailureReason: probeAuthFailure,
+            authFailureConnectionId: probeAuthFailureConnectionId,
           });
         }
         return;
@@ -1199,6 +1202,7 @@ export class HostRuntimeController {
               if (authFailure) {
                 this.authRejectedConnectionIds.add(connection.id);
                 probeAuthFailure = authFailure;
+                probeAuthFailureConnectionId = connection.id;
               }
               probeByConnectionId.set(connection.id, {
                 status: "unavailable",
@@ -1471,6 +1475,7 @@ export class HostRuntimeController {
         ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
         client: null,
         authFailureReason: authFailure,
+        authFailureConnectionId: authFailure ? connection.id : null,
       });
       if (authFailure) {
         const probes = new Map(this.snapshot.probeByConnectionId);
@@ -1512,6 +1517,7 @@ export class HostRuntimeController {
           ...this.buildAgentDirectoryStatusPatch(),
           client,
           authFailureReason: null,
+          authFailureConnectionId: null,
         });
       });
     } catch (error) {
@@ -3062,6 +3068,7 @@ export interface HostMutations {
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
+  setHostPassword: (serverId: string, password: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
   setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
@@ -3077,6 +3084,7 @@ export function useHostMutations(): HostMutations {
       probeAndUpsertRemoteSshConnection: (input) => store.probeAndUpsertRemoteSshConnection(input),
       beginLinkPairing: () => store.beginLinkPairing(),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
+      setHostPassword: (serverId, password) => store.setHostPassword(serverId, password),
       setHostColor: (serverId, color) => store.setHostColor(serverId, color),
       setHostBadgeDisplay: (serverId, badgeDisplay) =>
         store.setHostBadgeDisplay(serverId, badgeDisplay),
