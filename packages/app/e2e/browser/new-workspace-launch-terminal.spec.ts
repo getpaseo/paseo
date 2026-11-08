@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "../support/fixtures";
+import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { gotoAppShell } from "../support/helpers/app";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
+  connectNewWorkspaceDaemonClient,
+  expectNewWorkspaceProjectSelected,
   expectNewWorkspaceDraft,
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
@@ -53,8 +56,18 @@ const BARE_PROFILE: TerminalProfile = {
   args: ["-c", "echo bare-launch-static-line; exec cat"],
 };
 
+const MISSING_PROFILE: TerminalProfile = {
+  id: "e2e-missing-command",
+  name: "Missing Command",
+  command: "/paseo-e2e-missing-terminal",
+  args: [],
+};
+
 test.use({
-  e2eDaemonConfig: { version: 1, daemon: { terminalProfiles: [PROMPT_PROFILE, BARE_PROFILE] } },
+  e2eDaemonConfig: {
+    version: 1,
+    daemon: { terminalProfiles: [PROMPT_PROFILE, BARE_PROFILE, MISSING_PROFILE] },
+  },
 });
 
 test.describe("New workspace: launching a terminal", () => {
@@ -124,6 +137,51 @@ test.describe("New workspace: launching a terminal", () => {
         "keep this command on the chosen project",
       );
     } finally {
+      await otherProject.cleanup();
+    }
+  });
+
+  test("sidebar requests replace a manually selected project", async ({ page }) => {
+    const otherProject = await seedWorkspace({ repoPrefix: "sidebar-project-request-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, workspace);
+      await selectNewWorkspaceProject(page, otherProject);
+      await expectNewWorkspaceProjectSelected(page, otherProject.projectDisplayName);
+      await openNewWorkspaceComposer(page, workspace);
+      await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
+    } finally {
+      await otherProject.cleanup();
+    }
+  });
+
+  test("retry after a failed terminal launch uses the newly selected project", async ({ page }) => {
+    const otherProject = await seedWorkspace({ repoPrefix: "terminal-retry-project-" });
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, workspace);
+      await selectLaunchOption(page, MISSING_PROFILE.id);
+      await submitTerminalLaunch(page);
+      await expect(
+        page.getByText(/paseo-e2e-missing-terminal.*command not found/).first(),
+      ).toBeVisible();
+      await selectNewWorkspaceProject(page, otherProject);
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await fillTerminalPrompt(page, "retry on the newly selected project");
+      await submitTerminalLaunch(page);
+      await expectWorkspaceOpensWithTerminalTab(page);
+      await expectTerminalOutputContains(page, "captured: retry on the newly selected project");
+      const workspaceSegment = new URL(page.url()).pathname.split("/").at(-1)!;
+      const workspaceId = decodeWorkspaceIdFromPathSegment(workspaceSegment);
+      const created = (await client.fetchWorkspaces()).entries.find(
+        (entry) => entry.id === workspaceId,
+      );
+      expect(created?.projectId).toBe(otherProject.projectId);
+    } finally {
+      await client.close();
       await otherProject.cleanup();
     }
   });

@@ -870,6 +870,49 @@ function useNewWorkspaceInitialContext({
   };
 }
 
+interface NewWorkspaceCreationState {
+  placementKey: string;
+  identity: { draftId: string; worktreeSlug: string };
+  result: WorkspaceCreationResult | { workspace: null };
+}
+
+function useNewWorkspaceCreationState(input: {
+  serverId: string;
+  project: { viewKey: string } | null;
+  sourceDirectory: string | null;
+  draftId?: string;
+}) {
+  const placementKey = JSON.stringify([
+    input.serverId,
+    input.project?.viewKey ?? null,
+    input.sourceDirectory,
+  ]);
+  const [state, setState] = useState<NewWorkspaceCreationState>(() => ({
+    placementKey,
+    identity: { draftId: input.draftId ?? generateDraftId(), worktreeSlug: createNameId() },
+    result: { workspace: null },
+  }));
+  if (state.placementKey !== placementKey) {
+    // A failed launch may already have created a workspace under the previous target.
+    setState({
+      placementKey,
+      identity: state.result.workspace
+        ? { draftId: generateDraftId(), worktreeSlug: createNameId() }
+        : state.identity,
+      result: { workspace: null },
+    });
+  }
+  const setCreationResult = useCallback(
+    (result: WorkspaceCreationResult) => {
+      setState((current) =>
+        current.placementKey === placementKey ? { ...current, result } : current,
+      );
+    },
+    [placementKey],
+  );
+  return { creationIdentity: state.identity, creationResult: state.result, setCreationResult };
+}
+
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -911,14 +954,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
-  const [creationIdentity] = useState(() => ({
-    draftId: draftId ?? generateDraftId(),
-    worktreeSlug: createNameId(),
-  }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [creationResult, setCreationResult] = useState<
-    WorkspaceCreationResult | { workspace: null }
-  >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -982,7 +1018,6 @@ export function NewWorkspaceScreen({
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
 
-  const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1002,6 +1037,13 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  const { creationIdentity, creationResult, setCreationResult } = useNewWorkspaceCreationState({
+    serverId: selectedServerId,
+    project: selectedProject,
+    sourceDirectory: selectedSourceDirectory,
+    draftId,
+  });
+  const { workspace } = creationResult;
   useEffect(() => {
     const hasManualPlacement = hasManualHostSelection || hasManualProjectSelection;
     if (!hasManualPlacement || !selectedProject || !selectedSourceDirectory) return;
@@ -1325,6 +1367,7 @@ export function NewWorkspaceScreen({
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
+      setCreationResult,
       selectedItem,
       selectedProject,
       selectedServerId,
