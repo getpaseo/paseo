@@ -469,7 +469,7 @@ class TestAgentSession implements AgentSession {
 
   async startTurn(): Promise<{ turnId: string }> {
     this.interrupted = false;
-    const turnId = `turn-${++this.turnIdCounter}`;
+    const turnId = `turn-${this.id}-${++this.turnIdCounter}`;
     // Use setTimeout so events arrive after the caller sets up the foreground waiter
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
@@ -13486,4 +13486,36 @@ test("stops only a currently owned public background item with its current token
   ).rejects.toThrow();
   expect(stopped).toEqual(["one"]);
   await manager.closeAgent(agent.id);
+});
+
+test("turns keep distinct identities across an idle runtime collection and resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-identity-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const collect = runtimeCleanup(manager);
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const consume = async (prompt: string, clientMessageId: string) => {
+      for await (const _event of manager.streamAgent(agent.id, prompt, { clientMessageId })) {
+      }
+    };
+    await consume("first", "first");
+    const later = new Date(Date.now() + 61 * 60_000);
+    expect((await collect({ now: later })).collected).toHaveLength(1);
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    await consume("second", "second");
+    const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows;
+    const userTurnIds = rows
+      .filter((row) => row.item.type === "user_message")
+      .map((row) => row.turnId);
+    expect(userTurnIds).toHaveLength(2);
+    expect(new Set(userTurnIds).size).toBe(2);
+  } finally {
+    await manager.closeAgent(manager.listAgents()[0]?.id ?? "missing").catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });

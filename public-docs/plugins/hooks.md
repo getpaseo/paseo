@@ -94,7 +94,7 @@ type PluginTurnOutcome =
 
 | Field        | Shape / meaning                                                                        |
 | ------------ | -------------------------------------------------------------------------------------- |
-| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens               |
+| `turnId`     | Provider-reported `string` or `null`; unique across resumed sessions                   |
 | `timeline`   | Deprecated, always `[]`; fetch history with the SDK.                                   |
 | `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other` |
 | `resolution` | SDK `AgentPermissionResponse`                                                          |
