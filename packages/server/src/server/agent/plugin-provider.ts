@@ -3,10 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
-import type {
-  JsonValue,
-  ProviderOptions,
-} from "@getpaseo/protocol/agent-types";
+import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
@@ -119,16 +116,10 @@ function providerError(error: ProviderError): Error {
 }
 
 function isProviderRequestReply(
-  event: ProviderEvent
+  event: ProviderEvent,
 ): event is Extract<
   ProviderEvent,
-  {
-    type:
-      | "request.completed"
-      | "catalog"
-      | "sessions"
-      | "session.can_stop_runtime";
-  }
+  { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
 > {
   return (
     event.type === "request.completed" ||
@@ -150,15 +141,12 @@ class ProviderRuntime {
   private readonly sessionListeners = new Set<
     (
       session: ProviderRuntimeSession,
-      event: Extract<ProviderEvent, { type: "session.opened" }>
+      event: Extract<ProviderEvent, { type: "session.opened" }>,
     ) => void
   >();
   private readonly requests = new Map<string, PendingRequest>();
   private readonly sessionRequests = new Map<string, string>();
-  private readonly pendingOpenDescendants = new Map<
-    string,
-    PendingOpenDescendantState
-  >();
+  private readonly pendingOpenDescendants = new Map<string, PendingOpenDescendantState>();
   private readonly pendingOpenDescendantsByRoot = new Map<
     ProviderRuntimeSession,
     PendingOpenDescendantState
@@ -166,7 +154,7 @@ class ProviderRuntime {
 
   constructor(
     private readonly registration: ProviderRegistration,
-    private readonly runtimeSettings?: ProviderRuntimeSettings
+    private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
   private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
@@ -180,22 +168,15 @@ class ProviderRuntime {
     const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
     const availability = await checkProviderLaunchAvailable(launch);
-    if (!availability.resolvedPath)
-      throw new Error(`${launch.command} not found on PATH`);
-    return {
-      command: resolvePath(availability.resolvedPath),
-      args: launch.args,
-      env,
-    };
+    if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
+    return { command: resolvePath(availability.resolvedPath), args: launch.args, env };
   }
 
   async status(): Promise<ProviderStatus> {
     try {
       const launch = await this.resolveLaunch();
       if (this.registration.status)
-        return ProviderStatusSchema.parse(
-          await this.registration.status({ launch })
-        );
+        return ProviderStatusSchema.parse(await this.registration.status({ launch }));
       if (!this.registration.command) await this.getConnection();
       return { available: true };
     } catch (error) {
@@ -206,9 +187,7 @@ class ProviderRuntime {
     }
   }
 
-  async catalogCacheKey(
-    options: FetchCatalogOptions
-  ): Promise<string | undefined> {
+  async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
     const callback = this.registration.getCatalogCacheKey;
     if (!callback) return undefined;
     return callback({ ...options, launch: await this.resolveLaunch() });
@@ -228,14 +207,10 @@ class ProviderRuntime {
 
   async catalog(
     cwd?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<Extract<ProviderEvent, { type: "catalog" }>["catalog"]> {
-    const event = await this.complete(
-      { type: "catalog", requestId: randomUUID(), cwd },
-      signal
-    );
-    if (event.type !== "catalog")
-      throw new Error("Provider returned an invalid catalog response");
+    const event = await this.complete({ type: "catalog", requestId: randomUUID(), cwd }, signal);
+    if (event.type !== "catalog") throw new Error("Provider returned an invalid catalog response");
     return event.catalog;
   }
 
@@ -244,15 +219,11 @@ class ProviderRuntime {
       query?: string;
       cwd?: string;
       limit?: number;
-    } = {}
+    } = {},
   ): Promise<Extract<ProviderEvent, { type: "sessions" }>["sessions"]> {
     const connection = await this.getConnection();
     if (!connection.capabilities.includes("session.list")) return [];
-    const event = await this.complete({
-      type: "sessions",
-      requestId: randomUUID(),
-      ...input,
-    });
+    const event = await this.complete({ type: "sessions", requestId: randomUUID(), ...input });
     if (event.type !== "sessions")
       throw new Error("Provider returned an invalid sessions response");
     return event.sessions;
@@ -261,16 +232,14 @@ class ProviderRuntime {
   onSessionOpened(
     listener: (
       session: ProviderRuntimeSession,
-      event: Extract<ProviderEvent, { type: "session.opened" }>
-    ) => void
+      event: Extract<ProviderEvent, { type: "session.opened" }>,
+    ) => void,
   ): () => void {
     this.sessionListeners.add(listener);
     return () => this.sessionListeners.delete(listener);
   }
 
-  async openSession(
-    input: OpenProviderSessionInput
-  ): Promise<ProviderRuntimeSession> {
+  async openSession(input: OpenProviderSessionInput): Promise<ProviderRuntimeSession> {
     if (this.sessions.has(input.sessionId)) {
       throw new Error(`Provider session already exists: ${input.sessionId}`);
     }
@@ -285,7 +254,7 @@ class ProviderRuntime {
       connection,
       input.sessionId,
       input.sessionId,
-      "core"
+      "core",
     );
     this.sessions.set(input.sessionId, session);
     this.providerSessions.set(input.sessionId, session);
@@ -315,21 +284,13 @@ class ProviderRuntime {
   async archive(persistence: ProviderPersistence): Promise<void> {
     const connection = await this.getConnection();
     if (!connection.capabilities.includes("session.archive")) return;
-    await this.complete({
-      type: "session.archive",
-      requestId: randomUUID(),
-      persistence,
-    });
+    await this.complete({ type: "session.archive", requestId: randomUUID(), persistence });
   }
 
   async unarchive(persistence: ProviderPersistence): Promise<void> {
     const connection = await this.getConnection();
     if (!connection.capabilities.includes("session.unarchive")) return;
-    await this.complete({
-      type: "session.unarchive",
-      requestId: randomUUID(),
-      persistence,
-    });
+    await this.complete({ type: "session.unarchive", requestId: randomUUID(), persistence });
   }
 
   close(): Promise<void> {
@@ -347,14 +308,13 @@ class ProviderRuntime {
     this.pendingOpenDescendants.clear();
     this.pendingOpenDescendantsByRoot.clear();
     this.sessionListeners.clear();
-    for (const request of this.requests.values())
-      request.reject(new Error("Provider closed"));
+    for (const request of this.requests.values()) request.reject(new Error("Provider closed"));
     this.requests.clear();
     this.closePromise = Promise.all([
       connection?.close(),
       connecting?.then(
         () => undefined,
-        () => undefined
+        () => undefined,
       ),
     ]).then(() => undefined);
     return this.closePromise;
@@ -362,7 +322,7 @@ class ProviderRuntime {
 
   async complete(
     input: ProviderInput & { requestId: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ProviderEvent> {
     signal?.throwIfAborted();
     const connection = await this.getConnection();
@@ -372,7 +332,7 @@ class ProviderRuntime {
       kind: input.type,
       sessionId:
         "sessionId" in input
-          ? this.providerSessions.get(input.sessionId)?.id ?? input.sessionId
+          ? (this.providerSessions.get(input.sessionId)?.id ?? input.sessionId)
           : undefined,
       resolve: pending.resolve,
       reject: pending.reject,
@@ -380,9 +340,7 @@ class ProviderRuntime {
     const abort = () => {
       if (!this.requests.delete(input.requestId)) return;
       pending.reject(
-        signal?.reason instanceof Error
-          ? signal.reason
-          : new Error("Provider request aborted")
+        signal?.reason instanceof Error ? signal.reason : new Error("Provider request aborted"),
       );
     };
     signal?.addEventListener("abort", abort, { once: true });
@@ -403,8 +361,7 @@ class ProviderRuntime {
   }
 
   private getConnection(): Promise<ProviderConnection> {
-    if (this.closed)
-      return Promise.reject(new Error("Provider runtime is closed"));
+    if (this.closed) return Promise.reject(new Error("Provider runtime is closed"));
     if (this.connection) return Promise.resolve(this.connection);
     if (this.connecting) return this.connecting;
     const generation = this.generation;
@@ -418,14 +375,12 @@ class ProviderRuntime {
       () => {
         if (this.connecting === connecting) this.connecting = null;
         return undefined;
-      }
+      },
     );
     return connecting;
   }
 
-  private async establishConnection(
-    generation: number
-  ): Promise<ProviderConnection> {
+  private async establishConnection(generation: number): Promise<ProviderConnection> {
     const rawConnection = await this.registration.connect({
       launch: await this.resolveLaunch(),
       versions: [PROVIDER_PROTOCOL_VERSION],
@@ -455,9 +410,7 @@ class ProviderRuntime {
 
   private validateConnection(connection: ProviderConnection): void {
     if (connection.version !== PROVIDER_PROTOCOL_VERSION) {
-      throw new Error(
-        `Provider selected unsupported version ${connection.version}`
-      );
+      throw new Error(`Provider selected unsupported version ${connection.version}`);
     }
   }
 
@@ -480,10 +433,7 @@ class ProviderRuntime {
         ...event,
         sessionId: session.id,
         ...(event.type === "session.opened" && event.parentSessionId
-          ? {
-              parentSessionId: this.providerSessions.get(event.parentSessionId)
-                ?.id,
-            }
+          ? { parentSessionId: this.providerSessions.get(event.parentSessionId)?.id }
           : {}),
       } as ProviderEvent;
     }
@@ -492,10 +442,8 @@ class ProviderRuntime {
     } else if (event.type === "session.closed") {
       this.settleClosedSessionRequests(
         event.sessionId,
-        new Error(
-          event.error?.message ?? `Provider session ${event.sessionId} closed`
-        ),
-        event
+        new Error(event.error?.message ?? `Provider session ${event.sessionId} closed`),
+        event,
       );
     }
     if ("sessionId" in event) {
@@ -517,11 +465,7 @@ class ProviderRuntime {
   }
 
   private acceptProviderChild(event: ProviderEvent): boolean {
-    if (
-      event.type !== "session.opened" ||
-      this.providerSessions.has(event.sessionId)
-    )
-      return false;
+    if (event.type !== "session.opened" || this.providerSessions.has(event.sessionId)) return false;
     const parent = event.parentSessionId
       ? this.providerSessions.get(event.parentSessionId)
       : undefined;
@@ -532,14 +476,13 @@ class ProviderRuntime {
       this.connection!,
       sessionId,
       event.sessionId,
-      event.restoration
+      event.restoration,
     );
     this.sessions.set(sessionId, session);
     this.providerSessions.set(event.sessionId, session);
     const mappedEvent = { ...event, sessionId, parentSessionId: parent.id };
     session.accept(mappedEvent);
-    for (const listener of this.sessionListeners)
-      listener(session, mappedEvent);
+    for (const listener of this.sessionListeners) listener(session, mappedEvent);
     return true;
   }
 
@@ -550,9 +493,7 @@ class ProviderRuntime {
       const parent = this.providerSessions.get(event.parentSessionId);
       state =
         this.pendingOpenDescendants.get(event.parentSessionId) ??
-        (parent?.hasPendingOpen()
-          ? this.pendingOpenDescendantStateFor(parent)
-          : undefined);
+        (parent?.hasPendingOpen() ? this.pendingOpenDescendantStateFor(parent) : undefined);
       if (state) {
         state.providerSessionIds.add(event.sessionId);
         this.pendingOpenDescendants.set(event.sessionId, state);
@@ -563,15 +504,10 @@ class ProviderRuntime {
     return true;
   }
 
-  private pendingOpenDescendantStateFor(
-    root: ProviderRuntimeSession
-  ): PendingOpenDescendantState {
+  private pendingOpenDescendantStateFor(root: ProviderRuntimeSession): PendingOpenDescendantState {
     const existing = this.pendingOpenDescendantsByRoot.get(root);
     if (existing) return existing;
-    const state: PendingOpenDescendantState = {
-      providerSessionIds: new Set(),
-      events: [],
-    };
+    const state: PendingOpenDescendantState = { providerSessionIds: new Set(), events: [] };
     this.pendingOpenDescendantsByRoot.set(root, state);
     return state;
   }
@@ -587,7 +523,7 @@ class ProviderRuntime {
   }
 
   private takePendingOpenDescendants(
-    root: ProviderRuntimeSession
+    root: ProviderRuntimeSession,
   ): PendingOpenDescendantState | undefined {
     const state = this.pendingOpenDescendantsByRoot.get(root);
     if (!state) return undefined;
@@ -607,15 +543,14 @@ class ProviderRuntime {
       request.reject(error);
     }
     for (const [requestId, pendingSessionId] of this.sessionRequests) {
-      if (pendingSessionId === sessionId)
-        this.sessionRequests.delete(requestId);
+      if (pendingSessionId === sessionId) this.sessionRequests.delete(requestId);
     }
   }
 
   private settleClosedSessionRequests(
     sessionId: string,
     error: Error,
-    event: Extract<ProviderEvent, { type: "session.closed" }>
+    event: Extract<ProviderEvent, { type: "session.closed" }>,
   ): void {
     for (const [requestId, request] of this.requests) {
       if (request.sessionId !== sessionId) continue;
@@ -625,16 +560,13 @@ class ProviderRuntime {
     }
   }
 
-  private failRequest(
-    event: Extract<ProviderEvent, { type: "request.failed" }>
-  ): void {
+  private failRequest(event: Extract<ProviderEvent, { type: "request.failed" }>): void {
     const request = this.requests.get(event.requestId);
     if (request) {
       this.requests.delete(event.requestId);
       request.reject(providerError(event.error));
     }
-    if (request?.sessionId)
-      this.sessions.get(request.sessionId)?.requestFailed(event);
+    if (request?.sessionId) this.sessions.get(request.sessionId)?.requestFailed(event);
     const sessionId = this.sessionRequests.get(event.requestId);
     if (!sessionId) return;
     this.sessionRequests.delete(event.requestId);
@@ -644,14 +576,8 @@ class ProviderRuntime {
   private finishRequest(
     event: Extract<
       ProviderEvent,
-      {
-        type:
-          | "request.completed"
-          | "catalog"
-          | "sessions"
-          | "session.can_stop_runtime";
-      }
-    >
+      { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
+    >,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
@@ -660,9 +586,7 @@ class ProviderRuntime {
       this.providerSessions.get(event.sessionId)?.id !== request.sessionId
     ) {
       this.requests.delete(event.requestId);
-      request.reject(
-        new Error("Runtime safety response belongs to another session")
-      );
+      request.reject(new Error("Runtime safety response belongs to another session"));
       return;
     }
     this.requests.delete(event.requestId);
@@ -675,8 +599,7 @@ class ProviderRuntimeSession {
   private historyClaimed = false;
   private readonly listeners = new Set<(event: ProviderEvent) => void>();
   private capabilities: readonly string[] = [];
-  private openRequest: { requestId: string; deferred: Deferred<void> } | null =
-    null;
+  private openRequest: { requestId: string; deferred: Deferred<void> } | null = null;
   private readonly prompts = new Map<
     string,
     Deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>
@@ -685,11 +608,7 @@ class ProviderRuntimeSession {
   private terminal = false;
   private closePromise: Promise<void> | null = null;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [] };
-  commands: Array<{
-    name: string;
-    description: string;
-    argumentHint?: string;
-  }> = [];
+  commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
   persistence: ProviderPersistence | null = null;
 
   constructor(
@@ -697,7 +616,7 @@ class ProviderRuntimeSession {
     private readonly connection: ProviderConnection,
     readonly id: string,
     private readonly providerSessionId: string,
-    readonly restoration: "core" | "parent"
+    readonly restoration: "core" | "parent",
   ) {}
 
   get providerId(): string {
@@ -718,18 +637,15 @@ class ProviderRuntimeSession {
   }
 
   async prompt(
-    prompt: ProviderPrompt
-  ): Promise<
-    Extract<ProviderEvent, { type: "session.prompt_result" }>["result"]
-  > {
+    prompt: ProviderPrompt,
+  ): Promise<Extract<ProviderEvent, { type: "session.prompt_result" }>["result"]> {
     requireProviderCapabilities(this.capabilities, {
       type: "session.prompt",
       sessionId: this.providerSessionId,
       prompt,
     });
     if (this.terminal) throw new StaleProviderSessionError(this.id);
-    const pending =
-      deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>();
+    const pending = deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>();
     this.prompts.set(prompt.clientMessageId, pending);
     try {
       await this.connection.send({
@@ -739,8 +655,7 @@ class ProviderRuntimeSession {
       });
       return (await pending.promise).result;
     } catch (error) {
-      if (this.terminal || this.runtime.isClosed)
-        throw new StaleProviderSessionError(this.id);
+      if (this.terminal || this.runtime.isClosed) throw new StaleProviderSessionError(this.id);
       throw error;
     } finally {
       this.prompts.delete(prompt.clientMessageId);
@@ -761,7 +676,7 @@ class ProviderRuntimeSession {
         requestId: randomUUID(),
         sessionId: this.providerSessionId,
       },
-      AbortSignal.timeout(10_000)
+      AbortSignal.timeout(10_000),
     );
     if (event.type !== "session.can_stop_runtime")
       throw new Error("Invalid runtime safety response");
@@ -781,7 +696,7 @@ class ProviderRuntimeSession {
 
   async respondToPermission(
     permissionId: string,
-    response: Extract<ProviderInput, { type: "session.permission" }>["response"]
+    response: Extract<ProviderInput, { type: "session.permission" }>["response"],
   ): Promise<void> {
     const input: Extract<ProviderInput, { type: "session.permission" }> = {
       type: "session.permission",
@@ -793,9 +708,7 @@ class ProviderRuntimeSession {
     await this.connection.send(input);
   }
 
-  async revert(
-    token: ProviderInput & { type: "session.revert" }
-  ): Promise<void> {
+  async revert(token: ProviderInput & { type: "session.revert" }): Promise<void> {
     const input = { ...token, sessionId: this.providerSessionId };
     requireProviderCapabilities(this.capabilities, input);
     await this.runtime.complete(input);
@@ -842,9 +755,7 @@ class ProviderRuntimeSession {
     return pending.promise;
   }
 
-  requestFailed(
-    event: Extract<ProviderEvent, { type: "request.failed" }>
-  ): void {
+  requestFailed(event: Extract<ProviderEvent, { type: "request.failed" }>): void {
     if (this.openRequest?.requestId === event.requestId) {
       this.openRequest.deferred.reject(providerError(event.error));
       this.openRequest = null;
@@ -854,15 +765,11 @@ class ProviderRuntimeSession {
 
   accept(event: ProviderEvent): void {
     if (event.type === "session.opened") {
-      event = {
-        ...event,
-        capabilities: this.normalizeSessionCapabilities(event.capabilities),
-      };
+      event = { ...event, capabilities: this.normalizeSessionCapabilities(event.capabilities) };
     }
     if (event.type === "session.opened") {
       this.capabilities = [...event.capabilities];
-      this.persistence =
-        this.restoration === "core" ? event.persistence ?? null : null;
+      this.persistence = this.restoration === "core" ? (event.persistence ?? null) : null;
       return;
     }
     const openRequest = this.openRequest;
@@ -877,21 +784,15 @@ class ProviderRuntimeSession {
       return;
     }
     if (event.type === "session.prompt_result") {
-      if (event.result.type === "turn")
-        this.activeTurnIds.add(event.result.turnId);
+      if (event.result.type === "turn") this.activeTurnIds.add(event.result.turnId);
       this.prompts.get(event.clientMessageId)?.resolve(event);
       return;
     }
-    if (
-      event.type === "session.runtime_failed" ||
-      event.type === "session.closed"
-    ) {
+    if (event.type === "session.runtime_failed" || event.type === "session.closed") {
       if (this.terminal) return;
       this.terminal = true;
       this.publish(event);
-      this.rejectPending(
-        new Error(event.error?.message ?? `Provider session ${this.id} closed`)
-      );
+      this.rejectPending(new Error(event.error?.message ?? `Provider session ${this.id} closed`));
       return;
     }
     this.publish(event);
@@ -924,17 +825,11 @@ class ProviderRuntimeSession {
     this.prompts.clear();
   }
 
-  private normalizeSessionCapabilities(
-    capabilities: readonly string[]
-  ): ProviderCapability[] {
-    const known = PROVIDER_CAPABILITIES.filter((capability) =>
-      capabilities.includes(capability)
-    );
+  private normalizeSessionCapabilities(capabilities: readonly string[]): ProviderCapability[] {
+    const known = PROVIDER_CAPABILITIES.filter((capability) => capabilities.includes(capability));
     for (const capability of known) {
       if (!this.connection.capabilities.includes(capability)) {
-        throw new Error(
-          `Provider session selected unoffered capability ${capability}`
-        );
+        throw new Error(`Provider session selected unoffered capability ${capability}`);
       }
     }
     return known;
@@ -955,11 +850,9 @@ class ProviderRuntimeSession {
   }
 }
 
-function normalizeConnection(
-  connection: ProviderConnection
-): ProviderConnection {
+function normalizeConnection(connection: ProviderConnection): ProviderConnection {
   const capabilities = PROVIDER_CAPABILITIES.filter((capability) =>
-    connection.capabilities.includes(capability)
+    connection.capabilities.includes(capability),
   );
   return {
     version: connection.version,
@@ -996,13 +889,8 @@ export class PluginAgentClientRegistry {
     for (const [id, adapted] of this.providers) {
       if (incoming.get(id) === adapted.registration) continue;
       this.providers.delete(id);
-      void Promise.all(
-        [...adapted.clients].map((client) => client.shutdown())
-      ).catch((error) => {
-        this.logger.warn(
-          { err: error, provider: id },
-          "Failed to stop plugin provider"
-        );
+      void Promise.all([...adapted.clients].map((client) => client.shutdown())).catch((error) => {
+        this.logger.warn({ err: error, provider: id }, "Failed to stop plugin provider");
       });
     }
 
@@ -1013,13 +901,10 @@ export class PluginAgentClientRegistry {
       const definition = createPluginProviderDefinition(
         registration,
         (_logger, runtimeSettings) => {
-          const configuredClient = new PluginAgentClient(
-            registration,
-            runtimeSettings
-          );
+          const configuredClient = new PluginAgentClient(registration, runtimeSettings);
           clients.add(configuredClient);
           return configuredClient;
-        }
+        },
       );
       this.providers.set(id, { registration, client, definition, clients });
     }
@@ -1027,14 +912,12 @@ export class PluginAgentClientRegistry {
 
   definitions(): Record<string, RegisteredProviderDefinition> {
     return Object.fromEntries(
-      [...this.providers].map(([id, provider]) => [id, provider.definition])
+      [...this.providers].map(([id, provider]) => [id, provider.definition]),
     );
   }
 
   clients(): Record<string, AgentClient> {
-    return Object.fromEntries(
-      [...this.providers].map(([id, provider]) => [id, provider.client])
-    );
+    return Object.fromEntries([...this.providers].map(([id, provider]) => [id, provider.client]));
   }
 
   has(provider: string): boolean {
@@ -1045,22 +928,19 @@ export class PluginAgentClientRegistry {
     const providers = [...this.providers.values()];
     this.providers.clear();
     await Promise.all(
-      providers.flatMap(({ clients }) =>
-        [...clients].map((client) => client.shutdown())
-      )
+      providers.flatMap(({ clients }) => [...clients].map((client) => client.shutdown())),
     );
   }
 }
 
 function createPluginProviderDefinition(
   registration: ProviderRegistration,
-  createClient: RegisteredProviderDefinition["createClient"]
+  createClient: RegisteredProviderDefinition["createClient"],
 ): RegisteredProviderDefinition {
   return {
     id: registration.id,
     label: registration.label,
-    description:
-      registration.description ?? `Plugin provider ${registration.label}`,
+    description: registration.description ?? `Plugin provider ${registration.label}`,
     iconSvg: registration.icon,
     requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
@@ -1083,18 +963,13 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(
-    registration: ProviderRegistration,
-    runtimeSettings?: ProviderRuntimeSettings
-  ) {
+  constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.runtimeSettings = runtimeSettings;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
-      this.getCatalogCacheKey = (options) =>
-        this.runtime.catalogCacheKey(options);
-    this.runtime.onSessionOpened((session, opened) =>
-      this.acceptChild(session, opened)
-    );
+      this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
+    this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }
 
   get capabilities(): AgentCapabilityFlags {
@@ -1104,7 +979,7 @@ class PluginAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
-    options?: AgentCreateSessionOptions
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     return await this.openSession({
       config,
@@ -1117,12 +992,10 @@ class PluginAgentClient implements AgentClient {
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    launchContext?: AgentLaunchContext
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     if (!overrides?.cwd) {
-      throw new Error(
-        `Plugin provider '${this.provider}' requires cwd to resume a session`
-      );
+      throw new Error(`Plugin provider '${this.provider}' requires cwd to resume a session`);
     }
     return await this.openSession({
       config: { ...overrides, provider: this.provider, cwd: overrides.cwd },
@@ -1135,11 +1008,11 @@ class PluginAgentClient implements AgentClient {
 
   async fetchCatalog(
     options: FetchCatalogOptions,
-    context?: ProviderRefreshContext
+    context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
     const catalog = await this.runtime.catalog(
       options.scope === "workspace" ? options.cwd : undefined,
-      context?.signal
+      context?.signal,
     );
     return {
       models: catalog.models.map((model) =>
@@ -1148,8 +1021,8 @@ class PluginAgentClient implements AgentClient {
           model,
           catalog.defaultModel,
           catalog.thinkingOptions,
-          catalog.defaultThinkingOption
-        )
+          catalog.defaultThinkingOption,
+        ),
       ),
       modes: catalog.modes.map((mode) => ({ ...mode })),
       defaultModeId: catalog.defaultMode,
@@ -1167,7 +1040,7 @@ class PluginAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options: ListImportableSessionsOptions = {}
+    options: ListImportableSessionsOptions = {},
   ): Promise<ImportableProviderSession[]> {
     const sessions = await this.runtime.listSessions({
       query: options.query,
@@ -1186,7 +1059,7 @@ class PluginAgentClient implements AgentClient {
 
   async importSession(
     input: ImportProviderSessionInput,
-    context: ImportProviderSessionContext
+    context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession> {
     const session = await this.openSession({
       config: { ...context.config, provider: this.provider, cwd: input.cwd },
@@ -1196,17 +1069,10 @@ class PluginAgentClient implements AgentClient {
       persist: true,
     });
     const persistence = session.describePersistence();
-    if (!persistence)
-      throw new Error(
-        `Plugin provider '${this.provider}' did not persist import`
-      );
+    if (!persistence) throw new Error(`Plugin provider '${this.provider}' did not persist import`);
     return {
       session,
-      config: {
-        ...context.storedConfig,
-        provider: this.provider,
-        cwd: input.cwd,
-      },
+      config: { ...context.storedConfig, provider: this.provider, cwd: input.cwd },
       persistence,
       timeline: session.timelineHistory(),
       providerSubagentEvents: session.subagentHistory(),
@@ -1235,11 +1101,7 @@ class PluginAgentClient implements AgentClient {
     const sessionId = randomUUID();
     const bridge = await this.runtime.openSession({
       sessionId,
-      config: mapSessionConfig(
-        input.config,
-        input.launchContext,
-        input.persist
-      ),
+      config: mapSessionConfig(input.config, input.launchContext, input.persist),
       persistence: input.persistence,
       history: input.history,
     });
@@ -1252,11 +1114,7 @@ class PluginAgentClient implements AgentClient {
       this.rootsBySession.set(next.id, session);
       this.attachPendingChildren();
     };
-    const config = mapSessionConfig(
-      input.config,
-      input.launchContext,
-      input.persist
-    );
+    const config = mapSessionConfig(input.config, input.launchContext, input.persist);
     const session = new PluginAgentSession(
       this.provider,
       bridge,
@@ -1279,7 +1137,10 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
       config.settings,
-      input.launchContext?.env ?? {}
+      createProviderEnv({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [config.env],
+      }),
     );
     bind(bridge);
     return session;
@@ -1287,7 +1148,7 @@ class PluginAgentClient implements AgentClient {
 
   private acceptChild(
     session: ProviderRuntimeSession,
-    opened: Extract<ProviderEvent, { type: "session.opened" }>
+    opened: Extract<ProviderEvent, { type: "session.opened" }>,
   ): void {
     const root = opened.parentSessionId
       ? this.rootsBySession.get(opened.parentSessionId)
@@ -1305,11 +1166,7 @@ class PluginAgentClient implements AgentClient {
     let attached = true;
     while (attached) {
       attached = false;
-      for (
-        let index = this.pendingChildren.length - 1;
-        index >= 0;
-        index -= 1
-      ) {
+      for (let index = this.pendingChildren.length - 1; index >= 0; index -= 1) {
         const pending = this.pendingChildren[index];
         const root = pending.opened.parentSessionId
           ? this.rootsBySession.get(pending.opened.parentSessionId)
@@ -1330,15 +1187,10 @@ interface TimelineTextSnapshot {
 }
 
 function isTextSnapshotItem(
-  item: ProviderTimelineItem
-): item is Extract<
-  ProviderTimelineItem,
-  { type: TimelineTextSnapshot["type"] }
-> {
+  item: ProviderTimelineItem,
+): item is Extract<ProviderTimelineItem, { type: TimelineTextSnapshot["type"] }> {
   return (
-    item.type === "assistant_message" ||
-    item.type === "reasoning" ||
-    item.type === "user_message"
+    item.type === "assistant_message" || item.type === "reasoning" || item.type === "user_message"
   );
 }
 
@@ -1346,33 +1198,18 @@ class PluginAgentSession implements AgentSession {
   readonly initialTimeline: ImportedProviderSession["timeline"];
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history = new PluginSessionHistory();
-  private readonly pendingPermissions = new Map<
-    string,
-    AgentPermissionRequest
-  >();
-  private readonly permissionResponses = new Map<
-    string,
-    AgentPermissionResponse
-  >();
-  private readonly revertTokens = new Map<
-    string,
-    ProviderTimelineItem["revertToken"]
-  >();
+  private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
+  private readonly permissionResponses = new Map<string, AgentPermissionResponse>();
+  private readonly revertTokens = new Map<string, ProviderTimelineItem["revertToken"]>();
   private readonly timelineSnapshots = new Map<string, TimelineTextSnapshot>();
   private readonly subagentIdsBySession = new Map<string, string | null>();
   private readonly children = new Map<
     string,
     { session: ProviderRuntimeSession; unsubscribe: () => void }
   >();
-  private readonly childSnapshots = new Map<
-    string,
-    Map<string, TimelineTextSnapshot>
-  >();
+  private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   // Outcome of each child's latest finished turn, so a plain close does not report it as completed.
-  private readonly childTurnOutcomes = new Map<
-    string,
-    "completed" | "canceled" | "failed"
-  >();
+  private readonly childTurnOutcomes = new Map<string, "completed" | "canceled" | "failed">();
   private unsubscribe: (() => void) | null = null;
   /** How the opened session differs from the options it was given. */
   readonly openOptionsPatch: Record<string, JsonValue>;
@@ -1401,11 +1238,11 @@ class PluginAgentSession implements AgentSession {
     private readonly reopen: (
       persistence: ProviderPersistence,
       state: ProviderConfigState,
-      options: Readonly<Record<string, JsonValue>>
+      options: Readonly<Record<string, JsonValue>>,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     givenOptions: Readonly<Record<string, JsonValue>>,
-    private readonly launchEnv: Record<string, string> = {}
+    private readonly launchEnv: Record<string, string> = {},
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1416,7 +1253,7 @@ class PluginAgentSession implements AgentSession {
     // Opening notices arrive before the manager subscribes to the session.
     // Commit them on registration and replay the same timestamps from history.
     this.initialTimeline = this.timelineHistory().filter(
-      (entry) => entry.item.type === "notification"
+      (entry) => entry.item.type === "notification",
     );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
   }
@@ -1440,8 +1277,7 @@ class PluginAgentSession implements AgentSession {
     const resumable = this.canReplayHistory;
     return {
       ...capabilities,
-      supportsRewindConversation:
-        capabilities.supportsRewindConversation && resumable,
+      supportsRewindConversation: capabilities.supportsRewindConversation && resumable,
       supportsRewindBoth: capabilities.supportsRewindBoth && resumable,
     };
   }
@@ -1450,15 +1286,11 @@ class PluginAgentSession implements AgentSession {
     return readPluginOptionState(this.bridge.config).controls;
   }
 
-  async run(
-    prompt: AgentPromptInput,
-    options?: AgentRunOptions
-  ): Promise<AgentRunResult> {
+  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return await runProviderTurn({
       prompt,
       runOptions: options,
-      startTurn: (nextPrompt, nextOptions) =>
-        this.startTurn(nextPrompt, nextOptions),
+      startTurn: (nextPrompt, nextOptions) => this.startTurn(nextPrompt, nextOptions),
       subscribe: (callback) => this.subscribe(callback),
       getSessionId: () => this.id,
     });
@@ -1466,7 +1298,7 @@ class PluginAgentSession implements AgentSession {
 
   async startTurn(
     prompt: AgentPromptInput,
-    options: AgentRunOptions = {}
+    options: AgentRunOptions = {},
   ): Promise<{ turnId: string }> {
     this.assertReplayComplete();
     const clientMessageId = options.clientMessageId ?? randomUUID();
@@ -1479,8 +1311,7 @@ class PluginAgentSession implements AgentSession {
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
     });
     if (result.type === "failed") throw providerError(result.error);
-    if (result.type === "turn" || result.type === "steer")
-      return { turnId: result.turnId };
+    if (result.type === "turn" || result.type === "steer") return { turnId: result.turnId };
 
     const turnId = `command-${clientMessageId}`;
     this.publish({ type: "turn_started", provider: this.provider, turnId });
@@ -1490,7 +1321,7 @@ class PluginAgentSession implements AgentSession {
 
   async steerActiveTurn(
     prompt: AgentPromptInput,
-    options: SteerActiveTurnOptions
+    options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
     this.assertReplayComplete();
     if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
@@ -1521,10 +1352,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   get canStopRuntime(): (() => Promise<boolean>) | undefined {
-    if (
-      !this.bridge.negotiatedCapabilities.includes("session.can_stop_runtime")
-    )
-      return undefined;
+    if (!this.bridge.negotiatedCapabilities.includes("session.can_stop_runtime")) return undefined;
     return () => this.bridge.canStopRuntime();
   }
 
@@ -1555,10 +1383,7 @@ class PluginAgentSession implements AgentSession {
     return [...this.pendingPermissions.values()];
   }
 
-  async respondToPermission(
-    requestId: string,
-    response: AgentPermissionResponse
-  ): Promise<void> {
+  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     this.permissionResponses.set(requestId, response);
     try {
       await this.bridge.respondToPermission(
@@ -1566,7 +1391,7 @@ class PluginAgentSession implements AgentSession {
         toJsonValue(response, "permission response") as Extract<
           ProviderInput,
           { type: "session.permission" }
-        >["response"]
+        >["response"],
       );
     } catch (error) {
       this.permissionResponses.delete(requestId);
@@ -1616,9 +1441,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   /** The agent manager sends one apply at a time per session. */
-  async applyOptions(
-    options: ProviderOptions
-  ): Promise<Record<string, JsonValue>> {
+  async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentOptions();
     const { legacySettings } = readPluginOptionState(this.bridge.config);
@@ -1668,28 +1491,22 @@ class PluginAgentSession implements AgentSession {
     return this.history
       .read(this.provider)
       .flatMap((event) =>
-        event.type === "timeline"
-          ? [{ item: event.item, timestamp: event.timestamp }]
-          : []
+        event.type === "timeline" ? [{ item: event.item, timestamp: event.timestamp }] : [],
       );
   }
 
-  subagentHistory(): NonNullable<
-    ImportedProviderSession["providerSubagentEvents"]
-  > {
+  subagentHistory(): NonNullable<ImportedProviderSession["providerSubagentEvents"]> {
     return this.history
       .read(this.provider)
       .filter(
-        (
-          event
-        ): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
-          event.type === "provider_subagent"
+        (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+          event.type === "provider_subagent",
       );
   }
 
   attachChild(
     child: ProviderRuntimeSession,
-    opened: Extract<ProviderEvent, { type: "session.opened" }>
+    opened: Extract<ProviderEvent, { type: "session.opened" }>,
   ): void {
     const parentSubagentId = opened.parentSessionId
       ? this.subagentIdsBySession.get(opened.parentSessionId)
@@ -1715,13 +1532,10 @@ class PluginAgentSession implements AgentSession {
     });
     const snapshots = new Map<string, TimelineTextSnapshot>();
     this.childSnapshots.set(childId, snapshots);
-    for (const event of child.history)
-      this.acceptChildEvent(childId, event, snapshots);
+    for (const event of child.history) this.acceptChildEvent(childId, event, snapshots);
     this.children.set(child.id, {
       session: child,
-      unsubscribe: child.onEvent((event) =>
-        this.acceptChildEvent(childId, event, snapshots)
-      ),
+      unsubscribe: child.onEvent((event) => this.acceptChildEvent(childId, event, snapshots)),
     });
   }
 
@@ -1765,24 +1579,14 @@ class PluginAgentSession implements AgentSession {
     }
   }
 
-  private translateTurn(
-    event: Extract<ProviderEvent, { type: "session.turn" }>
-  ): AgentStreamEvent {
+  private translateTurn(event: Extract<ProviderEvent, { type: "session.turn" }>): AgentStreamEvent {
     if (event.state === "started") {
       this.currentTurnId = event.turnId;
-      return {
-        type: "turn_started",
-        provider: this.provider,
-        turnId: event.turnId,
-      };
+      return { type: "turn_started", provider: this.provider, turnId: event.turnId };
     }
     if (this.currentTurnId === event.turnId) this.currentTurnId = null;
     if (event.state === "completed") {
-      return {
-        type: "turn_completed",
-        provider: this.provider,
-        turnId: event.turnId,
-      };
+      return { type: "turn_completed", provider: this.provider, turnId: event.turnId };
     }
     if (event.state === "canceled") {
       return {
@@ -1803,13 +1607,9 @@ class PluginAgentSession implements AgentSession {
   }
 
   private translateTimeline(
-    event: Extract<ProviderEvent, { type: "timeline.item" }>
+    event: Extract<ProviderEvent, { type: "timeline.item" }>,
   ): AgentStreamEvent[] {
-    const item = mapTimelineItem(
-      event.item,
-      this.timelineSnapshots,
-      this.revertTokens
-    );
+    const item = mapTimelineItem(event.item, this.timelineSnapshots, this.revertTokens);
     return item
       ? [
           {
@@ -1824,12 +1624,9 @@ class PluginAgentSession implements AgentSession {
   }
 
   private translatePermission(
-    event: Extract<ProviderEvent, { type: "session.permission" }>
+    event: Extract<ProviderEvent, { type: "session.permission" }>,
   ): AgentStreamEvent {
-    const request: AgentPermissionRequest = {
-      ...event.request,
-      provider: this.provider,
-    };
+    const request: AgentPermissionRequest = { ...event.request, provider: this.provider };
     this.pendingPermissions.set(request.id, request);
     return {
       type: "permission_requested",
@@ -1840,7 +1637,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   private translatePermissionResolution(
-    event: Extract<ProviderEvent, { type: "session.permission_resolved" }>
+    event: Extract<ProviderEvent, { type: "session.permission_resolved" }>,
   ): AgentStreamEvent {
     this.pendingPermissions.delete(event.permissionId);
     const resolution = this.permissionResponses.get(event.permissionId) ?? {
@@ -1862,9 +1659,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   /** Options whose value differs from `known`: the plugin's own change or its opening state. */
-  private optionDifferences(
-    known: Readonly<Record<string, JsonValue>>
-  ): Record<string, JsonValue> {
+  private optionDifferences(known: Readonly<Record<string, JsonValue>>): Record<string, JsonValue> {
     const patch: Record<string, JsonValue> = {};
     for (const [id, value] of Object.entries(this.currentOptions())) {
       if (!isDeepStrictEqual(known[id], value)) patch[id] = value;
@@ -1877,9 +1672,7 @@ class PluginAgentSession implements AgentSession {
    * plugin accepted, then what it reported back. A key it reported before and no longer reports
    * was reset.
    */
-  private commitOptions(
-    accepted: Readonly<Record<string, JsonValue>> = {}
-  ): void {
+  private commitOptions(accepted: Readonly<Record<string, JsonValue>> = {}): void {
     for (const [id, value] of Object.entries(accepted)) {
       if (value === null) delete this.committedOptions[id];
       else this.committedOptions[id] = value;
@@ -1898,7 +1691,7 @@ class PluginAgentSession implements AgentSession {
    */
   private optionChanges(
     known: Readonly<Record<string, JsonValue>>,
-    reported: Readonly<Record<string, JsonValue>>
+    reported: Readonly<Record<string, JsonValue>>,
   ): Record<string, JsonValue> {
     const patch = this.optionDifferences(known);
     const current = this.currentOptions();
@@ -1917,7 +1710,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   private translateConfig(
-    event: Extract<ProviderEvent, { type: "session.config" }>
+    event: Extract<ProviderEvent, { type: "session.config" }>,
   ): AgentStreamEvent[] {
     return [
       ...this.reportOptionChanges(),
@@ -1947,21 +1740,9 @@ class PluginAgentSession implements AgentSession {
   }
 
   private translateNotice(
-    event: Extract<ProviderEvent, { type: "session.notice" }>
+    event: Extract<ProviderEvent, { type: "session.notice" }>,
   ): AgentStreamEvent[] {
     if (event.notice.dismissed) return [];
-    const message = [event.notice.title, event.notice.description]
-      .filter(Boolean)
-      .join("\n");
-    const alreadyExists = this.history
-      .read(this.provider)
-      .some(
-        (e) =>
-          e.type === "timeline" &&
-          e.item.type === "notification" &&
-          e.item.message === message
-      );
-    if (alreadyExists) return [];
     return [
       {
         type: "timeline",
@@ -1970,7 +1751,7 @@ class PluginAgentSession implements AgentSession {
         item: {
           type: "notification",
           level: event.notice.severity,
-          message,
+          message: [event.notice.title, event.notice.description].filter(Boolean).join("\n"),
         },
         turnId: this.currentTurnId ?? undefined,
       },
@@ -1991,7 +1772,7 @@ class PluginAgentSession implements AgentSession {
   private acceptChildEvent(
     childId: string,
     event: ProviderEvent,
-    snapshots: Map<string, TimelineTextSnapshot>
+    snapshots: Map<string, TimelineTextSnapshot>,
   ): void {
     if (event.type === "timeline.item") {
       const item = mapTimelineItem(event.item, snapshots);
@@ -1999,12 +1780,7 @@ class PluginAgentSession implements AgentSession {
         this.publish({
           type: "provider_subagent",
           provider: this.provider,
-          event: {
-            type: "timeline",
-            id: childId,
-            item,
-            timestamp: event.timestamp,
-          },
+          event: { type: "timeline", id: childId, item, timestamp: event.timestamp },
         });
       }
       return;
@@ -2026,10 +1802,7 @@ class PluginAgentSession implements AgentSession {
       });
       return;
     }
-    if (
-      event.type === "session.runtime_failed" ||
-      event.type === "session.closed"
-    ) {
+    if (event.type === "session.runtime_failed" || event.type === "session.closed") {
       this.publish({
         type: "provider_subagent",
         provider: this.provider,
@@ -2039,7 +1812,7 @@ class PluginAgentSession implements AgentSession {
           status:
             event.type === "session.runtime_failed" || event.error
               ? "failed"
-              : this.childTurnOutcomes.get(childId) ?? "completed",
+              : (this.childTurnOutcomes.get(childId) ?? "completed"),
         },
       });
     }
@@ -2067,7 +1840,7 @@ class PluginAgentSession implements AgentSession {
   private assertReplayComplete(): void {
     if (this.replay) {
       throw new Error(
-        "Plugin rewind history refresh is incomplete. Retry the rewind or reload the agent before continuing."
+        "Plugin rewind history refresh is incomplete. Retry the rewind or reload the agent before continuing.",
       );
     }
   }
@@ -2100,11 +1873,7 @@ class PluginAgentSession implements AgentSession {
       await this.bridge.close();
       replay.closed = true;
     }
-    const bridge = await this.reopen(
-      replay.persistence,
-      replay.config,
-      this.committedOptions
-    );
+    const bridge = await this.reopen(replay.persistence, replay.config, this.committedOptions);
     this.bridge = bridge;
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
@@ -2121,21 +1890,15 @@ class PluginAgentSession implements AgentSession {
     );
   }
 
-  private async revert(
-    messageId: string,
-    scope: "conversation" | "files" | "both"
-  ) {
+  private async revert(messageId: string, scope: "conversation" | "files" | "both") {
     const pending = this.replay;
     await this.ensureReplay();
     if (pending?.messageId === messageId && pending.scope === scope) return;
     if (scope !== "files" && !this.canReplayHistory) {
-      throw new Error(
-        "Plugin conversation rewind requires session persistence for history replay"
-      );
+      throw new Error("Plugin conversation rewind requires session persistence for history replay");
     }
     const token = this.revertTokens.get(messageId);
-    if (token === undefined)
-      throw new Error(`No provider revert token for message ${messageId}`);
+    if (token === undefined) throw new Error(`No provider revert token for message ${messageId}`);
     await this.bridge.revert({
       type: "session.revert",
       requestId: randomUUID(),
@@ -2145,15 +1908,8 @@ class PluginAgentSession implements AgentSession {
     });
     if (scope !== "files") {
       const persistence = this.bridge.persistence;
-      if (!persistence)
-        throw new Error("Plugin rewind removed session persistence");
-      this.replay = {
-        persistence,
-        config: this.bridge.config,
-        messageId,
-        scope,
-        closed: false,
-      };
+      if (!persistence) throw new Error("Plugin rewind removed session persistence");
+      this.replay = { persistence, config: this.bridge.config, messageId, scope, closed: false };
       await this.ensureReplay();
     }
   }
@@ -2168,11 +1924,8 @@ class PluginAgentSession implements AgentSession {
   }
 }
 
-function agentCapabilities(
-  capabilities: readonly string[]
-): AgentCapabilityFlags {
-  const supports = (capability: ProviderCapability) =>
-    capabilities.includes(capability);
+function agentCapabilities(capabilities: readonly string[]): AgentCapabilityFlags {
+  const supports = (capability: ProviderCapability) => capabilities.includes(capability);
   return {
     supportsStreaming: true,
     supportsSessionPersistence: supports("session.persistence"),
@@ -2190,16 +1943,10 @@ function agentCapabilities(
 
 function mapModel(
   provider: string,
-  model: Extract<
-    ProviderEvent,
-    { type: "catalog" }
-  >["catalog"]["models"][number],
+  model: Extract<ProviderEvent, { type: "catalog" }>["catalog"]["models"][number],
   defaultModel: string | undefined,
-  catalogThinkingOptions: Extract<
-    ProviderEvent,
-    { type: "catalog" }
-  >["catalog"]["thinkingOptions"],
-  catalogDefaultThinkingOption: string | undefined
+  catalogThinkingOptions: Extract<ProviderEvent, { type: "catalog" }>["catalog"]["thinkingOptions"],
+  catalogDefaultThinkingOption: string | undefined,
 ): AgentModelDefinition {
   const thinkingOptions = model.thinkingOptions ?? catalogThinkingOptions;
   return {
@@ -2207,18 +1954,15 @@ function mapModel(
     provider,
     isDefault: model.isDefault ?? model.id === defaultModel,
     metadata: model.metadata ? { ...model.metadata } : undefined,
-    thinkingOptions: thinkingOptions?.map((option) =>
-      Object.assign({}, option)
-    ),
-    defaultThinkingOptionId:
-      model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
+    thinkingOptions: thinkingOptions?.map((option) => Object.assign({}, option)),
+    defaultThinkingOptionId: model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
   };
 }
 
 function mapSessionConfig(
   config: AgentSessionConfig,
   launchContext: AgentLaunchContext | undefined,
-  persist: boolean
+  persist: boolean,
 ): ProviderSessionConfig {
   return {
     cwd: config.cwd,
@@ -2226,15 +1970,11 @@ function mapSessionConfig(
     systemPrompt: combineSystemPrompts(
       config.systemPrompt,
       config.daemonAppendSystemPrompt,
-      ...(config.pluginAppendSystemPrompt ?? [])
+      ...(config.pluginAppendSystemPrompt ?? []),
     ),
     mcpServers: { ...config.mcpServers },
     toolPolicy: config.toolPolicy
-      ? {
-          preapproved: config.toolPolicy.preapproved.map((grant) => ({
-            ...grant,
-          })),
-        }
+      ? { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) }
       : undefined,
     model: config.model,
     mode: config.modeId,
@@ -2253,15 +1993,14 @@ function combineSystemPrompts(
   ...pluginPrompts: string[]
 ): string | undefined {
   const parts = [systemPrompt, daemonPrompt, ...pluginPrompts].filter(
-    (value): value is string =>
-      typeof value === "string" && value.trim().length > 0
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
 function mapPromptInput(
   prompt: AgentPromptInput,
-  commands: readonly { name: string }[]
+  commands: readonly { name: string }[],
 ): ProviderPrompt["input"] {
   if (typeof prompt === "string" && prompt.startsWith("/")) {
     const separator = prompt.indexOf(" ");
@@ -2278,17 +2017,14 @@ function mapPromptInput(
 }
 
 function mapPromptContent(prompt: AgentPromptInput): ProviderContent[] {
-  const content =
-    typeof prompt === "string"
-      ? [{ type: "text" as const, text: prompt }]
-      : prompt;
+  const content = typeof prompt === "string" ? [{ type: "text" as const, text: prompt }] : prompt;
   return toJsonValue(content, "prompt content") as ProviderContent[];
 }
 
 function mapTimelineItem(
   item: ProviderTimelineItem,
   snapshots: Map<string, TimelineTextSnapshot>,
-  revertTokens?: Map<string, ProviderTimelineItem["revertToken"]>
+  revertTokens?: Map<string, ProviderTimelineItem["revertToken"]>,
 ): AgentTimelineItem | null {
   const previous = snapshots.get(item.id);
   if (isTextSnapshotItem(item)) {
@@ -2311,8 +2047,7 @@ function mapTimelineItem(
       : { type: "reasoning", text };
   }
   if (item.type === "user_message") {
-    if (previous?.type === "user_message" && previous.text === item.text)
-      return null;
+    if (previous?.type === "user_message" && previous.text === item.text) return null;
     return {
       type: "user_message",
       text: item.text,
@@ -2335,7 +2070,7 @@ function mapTimelineItem(
 
 function rememberRevertToken(
   item: ProviderTimelineItem,
-  tokens?: Map<string, ProviderTimelineItem["revertToken"]>
+  tokens?: Map<string, ProviderTimelineItem["revertToken"]>,
 ): void {
   if (item.revertToken === undefined || !tokens) return;
   tokens.set(item.id, item.revertToken);
@@ -2346,7 +2081,7 @@ function rememberRevertToken(
 
 function persistenceHandle(
   provider: string,
-  persistence: ProviderPersistence
+  persistence: ProviderPersistence,
 ): AgentPersistenceHandle {
   return {
     provider,
@@ -2359,9 +2094,7 @@ function encodePersistence(persistence: ProviderPersistence): string {
   return `plugin:${JSON.stringify(persistence)}`;
 }
 
-function decodePersistence(
-  handle: AgentPersistenceHandle
-): ProviderPersistence {
+function decodePersistence(handle: AgentPersistenceHandle): ProviderPersistence {
   const fromMetadata = handle.metadata?.pluginProviderPersistence;
   if (fromMetadata !== undefined) {
     return ProviderPersistenceSchema.parse(fromMetadata);
@@ -2374,11 +2107,8 @@ const ProviderPersistenceSchema: z.ZodType<ProviderPersistence> = z
   .strict();
 
 function decodePersistenceId(id: string): ProviderPersistence {
-  if (!id.startsWith("plugin:"))
-    throw new Error("Invalid plugin provider persistence handle");
-  return ProviderPersistenceSchema.parse(
-    JSON.parse(id.slice("plugin:".length))
-  );
+  if (!id.startsWith("plugin:")) throw new Error("Invalid plugin provider persistence handle");
+  return ProviderPersistenceSchema.parse(JSON.parse(id.slice("plugin:".length)));
 }
 
 function parseProviderDate(value: string | undefined): Date {
@@ -2386,16 +2116,9 @@ function parseProviderDate(value: string | undefined): Date {
   return new Date(Number.isFinite(timestamp) ? timestamp : 0);
 }
 
-function toJsonObject(
-  value: unknown,
-  label: string
-): Record<string, JsonValue> {
+function toJsonObject(value: unknown, label: string): Record<string, JsonValue> {
   const encoded = toJsonValue(value, label);
-  if (
-    typeof encoded !== "object" ||
-    encoded === null ||
-    Array.isArray(encoded)
-  ) {
+  if (typeof encoded !== "object" || encoded === null || Array.isArray(encoded)) {
     throw new Error(`${label} must be a JSON object`);
   }
   return encoded as Record<string, JsonValue>;
@@ -2403,7 +2126,6 @@ function toJsonObject(
 
 function toJsonValue(value: unknown, label: string): JsonValue {
   const encoded = JSON.stringify(value);
-  if (encoded === undefined)
-    throw new Error(`${label} must be JSON-serializable`);
+  if (encoded === undefined) throw new Error(`${label} must be JSON-serializable`);
   return JSON.parse(encoded) as JsonValue;
 }
