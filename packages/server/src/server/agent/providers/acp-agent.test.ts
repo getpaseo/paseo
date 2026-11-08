@@ -61,6 +61,7 @@ import type {
   ProviderRefreshContext,
 } from "../agent-sdk-types.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { createEventCollector, type EventCollector } from "./test-utils/event-collector.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -5173,7 +5174,6 @@ new AgentSideConnection(
           sessionId: "delegation-session",
           ...secondTree,
         });
-        await new Promise((resolve) => setTimeout(resolve, 100));
         return firstTree;
       }
       if (scenario === "held") {
@@ -5189,7 +5189,6 @@ new AgentSideConnection(
           sessionId: "delegation-session",
           ...malformedTree,
         });
-        await new Promise((resolve) => setTimeout(resolve, 100));
         return firstTree;
       }
       if (scenario === "colon") {
@@ -5372,13 +5371,29 @@ describe("ACP delegation extension", () => {
       });
   }
 
+  /**
+   * Runs a turn and waits for it to end.
+   *
+   * The provider publishes its tree before it answers the prompt, and the
+   * session publishes the rows of that tree before it reports the end of the
+   * turn. Waiting for the end of the turn therefore waits for the rows too.
+   */
+  async function runTurn(
+    target: AgentSession,
+    collector: EventCollector,
+    prompt: string,
+  ): Promise<void> {
+    const from = collector.events.length;
+    await target.startTurn(prompt);
+    await collector.waitFor((event) => event.type === "turn_completed", from);
+  }
+
   test("publishes the tree the provider reports", async () => {
     const client = createClient({});
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
     ]);
   });
@@ -5386,13 +5401,11 @@ describe("ACP delegation extension", () => {
   test("ignores a tree the provider repeats", async () => {
     const client = createClient({ scenario: "repeat" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "other", title: "Summarize", status: "running" },
     ]);
@@ -5401,14 +5414,12 @@ describe("ACP delegation extension", () => {
   test("replaces the rows when the provider publishes an updated tree", async () => {
     const client = createClient({ scenario: "update" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
     // The tree is the whole set: the member it no longer holds is removed.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "other", title: "Summarize", status: "running" },
       { type: "remove", id: "other", title: undefined, status: undefined },
@@ -5419,17 +5430,15 @@ describe("ACP delegation extension", () => {
   test("publishes a tree whose fields hold the separator of the tree before it", async () => {
     const client = createClient({ scenario: "colon" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
     // The title of the first tree holds the separator that the second tree
     // splits between the title and the description. The two trees read the
     // same when the fields are joined, so the second one was taken for a
     // repeat of the first and never reached the track.
-    const rows = events
+    const rows = collector.events
       .filter((event) => event.type === "provider_subagent")
       .map((event) => {
         const input = (event as { event: Record<string, unknown> }).event;
@@ -5450,16 +5459,14 @@ describe("ACP delegation extension", () => {
   test("takes away the row of a member the tree reports without a row", async () => {
     const client = createClient({ scenario: "held" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
     // The provider reports a state the track cannot show. The row goes with
     // it: a row that keeps its last known state would claim a state the
     // provider has taken back.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "waiting", title: "Wait in the queue", status: "running" },
       { type: "remove", id: "waiting", title: undefined, status: undefined },
@@ -5470,16 +5477,14 @@ describe("ACP delegation extension", () => {
   test("takes away the row of a member the tree stops reporting", async () => {
     const client = createClient({ scenario: "sequence" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await runTurn(session, collector, "go");
 
     // The member is running, then reported with a state the track cannot
     // show, then gone from the tree. Its row goes with the state it cannot
     // show, and the tree that no longer holds it leaves nothing behind.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "waiting", title: "Wait in the queue", status: "running" },
       { type: "remove", id: "waiting", title: undefined, status: undefined },
@@ -5490,14 +5495,11 @@ describe("ACP delegation extension", () => {
   test("keeps a valid read that a malformed notification interrupted", async () => {
     const client = createClient({ scenario: "malformed-during-read" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const collector = createEventCollector(session);
 
     // A tree that cannot be read publishes nothing, so it cancels nothing:
     // the read that answers for a tree the provider can read still counts.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
     ]);
   });
@@ -5505,16 +5507,14 @@ describe("ACP delegation extension", () => {
   test("ignores a tree it cannot read", async () => {
     const client = createClient({ scenario: "malformed" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
     // A tree that cannot be read in full changes nothing: the row the
     // provider published before it stays, because a tree read in part would
     // remove the rows of the members it did not parse.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
     ]);
   });
@@ -5522,15 +5522,12 @@ describe("ACP delegation extension", () => {
   test("drops a read that answers for an older tree", async () => {
     const client = createClient({ scenario: "stale" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const collector = createEventCollector(session);
 
     // The provider published a newer tree while the read was in flight. The
     // answer belongs to the older tree, so it is dropped instead of
     // removing the row of the newer one.
-    expect(delegationRows(events)).toEqual([
+    expect(delegationRows(collector.events)).toEqual([
       { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
       { type: "upsert", id: "other", title: "Summarize", status: "running" },
     ]);
@@ -5538,22 +5535,19 @@ describe("ACP delegation extension", () => {
   test("ignores the tree of another session", async () => {
     const client = createClient({ scenario: "other-session" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    await session.startTurn("go");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runTurn(session, collector, "go");
 
-    expect(delegationRows(events)).toHaveLength(1);
+    expect(delegationRows(collector.events)).toHaveLength(1);
   });
 
   test("does not read the tree of a provider that does not advertise it", async () => {
     const client = createClient({ scenario: "unadvertised" });
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    expect(delegationRows(events)).toEqual([]);
+    expect(delegationRows(collector.events)).toEqual([]);
     const log = await readAgentLog();
     expect(log.some((entry) => entry.method === "test/delegation/get")).toBe(false);
   });
@@ -5562,10 +5556,9 @@ describe("ACP delegation extension", () => {
     const client = createClient({ scenario: "silent" });
 
     session = await client.createSession({ provider: "acp", cwd: dir });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    const collector = createEventCollector(session);
 
-    expect(delegationRows(events)).toEqual([]);
+    expect(delegationRows(collector.events)).toEqual([]);
   });
 });
 
@@ -5655,33 +5648,23 @@ describe("ACP delegation deferral", () => {
 
     // The provider keeps publishing its tree: another member changes every
     // 100ms, well past the deadline the first report set.
-    const marks: number[] = [];
-    for (let step = 1; step <= 8; step += 1) {
+    for (let step = 1; step <= 4; step += 1) {
       vi.advanceTimersByTime(100);
       await publishTree(session, [
         { id: "child", status: "completed" },
         { id: "other", status: "running" },
         { id: "other-" + step, status: "running" },
       ]);
-      marks.push(events.length);
-      if (step <= 4) {
-        // The row still waits: the deadline has not passed.
-        expect(rowsFor(events, "child")).toEqual([]);
-      }
+      // The row still waits: the deadline has not passed.
+      expect(rowsFor(events, "child")).toEqual([]);
     }
 
     // The row shows at the deadline of its first report, while the tree
     // keeps changing around it. The changes must not push it further away.
-    const completed = events.findIndex((event) => {
-      const input = (event as { event: Record<string, unknown> }).event;
-      return (
-        event.type === "provider_subagent" && input.id === "child" && input.status === "completed"
-      );
-    });
-    expect(completed).toBeGreaterThanOrEqual(0);
-    // The deadline is 500ms: the row shows in the window that ends there.
-    expect(completed).toBeGreaterThanOrEqual(marks[3]);
-    expect(completed).toBeLessThan(marks[4]);
+    vi.advanceTimersByTime(100);
+    expect(rowsFor(events, "child")).toEqual([
+      { type: "upsert", id: "child", status: "completed" },
+    ]);
   });
 
   test("shows a newer state for the child instead of the state that waited", async () => {

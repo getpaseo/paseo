@@ -79,14 +79,27 @@ export function isMiniMaxCodeProvider(
 }
 
 /**
+ * The suffixes a Windows launcher of the binary may carry.
+ *
+ * Windows runs a script through its own extension: a user who registers
+ * `mcode.cmd` runs the same agent as a user who registers `mcode`.
+ */
+const MINIMAX_CODE_COMMAND_SUFFIXES = /\.(?:cmd|exe|bat)$/i;
+
+/**
  * Reports whether a command part names the MiniMax Code binary.
  *
- * The catalog installs the binary through npx, so the part may carry a
- * package version. The name is compared exactly, never as a substring.
+ * The part may be a path - `/usr/local/bin/mcode` on POSIX, `C:\tools\mcode.cmd`
+ * on Windows - so the name of the file is what tells the agents apart. The
+ * catalog installs the binary through npx, so the name may carry a package
+ * version. The name is compared exactly, never as a substring.
  */
 function isMiniMaxCodeBinary(part: string): boolean {
-  const binary = part.split("/").pop() ?? part;
-  const name = binary.split("@")[0] ?? binary;
+  const fileName = part.split(/[\\/]/).pop() ?? part;
+  // A scoped package keeps the `@` of its scope, which is not a version.
+  const versionAt = fileName.indexOf("@", 1);
+  const withoutVersion = versionAt > 0 ? fileName.slice(0, versionAt) : fileName;
+  const name = withoutVersion.replace(MINIMAX_CODE_COMMAND_SUFFIXES, "");
   return MINIMAX_CODE_COMMAND_NAMES.has(name);
 }
 
@@ -175,7 +188,19 @@ function readMiniMaxCodeRows(
   if (!members) {
     return null;
   }
-  const memberIdSet = new Set(members.map((member) => member.sessionId));
+  const memberById = new Map<string, MiniMaxCodeDelegationMember>();
+  for (const member of members) {
+    memberById.set(member.sessionId, member);
+  }
+  // Only a member Paseo can show becomes a row. A child whose parent has no
+  // row would hang under a parent the track does not hold, and the track
+  // hides it: the parent is resolved against the members that do have a row.
+  const shownMemberIds = new Set<string>();
+  for (const member of members) {
+    if (readMiniMaxCodeMemberStatus(member.status)) {
+      shownMemberIds.add(member.sessionId);
+    }
+  }
   const rows: ACPDelegationRow[] = [];
   for (const member of members) {
     const status = readMiniMaxCodeMemberStatus(member.status);
@@ -191,10 +216,7 @@ function readMiniMaxCodeRows(
       title: member.agentName,
       description: member.task,
       status,
-      parentSubagentId:
-        member.parentSessionId && memberIdSet.has(member.parentSessionId)
-          ? member.parentSessionId
-          : null,
+      parentSubagentId: readShownParentId(member, memberById, shownMemberIds),
     };
     if (member.updatedAtMs !== null) {
       row.timestamp = new Date(member.updatedAtMs).toISOString();
@@ -216,6 +238,41 @@ function readMiniMaxCodeRows(
     rows.push(row);
   }
   return rows;
+}
+
+/**
+ * Finds the parent a row hangs under.
+ *
+ * The parent is the nearest ancestor that has a row of its own. A parent
+ * Paseo cannot show would hide its child from the track, and a child of a
+ * parent the tree does not hold has no parent to hang under at all: it hangs
+ * under the root instead.
+ */
+function readShownParentId(
+  member: MiniMaxCodeDelegationMember,
+  memberById: ReadonlyMap<string, MiniMaxCodeDelegationMember>,
+  shownMemberIds: ReadonlySet<string>,
+): string | null {
+  const visited = new Set<string>([member.sessionId]);
+  let parentId = member.parentSessionId;
+  while (parentId) {
+    if (visited.has(parentId)) {
+      // The chain of parents loops back on itself, so this member has no
+      // ancestor to hang under.
+      return null;
+    }
+    visited.add(parentId);
+    if (shownMemberIds.has(parentId)) {
+      return parentId;
+    }
+    const parent = memberById.get(parentId);
+    if (!parent) {
+      // The parent is not part of the tree.
+      return null;
+    }
+    parentId = parent.parentSessionId;
+  }
+  return null;
 }
 
 /**
