@@ -54,6 +54,7 @@ export function ZoomableViewport({
   onPressOutsideContent,
   style,
   testID,
+  toolbarPlacement = "overlay",
   wheelActivation = "modifier",
 }: ZoomableViewportProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -262,8 +263,9 @@ export function ZoomableViewport({
   const renderedCanvasStyle = useMemo<React.CSSProperties>(() => {
     let cursor: React.CSSProperties["cursor"] = "default";
     if (transform.scale > 1) cursor = isDragging ? "grabbing" : "grab";
-    return { ...canvasDomStyle, cursor };
-  }, [isDragging, transform.scale]);
+    const base = toolbarPlacement === "top" ? canvasInFlowDomStyle : canvasDomStyle;
+    return { ...base, cursor };
+  }, [isDragging, toolbarPlacement, transform.scale]);
   const renderedContentStyle = useMemo<React.CSSProperties>(
     () => ({
       ...contentDomStyle,
@@ -279,8 +281,31 @@ export function ZoomableViewport({
   const handleMouseEnter = useCallback(() => setIsHovered(true), []);
   const handleMouseLeave = useCallback(() => setIsHovered(false), []);
 
+  const toolbar = (
+    <div
+      onBlurCapture={handleBlur}
+      onFocusCapture={handleFocus}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      style={toolbarPlacement === "top" ? toolbarTopDomStyle : toolbarDomStyle}
+    >
+      <ViewportToolbar
+        actions={actions}
+        maxScale={maxScale}
+        minScale={minScale}
+        onReset={reset}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        placement={toolbarPlacement}
+        scale={transform.scale}
+        visible={toolbarPlacement === "top" ? true : controlsVisible}
+      />
+    </div>
+  );
+
   return (
     <View style={[styles.root, style]} testID={testID}>
+      {toolbarPlacement === "top" ? toolbar : null}
       <div
         aria-label={accessibilityLabel}
         data-testid={testID ? `${testID}-canvas` : undefined}
@@ -300,24 +325,7 @@ export function ZoomableViewport({
       >
         <div style={renderedContentStyle}>{children}</div>
       </div>
-      <div
-        onBlurCapture={handleBlur}
-        onFocusCapture={handleFocus}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        style={toolbarDomStyle}
-      >
-        <ViewportToolbar
-          actions={actions}
-          maxScale={maxScale}
-          minScale={minScale}
-          onReset={reset}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          scale={transform.scale}
-          visible={controlsVisible}
-        />
-      </div>
+      {toolbarPlacement === "overlay" ? toolbar : null}
     </View>
   );
 }
@@ -336,6 +344,13 @@ const canvasDomStyle: React.CSSProperties = {
   touchAction: "none",
   userSelect: "none",
 };
+const canvasInFlowDomStyle: React.CSSProperties = {
+  ...canvasDomStyle,
+  position: "relative",
+  inset: "auto",
+  flex: 1,
+  minHeight: 0,
+};
 const contentDomStyle: React.CSSProperties = {
   flexShrink: 0,
   transformOrigin: "center center",
@@ -346,5 +361,12 @@ const toolbarDomStyle: React.CSSProperties = {
   right: 0,
   width: 200,
   height: 48,
+  zIndex: 1,
+};
+const toolbarTopDomStyle: React.CSSProperties = {
+  position: "relative",
+  display: "flex",
+  justifyContent: "flex-end",
+  width: "100%",
   zIndex: 1,
 };

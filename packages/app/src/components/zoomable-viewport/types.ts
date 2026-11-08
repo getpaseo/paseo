@@ -7,6 +7,7 @@ export interface ZoomableViewportAction {
   label: string;
   onPress: () => void;
   testID?: string;
+  disabled?: boolean;
 }
 
 export interface ZoomableViewportProps {
@@ -18,6 +19,7 @@ export interface ZoomableViewportProps {
   maxScale?: number;
   minScale?: number;
   onPressOutsideContent?: () => void;
+  toolbarPlacement?: "overlay" | "top";
   style?: StyleProp<ViewStyle>;
   testID?: string;
   wheelActivation?: "always" | "modifier";

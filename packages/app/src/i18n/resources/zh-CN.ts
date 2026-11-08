@@ -354,6 +354,10 @@ export const zhCN: TranslationResources = {
       imageUnavailable: "图片不可用",
       imagePreviewUnavailable: "图片预览不可用。",
       imagePreviewLoadFailed: "无法加载图片预览。",
+      saveToPhotos: "保存到相册",
+      savedToPhotos: "已保存到相册",
+      saveFailed: "无法保存图片",
+      photoPermissionDenied: "请在设置中允许访问照片以保存图片。",
       review: "审查",
       commentsOne: "1 条评论",
       commentsMany: "{{count}} 条评论",
@@ -2096,6 +2100,7 @@ export const zhCN: TranslationResources = {
     empty: "没有可用的更多详情",
     input: "输入",
     output: "输出",
+    openImage: "打开图片",
   },
   turnSummary: {
     details: "查看轮次详情",

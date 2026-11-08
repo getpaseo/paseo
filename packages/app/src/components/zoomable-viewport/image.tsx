@@ -17,6 +17,7 @@ interface ZoomableImageProps {
   onPressOutsideContent?: () => void;
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  toolbarPlacement?: "overlay" | "top";
   wheelActivation?: "always" | "modifier";
 }
 
@@ -32,6 +33,7 @@ export function ZoomableImage({
   onPressOutsideContent,
   style,
   testID = "zoomable-image",
+  toolbarPlacement,
   wheelActivation = "always",
 }: ZoomableImageProps) {
   const [loadedSize, setLoadedSize] = useState<ViewportSize | null>(null);
@@ -83,6 +85,7 @@ export function ZoomableImage({
       onPressOutsideContent={onPressOutsideContent}
       style={style}
       testID={testID}
+      toolbarPlacement={toolbarPlacement}
       wheelActivation={wheelActivation}
     >
       <Image

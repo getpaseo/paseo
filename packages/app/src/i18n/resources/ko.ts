@@ -355,6 +355,10 @@ export const ko: TranslationResources = {
       imageUnavailable: "이미지를 사용할 수 없습니다",
       imagePreviewUnavailable: "이미지 미리보기를 사용할 수 없습니다.",
       imagePreviewLoadFailed: "이미지 미리보기를 불러올 수 없습니다.",
+      saveToPhotos: "사진에 저장",
+      savedToPhotos: "사진에 저장됨",
+      saveFailed: "이미지를 저장할 수 없습니다",
+      photoPermissionDenied: "설정에서 사진 접근을 허용하면 이미지를 저장할 수 있습니다.",
       review: "리뷰",
       commentsOne: "댓글 1개",
       commentsMany: "댓글 {{count}}개",
@@ -2130,6 +2134,7 @@ export const ko: TranslationResources = {
     empty: "추가 세부 정보가 없습니다",
     input: "입력",
     output: "출력",
+    openImage: "이미지 열기",
   },
   turnSummary: {
     details: "턴 세부 정보 보기",

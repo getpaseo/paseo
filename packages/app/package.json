@@ -99,6 +99,7 @@
     "expo-keep-awake": "~57.0.2",
     "expo-linking": "~57.0.13",
     "expo-localization": "~57.0.2",
+    "expo-media-library": "~57.0.6",
     "expo-notifications": "~57.0.23",
     "expo-router": "~57.0.28",
     "expo-sharing": "~57.0.23",

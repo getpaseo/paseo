@@ -358,6 +358,10 @@ export const ptBR: TranslationResources = {
       imageUnavailable: "Imagem indisponível",
       imagePreviewUnavailable: "Prévia da imagem indisponível.",
       imagePreviewLoadFailed: "Não foi possível carregar a prévia da imagem.",
+      saveToPhotos: "Salvar em Fotos",
+      savedToPhotos: "Salvo em Fotos",
+      saveFailed: "Não foi possível salvar a imagem",
+      photoPermissionDenied: "Permita o acesso às fotos nos Ajustes para salvar imagens.",
       review: "Revisão",
       commentsOne: "1 comentário",
       commentsMany: "{{count}} comentários",
@@ -2153,6 +2157,7 @@ export const ptBR: TranslationResources = {
     empty: "Nenhum detalhe adicional disponível",
     input: "Entrada",
     output: "Saída",
+    openImage: "Abrir imagem",
   },
   turnSummary: {
     details: "Ver detalhes do turno",

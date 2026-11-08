@@ -359,6 +359,11 @@ export const fr: TranslationResources = {
       imageUnavailable: "Image indisponible",
       imagePreviewUnavailable: "Aperçu de l’image indisponible.",
       imagePreviewLoadFailed: "Impossible de charger l’aperçu de l’image.",
+      saveToPhotos: "Enregistrer dans Photos",
+      savedToPhotos: "Enregistré dans Photos",
+      saveFailed: "Impossible d’enregistrer l’image",
+      photoPermissionDenied:
+        "Autorisez l’accès aux photos dans Réglages pour enregistrer des images.",
       review: "Revue",
       commentsOne: "1 commentaire",
       commentsMany: "{{count}} commentaires",
@@ -2168,6 +2173,7 @@ export const fr: TranslationResources = {
     empty: "Aucun détail supplémentaire disponible",
     input: "Entrée",
     output: "Sortie",
+    openImage: "Ouvrir l’image",
   },
   turnSummary: {
     details: "Voir les détails du tour",

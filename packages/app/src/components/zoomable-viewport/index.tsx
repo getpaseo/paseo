@@ -28,6 +28,7 @@ export function ZoomableViewport({
   onPressOutsideContent,
   style,
   testID,
+  toolbarPlacement = "overlay",
 }: ZoomableViewportProps) {
   const [viewport, setViewport] = useState<ViewportSize | null>(null);
   const [toolbarScale, setToolbarScale] = useState(1);
@@ -210,11 +211,25 @@ export function ZoomableViewport({
   );
 
   return (
-    <View onLayout={handleLayout} style={[styles.root, style]} testID={testID}>
+    <View style={[styles.root, style]} testID={testID}>
+      {toolbarPlacement === "top" ? (
+        <ViewportToolbar
+          actions={actions}
+          maxScale={maxScale}
+          minScale={minScale}
+          onReset={reset}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          placement="top"
+          scale={toolbarScale}
+          visible
+        />
+      ) : null}
       <GestureDetector gesture={gesture}>
         <View
           accessibilityLabel={accessibilityLabel}
           accessibilityRole={accessibilityLabel ? "image" : undefined}
+          onLayout={handleLayout}
           style={styles.canvas}
           testID={testID ? `${testID}-canvas` : undefined}
         >
@@ -225,16 +240,18 @@ export function ZoomableViewport({
           ) : null}
         </View>
       </GestureDetector>
-      <ViewportToolbar
-        actions={actions}
-        maxScale={maxScale}
-        minScale={minScale}
-        onReset={reset}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        scale={toolbarScale}
-        visible
-      />
+      {toolbarPlacement === "overlay" ? (
+        <ViewportToolbar
+          actions={actions}
+          maxScale={maxScale}
+          minScale={minScale}
+          onReset={reset}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          scale={toolbarScale}
+          visible
+        />
+      ) : null}
     </View>
   );
 }

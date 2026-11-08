@@ -354,6 +354,10 @@ export const ar: TranslationResources = {
       imageUnavailable: "الصورة غير متاحة",
       imagePreviewUnavailable: "معاينة الصورة غير متاحة.",
       imagePreviewLoadFailed: "غير قادر على تحميل معاينة الصورة.",
+      saveToPhotos: "حفظ في الصور",
+      savedToPhotos: "تم الحفظ في الصور",
+      saveFailed: "تعذر حفظ الصورة",
+      photoPermissionDenied: "اسمح بالوصول إلى الصور من الإعدادات لحفظ الصور.",
       review: "مراجعة",
       commentsOne: "تعليق واحد",
       commentsMany: "{{count}} تعليقات",
@@ -2119,6 +2123,7 @@ export const ar: TranslationResources = {
     empty: "لا توجد تفاصيل إضافية متاحة",
     input: "مدخل",
     output: "الإخراج",
+    openImage: "فتح الصورة",
   },
   turnSummary: {
     details: "عرض تفاصيل الجولة",

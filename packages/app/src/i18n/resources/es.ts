@@ -359,6 +359,10 @@ export const es: TranslationResources = {
       imageUnavailable: "Imagen no disponible",
       imagePreviewUnavailable: "Vista previa de la imagen no disponible.",
       imagePreviewLoadFailed: "No se puede cargar la vista previa de la imagen.",
+      saveToPhotos: "Guardar en Fotos",
+      savedToPhotos: "Guardado en Fotos",
+      saveFailed: "No se pudo guardar la imagen",
+      photoPermissionDenied: "Permite el acceso a las fotos en Ajustes para guardar imágenes.",
       review: "Revisión",
       commentsOne: "1 comentario",
       commentsMany: "{{count}} comentarios",
@@ -2168,6 +2172,7 @@ export const es: TranslationResources = {
     empty: "No hay detalles adicionales disponibles",
     input: "Aporte",
     output: "Producción",
+    openImage: "Abrir imagen",
   },
   turnSummary: {
     details: "Ver detalles del turno",

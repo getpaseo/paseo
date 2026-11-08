@@ -17,6 +17,7 @@ interface ViewportToolbarProps {
   onReset: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  placement?: "overlay" | "top";
   scale: number;
   visible: boolean;
 }
@@ -32,6 +33,7 @@ export const ViewportToolbar = React.memo(function ViewportToolbar({
   onReset,
   onZoomIn,
   onZoomOut,
+  placement = "overlay",
   scale,
   visible,
 }: ViewportToolbarProps) {
@@ -55,11 +57,14 @@ export const ViewportToolbar = React.memo(function ViewportToolbar({
       onPress: onReset,
       disabled: scale === 1,
     },
-    ...actions.map((action) => ({ ...action, disabled: false })),
+    ...actions.map((action) => ({ ...action, disabled: action.disabled ?? false })),
   ];
 
   return (
-    <View style={styles.cluster} testID="zoomable-viewport-toolbar">
+    <View
+      style={placement === "top" ? styles.topCluster : styles.cluster}
+      testID="zoomable-viewport-toolbar"
+    >
       {viewportActions.map((action) => (
         <ViewportToolbarButton
           key={action.label}
@@ -113,6 +118,14 @@ function ViewportToolbarButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  topCluster: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    pointerEvents: "box-none",
+  },
   cluster: {
     position: "absolute",
     top: theme.spacing[2],

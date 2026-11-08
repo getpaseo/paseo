@@ -5,20 +5,24 @@ import { Pressable, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
-import { X } from "lucide-react-native";
+import { ImageDown, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isNative } from "@/constants/platform";
+import { ToastViewport, useToastHost } from "@/components/toast-host";
+import { PhotoLibraryPermissionError } from "@/media/photo-library-permission";
+import { saveImageToAlbum } from "@/media/save-image-to-album";
 import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
+import type { ZoomableViewportAction } from "@/components/zoomable-viewport/types";
 import { useGlobalOverlayLayer } from "@/lib/overlay-root";
 
 export type ImageLightboxSource =
-  | { type: "attachment"; metadata: AttachmentMetadata }
-  | { type: "uri"; uri: string; contentSize?: ViewportSize };
+  | { type: "attachment"; metadata: AttachmentMetadata; title?: string }
+  | { type: "uri"; uri: string; contentSize?: ViewportSize; title?: string };
 
 interface AttachmentLightboxProps {
   source: ImageLightboxSource | null;
@@ -30,11 +34,14 @@ const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
 
 export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { t } = useTranslation();
+  const { api: toast, toast: toastState, dismiss: dismissToast } = useToastHost();
   const metadata = source?.type === "attachment" ? source.metadata : null;
   const attachmentUrl = useAttachmentPreviewUrl(metadata);
   const url = source?.type === "uri" ? source.uri : attachmentUrl;
+  const title = source?.title;
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
+  const [saving, setSaving] = useState(false);
   const modalLayer = useGlobalOverlayLayer("modal", source !== null);
 
   useEffect(() => {
@@ -58,17 +65,46 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     onKeyDown: handleOverlayKeyDown,
   });
 
-  const actions = useMemo(
-    () => [
-      {
-        icon: X,
-        label: t("message.attachments.closeImage"),
-        onPress: onClose,
-        testID: "attachment-lightbox-close",
-      },
-    ],
-    [onClose, t],
-  );
+  // Only local files can go to the photo library; remote and blob URLs cannot.
+  const canSaveToPhotos = isNative && url?.startsWith("file://") === true;
+
+  const saveToPhotos = useCallback(async () => {
+    if (!url || saving) return;
+    setSaving(true);
+    try {
+      await saveImageToAlbum(url);
+      toast.show(t("message.attachments.savedToPhotos"), { variant: "success" });
+    } catch (error) {
+      console.error("[image-lightbox] Failed to save image to the photo library", { error });
+      toast.error(
+        error instanceof PhotoLibraryPermissionError
+          ? t("message.attachments.photoPermissionDenied")
+          : t("message.attachments.saveFailed"),
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [saving, t, toast, url]);
+
+  const actions = useMemo<ZoomableViewportAction[]>(() => {
+    const next: ZoomableViewportAction[] = [];
+    if (canSaveToPhotos) {
+      next.push({
+        icon: ImageDown,
+        label: t("message.attachments.saveToPhotos"),
+        onPress: saveToPhotos,
+        testID: "attachment-lightbox-save",
+        disabled: saving,
+      });
+    }
+    next.push({
+      icon: X,
+      label: t("message.attachments.closeImage"),
+      onPress: onClose,
+      testID: "attachment-lightbox-close",
+    });
+    return next;
+  }, [canSaveToPhotos, onClose, saveToPhotos, saving, t]);
 
   const handleImageError = useCallback(() => setErrored(true), []);
 
@@ -93,7 +129,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                 onPress={onClose}
                 style={styles.backdrop}
               />
-              <LightboxImageArea>
+              <LightboxImageArea title={title}>
                 {hasError ? (
                   <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
                 ) : (
@@ -110,6 +146,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                   />
                 )}
               </LightboxImageArea>
+              <ToastViewport onDismiss={dismissToast} toast={toastState} />
             </View>
           </WindowChromeRootRegion>
         </SafeAreaProvider>
@@ -118,7 +155,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   );
 }
 
-function LightboxImageArea({ children }: { children: ReactNode }) {
+function LightboxImageArea({ title, children }: { title?: string; children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const style = useMemo(
     () => [
@@ -134,6 +171,18 @@ function LightboxImageArea({ children }: { children: ReactNode }) {
   );
   return (
     <View pointerEvents="box-none" style={style}>
+      {title ? (
+        <View pointerEvents="none" style={styles.titleBar}>
+          <Text
+            ellipsizeMode="middle"
+            numberOfLines={1}
+            style={styles.titleText}
+            testID="attachment-lightbox-title"
+          >
+            {title}
+          </Text>
+        </View>
+      ) : null}
       <View pointerEvents="box-none" style={styles.imageArea}>
         {children}
       </View>
@@ -175,5 +224,14 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  titleBar: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+  },
+  titleText: {
+    color: theme.colors.palette.white,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
   },
 }));

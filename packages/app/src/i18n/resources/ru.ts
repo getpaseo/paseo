@@ -358,6 +358,10 @@ export const ru: TranslationResources = {
       imageUnavailable: "Изображение недоступно",
       imagePreviewUnavailable: "Предварительный просмотр изображения недоступен.",
       imagePreviewLoadFailed: "Не удалось загрузить предварительный просмотр изображения.",
+      saveToPhotos: "Сохранить в Фото",
+      savedToPhotos: "Сохранено в Фото",
+      saveFailed: "Не удалось сохранить изображение",
+      photoPermissionDenied: "Разрешите доступ к фото в Настройках, чтобы сохранять изображения.",
       review: "Ревью",
       commentsOne: "1 комментарий",
       commentsMany: "Комментарии: {{count}}",
@@ -2154,6 +2158,7 @@ export const ru: TranslationResources = {
     empty: "Дополнительные сведения отсутствуют",
     input: "Входные данные",
     output: "Выходные данные",
+    openImage: "Открыть изображение",
   },
   turnSummary: {
     details: "Показать подробности хода",

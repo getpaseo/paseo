@@ -15,6 +15,7 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
     borderRadius: { full: 999, md: 6, lg: 8 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400" },
+    fontFamily: { ui: "system-ui", mono: "monospace" },
     colors: {
       surface1: "#111",
       surface2: "#222",
@@ -22,6 +23,7 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
       foregroundMuted: "#aaa",
       border: "#555",
       borderAccent: "#444",
+      palette: { white: "#fff" },
     },
   };
 
@@ -54,6 +56,14 @@ vi.mock("react-native-unistyles", () => ({
     create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
   },
   useUnistyles: () => ({ theme }),
+}));
+vi.mock("@/components/toast-host", () => ({
+  useToastHost: () => ({
+    api: { show: () => () => undefined, copied: () => undefined, error: () => undefined },
+    toast: null,
+    dismiss: () => undefined,
+  }),
+  ToastViewport: () => null,
 }));
 
 vi.mock("@/constants/platform", () => ({

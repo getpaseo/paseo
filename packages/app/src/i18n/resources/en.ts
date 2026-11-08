@@ -351,6 +351,10 @@ export const en = {
       imageUnavailable: "Image unavailable",
       imagePreviewUnavailable: "Image preview unavailable.",
       imagePreviewLoadFailed: "Unable to load image preview.",
+      saveToPhotos: "Save to Photos",
+      savedToPhotos: "Saved to Photos",
+      saveFailed: "Couldn't save image",
+      photoPermissionDenied: "Allow photo access in Settings to save images.",
       review: "Review",
       commentsOne: "1 comment",
       commentsMany: "{{count}} comments",
@@ -2145,6 +2149,7 @@ export const en = {
     empty: "No additional details available",
     input: "Input",
     output: "Output",
+    openImage: "Open image",
   },
   turnSummary: {
     details: "View turn details",

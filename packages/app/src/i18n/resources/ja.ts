@@ -359,6 +359,10 @@ export const ja: TranslationResources = {
       imageUnavailable: "画像が利用できません",
       imagePreviewUnavailable: "画像プレビューは利用できません。",
       imagePreviewLoadFailed: "画像プレビューを読み込めません。",
+      saveToPhotos: "写真に保存",
+      savedToPhotos: "写真に保存しました",
+      saveFailed: "画像を保存できませんでした",
+      photoPermissionDenied: "設定で写真へのアクセスを許可すると画像を保存できます。",
       review: "レビュー",
       commentsOne: "1件のコメント",
       commentsMany: "{{count}}件のコメント",
@@ -2141,6 +2145,7 @@ export const ja: TranslationResources = {
     empty: "追加の詳細はありません",
     input: "入力",
     output: "出力",
+    openImage: "画像を開く",
   },
   turnSummary: {
     details: "ターンの詳細を表示",

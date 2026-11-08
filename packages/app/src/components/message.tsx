@@ -2344,6 +2344,8 @@ export const ToolCall = memo(function ToolCall({
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
+        serverId,
+        cwd,
       });
     } else {
       hold(toggleExpanded);
@@ -2360,6 +2362,8 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.icon,
     presentation.isLoadingDetails,
+    serverId,
+    cwd,
   ]);
 
   useEffect(() => {
@@ -2399,6 +2403,8 @@ export const ToolCall = memo(function ToolCall({
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
+        serverId={serverId}
+        cwd={cwd}
       />
     );
   }, [
@@ -2408,6 +2414,8 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    serverId,
+    cwd,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {

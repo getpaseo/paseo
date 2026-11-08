@@ -57,6 +57,7 @@ export const Heart = StubIcon;
 export const History = StubIcon;
 export const Home = StubIcon;
 export const Image = StubIcon;
+export const ImageDown = StubIcon;
 export const Import = StubIcon;
 export const Inbox = StubIcon;
 export const Info = StubIcon;

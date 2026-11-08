@@ -37,8 +37,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# vitest browser failure screenshots
+# vitest browser failure screenshots and annotations
 .vitest-screenshots/
+.vitest-attachments/
 
 app-example
 

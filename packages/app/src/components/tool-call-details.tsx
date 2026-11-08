@@ -15,6 +15,7 @@ import {
   buildPaseoToolDetailSections,
   type PaseoToolDetailSection,
 } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import { isRasterImagePath } from "@/attachments/file-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
@@ -24,6 +25,7 @@ import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cach
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
+import { ToolCallReadImage } from "./tool-call-read-image";
 import { isWeb } from "@/constants/platform";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
@@ -37,6 +39,8 @@ interface ToolCallDetailsContentProps {
   maxHeight?: number;
   fillAvailableHeight?: boolean;
   showLoadingSkeleton?: boolean;
+  serverId?: string;
+  cwd?: string;
 }
 
 interface DetailStyles {
@@ -451,6 +455,7 @@ function buildDetailSections(
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
   t: TFunction,
+  imageContext: { serverId?: string; cwd?: string },
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
@@ -477,6 +482,17 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "read") {
+    if (isRasterImagePath(detail.filePath)) {
+      return [
+        <ToolCallReadImage
+          key="read-image"
+          cwd={imageContext.cwd}
+          filePath={detail.filePath}
+          maxHeight={ds.resolvedMaxHeight ?? 360}
+          serverId={imageContext.serverId}
+        />,
+      ];
+    }
     if (!detail.content) return [];
     return [
       <ScrollableTextSection
@@ -545,13 +561,18 @@ export function ToolCallDetailsContent({
   maxHeight,
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
+  serverId,
+  cwd,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
+  const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t, {
+    serverId,
+    cwd,
+  });
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
