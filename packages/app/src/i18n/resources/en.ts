@@ -2859,6 +2859,7 @@ export const en = {
     },
     host: {
       password: {
+        awaitingOrigin: "{{host}} connects through {{origin}}. Connect {{origin}} to reach it.",
         password_required:
           "{{host}} ({{connection}}): This host now requires a password, and none is saved for it.",
         incorrect_password:

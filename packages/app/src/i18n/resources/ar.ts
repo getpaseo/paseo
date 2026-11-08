@@ -2769,6 +2769,7 @@ export const ar: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin: "يتصل {{host}} عبر {{origin}}. اتصل بـ {{origin}} للوصول إليه.",
         password_required:
           "{{host}} ({{connection}}): أصبح هذا المضيف يتطلب كلمة مرور، ولا توجد كلمة مرور محفوظة له.",
         incorrect_password: "{{host}} ({{connection}}): رُفضت كلمة المرور المحفوظة. ربما تغيرت.",

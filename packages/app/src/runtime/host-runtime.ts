@@ -144,6 +144,7 @@ export interface HostRuntimeSnapshot {
   lastError: string | null;
   authFailureReason?: "password_required" | "incorrect_password" | null;
   authFailureConnectionId?: string | null;
+  awaitingOriginServerId?: string | null;
   lastOnlineAt: string | null;
   agentDirectoryStatus: HostRuntimeAgentDirectoryStatus;
   agentDirectoryError: string | null;
@@ -932,6 +933,17 @@ export class HostRuntimeController {
     return cycle;
   }
 
+  async reprobeOrigin(originServerId: string): Promise<void> {
+    const connections = this.host.connections.filter(
+      (connection) => connection.type === "routed" && connection.originServerId === originServerId,
+    );
+    if (connections.length === 0) return;
+    await this.probeCycleInFlight;
+    if (!this.started) return;
+    for (const connection of connections) this.connectionLastProbedAt.delete(connection.id);
+    await this.runProbeCycleNow();
+  }
+
   private async runProbeCycle(): Promise<void> {
     const requestVersion = ++this.probeRequestVersion;
     if (this.host.connections.length === 0) {
@@ -1250,6 +1262,17 @@ export class HostRuntimeController {
   }
 
   private updateSnapshot(patch: HostRuntimeSnapshotPatch): void {
+    const routed = this.host.connections.find((connection) => connection.type === "routed");
+    const status = patch.connectionStatus ?? this.snapshot.connectionStatus;
+    const probes = patch.probeByConnectionId ?? this.snapshot.probeByConnectionId;
+    const hasAvailableConnection = Array.from(probes.values()).some(
+      (probe) => probe.status === "available",
+    );
+    const awaitingOrigin = routed && status !== "online" && !hasAvailableConnection;
+    patch = {
+      ...patch,
+      awaitingOriginServerId: awaitingOrigin ? routed.originServerId : null,
+    };
     const preservedPatch: HostRuntimeSnapshotPatch = { ...patch };
     let hasChanged = this.host.serverId !== this.snapshot.serverId;
     for (const key of Object.keys(patch) as (keyof HostRuntimeSnapshotPatch)[]) {
@@ -2459,12 +2482,20 @@ export class HostRuntimeStore {
       const initialSnapshot = controller.getSnapshot();
       this.lastConnectionStatusByServer.set(host.serverId, initialSnapshot.connectionStatus);
       this.connectionStatusStartedAtByServer.set(host.serverId, Date.now());
+      let wasOnline = false;
       controller.subscribe(() => {
         const snapshot = controller.getSnapshot();
+        const becameOnline = snapshot.connectionStatus === "online" && !wasOnline;
+        wasOnline = snapshot.connectionStatus === "online";
         this.syncSessionReplica(snapshot.serverId, snapshot);
         this.syncDirectoryConnection(snapshot.serverId);
         this.syncHostDiscovery(snapshot.serverId);
         this.emit(snapshot.serverId);
+        if (becameOnline) {
+          for (const target of this.controllers.values()) {
+            void target.reprobeOrigin(snapshot.serverId);
+          }
+        }
       });
       void controller
         .start(

@@ -2703,6 +2703,7 @@ export const zhCN: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin: "{{host}} 通过 {{origin}} 连接。请连接 {{origin}} 以访问此主机。",
         password_required: "{{host}}（{{connection}}）：此主机现在需要密码，但尚未保存密码。",
         incorrect_password: "{{host}}（{{connection}}）：已保存的密码被拒绝，密码可能已更改。",
         label: "密码",

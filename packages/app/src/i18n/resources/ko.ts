@@ -2747,6 +2747,8 @@ export const ko: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin:
+          "{{host}}은(는) {{origin}}을(를) 통해 연결됩니다. 액세스하려면 {{origin}}에 연결하세요.",
         password_required:
           "{{host}} ({{connection}}): 이 호스트에 이제 비밀번호가 필요하지만 저장된 비밀번호가 없습니다.",
         incorrect_password:

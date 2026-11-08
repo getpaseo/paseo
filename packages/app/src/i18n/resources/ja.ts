@@ -2759,6 +2759,8 @@ export const ja: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin:
+          "{{host}} は {{origin}} 経由で接続します。アクセスするには {{origin}} に接続してください。",
         password_required:
           "{{host}}（{{connection}}）：このホストにはパスワードが必要になりましたが、保存されていません。",
         incorrect_password:

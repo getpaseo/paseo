@@ -2779,6 +2779,8 @@ export const ru: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin:
+          "{{host}} подключается через {{origin}}. Подключите {{origin}}, чтобы получить к нему доступ.",
         password_required:
           "{{host}} ({{connection}}): Теперь для этого хоста требуется пароль, но он не сохранён.",
         incorrect_password:

@@ -2792,6 +2792,8 @@ export const es: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin:
+          "{{host}} se conecta a través de {{origin}}. Conecta {{origin}} para acceder a él.",
         password_required:
           "{{host}} ({{connection}}): Este host ahora requiere una contraseña y no tiene ninguna guardada.",
         incorrect_password:

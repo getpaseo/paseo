@@ -233,7 +233,7 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
 
 function getHostConnectionFailure(snapshot: HostRuntimeSnapshot | null) {
   const title = snapshot?.lastError?.trim();
-  if (!title) return null;
+  if (!title && !snapshot?.awaitingOriginServerId) return null;
   return {
     title,
     reason: snapshot?.authFailureReason,
@@ -242,10 +242,19 @@ function getHostConnectionFailure(snapshot: HostRuntimeSnapshot | null) {
   };
 }
 
+// A routed host waits for its offline origin instead of asking for its own password.
+function useAwaitingOrigin(originId: string | null | undefined): string | null {
+  const origin = useHostProfile(originId ?? "");
+  const originSnapshot = useHostRuntimeSnapshot(originId ?? "");
+  if (!originId || originSnapshot?.connectionStatus === "online") return null;
+  return origin?.label || originId;
+}
+
 function HostConnectionError({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const snapshot = useHostRuntimeSnapshot(serverId);
   const host = useHostProfile(serverId);
+  const awaitingOrigin = useAwaitingOrigin(snapshot?.awaitingOriginServerId);
   const { setHostPassword } = useHostMutations();
   const inputRef = useRef<EditingTextInputHandle>(null);
   const [password, setPassword] = useState("");
@@ -278,15 +287,20 @@ function HostConnectionError({ serverId }: { serverId: string }) {
     }
   }, [password, failure, serverId, setHostPassword, t]);
 
-  if (!failure) return null;
+  if (!failure || !host) return null;
+  const needsPassword = failure.reason && !awaitingOrigin;
+  const title = awaitingOrigin
+    ? t("settings.host.password.awaitingOrigin", { host: host.label, origin: awaitingOrigin })
+    : failure.title;
+  if (!title) return null;
   return (
     <View style={styles.connectionError}>
       <InlineAlert
         size="sm"
         variant="error"
-        title={failure.title}
+        title={title ?? undefined}
         description={
-          failure.reason && host
+          needsPassword
             ? t(`settings.host.password.${failure.reason}`, {
                 host: host.label,
                 connection: connection ? formatHostConnectionLabel(connection, t) : failure.display,
@@ -295,7 +309,7 @@ function HostConnectionError({ serverId }: { serverId: string }) {
         }
         testID="host-connection-error"
       >
-        {failure.reason ? (
+        {needsPassword ? (
           <View style={styles.passwordRecovery}>
             <Field label={t("settings.host.password.label")} error={saveError}>
               <FormTextInput

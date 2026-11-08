@@ -2773,6 +2773,8 @@ export const ptBR: TranslationResources = {
     },
     host: {
       password: {
+        awaitingOrigin:
+          "{{host}} se conecta por meio de {{origin}}. Conecte {{origin}} para acessá-lo.",
         password_required:
           "{{host}} ({{connection}}): Este host agora exige uma senha e nenhuma está salva para ele.",
         incorrect_password:
