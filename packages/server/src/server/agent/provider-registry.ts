@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { ConversationImageStore } from "./conversation-images.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import type {
@@ -104,6 +105,7 @@ export interface RegisteredProviderDefinition extends AgentProviderDefinition {
 }
 
 export interface BuildProviderRegistryOptions {
+  captureUserImages?: ConversationImageStore["capture"];
   pluginProviders?: Record<string, RegisteredProviderDefinition>;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
@@ -116,7 +118,7 @@ export interface BuildProviderRegistryOptions {
 
 interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
-  "workspaceGitService" | "managedProcesses" | "ompRuntime"
+  "workspaceGitService" | "managedProcesses" | "ompRuntime" | "captureUserImages"
 > {
   openCodeBridge?: OpenCodeBridge;
   customProvider?: {
@@ -187,10 +189,11 @@ const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
 };
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
-  claude: (logger, runtimeSettings) =>
+  claude: (logger, runtimeSettings, options) =>
     new ClaudeAgentClient({
       logger,
       runtimeSettings,
+      captureUserImages: options?.captureUserImages,
     }),
   codex: (logger, runtimeSettings, options) =>
     new CodexAppServerAgentClient(logger, runtimeSettings, {
@@ -761,7 +764,11 @@ function buildResolvedBuiltinProviders(
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
   options: Pick<
     BuildProviderRegistryOptions,
-    "workspaceGitService" | "managedProcesses" | "ompRuntime" | "openCodeBridge"
+    | "workspaceGitService"
+    | "managedProcesses"
+    | "ompRuntime"
+    | "openCodeBridge"
+    | "captureUserImages"
   >,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
@@ -786,6 +793,7 @@ function buildResolvedBuiltinProviders(
             managedProcesses: options.managedProcesses,
             ompRuntime: options.ompRuntime,
             openCodeBridge: options.openCodeBridge,
+            captureUserImages: options.captureUserImages,
           }),
         contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
       }),
@@ -798,7 +806,10 @@ function buildResolvedBuiltinProviders(
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
-  options: Pick<BuildProviderRegistryOptions, "managedProcesses" | "openCodeBridge">,
+  options: Pick<
+    BuildProviderRegistryOptions,
+    "managedProcesses" | "openCodeBridge" | "captureUserImages"
+  >,
 ): void {
   for (const [providerId, override] of Object.entries(providerOverrides)) {
     if (resolvedProviders.has(providerId) || BUILTIN_PROVIDER_IDS.includes(providerId)) {
@@ -895,6 +906,7 @@ function addDerivedProviders(
         baseFactory(logger, mergedRuntimeSettings, {
           managedProcesses: options.managedProcesses,
           openCodeBridge: options.openCodeBridge,
+          captureUserImages: options.captureUserImages,
           customProvider: {
             id: providerId,
             label: override.label ?? providerId,
@@ -912,6 +924,7 @@ export function buildProviderRegistry(
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
+  const { captureUserImages, openCodeBridge } = options ?? {};
   const resolvedProviders = buildResolvedBuiltinProviders(
     providerOverrides,
     runtimeSettings,
@@ -919,7 +932,8 @@ export function buildProviderRegistry(
       workspaceGitService: options?.workspaceGitService,
       managedProcesses: options?.managedProcesses,
       ompRuntime: options?.ompRuntime,
-      openCodeBridge: options?.openCodeBridge,
+      openCodeBridge,
+      captureUserImages,
     },
     options?.isDev === true,
   );
@@ -949,7 +963,8 @@ export function buildProviderRegistry(
   }
   addDerivedProviders(resolvedProviders, providerOverrides, {
     managedProcesses: options?.managedProcesses,
-    openCodeBridge: options?.openCodeBridge,
+    openCodeBridge,
+    captureUserImages,
   });
 
   return Object.fromEntries(

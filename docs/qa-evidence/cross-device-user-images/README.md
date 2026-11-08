@@ -74,7 +74,7 @@ Focused runs selected these files with `npx vitest run <files> --bail=1` in thei
 | server    | `src/server/agent/agent-manager.test.ts`                              |          253 |
 | server    | `src/server/agent/conversation-images.test.ts`                        |            5 |
 | server    | `src/server/agent/agent-timeline-content.test.ts`                     |           11 |
-| server    | `src/server/agent/providers/claude/agent.import-large-record.test.ts` |            2 |
+| server    | `src/server/agent/providers/claude/agent.import-large-record.test.ts` |            8 |
 | server    | `src/server/agent/providers/pi/history-mapper.test.ts`                |           18 |
 | server    | `src/server/agent/providers/omp/history-mapper.test.ts`               |           21 |
 | server    | `src/server/agent/providers/claude/agent.test.ts`                     |          121 |
@@ -89,13 +89,15 @@ Focused runs selected these files with `npx vitest run <files> --bail=1` in thei
 | app       | `src/components/message-images.browser.test.tsx`                      |            6 |
 | protocol  | `src/messages.attachments.test.ts`                                    |           13 |
 
-These are 1,098 tests across 18 files, not a full-suite run. They cover native replay, duplicate and image-only messages, reopened storage, missing temporary inputs, membership checks, permissions, binary transfer, protocol parsing, and replica-cache round trips.
+These are 1,104 tests across 18 files, not a full-suite run. They cover native replay, duplicate and image-only messages, reopened storage, missing temporary inputs, membership checks, permissions, binary transfer, protocol parsing, and replica-cache round trips.
 
 Independent review exposed two additional paths. Three manager regressions first failed on raw `imageSources` escaping imported parent, imported child, and already-primed initial history. After normalization was moved before projection and content limiting on those paths, the manager file passed all 253 tests. A separate Chromium regression first failed because child images used a synthetic display-stream ID for the image RPC. Both browser component tests now pass, checking the parent-agent RPC arguments, a decoded thumbnail, unchanged message-action identity, and the default owner for ordinary messages. This component regression does not mount the full provider-child panel.
 
 Further review regressions cover virtualized remounts without another image RPC, refetch after local-byte deletion, and recovery when attachment GC has already taken its snapshot. The binding-store tests check bounded per-message writes, atomic alias groups, restart recovery, failed-write retries, private permissions, legacy manifests, and numeric replay ordering. Binding records avoid rewriting every earlier message on each import; they are not compacted automatically.
 
 A further red-first regression follows real Claude native transcript replay through its history converter and image capture with 1 MiB of base64-encoded bytes and no prior binding. It now recovers the exact bytes while keeping normalized public rows source-free and within the text budget. Limiter regressions also verify that nested tool data and ordinary text remain bounded.
+
+Claude now captures immutable bytes before any history accumulator retains a converted row. A structural regression checks 18 images across parent, child, and workflow histories before streaming, including materialized imports, exact reopened bytes, and reload. Additional cases check builtin/inherited-provider capture wiring, explicit missing-capability errors, capture-failure continuation and prior-binding recovery, and imageless compatibility. Cached histories retain references rather than aggregate base64.
 
 The three browser regressions and the real Pi/Haiku restart probe passed again after the cache and binding-record changes. The following commands also passed on the final source after workspace declarations were rebuilt:
 

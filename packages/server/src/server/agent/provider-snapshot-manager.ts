@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { Logger } from "pino";
+import type { ConversationImageStore } from "./conversation-images.js";
 import pLimit, { type LimitFunction } from "p-limit";
 
 import { expandTilde } from "../../utils/path.js";
@@ -112,6 +113,7 @@ export interface ProviderSnapshotTransition {
 type ProviderSnapshotChangeListener = (transition: ProviderSnapshotTransition) => void;
 
 export interface ProviderSnapshotManagerOptions {
+  captureUserImages?: ConversationImageStore["capture"];
   logger: Logger;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
@@ -244,6 +246,7 @@ export class ProviderSnapshotManager {
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly openCodeBridge?: OpenCodeBridge;
+  private readonly captureUserImages?: ConversationImageStore["capture"];
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
@@ -263,6 +266,7 @@ export class ProviderSnapshotManager {
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
     this.openCodeBridge = options.openCodeBridge;
+    this.captureUserImages = options.captureUserImages;
     this.isDev = options.isDev === true;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
@@ -715,6 +719,7 @@ export class ProviderSnapshotManager {
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
       openCodeBridge: this.openCodeBridge,
+      captureUserImages: this.captureUserImages,
       isDev: this.isDev,
     });
 
