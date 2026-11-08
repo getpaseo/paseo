@@ -35,8 +35,8 @@ const EXPECTED_EVENT_READINESS_BUDGET_MS = 45_000;
 // Keep event correlation and turn ordering assertions exact while accepting a fresh namespace.
 function turnIdAt(events: AgentStreamEvent[], ordinal: number): string {
   const started = events.find((event) => event.type === "turn_started");
-  if (!started || started.type !== "turn_started") {
-    throw new Error("Expected a turn_started event");
+  if (!started || started.type !== "turn_started" || typeof started.turnId !== "string") {
+    throw new Error("Expected a turn_started event with a turn ID");
   }
   const namespace = started.turnId.slice(0, started.turnId.lastIndexOf("-"));
   return `${namespace}-${ordinal}`;
