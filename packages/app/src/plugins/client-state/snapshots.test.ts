@@ -1,66 +1,20 @@
+import { i18n } from "@/i18n/i18next";
+import { fr } from "@/i18n/resources/fr";
 import { describe, expect, it } from "vitest";
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
-import { createPluginAgentSnapshot, createPluginWorkspaceSnapshot } from "./snapshots";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  createPluginAgentSnapshot,
+  createPluginWorkspaceSnapshot,
+  createPluginProjectSnapshot,
+} from "./snapshots";
 
-const workspace: WorkspaceDescriptor = {
-  createdAt: null,
-  lastUserMessageAt: null,
-  id: "workspace-1",
-  projectId: "project-1",
-  projectDisplayName: "Paseo",
-  projectRootPath: "/repo/paseo",
-  workspaceDirectory: "/repo/paseo/review",
-  projectKind: "git",
-  workspaceKind: "worktree",
-  name: "Review",
-  title: "Plugin review",
-  pinnedAt: null,
-  status: "running",
-  statusEnteredAt: new Date("2026-08-16T10:00:00.000Z"),
-  archivingAt: null,
-  diffStat: { additions: 12, deletions: 3 },
-  scripts: [],
-};
-
-const agent: Agent = {
-  serverId: "host-1",
-  id: "agent-1",
-  provider: "codex",
-  status: "running",
-  turn: { phase: "idle", cancellationRequestId: null },
-  createdAt: new Date("2026-08-16T10:01:00.000Z"),
-  updatedAt: new Date("2026-08-16T10:02:00.000Z"),
-  lastUserMessageAt: null,
-  lastActivityAt: new Date("2026-08-16T10:03:00.000Z"),
-  capabilities: {
-    supportsStreaming: true,
-    supportsSessionPersistence: true,
-    supportsDynamicModes: true,
-    supportsMcpServers: true,
-    supportsReasoningStream: true,
-    supportsToolInvocations: true,
-  },
-  currentModeId: "code",
-  availableModes: [],
-  pendingPermissions: [],
-  persistence: null,
-  title: "Implement plugin panels",
-  cwd: "/repo/paseo/review",
-  workspaceId: "workspace-1",
-  model: "gpt-5.6",
-  thinkingOptionId: "high",
-  requiresAttention: true,
-  attentionReason: "permission",
-  parentAgentId: null,
-  labels: { phase: "implementation" },
-};
-
+import { workspace, agent } from "./fixtures";
 describe("plugin context snapshots", () => {
   it("commits a deeply immutable normalized workspace snapshot synchronously", () => {
-    const snapshot = createPluginWorkspaceSnapshot(workspace);
-    expect(createPluginWorkspaceSnapshot(workspace)).toBe(snapshot);
+    const snapshot = createPluginWorkspaceSnapshot(workspace, "host-1");
+    expect(createPluginWorkspaceSnapshot(workspace, "host-1")).toBe(snapshot);
 
-    expect(snapshot).toEqual({
+    expect(snapshot).toMatchObject({
       id: "workspace-1",
       projectId: "project-1",
       projectDisplayName: "Paseo",
@@ -90,7 +44,7 @@ describe("plugin context snapshots", () => {
     const snapshot = createPluginAgentSnapshot(agent, workspace.id);
     expect(createPluginAgentSnapshot(agent, workspace.id)).toBe(snapshot);
 
-    expect(snapshot).toEqual({
+    expect(snapshot).toMatchObject({
       id: "agent-1",
       workspaceId: "workspace-1",
       provider: "codex",
@@ -117,5 +71,84 @@ describe("plugin context snapshots", () => {
     expect(snapshot.labels).toEqual({ phase: "implementation" });
     expect(agent.title).toBe("Implement plugin panels");
     expect(agent.labels).toEqual({ phase: "implementation" });
+  });
+});
+
+describe("sidebar entity snapshots", () => {
+  it("interns cross-host references and preserves identity across unrelated reads", () => {
+    const first = createPluginWorkspaceSnapshot(workspace, "host-1");
+    const second = createPluginWorkspaceSnapshot(workspace, "host-2");
+    expect(first.ref).not.toBe(second.ref);
+    expect(first.ref.hostId).toBe("host-1");
+    expect(first.project.id).toBe(workspace.projectId);
+    expect(Object.isFrozen(first.labels)).toBe(true);
+    expect(createPluginWorkspaceSnapshot(workspace, "host-1")).toBe(first);
+    expect(createPluginAgentSnapshot(agent, workspace.id).workspace).toBe(first.ref);
+  });
+
+  it("invalidates a done workspace when its effective root-agent status changes", () => {
+    const idle: WorkspaceDescriptor = { ...workspace, status: "done" };
+    const before = createPluginWorkspaceSnapshot(idle, "host-1");
+    const activity = new Map([
+      [idle.id, { agentId: agent.id, status: "needs_input" as const, enteredAt: null }],
+    ]);
+    const after = createPluginWorkspaceSnapshot(idle, "host-1", {
+      workspaceAgentActivity: activity,
+    });
+    expect(before.indicator).toBe("done");
+    expect(after.status).toBe("done");
+    expect(after.indicator).toBe("needs_input");
+    expect(after.indicatorLabel).toBe("Needs input");
+    expect(after.ref).toBe(before.ref);
+    expect(
+      createPluginWorkspaceSnapshot(idle, "host-1", { workspaceAgentActivity: activity }),
+    ).toBe(after);
+  });
+
+  it("reads projects without requiring a workspace", () => {
+    const project = {
+      projectId: "empty",
+      projectDisplayName: "Empty",
+      projectCustomName: null,
+      projectRootPath: "/empty",
+      projectKind: "git" as const,
+    };
+    const snapshot = createPluginProjectSnapshot(project, "host-1");
+    expect(createPluginProjectSnapshot(project, "host-1")).toBe(snapshot);
+    expect(snapshot.displayName).toBe("Empty");
+    expect(snapshot.ref.id).toBe("empty");
+    expect(Object.isFrozen(snapshot)).toBe(true);
+  });
+});
+
+it("uses the app status labels and invalidates a snapshot on language change", async () => {
+  i18n.addResourceBundle("fr", "translation", fr);
+  const previousLanguage = i18n.language;
+  try {
+    await i18n.changeLanguage("en");
+    const english = createPluginWorkspaceSnapshot(workspace, "host-1");
+    expect(english.indicatorLabel).toBe("Working");
+    await i18n.changeLanguage("fr");
+    const french = createPluginWorkspaceSnapshot(workspace, "host-1");
+    expect(french).not.toBe(english);
+    expect(french.ref).toBe(english.ref);
+    expect(french.indicatorLabel).toBe("En cours");
+    expect(createPluginWorkspaceSnapshot(workspace, "host-1")).toBe(french);
+  } finally {
+    await i18n.changeLanguage(previousLanguage);
+  }
+});
+
+it("preserves the host-qualified parent of a remotely delegated agent", () => {
+  const child = {
+    ...agent,
+    serverId: "host-2",
+    parentAgentId: null,
+    labels: { "paseo.parent-server-id": "host-1", "paseo.parent-agent-id": "parent" },
+  };
+  expect(createPluginAgentSnapshot(child, workspace.id).parentAgent).toMatchObject({
+    hostId: "host-1",
+    id: "parent",
+    kind: "agent",
   });
 });

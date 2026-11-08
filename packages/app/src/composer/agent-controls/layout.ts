@@ -1,7 +1,9 @@
 import {
-  iconSizeFor,
+  TOOLBAR_CONTROL_GAPS,
   TOOLBAR_CONTROL_SIZES,
+  toolbarGlyphsFor,
   type ControlSizing,
+  type ToolbarGlyphs,
 } from "@/components/ui/control-geometry";
 
 /**
@@ -39,23 +41,32 @@ export interface ComposerControlPresentation {
   showModelLabel: boolean;
 }
 
+/** What each toolbar control takes up in the row, which is what the density budget sums. */
 export interface ComposerToolbarGeometry {
+  /** An icon-only control's width in the row. */
   controlSize: number;
-  glyphSize: number;
+  glyphs: ToolbarGlyphs;
   controlGap: number;
   iconLabelGap: number;
+  /** A labelled control's padding on each side, as far as it takes room in the row. */
   labelPadding: number;
   caretSize: number;
 }
 
-/** The toolbar's measurements under a control sizing; see `resolveControlSizing`. */
+/**
+ * The toolbar's measurements under a control sizing; see `resolveControlSizing`. Touch-sized a
+ * control lays out at the width of what it paints (`toolbarSlot`, `toolbarContentSlot`), so an
+ * icon-only control takes its glyph's width and a picker's padding takes no room.
+ */
 export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarGeometry {
+  const glyphs = toolbarGlyphsFor(sizing);
+  const isTouch = sizing === "touch";
   return {
-    controlSize: TOOLBAR_CONTROL_SIZES[sizing],
-    glyphSize: iconSizeFor("md")[sizing],
-    controlGap: 4,
+    controlSize: isTouch ? glyphs.icon.size : TOOLBAR_CONTROL_SIZES.pointer,
+    glyphs,
+    controlGap: TOOLBAR_CONTROL_GAPS[sizing],
     iconLabelGap: 4,
-    labelPadding: 8,
+    labelPadding: isTouch ? 0 : 8,
     caretSize: 14,
   };
 }
@@ -63,8 +74,6 @@ export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarG
 const DENSITY_HYSTERESIS = 12;
 /** The model label's narrowest useful width: enough for the model family, such as "GPT-6…". */
 const MODEL_FAMILY_LABEL_WIDTH = 56;
-/** A thinking label beside the folded model label, such as "Medium". */
-const THINKING_LABEL_WIDTH = 48;
 
 function normalizedFontScale(fontScale: number): number {
   return Number.isFinite(fontScale) ? Math.max(1, fontScale) : 1;
@@ -83,7 +92,7 @@ function estimateLabelWidth(label: string, fontScale: number): number {
 
 /** A labelled control's fixed chrome: its padding, its glyph, and the gap to its label. */
 function labelledChrome(geometry: ComposerToolbarGeometry): number {
-  return geometry.labelPadding * 2 + geometry.glyphSize + geometry.iconLabelGap;
+  return geometry.labelPadding * 2 + geometry.glyphs.label.size + geometry.iconLabelGap;
 }
 
 function resolveFeatureControlWidth(
@@ -147,16 +156,16 @@ function resolveTightFloor(
   return sumControlWidths(widths, geometry);
 }
 
-/** One model control carrying the model family label and the thinking label. */
+/**
+ * One model control carrying the model family label. Its thinking label is not budgeted: it is
+ * the first label to go when the control runs out of room; see `resolveModelTriggerLabels`.
+ */
 function resolveCompactFloor(
   controls: ComposerControlPresence,
   geometry: ComposerToolbarGeometry,
 ): number {
   const fontScale = normalizedFontScale(controls.fontScale);
-  const thinkingLabel = controls.hasThinking
-    ? geometry.iconLabelGap + THINKING_LABEL_WIDTH * fontScale
-    : 0;
-  return labelledChrome(geometry) + MODEL_FAMILY_LABEL_WIDTH * fontScale + thinkingLabel;
+  return labelledChrome(geometry) + MODEL_FAMILY_LABEL_WIDTH * fontScale;
 }
 
 function resolveDensityFloor(
@@ -250,4 +259,34 @@ export function resolveComposerControlPresentation(
   density: ComposerControlDensity,
 ): ComposerControlPresentation {
   return PRESENTATIONS[density];
+}
+
+/**
+ * Which labels the folded model control shows. `measuring` until every width is known, so the
+ * control never paints a choice made without them.
+ */
+export type ModelTriggerLabels = "measuring" | "modelAndThinking" | "model";
+
+/** Widths measured from the rendered model control, in points. */
+export interface ModelTriggerMeasurements {
+  /** The width the control may take. */
+  availableWidth: number;
+  /** The control with its model and thinking labels side by side, untruncated. */
+  fullWidth: number;
+}
+
+/**
+ * The thinking label goes first: it shows only while the model label fits beside it in full, so
+ * the model label truncates only once the thinking label is gone. The web reports layout widths
+ * rounded to whole pixels, so equal widths can hide a fraction of a pixel of overflow; only a
+ * full width strictly below the available width is known to fit.
+ */
+export function resolveModelTriggerLabels(input: {
+  hasThinking: boolean;
+  measurements: Partial<ModelTriggerMeasurements>;
+}): ModelTriggerLabels {
+  if (!input.hasThinking) return "model";
+  const { availableWidth, fullWidth } = input.measurements;
+  if (availableWidth === undefined || fullWidth === undefined) return "measuring";
+  return fullWidth < availableWidth ? "modelAndThinking" : "model";
 }

@@ -1,3 +1,4 @@
+import { OpenCodeBackgroundInventory } from "./background-inventory.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -57,6 +58,7 @@ export class OpenCodeV2Session implements AgentSession {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private history: SessionMessageInfo[] = [];
+  private readonly background: OpenCodeBackgroundInventory;
   private modes: AgentMode[] = [];
   constructor(
     private connection: V2Connection,
@@ -70,6 +72,16 @@ export class OpenCodeV2Session implements AgentSession {
     private readonly acquire?: () => Promise<V2Connection>,
     private readonly moved?: (connection: V2Connection) => void,
   ) {
+    this.background = new OpenCodeBackgroundInventory({
+      id: info.id,
+      cwd: config.cwd,
+      emit: (event) => this.emit(event),
+      report: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode background inventory failed",
+        ),
+    });
     this.permissions = new SessionPermissions(
       () => this.client,
       info.id,
@@ -143,6 +155,7 @@ export class OpenCodeV2Session implements AgentSession {
     void connection.exited.then((error) => {
       if (this.closed || this.connection !== connection) return undefined;
       this.exited = true;
+      this.background.disconnect(true);
       this.streamAbort.abort(error);
       this.turns.fail(error);
       return undefined;
@@ -242,6 +255,8 @@ export class OpenCodeV2Session implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void) {
     this.listeners.add(callback);
+    const background = this.background.snapshot();
+    if (background) callback(background);
     // Reopening can adopt an execution during initialization, before its caller
     // can subscribe. Deliver that live turn so it remains visible and interruptible.
     if (this.turns.id)
@@ -352,6 +367,7 @@ export class OpenCodeV2Session implements AgentSession {
         thinkingOptionId: variant ?? null,
       },
     });
+    return { model: `${selected.providerID}/${selected.id}` };
   }
 
   async setThinkingOption(variant: string | null) {
@@ -405,6 +421,9 @@ export class OpenCodeV2Session implements AgentSession {
   }
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
     return this.turns.steerActiveTurn(prompt, options);
+  }
+  stopBackgroundWork(id: string) {
+    return this.background.stopItem(id);
   }
   interrupt() {
     return this.turns.interrupt();
@@ -515,9 +534,12 @@ export class OpenCodeV2Session implements AgentSession {
           if (event.type === "server.connected") {
             this.timeline.resetStreams();
             await this.reconcileConnection();
+            signal.throwIfAborted();
+            this.background.start(this.client);
             connected = true;
             ready();
           }
+          this.background.observe(event);
           await this.children.observe(event);
           this.observeOwnEvent(event);
         }
@@ -533,6 +555,7 @@ export class OpenCodeV2Session implements AgentSession {
           "OpenCode event stream interrupted; reconciling on reconnect",
         );
       }
+      this.background.disconnect();
       await delay(100, undefined, { signal }).catch(() => undefined);
     }
   }
@@ -573,6 +596,7 @@ export class OpenCodeV2Session implements AgentSession {
     this.turns.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.background.disconnect();
     await this.stream;
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);

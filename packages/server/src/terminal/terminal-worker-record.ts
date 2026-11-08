@@ -4,14 +4,20 @@ import path from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomicSync, writePrivateFileAtomic } from "../server/private-files.js";
 
-// Owner-only metadata a detached terminal worker leaves in $PASEO_HOME so the next daemon can
-// find, authenticate and adopt it, and so cleanup can identify every process it is allowed to
-// signal. Process identity is the birth time `ps`/Win32_Process report, never the pid alone.
+// Owner-only metadata used to find and authenticate workers in the locked home.
 
 const TerminalWorkerTerminalEntrySchema = z.object({
   id: z.string().min(1),
   pid: z.number().int().positive(),
+  // Null when the program's birth time could not be read: it is never signaled.
+  startedAt: z.string().min(1).nullable(),
+});
+
+// The birth time and command line workers up to 0.15.1 recorded about themselves. Still read
+// from their records, never written, and never consulted: the socket identifies a worker.
+const LegacyTerminalWorkerIdentitySchema = z.object({
   startedAt: z.string().min(1),
+  commandLine: z.string().min(1),
 });
 
 // One process a cleanup could not confirm gone, kept so a later caller (a retry, or a remote
@@ -28,10 +34,7 @@ const TerminalWorkerRecordSchema = z.object({
   pid: z.number().int().positive(),
   bootId: z.string().nullable(),
   createdAt: z.string().min(1),
-  identity: z.object({
-    startedAt: z.string().min(1),
-    commandLine: z.string().min(1),
-  }),
+  identity: LegacyTerminalWorkerIdentitySchema.optional(),
   // Read loosely: a version this daemon cannot interpret marks a worker from a newer Paseo
   // (classifyTerminalWorkerProtocol), not an unreadable record.
   protocolVersion: z.union([z.number(), z.string()]),

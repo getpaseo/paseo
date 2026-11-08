@@ -84,3 +84,10 @@ its DOM-derived scope.
 Escape interrupts an agent only in the message input or an unclaimed surface.
 A focused terminal excludes that binding. The source leaves terminal Escape alone;
 terminal Escape/Ctrl forwarding is a separate feature.
+
+## Keys shared with text editing
+
+A binding on a key the platform already uses for editing, such as Cmd/Ctrl+Z for
+workspace archive undo, declares `editable: false` and registers its handler with
+`isActive` true only while it has work. An inactive handler leaves the key
+unhandled, so the pipeline skips `preventDefault` and the platform's own undo runs.

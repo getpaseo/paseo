@@ -12,8 +12,19 @@ import {
   resolveControlSizing,
   switchGeometryForLayout,
   getControlInteractionPhase,
+  TOOLBAR_CONTROL_GAP,
+  TOOLBAR_CONTROL_GAPS,
   TOOLBAR_CONTROL_HEIGHT,
   TOOLBAR_CONTROL_SIZES,
+  TOOLBAR_DISC_GLYPH_SIZES,
+  TOOLBAR_DISC_SIZE,
+  TOOLBAR_DISC_SIZES,
+  TOOLBAR_GLYPH_SIZES,
+  TOOLBAR_RINGS,
+  toolbarGlyphColor,
+  toolbarGlyphsFor,
+  toolbarGlyphTone,
+  toolbarSlot,
   TOUCH_TARGET,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -90,6 +101,11 @@ describe("control sizing gate", () => {
     // Composer toolbar controls: a full target on touch, unchanged 28 on pointer.
     expect(TOOLBAR_CONTROL_SIZES).toEqual({ touch: TOUCH_TARGET, pointer: 28 });
     expect(TOOLBAR_CONTROL_HEIGHT).toEqual({ xs: TOUCH_TARGET, md: 28 });
+    // A filled toolbar control paints a 36pt disc inside its 44pt touch frame, and fills its
+    // 28pt pointer frame exactly, so desktop is unchanged. Its glyph is the `md` glyph.
+    expect(TOOLBAR_DISC_SIZES).toEqual({ touch: 36, pointer: TOOLBAR_CONTROL_SIZES.pointer });
+    expect(TOOLBAR_DISC_SIZE).toEqual({ xs: 36, md: 28 });
+    expect(iconSizeFor("md")).toEqual({ touch: 20, pointer: 16 });
     for (const size of ["sm", "md"] as const) {
       expect(controlHeightForLayout(size, true)).toBeGreaterThan(
         controlHeightForLayout(size, false),
@@ -99,6 +115,62 @@ describe("control sizing gate", () => {
     for (const size of ["xs", "sm", "md", "lg"] as const) {
       expect(iconSizeFor(size).touch).toBeGreaterThan(iconSizeFor(size).pointer);
     }
+  });
+});
+
+describe("toolbar glyphs and spacing", () => {
+  it("spaces touch toolbar controls by what they paint and keeps the pointer's 4px gap", () => {
+    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 20, pointer: 4 });
+    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 20, md: 4 });
+    // A 20pt glyph's disc-sized frame reaches 8 into the gap on each side.
+    expect(toolbarSlot(20)).toEqual({
+      width: TOOLBAR_DISC_SIZE,
+      height: TOOLBAR_DISC_SIZE,
+      marginHorizontal: { xs: -8, md: 0 },
+    });
+  });
+
+  it("paints touch toolbar glyphs at the header icons' 20pt and 1.5px stroke and leaves pointer unchanged", () => {
+    const pointerGlyph = { size: 16, strokeWidth: 1.5, tone: "muted" };
+    expect(toolbarGlyphsFor("touch").icon).toEqual({
+      size: 20,
+      strokeWidth: 1.5,
+      tone: "foreground",
+    });
+    expect(toolbarGlyphsFor("pointer")).toEqual({ icon: pointerGlyph, label: pointerGlyph });
+    expect(TOOLBAR_GLYPH_SIZES.icon).toEqual({ xs: 20, md: 16 });
+    expect(toolbarGlyphsFor("touch").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.touch);
+    expect(toolbarGlyphsFor("pointer").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.pointer);
+    // A disc's solid glyph stays at the `md` size so the stop square does not fill its disc.
+    expect(TOOLBAR_DISC_GLYPH_SIZES).toEqual({ touch: 20, pointer: 16 });
+  });
+
+  it("keeps a touch glyph beside a label at the label's 20pt scale", () => {
+    expect(toolbarGlyphsFor("touch").label).toEqual({
+      size: 20,
+      strokeWidth: 1.5,
+      tone: "foreground",
+    });
+    expect(TOOLBAR_GLYPH_SIZES.label).toEqual({ xs: 20, md: 16 });
+  });
+
+  it("sizes the touch context ring to the toolbar glyph's ink and keeps the pointer ring", () => {
+    expect(TOOLBAR_RINGS).toEqual({
+      touch: { size: 18, strokeWidth: 2 },
+      pointer: { size: 16, strokeWidth: 2 },
+    });
+  });
+
+  it("brightens a muted toolbar glyph under a hovering pointer", () => {
+    const pointer = toolbarGlyphsFor("pointer").icon;
+    const touch = toolbarGlyphsFor("touch").icon;
+    expect(toolbarGlyphTone(pointer, false)).toBe("muted");
+    expect(toolbarGlyphTone(pointer, true)).toBe("foreground");
+    expect(toolbarGlyphTone(touch, false)).toBe("foreground");
+    const colors = { foreground: "#fafafa", foregroundMuted: "#a1a5a4" };
+    const palette = { colors } as unknown as Theme;
+    expect(toolbarGlyphColor(palette, "foreground")).toBe("#fafafa");
+    expect(toolbarGlyphColor(palette, "muted")).toBe("#a1a5a4");
   });
 });
 

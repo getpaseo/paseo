@@ -571,3 +571,43 @@ test.each(["all", "base", "uncommitted"] as const)(
     expect(parsed.attachments).toEqual([attachment]);
   },
 );
+
+describe("terminal collection protocol compatibility", () => {
+  test("accepts released directory observations and their snapshots", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "subscribe_terminals_request",
+        cwd: "/repo",
+        requestId: "old",
+      }),
+    ).toMatchObject({ cwd: "/repo" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: { cwd: "/repo", terminals: [{ id: "terminal", name: "Shell" }] },
+      }),
+    ).toMatchObject({ payload: { cwd: "/repo" } });
+  });
+  test("accepts capability-gated host observations and additive metadata", () => {
+    expect(
+      SessionInboundMessageSchema.parse({ type: "subscribe_terminals_request", requestId: "host" }),
+    ).toMatchObject({ requestId: "host" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: {
+          terminals: [
+            {
+              id: "terminal",
+              name: "Shell",
+              cwd: "/repo",
+              workspaceId: "workspace",
+              createdAt: null,
+              isScript: true,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ payload: { terminals: [{ isScript: true, createdAt: null }] } });
+  });
+});

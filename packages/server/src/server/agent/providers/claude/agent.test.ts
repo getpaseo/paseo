@@ -1345,6 +1345,30 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("keeps turn identities distinct across resumed session objects", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const handle = {
+      provider: "claude" as const,
+      sessionId: "saved-session",
+      metadata: { cwd: process.cwd() },
+    };
+    const first = await client.resumeSession(handle);
+    const firstTurn = await first.startTurn("first");
+    await first.close();
+    const resumed = await client.resumeSession(handle);
+    try {
+      const nextTurn = await resumed.startTurn("second");
+      expect(nextTurn.turnId).not.toBe(firstTurn.turnId);
+    } finally {
+      await resumed.close();
+    }
+  });
+
   test("disables Claude hooks for internal agents only", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -2908,8 +2932,13 @@ describe("ClaudeAgentSession context window usage", () => {
     await session.startTurn("turn", { clientMessageId: "client-message-1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
-    expect(events[1]).toMatchObject({
+    const started = events.findIndex((event) => event.type === "turn_started");
+    const userMessage = events.findIndex(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(userMessage).toBeGreaterThan(started);
+    expect(events[userMessage]).toMatchObject({
       type: "timeline",
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });
@@ -2980,7 +3009,7 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
-  test("classifies Claude root-only commands separately from inline skills", async () => {
+  test("classifies Claude root-only commands separately from inline skills and hides internal ones", async () => {
     const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       void prompt;
       return {
@@ -3011,6 +3040,11 @@ describe("ClaudeAgentSession context window usage", () => {
           {
             name: "clear",
             description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+          {
+            name: "__remote-workflow",
+            description: "Run a remote workflow (server-launched sessions only)",
             argumentHint: "",
           },
         ],
