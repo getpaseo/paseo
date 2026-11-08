@@ -57,6 +57,16 @@ export function withRuntimePaseoMcpServer(params: {
   };
 }
 
+export function isRuntimePaseoMcpServer(config: McpServerConfig): boolean {
+  if (config.type !== "http" || !isInternalPaseoMcpServer(config)) return false;
+  const url = new URL(config.url);
+  return (
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+    Boolean(url.searchParams.get("callerAgentId")?.trim())
+  );
+}
+
 function isInternalPaseoMcpServer(config: McpServerConfig): boolean {
   if (config.type !== "http" && config.type !== "sse") {
     return false;
