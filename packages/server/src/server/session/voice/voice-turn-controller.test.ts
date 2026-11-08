@@ -482,7 +482,48 @@ describe("voice turn controller", () => {
     }
   });
 
-  it("fires the finalization timeout with an empty transcript when a turn only has a partial", async () => {
+  it("grants long utterances a proportionally longer finalization window", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createControllerHarness();
+
+      await harness.controller.start();
+      harness.detector.emit("speech_started");
+      await settleSerialQueue();
+
+      await vi.advanceTimersByTimeAsync(9_000);
+      harness.detector.emit("speech_stopped");
+      await settleSerialQueue();
+      harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+
+      // 17s after stop is past the fixed 10s window but inside the 18s
+      // window granted to a 9s utterance, so no retry/fallback yet.
+      await vi.advanceTimersByTimeAsync(17_000);
+      await settleSerialQueue();
+
+      expect(harness.onFinalTranscript).not.toHaveBeenCalled();
+      expect(harness.sttSessions[0]?.commitCount).toBe(1);
+
+      harness.sttSessions[0]?.emitTranscript({
+        segmentId: "segment-1",
+        transcript: "hello world",
+        isFinal: true,
+      });
+      await settleSerialQueue();
+
+      expect(harness.onFinalTranscript).toHaveBeenCalledTimes(1);
+      expect(harness.onFinalTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          segmentId: "segment-1",
+          transcript: "hello world",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries once, then falls back to the partial when finals never arrive", async () => {
     vi.useFakeTimers();
     try {
       const harness = createControllerHarness();
@@ -499,6 +540,49 @@ describe("voice turn controller", () => {
       harness.detector.emit("speech_stopped");
       await settleSerialQueue();
       harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+
+      // First window expires: stall (committed, no finals) -> one re-commit,
+      // no callback yet.
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settleSerialQueue();
+
+      expect(harness.onFinalTranscript).not.toHaveBeenCalled();
+      expect(harness.sttSessions[0]?.commitCount).toBe(2);
+
+      // Second window expires: fire with the partial as fallback.
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settleSerialQueue();
+
+      expect(harness.onFinalTranscript).toHaveBeenCalledTimes(1);
+      expect(harness.onFinalTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          segmentId: "segment-1",
+          transcript: "hello",
+          isPartialFallback: true,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries once, then fires empty when the turn has neither finals nor partials", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createControllerHarness();
+
+      await harness.controller.start();
+      harness.detector.emit("speech_started");
+      await settleSerialQueue();
+      harness.detector.emit("speech_stopped");
+      await settleSerialQueue();
+      harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settleSerialQueue();
+
+      expect(harness.onFinalTranscript).not.toHaveBeenCalled();
+      expect(harness.sttSessions[0]?.commitCount).toBe(2);
 
       await vi.advanceTimersByTimeAsync(10_000);
       await settleSerialQueue();
