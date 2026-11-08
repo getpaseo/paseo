@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -16,6 +16,14 @@ import { MAX_PROVIDER_IMAGE_BYTES } from "./providers/provider-image-output.js";
 
 const MAX_IMAGE_BYTES = MAX_PROVIDER_IMAGE_BYTES;
 const BindingsSchema = z.record(z.string(), z.array(TimelineImageSchema));
+const BindingRecordSchema = z.object({
+  identities: z.array(z.string()),
+  images: z.array(TimelineImageSchema),
+});
+interface BindingState {
+  bindings: Map<string, TimelineImage[]>;
+  nextSequence: bigint;
+}
 type UserMessage = Extract<AgentTimelineItem, { type: "user_message" }>;
 
 function digest(value: string | Uint8Array): string {
@@ -81,7 +89,7 @@ export function claudeUserImages(content: unknown): UserImageSource[] {
 
 export class ConversationImageStore {
   private readonly root: string;
-  private readonly bindings = new Map<string, z.infer<typeof BindingsSchema>>();
+  private readonly bindings = new Map<string, Promise<BindingState>>();
   private readonly tails = new Map<string, Promise<void>>();
 
   constructor(paseoHome: string) {
@@ -101,36 +109,73 @@ export class ConversationImageStore {
     }
   }
 
-  private async load(agentId: string): Promise<z.infer<typeof BindingsSchema>> {
+  private load(agentId: string): Promise<BindingState> {
     const cached = this.bindings.get(agentId);
     if (cached) return cached;
-    let bindings: z.infer<typeof BindingsSchema> = {};
+    const loading = this.loadBindings(agentId).catch((error) => {
+      this.bindings.delete(agentId);
+      throw error;
+    });
+    this.bindings.set(agentId, loading);
+    return loading;
+  }
+
+  private async loadBindings(agentId: string): Promise<BindingState> {
+    const state: BindingState = { bindings: new Map(), nextSequence: 0n };
+    // Existing manifests are a read-only seed; new binds never rewrite them.
     try {
-      bindings = BindingsSchema.parse(JSON.parse(await readFile(this.manifest(agentId), "utf8")));
+      const seed = BindingsSchema.parse(JSON.parse(await readFile(this.manifest(agentId), "utf8")));
+      for (const [identity, images] of Object.entries(seed)) state.bindings.set(identity, images);
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
-    this.bindings.set(agentId, bindings);
-    return bindings;
+    let filenames: string[];
+    try {
+      filenames = await readdir(this.records(agentId));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      return state;
+    }
+    const records = filenames.filter((filename) => /^\d+\.json$/.test(filename));
+    records.sort((left, right) => {
+      const a = BigInt(left.slice(0, -5));
+      const b = BigInt(right.slice(0, -5));
+      if (a === b) return 0;
+      return a < b ? -1 : 1;
+    });
+    for (const filename of records) {
+      const record = BindingRecordSchema.parse(
+        JSON.parse(await readFile(path.join(this.records(agentId), filename), "utf8")),
+      );
+      for (const identity of record.identities) state.bindings.set(identity, record.images);
+      state.nextSequence = BigInt(filename.slice(0, -5)) + 1n;
+    }
+    return state;
   }
 
   private manifest(agentId: string): string {
     return path.join(this.root, "agents", `${digest(agentId)}.json`);
   }
 
+  private records(agentId: string): string {
+    return path.join(this.root, "agents", digest(agentId));
+  }
+
   async bind(agentId: string, identities: string[], images: TimelineImage[]): Promise<void> {
     if (!images.length || !identities.length) return;
     const previous = this.tails.get(agentId) ?? Promise.resolve();
     const operation = previous.then(async () => {
-      const previousBindings = await this.load(agentId);
-      if (identities.every((id) => JSON.stringify(previousBindings[id]) === JSON.stringify(images)))
+      const state = await this.load(agentId);
+      const serializedImages = JSON.stringify(images);
+      if (identities.every((id) => JSON.stringify(state.bindings.get(id)) === serializedImages))
         return;
-      const bindings = {
-        ...previousBindings,
-        ...Object.fromEntries(identities.map((id) => [id, images])),
-      };
-      await this.atomicWrite(this.manifest(agentId), JSON.stringify(bindings));
-      this.bindings.set(agentId, bindings);
+      // One record commits every alias together, with work proportional to this message only.
+      await this.atomicWrite(
+        path.join(this.records(agentId), `${state.nextSequence}.json`),
+        JSON.stringify({ identities: [...new Set(identities)], images }),
+      );
+      state.nextSequence++;
+      for (const identity of identities) state.bindings.set(identity, images);
       return;
     });
     this.tails.set(
@@ -142,11 +187,8 @@ export class ConversationImageStore {
 
   async normalize(agentId: string, item: UserMessage): Promise<UserMessage> {
     const { imageSources, ...message } = item;
-    const bindings = await this.load(agentId);
-    const existing =
-      item.messageId && Object.hasOwn(bindings, item.messageId)
-        ? bindings[item.messageId]
-        : undefined;
+    const { bindings } = await this.load(agentId);
+    const existing = item.messageId ? bindings.get(item.messageId) : undefined;
     const hasDurableImages = existing?.every((image) => image.kind === "stored");
     const recovered = hasDurableImages
       ? existing

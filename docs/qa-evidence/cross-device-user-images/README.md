@@ -37,7 +37,7 @@ The sender's thumbnail decoded successfully before each receiver assertion faile
 The same command passes. The regression now also includes a compact receiver and captures sender and receiver screenshots. Each receiver reloads and must decode the image again from shared history.
 
 ```text
-3 passed (47.8s)
+3 passed
 ```
 
 The compact case also passed with the HTML reporter enabled to retain its screenshot attachments.
@@ -72,6 +72,7 @@ Each test file ran separately with `npx vitest run <file> --bail=1` in its works
 | --------- | ----------------------------------------------------------- | -----------: |
 | server    | `src/server/agent/providers/provider-image-output.test.ts`  |           19 |
 | server    | `src/server/agent/agent-manager.test.ts`                    |          253 |
+| server    | `src/server/agent/conversation-images.test.ts`              |            5 |
 | server    | `src/server/agent/providers/pi/history-mapper.test.ts`      |           18 |
 | server    | `src/server/agent/providers/omp/history-mapper.test.ts`     |           21 |
 | server    | `src/server/agent/providers/claude/agent.test.ts`           |          121 |
@@ -83,14 +84,16 @@ Each test file ran separately with `npx vitest run <file> --bail=1` in its works
 | server    | `src/server/websocket-server.file-transfer.e2e.test.ts`     |            4 |
 | app       | `src/types/stream.test.ts`                                  |           71 |
 | app       | `src/runtime/replica-cache/index.test.ts`                   |           52 |
-| app       | `src/components/message-images.browser.test.tsx`            |            2 |
+| app       | `src/components/message-images.browser.test.tsx`            |            6 |
 | protocol  | `src/messages.attachments.test.ts`                          |           13 |
 
-These are 1,076 tests across 15 files, not a full-suite run. They cover native replay, duplicate and image-only messages, reopened storage, missing temporary inputs, membership checks, permissions, binary transfer, protocol parsing, and replica-cache round trips.
+These are 1,085 tests across 16 files, not a full-suite run. They cover native replay, duplicate and image-only messages, reopened storage, missing temporary inputs, membership checks, permissions, binary transfer, protocol parsing, and replica-cache round trips.
 
 Independent review exposed two additional paths. Three manager regressions first failed on raw `imageSources` escaping imported parent, imported child, and already-primed initial history. After normalization was moved before projection and content limiting on those paths, the manager file passed all 253 tests. A separate Chromium regression first failed because child images used a synthetic display-stream ID for the image RPC. Both browser component tests now pass, checking the parent-agent RPC arguments, a decoded thumbnail, unchanged message-action identity, and the default owner for ordinary messages. This component regression does not mount the full provider-child panel.
 
-After both review fixes, the three browser regressions and the real Pi/Haiku restart probe passed again. The following commands also passed on the final source after workspace declarations were rebuilt:
+Further review regressions cover virtualized remounts without another image RPC, refetch after local-byte deletion, and recovery when attachment GC has already taken its snapshot. The binding-store tests check bounded per-message writes, atomic alias groups, restart recovery, failed-write retries, private permissions, legacy manifests, and numeric replay ordering. Binding records avoid rewriting every earlier message on each import; they are not compacted automatically.
+
+After the review fixes, the three browser regressions and the real Pi/Haiku restart probe passed again. The following commands also passed on the final source after workspace declarations were rebuilt:
 
 ```sh
 npm run build:server

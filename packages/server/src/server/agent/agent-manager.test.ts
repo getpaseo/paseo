@@ -13633,7 +13633,7 @@ test("provider-child image sources stay private and reads expire with child memb
   const manager = new AgentManager({
     clients: { codex: new ChildImageClient() },
     logger,
-    conversationImages: new ConversationImageStore(home, logger),
+    conversationImages: new ConversationImageStore(home),
   });
   try {
     const agent = await manager.createAgent({ provider: "codex", cwd: home }, undefined, {
@@ -13687,7 +13687,7 @@ test.each(["parent", "child", "initialTimeline"] as const)(
   "imported %s image-only history is normalized before publication",
   async (ingress) => {
     const home = mkdtempSync(join(tmpdir(), "paseo-import-images-"));
-    const imageStore = new ConversationImageStore(home, logger);
+    const imageStore = new ConversationImageStore(home);
     const source = { kind: "base64", mimeType: "image/png", data: "aW1hZ2UgYnl0ZXM=" } as const;
     const entries = [1, 2].map((index) => ({
       timestamp: `2026-09-22T00:00:0${index}.000Z`,
@@ -13753,7 +13753,7 @@ test.each(["parent", "child", "initialTimeline"] as const)(
         : await manager.getTimelineRows(agent.id);
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.timestamp)).toEqual(entries.map((entry) => entry.timestamp));
-    const restoredStore = new ConversationImageStore(home, logger);
+    const restoredStore = new ConversationImageStore(home);
     const identityScope = ingress === "child" ? JSON.stringify([agent.id, "child"]) : agent.id;
     for (const [index, row] of rows.entries()) {
       expect(row.item).not.toHaveProperty("imageSources");
