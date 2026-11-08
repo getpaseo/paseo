@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type {
   ProviderCatalog,
@@ -12,7 +15,7 @@ import type {
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
-import { validateSelection } from "./catalog.js";
+import { getModelContextWindow, validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -38,9 +41,131 @@ interface SessionOptions {
   id: string;
   config: ProviderSessionConfig;
   launch: ProviderLaunch;
+  history?: "replay" | "skip";
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
   emit(event: ProviderEvent): void;
+}
+
+function extractUserText(content: string): string {
+  const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(content);
+  return (match ? match[1] : content).trim();
+}
+
+function replayHistoryFromTranscript(
+  conversationId: string | null,
+  sessionId: string,
+  emit: (event: ProviderEvent) => void,
+): void {
+  if (!conversationId) return;
+  const file = path.join(
+    os.homedir(),
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+    "transcript.jsonl",
+  );
+  if (!fs.existsSync(file)) return;
+  let content = "";
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch {
+    return;
+  }
+
+  const lines = content.trim().split("\n");
+  for (const line of lines) {
+    if (!line) continue;
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (obj.type === "USER_INPUT" && typeof obj.content === "string") {
+      const text = extractUserText(obj.content);
+      if (!text) continue;
+      emit({
+        type: "timeline.item",
+        sessionId,
+        timestamp: typeof obj.created_at === "string" ? obj.created_at : undefined,
+        item: {
+          type: "user_message",
+          id: `user-${obj.step_index}`,
+          messageId: `user-${obj.step_index}`,
+          text,
+        },
+      });
+    } else if (
+      obj.type === "PLANNER_RESPONSE" &&
+      typeof obj.content === "string" &&
+      obj.content.trim().length > 0
+    ) {
+      emit({
+        type: "timeline.item",
+        sessionId,
+        timestamp: typeof obj.created_at === "string" ? obj.created_at : undefined,
+        item: {
+          type: "assistant_message",
+          id: `assistant-${obj.step_index}`,
+          messageId: `assistant-${obj.step_index}`,
+          text: obj.content,
+        },
+      });
+    }
+  }
+}
+
+function readLastContextUsage(conversationId: string | null): {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  usedTokens: number;
+} | null {
+  if (!conversationId) return null;
+  const file = path.join(
+    os.homedir(),
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+    "transcript.jsonl",
+  );
+  if (!fs.existsSync(file)) return null;
+  let content = "";
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+
+  const lines = content.trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (typeof obj.input_tokens === "number") {
+      const inputTokens = obj.input_tokens;
+      const cachedInputTokens =
+        typeof obj.cache_read_tokens === "number" ? obj.cache_read_tokens : 0;
+      const outputTokens = typeof obj.output_tokens === "number" ? obj.output_tokens : 0;
+      return {
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        usedTokens: inputTokens + cachedInputTokens + outputTokens,
+      };
+    }
+  }
+  return null;
 }
 
 export class Session {
@@ -75,6 +200,33 @@ export class Session {
     this.publishFullAccessNotice();
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+
+    if (this.options.history === "replay") {
+      replayHistoryFromTranscript(this.conversationId, this.options.id, (e) => this.emit(e));
+    }
+
+    const lastUsage = readLastContextUsage(this.conversationId);
+    const currentModelId = this.config.model;
+    const catalogModel = currentModelId
+      ? this.options.catalog().models.find((m) => m.id === currentModelId)
+      : undefined;
+    const contextWindowMaxTokens =
+      catalogModel?.contextWindowMaxTokens ??
+      (currentModelId ? getModelContextWindow(currentModelId) : 1_048_576);
+
+    if (lastUsage) {
+      this.emit({
+        type: "session.usage",
+        sessionId: this.options.id,
+        usage: {
+          inputTokens: lastUsage.inputTokens,
+          cachedInputTokens: lastUsage.cachedInputTokens,
+          outputTokens: lastUsage.outputTokens,
+          contextWindowMaxTokens,
+          contextWindowUsedTokens: lastUsage.usedTokens,
+        },
+      });
+    }
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -294,11 +446,24 @@ export class Session {
         turn.usage.inputTokens += step.usage.input_tokens;
         turn.usage.outputTokens += step.usage.output_tokens;
         turn.usage.cachedInputTokens += step.usage.cache_read_tokens;
+        const currentModelId = this.config.model;
+        const catalogModel = currentModelId
+          ? this.options.catalog().models.find((m) => m.id === currentModelId)
+          : undefined;
+        const contextWindowMaxTokens =
+          catalogModel?.contextWindowMaxTokens ??
+          (currentModelId ? getModelContextWindow(currentModelId) : 1_048_576);
+        const contextWindowUsedTokens =
+          step.usage.input_tokens + step.usage.cache_read_tokens + step.usage.output_tokens;
         this.emit({
           type: "session.usage",
           sessionId: this.options.id,
           turnId: turn.id,
-          usage: { ...turn.usage },
+          usage: {
+            ...turn.usage,
+            contextWindowMaxTokens,
+            contextWindowUsedTokens,
+          },
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {

@@ -20,6 +20,16 @@ const modes: readonly ProviderMode[] = [
   },
 ];
 
+export function getModelContextWindow(modelId: string): number {
+  if (modelId.startsWith("claude-")) {
+    return 200_000;
+  }
+  if (modelId.startsWith("gpt-")) {
+    return 128_000;
+  }
+  return 1_048_576;
+}
+
 export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<ProviderCatalog> {
   const output = await probe({ launch, args: ["models"], cwd });
   const models: ProviderModel[] = [];
@@ -29,7 +39,7 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
       throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
     if (models.some((model) => model.id === id))
       throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
-    models.push({ id, label });
+    models.push({ id, label, contextWindowMaxTokens: getModelContextWindow(id) });
   }
   return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
 }
