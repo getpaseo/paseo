@@ -35,10 +35,15 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
-import { createNativeDisclosureHold } from "./native-disclosure-hold";
+import { createNativeDisclosureHold, disclosureAnchorRowId } from "./native-disclosure-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
-import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
+import type {
+  DisclosureTriggerEdge,
+  StreamRenderInput,
+  StreamStrategy,
+  StreamViewportHandle,
+} from "./strategy";
 import { createStreamStrategy, isNearBottomForStreamRenderStrategy } from "./strategy";
 import {
   isHistoryStartLoadingOperation,
@@ -319,14 +324,20 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   );
   useEffect(() => () => disclosureHold.cancel(), [disclosureHold]);
   // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
-  // has end following off and LegendList anchoring on the held row. The row's measurement trigger
-  // makes that same commit carry the row's new height.
-  const holdRow = useStableEvent((rowId: string, apply: () => void) => {
-    disclosureHold.hold(rowId);
-    bottomAnchorController.holdForDisclosure();
-    apply();
-    rowLayoutSyncRegistry.get(rowId)?.();
-  });
+  // has end following off and LegendList anchoring on the held row, or on the row below it for a
+  // trigger on the row's bottom edge. The row's measurement trigger makes that same commit carry
+  // the row's new height. While following, a bottom trigger keeps following: the end pin holds the
+  // content end, and with it the bottom of the row, in the frame the new height mounts.
+  const holdRow = useStableEvent(
+    (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => {
+      if (!(triggerEdge === "bottom" && bottomAnchorController.mode === "sticky-bottom")) {
+        disclosureHold.hold(disclosureAnchorRowId(rows, rowId, triggerEdge));
+        bottomAnchorController.holdForDisclosure();
+      }
+      apply();
+      rowLayoutSyncRegistry.get(rowId)?.();
+    },
+  );
   const handleItemSizeChanged = useStableEvent(
     (info: { size: number; previous: number; itemKey: string; itemData: StreamItem }) => {
       newRowEstimates.noteMeasured(info.itemData, info.size);
@@ -334,8 +345,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
   );
   const shouldRestorePosition = useStableEvent((item: StreamItem) => {
-    const heldRowId = disclosureHold.heldRowId();
-    return heldRowId === null || item.id === heldRowId;
+    const anchorRowId = disclosureHold.anchorRowId();
+    return anchorRowId === null || item.id === anchorRowId;
   });
   // One owner keeps the scroll offset at any moment:
   // - Before the list has placed its rows for the agent: LegendList's initial scroll to the end. It
@@ -349,7 +360,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   //   scrolls to the end its JS sizes predict, which runs ahead of the native mount, so it lands
   //   short of the real end and the controller reads that as the user scrolling away.
   // - A disclosure hold: the held row. The hold detaches the controller, which removes the pin, and
-  //   LegendList keeps only the held row in place.
+  //   LegendList keeps only the held row in place, or the row below it when the trigger sits on the
+  //   held row's bottom edge. A bottom-edge hold while following leaves the end pin in charge.
   // - A user scroll: the finger. The controller detaches for the gesture, so streamed lines grow below
   //   the rows the user is dragging, and resumes following if the gesture ends at the end.
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading

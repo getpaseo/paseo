@@ -1,12 +1,14 @@
+import type { DisclosureTriggerEdge } from "./strategy";
+
 /**
- * The native viewport's disclosure hold. While a row is held, it is the only row the list may
- * anchor on. The hold ends once item sizes stop changing for `quietFrames` frames: the list
+ * The native viewport's disclosure hold. While it holds, its anchor row is the only row the list
+ * may anchor on (`disclosureAnchorRowId`). The hold ends once item sizes stop changing for `quietFrames` frames: the list
  * measures the toggled row and any rows it inserted over one or more frames, and end following
  * must not resume between the change and the list's last layout correction.
  */
 export interface NativeDisclosureHold {
-  heldRowId(): string | null;
-  hold(rowId: string): void;
+  anchorRowId(): string | null;
+  hold(anchorRowId: string): void;
   noteItemSizeChanged(): void;
   cancel(): void;
 }
@@ -17,7 +19,7 @@ export function createNativeDisclosureHold(input: {
   cancelFrame: (id: number) => void;
   onRelease: () => void;
 }): NativeDisclosureHold {
-  let heldRowId: string | null = null;
+  let anchorRowId: string | null = null;
   let frameId: number | null = null;
   let remainingFrames = 0;
 
@@ -35,7 +37,7 @@ export function createNativeDisclosureHold(input: {
       return;
     }
     frameId = null;
-    heldRowId = null;
+    anchorRowId = null;
     input.onRelease();
   };
 
@@ -46,19 +48,34 @@ export function createNativeDisclosureHold(input: {
   };
 
   return {
-    heldRowId: () => heldRowId,
-    hold(rowId) {
-      heldRowId = rowId;
+    anchorRowId: () => anchorRowId,
+    hold(nextAnchorRowId) {
+      anchorRowId = nextAnchorRowId;
       restartCountdown();
     },
     noteItemSizeChanged() {
-      if (heldRowId !== null) {
+      if (anchorRowId !== null) {
         restartCountdown();
       }
     },
     cancel() {
       stopCountdown();
-      heldRowId = null;
+      anchorRowId = null;
     },
   };
+}
+
+/**
+ * The row LegendList keeps in place while a disclosure holds `rowId`. LegendList restores row tops,
+ * so a trigger on the bottom edge of its row anchors the row below: that row's top is the held
+ * row's bottom. The last row has no row below and keeps its top.
+ */
+export function disclosureAnchorRowId(
+  rows: readonly { id: string }[],
+  rowId: string,
+  triggerEdge: DisclosureTriggerEdge,
+): string {
+  if (triggerEdge === "top") return rowId;
+  const index = rows.findIndex((row) => row.id === rowId);
+  return rows[index + 1]?.id ?? rowId;
 }

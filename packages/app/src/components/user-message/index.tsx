@@ -12,6 +12,8 @@ import { isNative } from "@/constants/platform";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
 
 const PREVIEW_HEIGHT = 240;
+// Show more and show less sit under the text they open and close.
+const TRIGGER_BELOW_CONTENT = { triggerEdge: "bottom" } as const;
 // Native View still clips with "scroll", but Yoga measures its children without
 // the height cap. "hidden" caps the measured body too, hiding the expand control.
 const previewStyle: ViewStyle = {
@@ -28,7 +30,10 @@ export function MessagePreview({ children }: { children: ReactNode }) {
     [],
   );
   const hold = useDisclosureHold();
-  const toggle = useCallback(() => hold(() => setExpanded((value) => !value)), [hold]);
+  const toggle = useCallback(
+    () => hold(() => setExpanded((value) => !value), TRIGGER_BELOW_CONTENT),
+    [hold],
+  );
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   return (
     <>

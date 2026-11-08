@@ -6,7 +6,7 @@ import { i18n as testI18n } from "@/i18n/i18next";
 import { PlanCard } from "@/components/plan-card";
 import { MessagePreview } from "@/components/user-message";
 import { DisclosureRow } from "./disclosure";
-import type { StreamViewportHandle } from "./strategy";
+import type { DisclosureTriggerEdge, StreamViewportHandle } from "./strategy";
 
 // Load translations so the toggles expose their real accessible names.
 void testI18n;
@@ -35,6 +35,7 @@ afterEach(() => {
 
 interface Hold {
   rowId: string;
+  triggerEdge: DisclosureTriggerEdge;
   /** Whether the expanded content was already on screen when the strategy received the hold. */
   appliedBefore: boolean;
 }
@@ -48,8 +49,8 @@ function mountRow(rowId: string, isApplied: () => boolean, children: ReactNode) 
   const viewport: StreamViewportHandle = {
     scrollToBottom: vi.fn(),
     prepareForViewportChange: vi.fn(),
-    holdRow: (heldRowId, apply) => {
-      holds.push({ rowId: heldRowId, appliedBefore: isApplied() });
+    holdRow: (heldRowId, apply, triggerEdge) => {
+      holds.push({ rowId: heldRowId, triggerEdge, appliedBefore: isApplied() });
       apply();
     },
   };
@@ -97,8 +98,9 @@ describe("timeline disclosures hold their row", () => {
     expect(view().getByRole("button", { name: "Show more" })).toBeTruthy();
 
     expect(holds).toEqual([
-      { rowId: "message-1", appliedBefore: false },
-      { rowId: "message-1", appliedBefore: true },
+      // Show more sits under the text it opens.
+      { rowId: "message-1", triggerEdge: "bottom", appliedBefore: false },
+      { rowId: "message-1", triggerEdge: "bottom", appliedBefore: true },
     ]);
   });
 
@@ -117,8 +119,8 @@ describe("timeline disclosures hold their row", () => {
     expect(view().getByText("Step one")).toBeTruthy();
 
     expect(holds).toEqual([
-      { rowId: "plan-1", appliedBefore: true },
-      { rowId: "plan-1", appliedBefore: false },
+      { rowId: "plan-1", triggerEdge: "top", appliedBefore: true },
+      { rowId: "plan-1", triggerEdge: "top", appliedBefore: false },
     ]);
   });
 

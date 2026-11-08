@@ -42,12 +42,12 @@ describe("native disclosure hold", () => {
     hold.hold("turn-1");
     frames.runFrame();
 
-    expect(hold.heldRowId()).toBe("turn-1");
+    expect(hold.anchorRowId()).toBe("turn-1");
     expect(releases).toEqual([]);
 
     frames.runFrame();
 
-    expect(hold.heldRowId()).toBeNull();
+    expect(hold.anchorRowId()).toBeNull();
     expect(releases).toEqual(["released"]);
   });
 
@@ -83,7 +83,7 @@ describe("native disclosure hold", () => {
     frames.runFrame();
     hold.hold("turn-2");
 
-    expect(hold.heldRowId()).toBe("turn-2");
+    expect(hold.anchorRowId()).toBe("turn-2");
 
     frames.runFrame();
     frames.runFrame();
@@ -99,7 +99,7 @@ describe("native disclosure hold", () => {
     frames.runFrame();
     frames.runFrame();
 
-    expect(hold.heldRowId()).toBeNull();
+    expect(hold.anchorRowId()).toBeNull();
     expect(releases).toEqual([]);
   });
 });

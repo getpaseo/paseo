@@ -19,15 +19,21 @@
 # 7. Header and footer revealed with the rows (RevealedLayoutView, ListComponent).
 # 8. Top-padding shrink hold on iOS only (setPaddingTop): Android paints the held height as blank
 #    space at the end.
-# 9. Rows cut off at the top count as in view (getIdsInVisibleRange): they follow the fully
-#    visible rows in idsInView, so a disclosure hold on a row whose top is above the viewport
-#    still anchors on that row instead of the row below it.
+# 9. Rows cut off at the top count as in view, and so does the row just past the end of the
+#    viewport (getIdsInVisibleRange): they follow the fully visible rows in idsInView, so a
+#    disclosure hold on a row whose top is above the viewport still anchors on that row instead
+#    of the row below it, and a hold on the row below a bottom-edge trigger anchors even when
+#    that row starts below the viewport.
 # 10. A size change keeps only a row shouldRestorePosition accepts in place (prepareMVCP), as a
 #    data change already does, so a disclosure that only grows (a todo card) holds the cut-off
 #    row instead of the first row in view.
 # 11. A 0 x 0 measurement is not a size (updateItemSizesBatch): rows of a hidden retained tab
 #    (display: none) still render and measure 0 x 0. Recording it collapsed the row, and a row
 #    whose frame was unchanged when the tab showed again got no layout event to correct it.
+# 12. No Android clamp prediction for a size change (prepareMVCP): upstream measures the adjustment
+#    of a shrink past the end from the new end, assuming the scroll view clamped first. The app's
+#    scroll view clamps after the adjustment on both platforms (modules/paseo-scroll), so a
+#    bottom-edge disclosure collapsing near the end landed at the end instead of in place.
 #
 # Upgrading: drop each hunk whose fix the new version ships, regenerate with
 # `npx patch-package @legendapp/list`, and copy this header back on top.
@@ -48,7 +54,7 @@ index 983e937..970ba51 100644
       * Returns a stable item type used for pooling and size estimation.
       */
 diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legendapp/list/react-native.js
-index eeb3fb0..5fe940d 100644
+index eeb3fb0..5ebd8e9 100644
 --- a/node_modules/@legendapp/list/react-native.js
 +++ b/node_modules/@legendapp/list/react-native.js
 @@ -1497,7 +1497,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -135,7 +141,28 @@ index eeb3fb0..5fe940d 100644
      }
      if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
        for (let i = 0; i < idsInView.length; i++) {
-@@ -2371,7 +2394,10 @@ function finishScrollTo(ctx) {
+@@ -1874,15 +1897,11 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         now,
+         positionDiff
+       });
+-      if (Platform.OS === "android" && !dataChanged && scrollTarget === void 0) {
+-        const maxScroll = getScrollRangeEnd(ctx);
+-        if (state.scroll > maxScroll + MVCP_POSITION_EPSILON) {
+-          const targetScroll = Math.max(0, Math.min(state.scroll + positionDiff, maxScroll));
+-          state.scroll = maxScroll;
+-          state.scrollPending = maxScroll;
+-          positionDiff = targetScroll - maxScroll;
+-        }
+-      }
++      // Paseo patch: no Android clamp prediction. Upstream assumes the scroll view clamped to the new
++      // end before React Native adds the anchor's movement, and measures the adjustment from that
++      // end. The app's scroll view defers the clamp until after the adjustment, as iOS does
++      // (modules/paseo-scroll), so an adjustment measured from the end moved a shrinking row's
++      // anchor back to the end instead of keeping it in place.
+       if (shouldQueueNativeMVCPAdjust(dataChanged, state, positionDiff, prevTotalSize, prevScroll, scrollTarget)) {
+         state.pendingNativeMVCPAdjust = {
+           amount: positionDiff,
+@@ -2371,7 +2390,10 @@ function finishScrollTo(ctx) {
      };
      if (scrollingTo.isInitialScroll || state.initialScroll) {
        const isOffsetSession = ((_b = state.initialScrollSession) == null ? void 0 : _b.kind) === "offset";
@@ -147,7 +174,7 @@ index eeb3fb0..5fe940d 100644
        finishInitialScroll(ctx, {
          onFinished: complete,
          preserveTarget: isOffsetSession && state.props.data.length === 0 || shouldPreserveResizeTarget,
-@@ -2515,11 +2541,12 @@ function checkFinishedScrollFallback(ctx) {
+@@ -2515,11 +2537,12 @@ function checkFinishedScrollFallback(ctx) {
          const targetOffset = (_d = (_c = (_b = initialScrollWatchdog.get(state)) == null ? void 0 : _b.targetOffset) != null ? _c : isStillScrollingTo.targetOffset) != null ? _d : 0;
          const jiggleOffset = targetOffset >= SILENT_INITIAL_SCROLL_TARGET_EPSILON ? targetOffset - SILENT_INITIAL_SCROLL_TARGET_EPSILON : targetOffset + SILENT_INITIAL_SCROLL_TARGET_EPSILON;
          initialScrollCompletion.markSilentInitialScrollRetry(state);
@@ -164,7 +191,7 @@ index eeb3fb0..5fe940d 100644
          scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
        } else if (shouldRetryUnalignedEndScroll) {
          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
-@@ -3378,7 +3405,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
+@@ -3378,7 +3401,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
    var _a3;
    const state = ctx.state;
    clearBootstrapInitialScrollSession(state);
@@ -174,7 +201,7 @@ index eeb3fb0..5fe940d 100644
    finishInitialScroll(ctx, {
      preserveTarget: shouldPreserveResizeTarget,
      recalculateItems: true,
-@@ -4569,6 +4597,17 @@ function getIdsInVisibleRange(state, range) {
+@@ -4569,6 +4593,24 @@ function getIdsInVisibleRange(state, range) {
        const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
        idsInView.push(id);
      }
@@ -189,10 +216,17 @@ index eeb3fb0..5fe940d 100644
 +        idsInView.push(id);
 +      }
 +    }
++    // Paseo patch: the row that starts at or below the end of the viewport goes last. A disclosure
++    // whose trigger sits on the bottom edge of its row holds the row below it, whose top is that
++    // edge, and that row is below the viewport whenever the held row's bottom is.
++    const belowIndex = range.endNoBuffer + 1;
++    if (belowIndex < state.props.data.length) {
++      idsInView.push((_b = state.idCache[belowIndex]) != null ? _b : getId(state, belowIndex));
++    }
    }
    return idsInView;
  }
-@@ -5176,8 +5215,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
+@@ -5176,8 +5218,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
  function isWithinEpsilon(delta) {
    return Math.abs(delta) <= NATIVE_LAYOUT_MEASUREMENT_EPSILON;
  }
@@ -208,7 +242,7 @@ index eeb3fb0..5fe940d 100644
  }
  
  // src/core/updateItemSizes.ts
-@@ -5291,6 +5335,11 @@ function updateItemSizesBatch(ctx, measurements) {
+@@ -5291,6 +5338,11 @@ function updateItemSizesBatch(ctx, measurements) {
    const result = {};
    const previousTotalSize = state.totalSize;
    for (const measurement of measurements) {
@@ -220,7 +254,7 @@ index eeb3fb0..5fe940d 100644
      const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
-@@ -5414,7 +5463,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -5414,7 +5466,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
      state.fixedItemSizeKeys.add(itemKey);
    }
    const prevSizeKnown = sizesKnown.get(itemKey);
@@ -229,7 +263,7 @@ index eeb3fb0..5fe940d 100644
      return 0;
    }
    const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
-@@ -6283,6 +6332,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+@@ -6283,6 +6335,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
  
  // src/components/Containers.native.tsx
  var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
@@ -240,7 +274,7 @@ index eeb3fb0..5fe940d 100644
  var ContainersLayer = typedMemo(function ContainersLayer2({
    children,
    freshDataTransitionEpoch,
-@@ -6290,7 +6343,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+@@ -6290,7 +6346,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
  }) {
    const ctx = useStateContext();
    const columnWrapperStyle = ctx.columnWrapperStyle;
@@ -249,7 +283,7 @@ index eeb3fb0..5fe940d 100644
    const minSize = useCommittedMinSize();
    const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
    const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
-@@ -6513,6 +6566,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+@@ -6513,6 +6569,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
      null
    );
  });
@@ -264,7 +298,7 @@ index eeb3fb0..5fe940d 100644
  var ListComponent = typedMemo(function ListComponent2({
    canRender,
    freshDataTransitionEpoch,
-@@ -6651,7 +6712,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6651,7 +6715,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      /* @__PURE__ */ React2__namespace.createElement(ScrollAdjust, null),
@@ -273,7 +307,7 @@ index eeb3fb0..5fe940d 100644
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React2__namespace.createElement(
-@@ -6665,7 +6726,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6665,7 +6729,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -282,7 +316,7 @@ index eeb3fb0..5fe940d 100644
      IS_DEV && ENABLE_DEVMODE
    );
  });
-@@ -7886,7 +7947,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+@@ -7886,7 +7950,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
    const state = ctx.state;
    if (stylePaddingTop !== void 0) {
      const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
@@ -294,7 +328,7 @@ index eeb3fb0..5fe940d 100644
        let prevTotalSize = peek$(ctx, "totalSize") || 0;
        set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
        state.timeoutSetPaddingTop = setTimeout(() => {
-@@ -7989,6 +8053,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7989,6 +8056,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -302,7 +336,7 @@ index eeb3fb0..5fe940d 100644
      getItemType,
      horizontal,
      rtl,
-@@ -8282,6 +8347,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8282,6 +8350,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance,
      estimatedItemSize,
@@ -311,7 +345,7 @@ index eeb3fb0..5fe940d 100644
      getItemType: useWrapIfItem(getItemType),
      hasExternalScroll,
 diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legendapp/list/react-native.mjs
-index fe5f415..7f1b9dd 100644
+index fe5f415..9788ce6 100644
 --- a/node_modules/@legendapp/list/react-native.mjs
 +++ b/node_modules/@legendapp/list/react-native.mjs
 @@ -1476,7 +1476,15 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
@@ -398,7 +432,28 @@ index fe5f415..7f1b9dd 100644
      }
      if (dataChanged && idsInView.length > 0 && state.didContainersLayout) {
        for (let i = 0; i < idsInView.length; i++) {
-@@ -2350,7 +2373,10 @@ function finishScrollTo(ctx) {
+@@ -1853,15 +1876,11 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         now,
+         positionDiff
+       });
+-      if (Platform.OS === "android" && !dataChanged && scrollTarget === void 0) {
+-        const maxScroll = getScrollRangeEnd(ctx);
+-        if (state.scroll > maxScroll + MVCP_POSITION_EPSILON) {
+-          const targetScroll = Math.max(0, Math.min(state.scroll + positionDiff, maxScroll));
+-          state.scroll = maxScroll;
+-          state.scrollPending = maxScroll;
+-          positionDiff = targetScroll - maxScroll;
+-        }
+-      }
++      // Paseo patch: no Android clamp prediction. Upstream assumes the scroll view clamped to the new
++      // end before React Native adds the anchor's movement, and measures the adjustment from that
++      // end. The app's scroll view defers the clamp until after the adjustment, as iOS does
++      // (modules/paseo-scroll), so an adjustment measured from the end moved a shrinking row's
++      // anchor back to the end instead of keeping it in place.
+       if (shouldQueueNativeMVCPAdjust(dataChanged, state, positionDiff, prevTotalSize, prevScroll, scrollTarget)) {
+         state.pendingNativeMVCPAdjust = {
+           amount: positionDiff,
+@@ -2350,7 +2369,10 @@ function finishScrollTo(ctx) {
      };
      if (scrollingTo.isInitialScroll || state.initialScroll) {
        const isOffsetSession = ((_b = state.initialScrollSession) == null ? void 0 : _b.kind) === "offset";
@@ -410,7 +465,7 @@ index fe5f415..7f1b9dd 100644
        finishInitialScroll(ctx, {
          onFinished: complete,
          preserveTarget: isOffsetSession && state.props.data.length === 0 || shouldPreserveResizeTarget,
-@@ -2494,11 +2520,12 @@ function checkFinishedScrollFallback(ctx) {
+@@ -2494,11 +2516,12 @@ function checkFinishedScrollFallback(ctx) {
          const targetOffset = (_d = (_c = (_b = initialScrollWatchdog.get(state)) == null ? void 0 : _b.targetOffset) != null ? _c : isStillScrollingTo.targetOffset) != null ? _d : 0;
          const jiggleOffset = targetOffset >= SILENT_INITIAL_SCROLL_TARGET_EPSILON ? targetOffset - SILENT_INITIAL_SCROLL_TARGET_EPSILON : targetOffset + SILENT_INITIAL_SCROLL_TARGET_EPSILON;
          initialScrollCompletion.markSilentInitialScrollRetry(state);
@@ -427,7 +482,7 @@ index fe5f415..7f1b9dd 100644
          scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
        } else if (shouldRetryUnalignedEndScroll) {
          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
-@@ -3357,7 +3384,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
+@@ -3357,7 +3380,8 @@ function finishBootstrapInitialScrollWithoutScroll(ctx, resolvedOffset) {
    var _a3;
    const state = ctx.state;
    clearBootstrapInitialScrollSession(state);
@@ -437,7 +492,7 @@ index fe5f415..7f1b9dd 100644
    finishInitialScroll(ctx, {
      preserveTarget: shouldPreserveResizeTarget,
      recalculateItems: true,
-@@ -4548,6 +4576,17 @@ function getIdsInVisibleRange(state, range) {
+@@ -4548,6 +4572,24 @@ function getIdsInVisibleRange(state, range) {
        const id = (_b = state.idCache[i]) != null ? _b : getId(state, i);
        idsInView.push(id);
      }
@@ -452,10 +507,17 @@ index fe5f415..7f1b9dd 100644
 +        idsInView.push(id);
 +      }
 +    }
++    // Paseo patch: the row that starts at or below the end of the viewport goes last. A disclosure
++    // whose trigger sits on the bottom edge of its row holds the row below it, whose top is that
++    // edge, and that row is below the viewport whenever the held row's bottom is.
++    const belowIndex = range.endNoBuffer + 1;
++    if (belowIndex < state.props.data.length) {
++      idsInView.push((_b = state.idCache[belowIndex]) != null ? _b : getId(state, belowIndex));
++    }
    }
    return idsInView;
  }
-@@ -5155,8 +5194,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
+@@ -5155,8 +5197,13 @@ var NATIVE_LAYOUT_MEASUREMENT_EPSILON = 1 / PixelRatio.get() + FLOATING_POINT_SL
  function isWithinEpsilon(delta) {
    return Math.abs(delta) <= NATIVE_LAYOUT_MEASUREMENT_EPSILON;
  }
@@ -471,7 +533,7 @@ index fe5f415..7f1b9dd 100644
  }
  
  // src/core/updateItemSizes.ts
-@@ -5270,6 +5314,11 @@ function updateItemSizesBatch(ctx, measurements) {
+@@ -5270,6 +5317,11 @@ function updateItemSizesBatch(ctx, measurements) {
    const result = {};
    const previousTotalSize = state.totalSize;
    for (const measurement of measurements) {
@@ -483,7 +545,7 @@ index fe5f415..7f1b9dd 100644
      const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
-@@ -5393,7 +5442,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -5393,7 +5445,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
      state.fixedItemSizeKeys.add(itemKey);
    }
    const prevSizeKnown = sizesKnown.get(itemKey);
@@ -492,7 +554,7 @@ index fe5f415..7f1b9dd 100644
      return 0;
    }
    const size = Platform.OS === "web" ? Math.round(rawSize) : roundSize(rawSize);
-@@ -6262,6 +6311,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
+@@ -6262,6 +6314,10 @@ function useFreshDataTransitionVisibility(readyToRender, transitionEpoch) {
  
  // src/components/Containers.native.tsx
  var useCommittedMinSize = IsNewArchitecture ? () => useArr$(["totalSize"])[0] : () => void 0;
@@ -503,7 +565,7 @@ index fe5f415..7f1b9dd 100644
  var ContainersLayer = typedMemo(function ContainersLayer2({
    children,
    freshDataTransitionEpoch,
-@@ -6269,7 +6322,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
+@@ -6269,7 +6325,7 @@ var ContainersLayer = typedMemo(function ContainersLayer2({
  }) {
    const ctx = useStateContext();
    const columnWrapperStyle = ctx.columnWrapperStyle;
@@ -512,7 +574,7 @@ index fe5f415..7f1b9dd 100644
    const minSize = useCommittedMinSize();
    const [readyToRender, numColumns, otherAxisSize = 0] = useArr$(["readyToRender", "numColumns", "otherAxisSize"]);
    const isVisible = useFreshDataTransitionVisibility(!!readyToRender, freshDataTransitionEpoch);
-@@ -6492,6 +6545,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
+@@ -6492,6 +6548,14 @@ var AlignItemsAtEndSpacer = typedMemo(function AlignItemsAtEndSpacer2({ horizont
      null
    );
  });
@@ -527,7 +589,7 @@ index fe5f415..7f1b9dd 100644
  var ListComponent = typedMemo(function ListComponent2({
    canRender,
    freshDataTransitionEpoch,
-@@ -6630,7 +6691,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6630,7 +6694,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      /* @__PURE__ */ React2.createElement(ScrollAdjust, null),
@@ -536,7 +598,7 @@ index fe5f415..7f1b9dd 100644
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React2.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React2.createElement(
-@@ -6644,7 +6705,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -6644,7 +6708,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -545,7 +607,7 @@ index fe5f415..7f1b9dd 100644
      IS_DEV && ENABLE_DEVMODE
    );
  });
-@@ -7865,7 +7926,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
+@@ -7865,7 +7929,10 @@ function setPaddingTop(ctx, { stylePaddingTop }) {
    const state = ctx.state;
    if (stylePaddingTop !== void 0) {
      const prevStylePaddingTop = peek$(ctx, "stylePaddingTop") || 0;
@@ -557,7 +619,7 @@ index fe5f415..7f1b9dd 100644
        let prevTotalSize = peek$(ctx, "totalSize") || 0;
        set$(ctx, "totalSize", prevTotalSize + prevStylePaddingTop);
        state.timeoutSetPaddingTop = setTimeout(() => {
-@@ -7968,6 +8032,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7968,6 +8035,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -565,7 +627,7 @@ index fe5f415..7f1b9dd 100644
      getItemType,
      horizontal,
      rtl,
-@@ -8261,6 +8326,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8261,6 +8329,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance,
      estimatedItemSize,

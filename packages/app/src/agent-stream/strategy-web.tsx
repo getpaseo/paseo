@@ -416,6 +416,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
               {
                 id: String(measurement.key),
                 top: measurement.start,
+                height: measurement.size,
               },
               props.readingRowReplacements,
             )
@@ -1170,11 +1171,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
-      holdRow: (rowId, apply) => {
+      holdRow: (rowId, apply, triggerEdge) => {
         cancelPendingStickToBottom();
         setFollowOutput(false);
         const row = measureRows()?.find((candidate) => candidate.id === rowId);
-        if (row) readingAnchor.pin(row);
+        const scrollTop = scrollContainerRef.current?.scrollTop;
+        if (row && scrollTop !== undefined) readingAnchor.pin(row, triggerEdge, scrollTop);
         disclosurePendingRef.current = true;
         apply();
       },
