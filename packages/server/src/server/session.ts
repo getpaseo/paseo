@@ -1944,7 +1944,19 @@ export class Session {
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
       this.unsubscribeTerminalsChanged?.();
       this.unsubscribeTerminalsChanged = null;
+      this.resetWorkspaceLivenessBaselines();
     }
+  }
+
+  /**
+   * The change checks compare against the last observed sets, so dropping a
+   * subscription must drop its baselines too. Otherwise a resubscribe compares
+   * fresh events against workspaces that are no longer live.
+   */
+  private resetWorkspaceLivenessBaselines(): void {
+    this.liveTerminalWorkspaceIdsByCwd.clear();
+    this.loadedAgentWorkspaceIds = null;
+    this.openAgentTabWorkspaceIds = null;
   }
 
   private refreshCatalogProducers(legacy: boolean): void {
@@ -9576,6 +9588,7 @@ export class Session {
     }
     this.unsubscribeTerminalsChanged?.();
     this.unsubscribeTerminalsChanged = null;
+    this.resetWorkspaceLivenessBaselines();
     this.providerCatalogSession.dispose();
 
     this.terminalController.dispose();
