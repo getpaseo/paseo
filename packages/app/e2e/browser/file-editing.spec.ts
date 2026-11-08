@@ -729,6 +729,10 @@ test.describe("CodeMirror workspace file editing", () => {
     const imagePath = path.join(workspace.repoPath, "pixel.png");
     await writeFile(markdownPath, "# First heading\n", "utf8");
     await writeFile(imagePath, RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "shape.svg"),
+      await readFile(path.resolve(__dirname, "../mobile/fixtures/native-preview.svg")),
+    );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
 
@@ -774,6 +778,12 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+
+    await openWorkspaceFile(page, "shape.svg");
+    await expect(imageCanvas).toBeVisible();
+    await expect(image).toBeVisible();
+    await expect(image).toHaveJSProperty("complete", true);
+    await expect(image).toHaveJSProperty("naturalWidth", 240);
   });
 
   test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
