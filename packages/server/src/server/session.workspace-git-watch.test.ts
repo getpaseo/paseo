@@ -29,6 +29,7 @@ import {
 } from "./workspace-registry.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import type { WorkspaceGitObserverService } from "./session/workspace-git-observer/workspace-git-observer-service.js";
+import { WORKSPACE_LIVENESS_WINDOW_MS } from "./session/workspace-git-observer/workspace-liveness.js";
 
 interface SessionInternals {
   buildWorkspaceDescriptorMap: () => Promise<Map<string, unknown>>;
@@ -1113,4 +1114,44 @@ describe("live workspace observation", () => {
     await session.cleanup();
   });
 
+  test("a touched workspace survives the next reconcile and drops after the liveness window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const touchedCwd = "/tmp/touched-workspace";
+      const { session, projects, workspaces } = createSessionForWorkspaceGitWatchTests();
+      seedGitWorkspace({
+        projects,
+        workspaces,
+        projectId: "proj-1",
+        workspaceId: "ws-touched",
+        cwd: touchedCwd,
+        name: "touched",
+        updatedAt: OLD,
+      });
+
+      await session.handleMessage({
+        type: "session.events.set_subscription.request",
+        requestId: "events-1",
+        events: ["checkout_status_update"],
+      });
+      expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0);
+
+      const record = workspaces.get("ws-touched");
+      if (!record) throw new Error("missing ws-touched record");
+      await session.syncWorkspaceGitObserverForWorkspace(record);
+      expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
+
+      // An unrelated reconcile inside the window counts the touch as activity.
+      await reconcileObservers(session);
+      expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
+
+      vi.setSystemTime(Date.now() + WORKSPACE_LIVENESS_WINDOW_MS + 60_000);
+      await reconcileObservers(session);
+      expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0);
+
+      await session.cleanup();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
