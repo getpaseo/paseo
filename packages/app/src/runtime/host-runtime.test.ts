@@ -2195,6 +2195,146 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  function gatewayRecoveryFixture() {
+    const parent = new FakeDaemonClient();
+    parent.connectedHosts = true;
+    parent.hostDirectory = Promise.resolve({
+      self: { serverId: "srv_parent", label: "parent" },
+      hosts: ["srv_child", "srv_healthy"].map((serverId) => ({
+        registrationId: `reg_${serverId}`,
+        serverId,
+        label: serverId,
+        source: { id: "user", key: serverId },
+        metadata: {},
+        enabled: true,
+        status: "online" as const,
+        targetDescription: "relay",
+        lastOnlineAt: null,
+        nextRetryAt: null,
+        error: null,
+      })),
+    });
+    const parentReady = createDeferred<void>();
+    const child = makeConnectedProbeClient(5);
+    const healthy = makeConnectedProbeClient(5);
+    const unrelated = makeConnectedProbeClient(5);
+    const attempts = new Map<string, number>();
+    const hosts = [
+      makeHost({
+        serverId: "srv_parent",
+        connections: [
+          {
+            id: "relay:parent",
+            type: "relay",
+            relayEndpoint: "relay.paseo.sh:443",
+            daemonPublicKeyB64: "pk_parent",
+          },
+        ],
+      }),
+      ...["srv_child", "srv_healthy"].map((serverId) =>
+        makeHost({
+          serverId,
+          connections: [
+            {
+              id: "via:srv_parent",
+              type: "routed" as const,
+              originServerId: "srv_parent",
+            },
+          ],
+        }),
+      ),
+      makeHost({
+        serverId: "srv_unrelated",
+        connections: [
+          {
+            id: "direct:unrelated:6767",
+            type: "directTcp",
+            endpoint: "unrelated:6767",
+          },
+        ],
+      }),
+    ];
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        "@paseo:e2e": "1",
+        "@paseo:daemon-registry": JSON.stringify(hosts),
+      }),
+      deps: {
+        getClientId: async () => "gateway-recovery",
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host, connection }) => {
+          attempts.set(host.serverId, (attempts.get(host.serverId) ?? 0) + 1);
+          let client: FakeDaemonClient;
+          if (host.serverId === "srv_parent") {
+            await parentReady.promise;
+            parent.setConnectionState({ status: "connected" });
+            client = parent;
+          } else if (connection.type === "routed") {
+            if (!parent.isConnected) throw new Error("Origin host srv_parent is unavailable");
+            client = host.serverId === "srv_child" ? child : healthy;
+          } else {
+            client = unrelated;
+          }
+          return {
+            client: client as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+      },
+    });
+    return { store, parent, parentReady, child, healthy, unrelated, attempts };
+  }
+
+  it("retries saved child routes immediately when their relay gateway first connects", async () => {
+    useHostRuntimeClock();
+    const { store, parentReady, attempts } = gatewayRecoveryFixture();
+    try {
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts.get("srv_child")).toBe(1);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).not.toBe("online");
+      parentReady.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot("srv_parent")?.connectionStatus).toBe("online");
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      expect(store.getSnapshot("srv_healthy")?.connectionStatus).toBe("online");
+      expect(attempts.get("srv_child")).toBe(2);
+      expect(attempts.get("srv_healthy")).toBe(2);
+      expect(attempts.get("srv_unrelated")).toBe(1);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it("wakes disconnected routed clients on gateway recovery without disturbing healthy hosts", async () => {
+    useHostRuntimeClock();
+    const { store, parent, parentReady, child, healthy, unrelated } = gatewayRecoveryFixture();
+    try {
+      parentReady.resolve();
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      parent.setConnectionState({ status: "disconnected", reason: "relay lost" });
+      child.setConnectionState({
+        status: "disconnected",
+        reason: "origin offline",
+        nextRetryAt: new Date(Date.now() + 12000).toISOString(),
+      });
+      parent.setConnectionState({ status: "connected" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(child.ensureConnectedCalls).toBe(1);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      expect(healthy.ensureConnectedCalls).toBe(0);
+      expect(unrelated.ensureConnectedCalls).toBe(0);
+      parent.setConnectionState({ status: "connected" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(child.ensureConnectedCalls).toBe(1);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
   it.each([false, true])(
     "keeps B and C distinct with routed and direct candidates (B direct first: %s)",
     async (directFirst) => {
