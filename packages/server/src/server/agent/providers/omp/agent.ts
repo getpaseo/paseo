@@ -131,11 +131,19 @@ export interface OmpAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   runtime?: OmpRuntime;
+  /** Test seam: build the runtime with the client's assembled settings. */
+  runtimeFactory?: OmpRuntimeFactory;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   providerIdleDeadlineMs?: number;
 }
+
+export type OmpRuntimeFactory = (
+  logger: Logger,
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  providerOptions: OmpRuntimeOptions,
+) => OmpRuntime;
 
 export interface OmpProviderIdleScheduler {
   waitForRetry(): Promise<void>;
@@ -2275,6 +2283,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly providerIdleDeadlineMs?: number;
   private readonly runtime?: OmpRuntime;
+  private readonly runtimeFactory: OmpRuntimeFactory;
 
   constructor(options: OmpAgentClientOptions) {
     // Do not synthesize a `replace` command here: a replace command bypasses
@@ -2288,6 +2297,7 @@ export class OmpAgentClient implements AgentClient {
     this.usagePollScheduler = options.usagePollScheduler;
     this.providerIdleDeadlineMs = options.providerIdleDeadlineMs;
     this.runtime = options.runtime;
+    this.runtimeFactory = options.runtimeFactory ?? createOmpRuntime;
   }
 
   private async configureNativePaseoTools(
@@ -2658,7 +2668,7 @@ export class OmpAgentClient implements AgentClient {
 
   private resolveRuntime(providerOptions: Record<string, unknown> | undefined): OmpRuntime {
     const { runtimeOptions } = resolveOmpProviderOptions(providerOptions);
-    return this.runtime ?? createOmpRuntime(this.logger, this.runtimeSettings, runtimeOptions);
+    return this.runtime ?? this.runtimeFactory(this.logger, this.runtimeSettings, runtimeOptions);
   }
 
   private async resolveOmpLaunch(): Promise<ResolvedProviderLaunch> {

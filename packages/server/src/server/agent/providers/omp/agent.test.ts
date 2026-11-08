@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
@@ -52,28 +53,34 @@ test("an idle follow-up is submitted as a prompt so OMP can start a turn", async
   ]);
 });
 
-test("default OMP runtime settings leave the launch command unresolved", () => {
-  const client = new OmpAgentClient({ logger: createTestLogger(), runtime: new FakeOmp() });
-  // Test seam: the constructor's private settings decide whether OmpCliRuntime
-  // skips executable resolution, so inspect the assembled value directly.
-  const clientWithSettings = client as unknown as {
-    readonly runtimeSettings?: { readonly command?: unknown };
-  };
-  expect(clientWithSettings.runtimeSettings?.command).toBeUndefined();
-});
-
-test("OMP keeps an explicit command override", () => {
-  const command = { mode: "replace" as const, argv: ["custom-omp"] };
+test("default OMP client leaves the launch command to the runtime factory", async () => {
+  const seen: Array<ProviderRuntimeSettings | undefined> = [];
   const client = new OmpAgentClient({
     logger: createTestLogger(),
-    runtime: new FakeOmp(),
-    runtimeSettings: { command },
+    runtimeFactory: (_logger, runtimeSettings) => {
+      seen.push(runtimeSettings);
+      return new FakeOmp();
+    },
   });
-  // Test seam: user overrides must survive the constructor unchanged.
-  const clientWithSettings = client as unknown as {
-    readonly runtimeSettings?: { readonly command?: unknown };
-  };
-  expect(clientWithSettings.runtimeSettings?.command).toEqual(command);
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  expect(seen[0]?.command).toBeUndefined();
+});
+
+test("OMP client passes an explicit command override to the runtime factory", async () => {
+  const command = { mode: "replace" as const, argv: ["custom-omp"] };
+  const seen: Array<ProviderRuntimeSettings | undefined> = [];
+  const client = new OmpAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: { command },
+    runtimeFactory: (_logger, runtimeSettings) => {
+      seen.push(runtimeSettings);
+      return new FakeOmp();
+    },
+  });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  expect(seen[0]?.command).toEqual(command);
 });
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
