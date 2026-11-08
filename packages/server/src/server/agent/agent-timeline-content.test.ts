@@ -81,6 +81,41 @@ describe("agent timeline content", () => {
     expect(serializedBytes(item)).toBeLessThanOrEqual(256 * 1024);
   });
 
+  test("preserves private user image sources without spending the public text budget", () => {
+    const imageSources = [
+      { kind: "base64" as const, mimeType: "image/png", data: "AQID".repeat(350_000) },
+    ];
+    const small: AgentTimelineItem = { type: "user_message", text: "describe", imageSources };
+    expect(limitAgentTimelineItemContent(small)).toBe(small);
+    const text = "t".repeat(1024 * 1024);
+    const publicItem = limitAgentTimelineItemContent({ type: "user_message", text });
+    const item = limitAgentTimelineItemContent({ type: "user_message", text, imageSources });
+    if (item.type !== "user_message") throw new Error("shape");
+    const { imageSources: retained, ...message } = item;
+    expect(retained).toBe(imageSources);
+    expect(message).toEqual(publicItem);
+    expect(item.text).toContain("…[truncated");
+    expect(serializedBytes(message)).toBeLessThanOrEqual(256 * 1024);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("still limits arbitrary nested imageSources and data in tool payloads", () => {
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "nested-image",
+      name: "image_tool",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { imageSources: [{ data: "AQID".repeat(350_000) }] },
+        output: { data: "o".repeat(1024 * 1024) },
+      },
+    });
+    expect(JSON.stringify(item)).toContain("…[truncated");
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+  });
+
   test("bounds an item whose structure alone exceeds the budget", () => {
     const item = limitAgentTimelineItemContent({
       type: "tool_call",
