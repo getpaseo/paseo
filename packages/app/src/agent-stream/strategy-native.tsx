@@ -318,11 +318,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   );
   // A hold on the content end mounts the end pin while detached (`holdRow`). The release reads the
   // tracked distance instead of the offset: the content size reaches JS before the pin's scroll does.
-  const [endHoldDistance, setEndHoldDistance] = useState<EndHoldDistance | null>(null);
+  const [endHold, setEndHold] = useState<{ rowId: string; distance: EndHoldDistance } | null>(null);
   const releaseDisclosure = useStableEvent(() => {
-    setEndHoldDistance(null);
+    setEndHold(null);
     bottomAnchorController.releaseDisclosure({
-      isAtEnd: endHoldDistance ? endHoldDistance.current() <= AT_END_OFFSET_PX : isAtEnd(),
+      isAtEnd: endHold ? endHold.distance.current() <= AT_END_OFFSET_PX : isAtEnd(),
     });
   });
   const [disclosureHold] = useState(() =>
@@ -345,7 +345,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const cancelDisclosureHold = useStableEvent(() => {
     flushPendingEndHold();
     disclosureHold.cancel();
-    setEndHoldDistance(null);
+    setEndHold(null);
   });
   useEffect(() => () => cancelDisclosureHold(), [cancelDisclosureHold]);
   // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
@@ -370,12 +370,15 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       const anchor = disclosureAnchor(rows, rowId, triggerEdge);
       bottomAnchorController.holdForDisclosure();
       if (anchor.kind === "row" || !isListPlacedRef.current) {
-        setEndHoldDistance(null);
+        setEndHold(null);
         disclosureHold.hold(anchor);
         applyAndMeasure();
         return;
       }
-      setEndHoldDistance(createEndHoldDistance(distanceFromEnd(streamViewportMetricsRef.current)));
+      setEndHold({
+        rowId,
+        distance: createEndHoldDistance(distanceFromEnd(streamViewportMetricsRef.current)),
+      });
       const frame = requestAnimationFrame(() => {
         pendingEndHoldRef.current = null;
         disclosureHold.hold(anchor);
@@ -414,7 +417,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading
   //   above or rows growing below leave what the user is reading where it is.
   const isFollowingEnd = bottomAnchorController.mode === "sticky-bottom";
-  const isEndPinned = isFollowingEnd || endHoldDistance !== null;
+  // An end hold pins the end only while its row's bottom is the end. A reply landing below the row
+  // drops the pin in the commit that mounts the reply, so the reply grows below the held row.
+  const isEndHeld =
+    endHold !== null && disclosureAnchor(rows, endHold.rowId, "bottom").kind === "end";
+  const isEndPinned = isFollowingEnd || isEndHeld;
   const pinsEnd = isEndPinned && isListPlaced;
   const maintainVisibleContentPosition = useMemo(
     () => (isEndPinned ? false : { data: true, size: true, shouldRestorePosition }),
@@ -641,7 +648,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentHeight: nextContentHeight,
       contentMeasuredForKey: isListPlacedRef.current ? "native-virtualized" : null,
     };
-    endHoldDistance?.noteContentSize(streamViewportMetricsRef.current);
+    endHold?.distance.noteContentSize(streamViewportMetricsRef.current);
     bottomAnchorController.handleContentSizeChange();
     // Content growing below a detached viewport moves the end away without a scroll event.
     if (

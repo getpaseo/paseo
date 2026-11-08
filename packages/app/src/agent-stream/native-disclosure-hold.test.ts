@@ -142,6 +142,14 @@ describe("disclosure anchor", () => {
   it("keeps the content end for a bottom-edge trigger on the last row", () => {
     expect(disclosureAnchor(rows, "message-2", "bottom")).toEqual({ kind: "end" });
   });
+
+  // The strategy re-derives this each render, so a reply lets go of the end in the commit it lands.
+  it("stops keeping the content end once a reply lands below the row", () => {
+    expect(disclosureAnchor([...rows, { id: "turn-2" }], "message-2", "bottom")).toEqual({
+      kind: "row",
+      rowId: "turn-2",
+    });
+  });
 });
 
 describe("end hold distance", () => {
