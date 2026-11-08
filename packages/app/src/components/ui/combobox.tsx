@@ -134,12 +134,7 @@ export interface ComboboxProps {
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
-  children?: ReactNode;
-}
-
-function useComboboxSheetPresentation(forceSheet: boolean | undefined): boolean {
-  const isCompact = useIsCompactFormFactor();
-  return forceSheet === true || isCompact;
+  children?: ReactNode | ((input: { activeOptionId: string | null }) => ReactNode);
 }
 
 function resolveControlledOpen(
@@ -941,7 +936,7 @@ interface MobileBodyProps {
   emptyText: string;
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
-  children: ReactNode;
+  children: ComboboxProps["children"];
 }
 
 function MobileComboboxBody(props: MobileBodyProps): ReactElement | null {
@@ -964,18 +959,23 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
     () => [styles.comboboxTitle, { color: props.titleColor }],
     [props.titleColor],
   );
-  const body = props.hasChildren ? (
-    props.children
-  ) : (
-    <OptionsList
-      options={props.orderedVisibleOptions}
-      value={props.value}
-      activeIndex={props.activeIndex}
-      emptyText={props.emptyText}
-      onSelect={props.handleSelect}
-      renderOption={props.renderOption}
-    />
-  );
+  const activeOptionId = props.orderedVisibleOptions[props.activeIndex]?.id ?? null;
+  let body: ReactNode;
+  if (props.hasChildren) {
+    body =
+      typeof props.children === "function" ? props.children({ activeOptionId }) : props.children;
+  } else {
+    body = (
+      <OptionsList
+        options={props.orderedVisibleOptions}
+        value={props.value}
+        activeIndex={props.activeIndex}
+        emptyText={props.emptyText}
+        onSelect={props.handleSelect}
+        renderOption={props.renderOption}
+      />
+    );
+  }
 
   return (
     <IsolatedBottomSheetModal
@@ -1095,21 +1095,26 @@ interface DesktopBodyProps {
   renderOption: RenderOptionFn | undefined;
   hasChildren: boolean;
   childrenScrollEnabled: boolean;
-  children: ReactNode;
+  children: ComboboxProps["children"];
 }
 
 function DesktopComboboxChildrenBody(props: {
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
   scrollEnabled: boolean;
-  children: ReactNode;
+  activeOptionId: string | null;
+  children: ComboboxProps["children"];
 }): ReactElement {
+  const renderedChildren =
+    typeof props.children === "function"
+      ? props.children({ activeOptionId: props.activeOptionId })
+      : props.children;
   const header = props.header ? <InlineHeaderView header={props.header} /> : props.stickyHeader;
   if (!props.scrollEnabled) {
     return (
       <>
         {header}
-        <View style={styles.desktopChildrenBody}>{props.children}</View>
+        <View style={styles.desktopChildrenBody}>{renderedChildren}</View>
       </>
     );
   }
@@ -1122,7 +1127,7 @@ function DesktopComboboxChildrenBody(props: {
         showsVerticalScrollIndicator={false}
         style={styles.desktopScroll}
       >
-        {props.children}
+        {renderedChildren}
       </ScrollView>
     </>
   );
@@ -1239,6 +1244,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
               header={props.header}
               stickyHeader={props.stickyHeader}
               scrollEnabled={props.childrenScrollEnabled}
+              activeOptionId={props.orderedVisibleOptions[props.activeIndex]?.id ?? null}
             >
               {props.children}
             </DesktopComboboxChildrenBody>
@@ -1288,6 +1294,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   );
 }
 
+// oxlint-disable-next-line eslint(complexity)
 export function Combobox({
   options,
   value,
@@ -1328,7 +1335,8 @@ export function Combobox({
   const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
-  const isMobile = useComboboxSheetPresentation(forceSheet);
+  const isCompact = useIsCompactFormFactor();
+  const isMobile = forceSheet === true || isCompact;
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
   const titleColor = theme.colors.foreground;

@@ -1,4 +1,4 @@
-import type { Page, TestInfo } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -11,7 +11,10 @@ test.use({ viewport: MOBILE_VIEWPORT, deviceScaleFactor: 2 });
 
 async function openTabSwitcher(page: Page) {
   await page.getByRole("button", { name: /Switch tabs/ }).click();
-  const footer = page.getByRole("button", { name: "New terminal", exact: true });
+  const footer = page.getByRole("button", {
+    name: "New terminal",
+    exact: true,
+  });
   await expect(footer).toBeVisible();
   // Visibility alone passes while the sheet is still travelling up from below the viewport.
   await expect
@@ -35,6 +38,40 @@ async function createTabFromSwitcher(page: Page, kind: "New agent" | "New termin
 async function fetchAgentTitle(client: SeedDaemonClient, agentId: string): Promise<string | null> {
   const result = await client.fetchAgents({ scope: "active" });
   return result.entries.find((entry) => entry.agent.id === agentId)?.agent.title ?? null;
+}
+
+async function dragToReorderTab(page: Page, sourceRow: Locator, targetRow: Locator) {
+  const source = await sourceRow.boundingBox();
+  const target = await targetRow.boundingBox();
+  if (!source || !target) throw new Error("Tab rows were not laid out");
+  await page.mouse.move(source.x + 25, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(source.x + 25, source.y + source.height / 2 + 12, {
+    steps: 4,
+  });
+  await page.mouse.move(target.x + 25, target.y + target.height - 4, {
+    steps: 20,
+  });
+  await page.mouse.up();
+}
+
+async function expectTabTitleDensity(row: Locator, longTitle: string, titleLines: number) {
+  const title = row.getByText(longTitle, { exact: true });
+  await expect(title).toBeVisible();
+  const layout = await title.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return {
+      clamp: style.webkitLineClamp,
+      height: node.getBoundingClientRect().height,
+      fontSize: parseFloat(style.fontSize),
+    };
+  });
+  expect(layout.height).toBeGreaterThan(layout.fontSize * 1.5);
+  if (titleLines > 0) {
+    expect(layout.clamp).toBe(String(titleLines));
+  } else {
+    expect(layout.clamp).not.toBe("1");
+  }
 }
 
 /**
@@ -150,96 +187,118 @@ test("switcher footer creates tabs and returns to the existing chat", async ({
 });
 
 for (const titleLines of [2, 3, 0] as const) {
-  test(`wraps long tab titles (${titleLines || "unlimited"} lines), shows agent details and persists drag order`, async ({
-    page,
-  }, testInfo) => {
-    test.setTimeout(180_000);
+  test(`wraps long tab titles (${titleLines || "unlimited"} lines)`, async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
     await page.addInitScript((workspaceTabTitleLines) => {
       localStorage.setItem("@paseo:app-settings", JSON.stringify({ workspaceTabTitleLines }));
     }, titleLines);
     const longTitle =
       "Plan a community science exhibition with astronomy demonstrations, volunteer schedules and multilingual visitor guides — 为社区科学展览规划天文互动演示、志愿者排班与多语言家庭参观指南";
     const session = await seedMockAgentWorkspace({
-      repoPrefix: "tab-list-details-",
+      repoPrefix: "tab-title-density-",
       title: longTitle,
       model: "five-minute-stream",
       thinkingOptionId: "high",
     });
     try {
       await openAgentRoute(page, session);
-      await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveText("1");
-      const second = await session.client.createAgent({
-        provider: "mock",
-        cwd: session.cwd,
-        workspaceId: session.workspaceId,
-        title: "Review the observatory visitor guide",
-        modeId: "load-test",
-        model: "e2e-fast-stream",
-      });
-      await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: second.id });
-      await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveText("2");
       await openTabSwitcher(page);
-      const firstRow = page.getByTestId(`workspace-tab-option-agent_${session.agentId}`);
-      const secondRow = page.getByTestId(`workspace-tab-option-agent_${second.id}`);
-      await expect(firstRow).toContainText("Five minute stream");
-      await expect(firstRow).toContainText("High");
-      if (titleLines === 3) {
-        await session.client.sendAgentMessage(
-          session.agentId,
-          "Draft the community observatory visitor guide.",
-        );
-        await expect(firstRow).toContainText(/High · \d+s/);
-        const initialDetails = await firstRow.textContent();
-        await expect.poll(() => firstRow.textContent()).not.toBe(initialDetails);
-        await session.client.cancelAgent(session.agentId);
-        await expect(firstRow).not.toContainText(/High · \d+s/);
-      }
-      const title = firstRow.getByText(longTitle, { exact: true });
-      await expect(title).toBeVisible();
-      const layout = await title.evaluate((node) => {
-        const style = getComputedStyle(node);
-        return {
-          clamp: style.webkitLineClamp,
-          height: node.getBoundingClientRect().height,
-          fontSize: parseFloat(style.fontSize),
-        };
-      });
-      expect(layout.height).toBeGreaterThan(layout.fontSize * 1.5);
-      if (titleLines > 0) expect(layout.clamp).toBe(String(titleLines));
-      else expect(layout.clamp).not.toBe("1");
+      const row = page.getByTestId(`workspace-tab-option-agent_${session.agentId}`);
+      await expect(row).toContainText("Five minute stream");
+      await expect(row).toContainText("High");
+      await expectTabTitleDensity(row, longTitle, titleLines);
       await captureScreen(page, testInfo, `title-lines-${titleLines || "unlimited"}`);
-
-      const source = await firstRow.boundingBox();
-      const target = await secondRow.boundingBox();
-      if (!source || !target) throw new Error("Tab rows were not laid out");
-      await page.mouse.move(source.x + 25, source.y + source.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(source.x + 25, source.y + source.height / 2 + 12, { steps: 4 });
-      await page.mouse.move(target.x + 25, target.y + target.height - 4, { steps: 20 });
-      await page.mouse.up();
-      const rows = page.locator('[data-testid^="workspace-tab-option-"]');
-      await expect(rows.first()).toHaveAttribute(
-        "data-testid",
-        `workspace-tab-option-agent_${second.id}`,
-      );
-      await captureScreen(page, testInfo, "reordered-tabs");
-      await page
-        .getByRole("button", { name: "Bottom sheet backdrop" })
-        .click({ position: { x: 10, y: 10 } });
-      await page.reload();
-      await openTabSwitcher(page);
-      await expect(rows.first()).toHaveAttribute(
-        "data-testid",
-        `workspace-tab-option-agent_${second.id}`,
-      );
-      await firstRow.click();
-      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
-      await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveText("2");
     } finally {
       await session.cleanup();
     }
   });
 }
+
+test("displays live duration for active agent turns and clears on cancellation", async ({
+  page,
+}) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "tab-turn-timer-",
+    title: "Observatory volunteer scheduling",
+    model: "five-minute-stream",
+    thinkingOptionId: "high",
+  });
+  try {
+    await openAgentRoute(page, session);
+    await openTabSwitcher(page);
+    const row = page.getByTestId(`workspace-tab-option-agent_${session.agentId}`);
+    await expect(row).toContainText("Five minute stream");
+    await expect(row).toContainText("High");
+    await expect(row).not.toContainText(/High · \d+s/);
+
+    await session.client.sendAgentMessage(
+      session.agentId,
+      "Draft the community observatory visitor guide.",
+    );
+    await expect(row).toContainText(/High · \d+s/);
+    const initialDetails = await row.textContent();
+    await expect.poll(() => row.textContent()).not.toBe(initialDetails);
+
+    await session.client.cancelAgent(session.agentId);
+    await expect(row).not.toContainText(/High · \d+s/);
+  } finally {
+    await session.cleanup();
+  }
+});
+
+test("reorders workspace tabs via touch drag and persists layout across reload", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "tab-reorder-",
+    title: "First tab",
+  });
+  try {
+    await openAgentRoute(page, session);
+    const second = await session.client.createAgent({
+      provider: "mock",
+      cwd: session.cwd,
+      workspaceId: session.workspaceId,
+      title: "Second tab",
+      modeId: "load-test",
+    });
+    await openAgentRoute(page, {
+      workspaceId: session.workspaceId,
+      agentId: second.id,
+    });
+    await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveText("2");
+
+    await openTabSwitcher(page);
+    const firstRow = page.getByTestId(`workspace-tab-option-agent_${session.agentId}`);
+    const secondRow = page.getByTestId(`workspace-tab-option-agent_${second.id}`);
+
+    await dragToReorderTab(page, firstRow, secondRow);
+
+    const rows = page.locator('[data-testid^="workspace-tab-option-"]');
+    await expect(rows.first()).toHaveAttribute(
+      "data-testid",
+      `workspace-tab-option-agent_${second.id}`,
+    );
+    await captureScreen(page, testInfo, "reordered-tabs");
+
+    await page
+      .getByRole("button", { name: "Bottom sheet backdrop" })
+      .click({ position: { x: 10, y: 10 } });
+    await page.reload();
+    await openTabSwitcher(page);
+    await expect(rows.first()).toHaveAttribute(
+      "data-testid",
+      `workspace-tab-option-agent_${second.id}`,
+    );
+
+    await firstRow.click();
+    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveText("2");
+  } finally {
+    await session.cleanup();
+  }
+});
 
 test("tab title line preference can be changed in Appearance and survives reload", async ({
   page,
