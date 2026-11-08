@@ -5,6 +5,29 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { V2Timeline } from "./timeline.js";
 
+test("user history retains image files with an empty text message", async () => {
+  expect(
+    await collectTimelineSnapshot(new V2Timeline(), [
+      {
+        type: "user",
+        id: "uploaded-image",
+        time: { created: 1 },
+        text: "",
+        files: [{ data: "aW1hZ2U=", mime: "image/png", source: { type: "inline" } }],
+      },
+    ]),
+  ).toMatchObject([
+    {
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "uploaded-image",
+        images: [{ mimeType: "image/png", source: expect.any(String) }],
+      },
+    },
+  ]);
+});
+
 function assistant(content: SessionMessageAssistant["content"]): SessionMessageAssistant {
   return {
     id: "answer",

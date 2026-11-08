@@ -1,4 +1,5 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import { userMessageImages } from "./user-message-images.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -662,6 +663,7 @@ interface PendingPermission {
 interface PendingUserMessage {
   text: string;
   messageId?: string;
+  images?: Awaited<ReturnType<typeof userMessageImages>>;
 }
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
@@ -2718,7 +2720,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const events = this.translateSessionUpdate(params.update);
+    const events = await this.translateSessionUpdate(params.update);
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -3117,9 +3119,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return error instanceof Error && error.message === this.featureUnavailableMessage(featureId);
   }
 
-  private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
+  private async translateSessionUpdate(update: SessionUpdate): Promise<AgentStreamEvent[]> {
     if (update.sessionUpdate === "user_message_chunk") {
-      return this.handleUserMessageChunk(update);
+      return await this.handleUserMessageChunk(update);
     }
 
     const pendingUserEvents = this.flushPendingUserMessage();
@@ -3190,9 +3192,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUserMessageChunk(
+  private async handleUserMessageChunk(
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
-  ): AgentStreamEvent[] {
+  ): Promise<AgentStreamEvent[]> {
     this.fallbackAssistantMessageId = null;
     if (
       this.activeForegroundTurnId &&
@@ -3202,7 +3204,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const chunkText = contentBlockToText(update.content);
-    if (!chunkText) {
+    const images = await userMessageImages([update.content]);
+    if (!chunkText && !images.length) {
       return [];
     }
 
@@ -3220,6 +3223,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.pendingUserMessage.messageId = messageId;
     }
     this.pendingUserMessage.text += chunkText;
+    if (images.length)
+      this.pendingUserMessage.images = [...(this.pendingUserMessage.images ?? []), ...images];
     return events;
   }
 
@@ -3233,6 +3238,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.wrapTimeline({
         type: "user_message",
         text: pending.text,
+        ...(pending.images?.length ? { images: pending.images } : {}),
         ...(pending.messageId ? { messageId: pending.messageId } : {}),
       }),
     ];

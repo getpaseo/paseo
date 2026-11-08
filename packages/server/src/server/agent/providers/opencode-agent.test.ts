@@ -1967,6 +1967,14 @@ describe("OpenCode adapter startTurn error handling", () => {
                   type: "text",
                   text: "Reply with exactly: probe ok",
                 },
+                {
+                  id: "prt_image",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "file",
+                  mime: "image/png",
+                  url: "data:image/png;base64,aW1hZ2U=",
+                },
               ],
             },
             {
@@ -2023,6 +2031,7 @@ describe("OpenCode adapter startTurn error handling", () => {
           type: "user_message",
           text: "Reply with exactly: probe ok",
           messageId: "msg_user",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
         },
       },
       {
@@ -4179,8 +4188,8 @@ describe("OpenCodeAgentClient env", () => {
 });
 
 describe("OpenCode persisted sessions", () => {
-  test("replay hides summaries produced by manual compact", () => {
-    const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
+  test("replay hides summaries produced by manual compact", async () => {
+    const timeline = await __openCodeInternals.buildOpenCodeSessionTimeline([
       {
         info: {
           id: "msg_compact_user",
@@ -4254,8 +4263,8 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 
-  test("replay suppresses OpenCode compaction summary messages", () => {
-    const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
+  test("replay suppresses OpenCode compaction summary messages", async () => {
+    const timeline = await __openCodeInternals.buildOpenCodeSessionTimeline([
       {
         info: {
           id: "msg_compaction_user",

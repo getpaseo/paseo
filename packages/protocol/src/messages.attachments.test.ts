@@ -3,12 +3,47 @@ import { describe, expect, it } from "vitest";
 import {
   AgentForkContextRequestMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentTimelineItemPayloadSchema,
   CreateAgentRequestMessageSchema,
   CreatePaseoWorktreeRequestSchema,
   SendAgentMessageRequestSchema,
 } from "./messages.js";
 
 describe("shared messages attachments", () => {
+  it("preserves durable image references on user timeline messages", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "user_message",
+        text: "Inspect this",
+        messageId: "provider-message-1",
+        clientMessageId: "client-message-1",
+        images: [
+          {
+            id: "sha256-image",
+            mimeType: "image/png",
+            source: "/paseo/conversation-images/sha256-image.png",
+            fileName: "screenshot.png",
+            byteSize: 42,
+          },
+        ],
+      }),
+    ).toEqual({
+      type: "user_message",
+      text: "Inspect this",
+      messageId: "provider-message-1",
+      clientMessageId: "client-message-1",
+      images: [
+        {
+          id: "sha256-image",
+          mimeType: "image/png",
+          source: "/paseo/conversation-images/sha256-image.png",
+          fileName: "screenshot.png",
+          byteSize: 42,
+        },
+      ],
+    });
+  });
+
   it("preserves an optional timeline cursor on fork-context messages", () => {
     const boundaryCursor = { epoch: "timeline-1", seq: 42 };
     const request = AgentForkContextRequestMessageSchema.parse({

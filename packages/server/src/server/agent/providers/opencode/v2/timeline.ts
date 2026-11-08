@@ -1,4 +1,5 @@
 import { mapOpencodeToolCall } from "../tool-call-mapper.js";
+import { userMessageImages } from "../../user-message-images.js";
 import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -77,26 +78,30 @@ export class V2Timeline {
       const timestamp = new Date(message.time.created).toISOString();
       const push = (item: AgentTimelineItem) =>
         publish({ type: "timeline", provider: "opencode", item, timestamp });
-      if (message.type === "user") this.userMessage(message, state, push);
+      if (message.type === "user") await this.userMessage(message, state, push);
       else if (message.type === "assistant") await this.assistantMessage(message, state, push);
       else if (message.type === "compaction") this.compactionMessage(message, push);
     }
   }
 
-  private userMessage(
+  private async userMessage(
     message: Extract<SessionMessageInfo, { type: "user" }>,
     state: TimelineState,
     push: (item: AgentTimelineItem) => void,
-  ) {
+  ): Promise<void> {
     state.structured = message.metadata?.paseoOutputSchema !== undefined;
     state.accepted = false;
     if (this.content.has(message.id)) return;
     this.content.set(message.id, message.text);
     const clientMessageId = message.metadata?.paseoClientMessageId;
+    const images = await userMessageImages(
+      message.files?.map((file) => ({ type: "file", data: file.data, mime: file.mime })),
+    );
     push({
       type: "user_message",
       text: message.text,
       messageId: message.id,
+      ...(images.length ? { images } : {}),
       ...(this.includeClientMessageId && typeof clientMessageId === "string"
         ? { clientMessageId }
         : {}),

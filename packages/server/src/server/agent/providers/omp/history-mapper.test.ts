@@ -28,6 +28,25 @@ async function collectHistory(
 }
 
 describe("OMP history mapper", () => {
+  test("retains image-only historical user messages", async () => {
+    expect(
+      await collectHistory(
+        [{ role: "user", content: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }] }],
+        [{ id: "old-image", text: "" }],
+      ),
+    ).toMatchObject([
+      {
+        type: "timeline",
+        item: {
+          type: "user_message",
+          text: "",
+          messageId: "old-image",
+          images: [{ mimeType: "image/png", source: expect.any(String) }],
+        },
+      },
+    ]);
+  });
+
   test("renders visible custom messages as completed tools with their type and content", async () => {
     const events = await collectHistory([
       {

@@ -89,6 +89,7 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
+import { userMessageImages } from "../user-message-images.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
@@ -124,6 +125,7 @@ import {
   type SteerActiveTurnOptions,
   type SteerResult,
   type AgentStreamEvent,
+  type AgentTimelineImage,
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
@@ -5727,14 +5729,28 @@ class ClaudeAgentSession implements AgentSession {
       });
     }
 
-    if (textMessageType === "user_message" && userTextParts.length > 0) {
-      items.unshift({
-        type: "user_message",
-        text: userTextParts.join("\n\n"),
-      });
+    if (textMessageType === "user_message") {
+      this.consolidateUserTextBlocks(items, userTextParts, await userMessageImages(content));
     }
 
     return items;
+  }
+
+  // One user message per SDK entry: text blocks merge into one row and the entry's
+  // images ride along so they survive a restart.
+  private consolidateUserTextBlocks(
+    items: AgentTimelineItem[],
+    userTextParts: string[],
+    images: AgentTimelineImage[],
+  ): void {
+    if (userTextParts.length === 0 && images.length === 0) {
+      return;
+    }
+    items.unshift({
+      type: "user_message",
+      text: userTextParts.join("\n\n"),
+      ...(images.length ? { images } : {}),
+    });
   }
 
   private appendTextBlockToTimeline(
@@ -6590,6 +6606,23 @@ function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
 }
 
+async function historicalUserMessage(
+  content: unknown,
+  messageId: string | null,
+): Promise<AgentTimelineItem[]> {
+  const text = extractUserMessageText(content);
+  const images = await userMessageImages(content);
+  if (!text && !images.length) return [];
+  return [
+    {
+      type: "user_message",
+      text: text ?? "",
+      ...(messageId ? { messageId } : {}),
+      ...(images.length ? { images } : {}),
+    },
+  ];
+}
+
 /**
  * A message steered into a running turn. Claude Code gives it no user entry: it records a
  * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
@@ -6638,14 +6671,7 @@ export async function convertClaudeHistoryEntry(
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      timeline.push({
-        type: "user_message",
-        text,
-        ...(userMessageId ? { messageId: userMessageId } : {}),
-      });
-    }
+    timeline.push(...(await historicalUserMessage(content, userMessageId)));
   }
 
   if (hasToolBlock && normalizedBlocks) {

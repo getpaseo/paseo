@@ -4,6 +4,7 @@ import type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  AgentTimelineImage,
   JsonValue,
   ProviderOptions,
   ToolPolicy,
@@ -18,6 +19,7 @@ export type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  AgentTimelineImage,
 };
 
 export type AgentProvider = string;
@@ -398,7 +400,13 @@ export interface PluginTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: AgentTimelineImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

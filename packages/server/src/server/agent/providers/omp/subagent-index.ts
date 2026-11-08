@@ -43,10 +43,10 @@ export class OmpSubagentIndex {
     return [this.upsert(id, state.status, state)];
   }
 
-  handleEvent(parent: object, payload: OmpSubagentEventPayload): AgentStreamEvent[] {
+  async handleEvent(parent: object, payload: OmpSubagentEventPayload): Promise<AgentStreamEvent[]> {
     const state = this.stateFor(parent, payload.id, "OMP subagent");
     const messages = messagesFromSessionEvent(payload.event);
-    return state.mapper.mapMessages(messages).flatMap((mapped) =>
+    return (await state.mapper.mapMessages(messages)).flatMap((mapped) =>
       mapped.type === "timeline"
         ? [
             {

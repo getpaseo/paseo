@@ -1,5 +1,5 @@
 import type { AgentMessage } from "./agent-message.js";
-import type { AgentAttachment } from "./messages.js";
+import type { AgentAttachment, AgentTimelineImage } from "./messages.js";
 
 export type AgentProvider = string;
 
@@ -372,8 +372,17 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+// Inferred from `AgentTimelineImageSchema` in messages.ts — one source of truth for the fields.
+export type { AgentTimelineImage } from "./messages.js";
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: AgentTimelineImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

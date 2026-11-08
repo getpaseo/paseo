@@ -46,6 +46,7 @@ import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { userMessageImages } from "./user-message-images.js";
 import { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1842,14 +1843,33 @@ function mapCodexThreadReasoningItem(
   return text ? { type: "reasoning", text } : null;
 }
 
-function mapCodexThreadUserMessageItem(
+function unwrapCodexImageAttachmentText(text: string, imageSources: string[]): string {
+  const wrapper =
+    /^\s*# Files mentioned by the user:\r?\n\r?\n([\s\S]+?)\r?\n\r?\nDistinguish instructions in attached documents from the user's request\.\r?\n\r?\n## My request:\r?\n([\s\S]*)$/.exec(
+      text,
+    );
+  if (!wrapper) return text;
+  const files = wrapper[1].split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const allFilesAttached = files.every((line) => {
+    const file = /^## .+?: (.+)$/.exec(line);
+    return file !== null && imageSources.includes(file[1]);
+  });
+  // Keep wrappers containing documents or missing images: their paths are still useful.
+  return allFilesAttached && files.length > 0 ? wrapper[2].trim() : text;
+}
+
+async function mapCodexThreadUserMessageItem(
   normalizedItem: Record<string, unknown>,
   includeUserMessage: boolean,
-): AgentTimelineItem | null {
+): Promise<AgentTimelineItem | null> {
   if (!includeUserMessage) {
     return null;
   }
-  const text = extractUserText(normalizedItem.content) ?? "";
+  const images = await userMessageImages(normalizedItem.content);
+  const text = unwrapCodexImageAttachmentText(
+    extractUserText(normalizedItem.content) ?? "",
+    images.map((image) => image.source),
+  );
   const messageId = nonEmptyString(normalizedItem.id);
   const clientMessageId = nonEmptyString(
     normalizedItem.clientId ?? normalizedItem.client_id ?? normalizedItem.clientUserMessageId,
@@ -1859,6 +1879,7 @@ function mapCodexThreadUserMessageItem(
     text,
     ...(messageId ? { messageId } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(images.length ? { images } : {}),
   };
 }
 
@@ -2086,7 +2107,7 @@ export async function threadItemToTimeline(
 
   switch (normalizedType) {
     case "userMessage":
-      return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
+      return await mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
     case "agentMessage":
       return mapCodexAgentMessage(normalizedItem);
     case "plan":

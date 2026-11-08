@@ -283,6 +283,7 @@ function buildAgentManagerSpies() {
     getPendingPermissions: vi.fn(),
     getRegisteredProviderIds: vi.fn().mockReturnValue(["claude"]),
     listDraftFeatures: vi.fn(),
+    persistSubmittedPromptImages: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -638,6 +639,8 @@ class BoundaryAgentManagerFake {
   public listAgents(): ManagedAgent[] {
     return [];
   }
+
+  public async persistSubmittedPromptImages(): Promise<void> {}
 }
 
 class BoundaryAgentStorageFake {

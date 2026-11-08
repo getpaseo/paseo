@@ -125,7 +125,7 @@ export async function* streamOmpHistory(input: {
     const events: AgentStreamEvent[] =
       "item" in replayEntry
         ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
-        : mapper.mapMessages([replayEntry.message]);
+        : await mapper.mapMessages([replayEntry.message]);
     for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
