@@ -80,7 +80,7 @@ describe("create agent preferences", () => {
         modelId: "gpt-5.5",
         modeId: "full-access",
         thinkingOptionId: "high",
-        options: { fast_mode: true },
+        options: { service_tier: "fast" },
       }),
     );
 
@@ -95,7 +95,7 @@ describe("create agent preferences", () => {
           model: "gpt-5.5",
           mode: "full-access",
           thinkingByModel: { "gpt-5.5": "high" },
-          options: { fast_mode: true },
+          options: { service_tier: "fast" },
         },
       },
     });
@@ -218,6 +218,37 @@ describe("create agent preferences", () => {
       provider: "codex",
       providerPreferences: { codex: { options: { service_tier: "priority" } } },
     });
+  });
+
+  it("reads a remembered Codex fast_mode as the service tier it meant, so the draft shows Fast", () => {
+    expect(
+      parseFormPreferences({
+        provider: "codex",
+        providerPreferences: {
+          codex: { options: { fast_mode: true, sandbox_mode: "read-only" } },
+          claude: { options: { fast_mode: true } },
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: { options: { service_tier: "fast", sandbox_mode: "read-only" } },
+        claude: { options: { fast_mode: true } },
+      },
+    });
+
+    expect(
+      parseFormPreferences({
+        providerPreferences: { codex: { featureValues: { fast_mode: false } } },
+      }),
+    ).toEqual({ providerPreferences: { codex: { options: { service_tier: "default" } } } });
+
+    // A tier already remembered wins over the key it replaced.
+    expect(
+      parseFormPreferences({
+        providerPreferences: { codex: { options: { fast_mode: true, service_tier: "default" } } },
+      }),
+    ).toEqual({ providerPreferences: { codex: { options: { service_tier: "default" } } } });
   });
 
   it("keeps options that are not booleans or strings, such as a profile's sandbox settings", () => {

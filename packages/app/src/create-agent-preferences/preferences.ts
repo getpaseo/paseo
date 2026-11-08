@@ -39,6 +39,24 @@ const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.preprocess(
   }),
 );
 
+// COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Codex took `fast_mode`
+// before `service_tier`; the daemon converts the option on every agent and profile it touches,
+// and this is the one place the app reads a remembered value without the daemon in between. Keyed
+// on the built-in provider id: a custom provider extending Codex keeps the old key and the daemon
+// still converts it on create.
+function convertLegacyCodexOptions(
+  preferences: Record<string, ProviderPreferences>,
+): Record<string, ProviderPreferences> {
+  const codex = preferences.codex;
+  if (!codex?.options || !("fast_mode" in codex.options)) return preferences;
+  const { fast_mode: legacy, ...rest } = codex.options;
+  const options =
+    "service_tier" in rest || typeof legacy !== "boolean"
+      ? rest
+      : { ...rest, service_tier: legacy ? "fast" : "default" };
+  return { ...preferences, codex: { ...codex, options } };
+}
+
 const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("chat") }),
   z.strictObject({ kind: z.literal("terminal"), profileId: z.string() }),
@@ -46,7 +64,10 @@ const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind",
 
 export const FormPreferencesSchema = z.strictObject({
   provider: z.string().optional(),
-  providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
+  providerPreferences: z
+    .record(z.string(), providerPreferencesSchema)
+    .transform(convertLegacyCodexOptions)
+    .optional(),
   // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
   // Keep the legacy payload alive until every capable host has had a chance to
   // import it; ordinary preference writes must not erase it first.
