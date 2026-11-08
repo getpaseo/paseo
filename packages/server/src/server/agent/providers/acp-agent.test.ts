@@ -26,6 +26,7 @@ import {
   ACPAgentSession,
   type ACPDelegationExtension,
   type ACPDelegationRow,
+  type ACPDelegationTree,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -95,6 +96,28 @@ describe("buildACPClientCapabilities", () => {
       },
       terminal: false,
       _meta: { source: "provider" },
+    });
+  });
+
+  test("merges the metadata of the override with the metadata of the request", () => {
+    expect(
+      buildACPClientCapabilities(
+        { "vendor/extension": { version: 1 } },
+        {
+          terminal: false,
+          _meta: { "user/setting": { enabled: true } },
+        },
+      ),
+    ).toEqual({
+      fs: {
+        readTextFile: false,
+        writeTextFile: false,
+      },
+      terminal: false,
+      _meta: {
+        "user/setting": { enabled: true },
+        "vendor/extension": { version: 1 },
+      },
     });
   });
 });
@@ -5097,6 +5120,21 @@ const secondTree = {
   ],
 };
 const thirdTree = { members: [member("child", "Read the failing test", "completed")] };
+const shownTree = {
+  members: [
+    member("child", "Read the failing test", "running"),
+    member("waiting", "Wait in the queue", "running"),
+  ],
+};
+const heldTree = {
+  members: [
+    member("child", "Read the failing test", "running"),
+    member("waiting", "Wait in the queue", "queued"),
+  ],
+};
+const malformedTree = {
+  members: [member("child", "Read the failing test", "running"), { title: "No session id" }],
+};
 
 new AgentSideConnection(
   (connection) => ({
@@ -5122,7 +5160,22 @@ new AgentSideConnection(
       if (scenario === "silent") {
         await new Promise(() => {});
       }
-      return scenario === "tree" || scenario === "other-session" ? firstTree : secondTree;
+      if (scenario === "stale") {
+        // The provider publishes a newer tree and only then answers the read
+        // that was made before it.
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...secondTree,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return firstTree;
+      }
+      if (scenario === "held") {
+        return shownTree;
+      }
+      return scenario === "tree" || scenario === "other-session" || scenario === "malformed"
+        ? firstTree
+        : secondTree;
     },
     async prompt() {
       if (scenario === "update") {
@@ -5135,6 +5188,18 @@ new AgentSideConnection(
         await connection.extNotification("test/delegation_update", {
           sessionId: "delegation-session",
           ...secondTree,
+        });
+      }
+      if (scenario === "held") {
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...heldTree,
+        });
+      }
+      if (scenario === "malformed") {
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...malformedTree,
         });
       }
       if (scenario === "other-session") {
@@ -5152,7 +5217,7 @@ new AgentSideConnection(
 );
 `;
 
-function readTestDelegationRows(payload: unknown): ACPDelegationRow[] | null {
+function readTestDelegationTree(payload: unknown): ACPDelegationTree | null {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -5160,24 +5225,31 @@ function readTestDelegationRows(payload: unknown): ACPDelegationRow[] | null {
   if (!Array.isArray(members)) {
     return null;
   }
+  const memberIds: string[] = [];
   const rows: ACPDelegationRow[] = [];
   for (const member of members) {
     if (!member || typeof member !== "object") {
-      continue;
+      return null;
     }
     const entry = member as { id?: unknown; title?: unknown; status?: unknown };
     if (typeof entry.id !== "string") {
+      return null;
+    }
+    memberIds.push(entry.id);
+    if (entry.status !== "running" && entry.status !== "completed") {
+      // A member the provider reports with a status the extension cannot show
+      // stays in the tree without a row.
       continue;
     }
     rows.push({
       id: entry.id,
       title: typeof entry.title === "string" ? entry.title : null,
       description: null,
-      status: entry.status === "completed" ? "completed" : "running",
+      status: entry.status,
       parentSubagentId: null,
     });
   }
-  return rows;
+  return { rows, memberIds };
 }
 
 // A vendor extension of the test's own: the generic session must publish the
@@ -5190,10 +5262,10 @@ const testDelegationExtension: ACPDelegationExtension = {
     return connection.extMethod("test/delegation/get", { sessionId });
   },
   parseReadResult(result) {
-    return readTestDelegationRows(result);
+    return readTestDelegationTree(result);
   },
   parseUpdate(params) {
-    return readTestDelegationRows(params);
+    return readTestDelegationTree(params);
   },
 };
 
@@ -5298,6 +5370,57 @@ describe("ACP delegation extension", () => {
     ]);
   });
 
+  test("keeps the row of a member the tree reports without a row", async () => {
+    const client = createClient({ scenario: "held" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The member the tree holds without a row of its own keeps the row it
+    // had: a member without a row is not a member that is gone.
+    expect(delegationRows(events)).toEqual([
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+      { type: "upsert", id: "waiting", title: "Wait in the queue", status: "running" },
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+    ]);
+  });
+
+  test("ignores a tree it cannot read", async () => {
+    const client = createClient({ scenario: "malformed" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // A tree that cannot be read in full changes nothing: the row the
+    // provider published before it stays, because a tree read in part would
+    // remove the rows of the members it did not parse.
+    expect(delegationRows(events)).toEqual([
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+    ]);
+  });
+
+  test("drops a read that answers for an older tree", async () => {
+    const client = createClient({ scenario: "stale" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // The provider published a newer tree while the read was in flight. The
+    // answer belongs to the older tree, so it is dropped instead of
+    // removing the row of the newer one.
+    expect(delegationRows(events)).toEqual([
+      { type: "upsert", id: "child", title: "Read the failing test", status: "running" },
+      { type: "upsert", id: "other", title: "Summarize", status: "running" },
+    ]);
+  });
   test("ignores the tree of another session", async () => {
     const client = createClient({ scenario: "other-session" });
     session = await client.createSession({ provider: "acp", cwd: dir });

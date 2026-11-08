@@ -73,9 +73,11 @@ const tree = {
   members: [
     member("child-session", "root-session", "explore", "List files in working directory", "running", 1000, 2000),
     member("grandchild-session", "child-session", "worker", "Summarize the findings", "completed", 1000, 3000),
-    member("pending-session", "root-session", "worker", "Wait for the first task", "completed", 4000, 4000),
+    member("instant-session", "root-session", "worker", "Finish in a moment", "completed", 4000, 4000),
     member("queued-session", "root-session", "worker", "Wait in the queue", "queued", 5000, 5000),
-    member("stopped-session", "root-session", "worker", "Stop the search", "stopped", 6000, 7000),
+    member("unknown-session", "root-session", "worker", "Report something new", "nonsense", 5500, 5500),
+    member("failed-session", "root-session", "worker", "Fail the search", "failed", 6000, 6500),
+    member("stopped-session", "root-session", "worker", "Stop the search", "stopped", 7000, 7500),
   ],
 };
 
@@ -247,6 +249,32 @@ describe("MiniMaxCodeACPAgentClient", () => {
     });
   });
 
+  test("merges the metadata of the caller into the handshake", async () => {
+    const client = new MiniMaxCodeACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, agentScript],
+      providerId: "minimax-code",
+      clientCapabilityMeta: { "user/setting": { enabled: true } },
+      env: {
+        ACP_SDK_URL: pathToFileURL(
+          createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+        ).href,
+        ACP_TEST_LOG: logPath,
+      },
+    });
+
+    session = await client.createSession({ provider: "acp", cwd: dir });
+
+    const log = await readAgentLog();
+    const initialize = log.find((entry) => entry.method === "initialize");
+    const capabilities = initialize?.clientCapabilities as
+      | { _meta?: Record<string, unknown> }
+      | undefined;
+    expect(capabilities?._meta).toEqual({
+      "user/setting": { enabled: true },
+      "minimax-code/extensions": { version: 1, notifications: true },
+    });
+  });
   test("does not ask another ACP provider for the MiniMax extension notifications", async () => {
     const client = new GenericACPAgentClient({
       logger: createTestLogger(),
@@ -277,7 +305,9 @@ describe("MiniMaxCodeACPAgentClient", () => {
     session.subscribe((event) => events.push(event));
 
     // The track names the row after the task and demotes the agent name, so
-    // the agent name is the title and the task is the description.
+    // the agent name is the title and the task is the description. A member the
+    // provider reports with a status Paseo cannot show - a queued one - has no
+    // row of its own.
     expect(delegationRows(events)).toEqual([
       {
         id: "child-session",
@@ -294,17 +324,17 @@ describe("MiniMaxCodeACPAgentClient", () => {
         parentSubagentId: "child-session",
       },
       {
-        id: "pending-session",
+        id: "instant-session",
         title: "worker",
-        description: "Wait for the first task",
-        status: "running",
+        description: "Finish in a moment",
+        status: "completed",
         parentSubagentId: null,
       },
       {
-        id: "queued-session",
+        id: "failed-session",
         title: "worker",
-        description: "Wait in the queue",
-        status: "running",
+        description: "Fail the search",
+        status: "failed",
         parentSubagentId: null,
       },
       {

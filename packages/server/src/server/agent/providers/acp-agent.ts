@@ -328,6 +328,26 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
 
+/**
+ * Merges the metadata of a handshake.
+ *
+ * A capability that one layer asks for must not drop what another layer asks
+ * for: the vendor extension of a provider and the metadata of a user
+ * configuration both belong in the same handshake.
+ */
+function mergeCapabilityMeta(
+  base?: ACPClientCapabilityMeta | null,
+  extra?: ACPClientCapabilityMeta,
+): ACPClientCapabilityMeta {
+  if (!base) {
+    return extra ?? {};
+  }
+  if (!extra) {
+    return { ...base };
+  }
+  return { ...base, ...extra };
+}
+
 export function buildACPClientCapabilities(
   meta?: ACPClientCapabilityMeta,
   override?: ACPClientCapabilities,
@@ -340,7 +360,8 @@ export function buildACPClientCapabilities(
       ...override?.fs,
     },
   };
-  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
+  const mergedMeta = mergeCapabilityMeta(override?._meta, meta);
+  return Object.keys(mergedMeta).length > 0 ? { ...capabilities, _meta: mergedMeta } : capabilities;
 }
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
@@ -488,6 +509,21 @@ export interface ACPDelegationRow {
 }
 
 /**
+ * A delegation tree, as the provider published it.
+ *
+ * A member the provider reports but Paseo cannot show yet - a status the
+ * subagent store does not know - has no row of its own. It is still a member
+ * of the tree, so the tree says so: a member without a row is not a member
+ * that is gone.
+ */
+export interface ACPDelegationTree {
+  /** The rows the track shows. */
+  rows: ACPDelegationRow[];
+  /** Every member the tree holds, including a member without a row. */
+  memberIds: string[];
+}
+
+/**
  * Lets a provider that runs its own child sessions publish that tree, without
  * the generic ACP session/client carrying any vendor knowledge.
  *
@@ -507,10 +543,10 @@ export interface ACPDelegationExtension {
     sessionId: string;
     connection: Pick<ClientSideConnection, "extMethod">;
   }): Promise<unknown>;
-  /** Turns the answer of the read method into the rows the track shows. */
-  parseReadResult(result: unknown): ACPDelegationRow[] | null;
-  /** Turns a published update into the rows the track shows. */
-  parseUpdate(params: Record<string, unknown>): ACPDelegationRow[] | null;
+  /** Turns the answer of the read method into the tree it holds. */
+  parseReadResult(result: unknown): ACPDelegationTree | null;
+  /** Turns a published update into the tree it holds. */
+  parseUpdate(params: Record<string, unknown>): ACPDelegationTree | null;
 }
 
 /**
@@ -1829,6 +1865,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // The last delegation tree the session published, so a repeated tree does
   // not redraw the same rows.
   private delegationSignature: string | null = null;
+  // Counts the trees the session published. A read that answers for an older
+  // tree than the one published meanwhile is dropped.
+  private delegationGeneration = 0;
   // The rows the session published, so a tree that no longer holds a member
   // removes its row.
   private readonly publishedDelegationIds = new Set<string>();
@@ -2883,13 +2922,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!this.supportsDelegationExtension()) {
       return;
     }
+    const generation = this.delegationGeneration;
     try {
       const result = await withTimeout(
         extension.readTree({ sessionId: this.sessionId, connection }),
         DELEGATION_TREE_TIMEOUT_MS,
         `ACP delegation tree timed out after ${DELEGATION_TREE_TIMEOUT_MS}ms`,
       );
-      this.applyDelegationRows(extension.parseReadResult(result));
+      if (generation !== this.delegationGeneration) {
+        // The provider published a newer tree while this read was in flight.
+        // The answer belongs to the older tree, so it is dropped: applying it
+        // would remove the rows of the newer one.
+        return;
+      }
+      this.applyDelegationTree(extension.parseReadResult(result));
     } catch (error) {
       // A provider without a delegation tree, or one that is not attached to
       // this process, answers with an error. That is not a failure of the
@@ -2907,20 +2953,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * the user sees the parent turn and nothing about what it delegated.
    *
    * The provider sends the whole tree, so the rows replace the previous state:
-   * a member the tree no longer holds is gone from the track.
+   * a member the tree no longer holds is gone from the track. A member the
+   * tree still holds without a row of its own keeps the row it had.
    */
-  private applyDelegationRows(rows: ACPDelegationRow[] | null): void {
-    if (!rows) {
+  private applyDelegationTree(tree: ACPDelegationTree | null): void {
+    if (!tree) {
       return;
     }
-    const signature = rows.map(delegationRowSignature).join("|");
+    const signature = `${tree.rows.map(delegationRowSignature).join("|")}#${tree.memberIds.join(",")}`;
     if (signature === this.delegationSignature) {
       // The provider repeats a tree it already sent. Republishing it would
       // only redraw the same rows.
       return;
     }
     this.delegationSignature = signature;
-    const memberIds = new Set(rows.map((row) => row.id));
+    const memberIds = new Set(tree.memberIds);
     for (const id of this.publishedDelegationIds) {
       if (!memberIds.has(id)) {
         this.pushEvent({
@@ -2931,7 +2978,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
     this.publishedDelegationIds.clear();
-    for (const row of rows) {
+    for (const row of tree.rows) {
       this.publishedDelegationIds.add(row.id);
       this.pushEvent({
         type: "provider_subagent",
@@ -2969,7 +3016,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       // A provider may publish the tree of another session to the same client.
       // Only the tree of this session belongs to it.
       if (sessionId === null || sessionId === this.sessionId) {
-        this.applyDelegationRows(extension.parseUpdate(params));
+        // A published tree is newer than a read that is still in flight, so
+        // the read is dropped when it answers.
+        this.delegationGeneration += 1;
+        this.applyDelegationTree(extension.parseUpdate(params));
       }
     }
 

@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import {
   type ACPDelegationExtension,
   type ACPDelegationRow,
+  type ACPDelegationTree,
   type ACPClientCapabilityMeta,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
@@ -88,15 +89,39 @@ interface MiniMaxCodeDelegationMember {
   agentName: string | null;
   task: string | null;
   status: string;
-  createdAtMs: number | null;
   updatedAtMs: number | null;
+}
+
+/**
+ * Reads the status of one member.
+ *
+ * MiniMax Code reports `running`, `completed`, `failed` and `stopped` for
+ * a delegated member. A member it reports with a status Paseo does not know -
+ * `queued` for one - has no row: the subagent store has no state for it, and
+ * reporting it as running would claim work the provider did not report. The
+ * member stays in the tree, so a row it had keeps its place.
+ */
+function readMiniMaxCodeMemberStatus(status: string): ProviderSubagentStatus | null {
+  switch (status) {
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "stopped":
+      return "canceled";
+    default:
+      return null;
+  }
 }
 
 /**
  * Reads the members of a delegation tree.
  *
- * The provider sends the whole tree, not a diff. A member without a session id
- * cannot be addressed and is skipped.
+ * The provider sends the whole tree, not a diff. A member that cannot be
+ * addressed makes the tree unusable: a tree read in part would drop the rows
+ * of the members it did not parse.
  */
 function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | null {
   if (!isRecord(tree)) {
@@ -109,7 +134,7 @@ function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | 
   const parsed: MiniMaxCodeDelegationMember[] = [];
   for (const entry of members) {
     if (!isRecord(entry) || typeof entry.sessionId !== "string" || !entry.sessionId) {
-      continue;
+      return null;
     }
     parsed.push({
       sessionId: entry.sessionId,
@@ -120,7 +145,6 @@ function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | 
       agentName: typeof entry.agentName === "string" && entry.agentName ? entry.agentName : null,
       task: typeof entry.task === "string" && entry.task ? entry.task : null,
       status: typeof entry.status === "string" ? entry.status : "",
-      createdAtMs: typeof entry.createdAtMs === "number" ? entry.createdAtMs : null,
       updatedAtMs: typeof entry.updatedAtMs === "number" ? entry.updatedAtMs : null,
     });
   }
@@ -128,59 +152,40 @@ function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | 
 }
 
 /**
- * Reads the status of one member.
- *
- * MiniMax Code reports `running`, `completed` and `stopped` for a
- * delegated member. A status outside that vocabulary says nothing about the
- * work being finished, so the member stays visible as running rather than
- * claiming an end the provider did not report.
- *
- * The provider can also project a member that has not started yet as finished,
- * with the same timestamp for its creation and its last update. It takes the
- * member back to running a moment later, so a finished member without any
- * observed progress stays running: reporting it as finished would claim the
- * work is done before it began.
+ * Turns a delegation tree into the rows the track shows.
  */
-function readMiniMaxCodeMemberStatus(member: MiniMaxCodeDelegationMember): ProviderSubagentStatus {
-  if (member.status === "completed") {
-    const neverProgressed =
-      member.createdAtMs !== null &&
-      member.updatedAtMs !== null &&
-      member.createdAtMs === member.updatedAtMs;
-    return neverProgressed ? "running" : "completed";
-  }
-  if (member.status === "stopped") {
-    return "canceled";
-  }
-  return "running";
-}
-
-/**
- * Turns the members of a tree into the rows the track shows.
- */
-function readMiniMaxCodeRows(tree: unknown): ACPDelegationRow[] | null {
+function readMiniMaxCodeTree(tree: unknown): ACPDelegationTree | null {
   const members = readMiniMaxCodeMembers(tree);
   if (!members) {
     return null;
   }
-  const memberIds = new Set(members.map((member) => member.sessionId));
-  return members.map((member) => {
+  const memberIds = members.map((member) => member.sessionId);
+  const memberIdSet = new Set(memberIds);
+  const rows: ACPDelegationRow[] = [];
+  for (const member of members) {
+    const status = readMiniMaxCodeMemberStatus(member.status);
+    if (!status) {
+      // The provider reports a status Paseo cannot show. The member stays in
+      // the tree, so the row it had is not removed.
+      continue;
+    }
     const row: ACPDelegationRow = {
       id: member.sessionId,
       // The track names the row after the task and demotes the agent name.
       title: member.agentName,
       description: member.task,
-      status: readMiniMaxCodeMemberStatus(member),
+      status,
       parentSubagentId:
-        member.parentSessionId && memberIds.has(member.parentSessionId)
+        member.parentSessionId && memberIdSet.has(member.parentSessionId)
           ? member.parentSessionId
           : null,
     };
     if (member.updatedAtMs !== null) {
       row.timestamp = new Date(member.updatedAtMs).toISOString();
     }
-    return row;
-  });
+    rows.push(row);
+  }
+  return { rows, memberIds };
 }
 
 /**
@@ -197,10 +202,10 @@ export const MINIMAX_CODE_DELEGATION_EXTENSION: ACPDelegationExtension = {
     return isRecord(response) ? response.snapshot : null;
   },
   parseReadResult(result) {
-    return readMiniMaxCodeRows(result);
+    return readMiniMaxCodeTree(result);
   },
   parseUpdate(params) {
-    return readMiniMaxCodeRows(params.snapshot);
+    return readMiniMaxCodeTree(params.snapshot);
   },
 };
 
@@ -210,6 +215,7 @@ interface MiniMaxCodeACPAgentClientOptions {
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
 }
 
 /**
@@ -223,7 +229,12 @@ export class MiniMaxCodeACPAgentClient extends GenericACPAgentClient {
   constructor(options: MiniMaxCodeACPAgentClientOptions) {
     super({
       ...options,
-      clientCapabilityMeta: MINIMAX_CODE_CLIENT_CAPABILITY_META,
+      // The vendor request joins the metadata of the caller: both belong in
+      // the same handshake.
+      clientCapabilityMeta: {
+        ...options.clientCapabilityMeta,
+        ...MINIMAX_CODE_CLIENT_CAPABILITY_META,
+      },
       delegationExtension: MINIMAX_CODE_DELEGATION_EXTENSION,
     });
   }
