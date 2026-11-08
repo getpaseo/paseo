@@ -10,6 +10,8 @@ import { expectWorkspaceAbsentFromSidebar } from "./sidebar";
 type DaemonClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
 const UNDO_SHORTCUT = process.platform === "darwin" ? "Meta+Z" : "Control+Z";
+const ARCHIVE_SHORTCUT =
+  process.platform === "darwin" ? "Meta+Shift+Backspace" : "Control+Shift+Backspace";
 /** The archived toast's lifetime, from `WORKSPACE_ARCHIVE_UNDO_WINDOW_MS`. */
 const UNDO_WINDOW_MS = 6000;
 
@@ -44,6 +46,25 @@ export async function archiveFromRowButton(page: Page, workspaceId: string): Pro
   await rowArchiveButton(page, workspaceId).click();
   await expectWorkspaceAbsentFromSidebar(page, workspaceId);
   await expect(undoButton(page)).toBeVisible();
+}
+
+/** Drags the sidebar's edge past its minimum, leaving it as narrow as it goes. */
+export async function resizeSidebarToMinimum(page: Page): Promise<void> {
+  const handle = await page.getByTestId("left-sidebar-resize-handle").boundingBox();
+  if (!handle) throw new Error("Sidebar resize handle is not laid out");
+  const y = handle.y + handle.height / 2;
+  await page.mouse.move(handle.x + handle.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x - 30, y, { steps: 8 });
+  await page.mouse.move(10, y, { steps: 16 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await page.getByTestId("sidebar-footer").boundingBox())?.width)
+    .toBeLessThanOrEqual(200);
+}
+
+export async function pressArchiveShortcut(page: Page): Promise<void> {
+  await page.keyboard.press(ARCHIVE_SHORTCUT);
 }
 
 export async function pressUndoShortcut(page: Page): Promise<void> {

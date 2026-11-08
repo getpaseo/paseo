@@ -29,6 +29,7 @@ export function WorkspaceArchivedToast({ onUndo }: { onUndo: () => void }) {
 const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: theme.spacing[2],
   },
