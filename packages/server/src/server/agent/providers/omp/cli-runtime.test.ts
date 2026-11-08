@@ -196,6 +196,31 @@ describe("OMP CLI runtime", () => {
     ]);
   });
 
+  test("does not start OMP when the signal aborts while resolving the command", async () => {
+    const controller = new AbortController();
+    const pendingCommand = Promise.withResolvers<string | null>();
+    const launches: OmpRuntimeLaunch[] = [];
+    const runtime = new OmpCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: ["omp"],
+      resolveDefaultCommand: () => pendingCommand.promise,
+      spawnProcess: (launch) => {
+        launches.push(launch);
+        return createOmpChild();
+      },
+    });
+
+    const startup = runtime.startSession({
+      cwd: "/workspace/project",
+      signal: controller.signal,
+    });
+    controller.abort();
+    pendingCommand.resolve("/resolved/bin/omp");
+
+    await expect(startup).rejects.toThrow(/abort/i);
+    expect(launches).toHaveLength(0);
+  });
+
   test("steer waits for OMP's response and surfaces rejection", async () => {
     const child = createOmpChild();
     let pending: Record<string, unknown> | null = null;

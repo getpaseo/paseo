@@ -2277,15 +2277,10 @@ export class OmpAgentClient implements AgentClient {
   private readonly runtime?: OmpRuntime;
 
   constructor(options: OmpAgentClientOptions) {
-    const runtimeSettings = mergeOmpRuntimeSettings(
-      {
-        command: {
-          mode: "replace",
-          argv: ["omp"],
-        },
-      },
-      options.runtimeSettings,
-    );
+    // Do not synthesize a `replace` command here: a replace command bypasses
+    // executable resolution in OmpCliRuntime, so the default `omp` would still
+    // launch through cmd.exe on Windows (#8920). User overrides are preserved.
+    const runtimeSettings = mergeOmpRuntimeSettings(undefined, options.runtimeSettings);
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
     this.providerIdleScheduler = options.providerIdleScheduler;

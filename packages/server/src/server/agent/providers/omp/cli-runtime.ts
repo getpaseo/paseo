@@ -85,8 +85,10 @@ export class OmpCliRuntime implements OmpRuntime {
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     const commandPrefix = this.resolveCommand();
+    const resolvedCommand = Array.isArray(commandPrefix) ? commandPrefix : await commandPrefix;
+    input.signal?.throwIfAborted();
     const launch = buildOmpLaunch({
-      command: Array.isArray(commandPrefix) ? commandPrefix : await commandPrefix,
+      command: resolvedCommand,
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });

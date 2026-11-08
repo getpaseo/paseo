@@ -52,6 +52,30 @@ test("an idle follow-up is submitted as a prompt so OMP can start a turn", async
   ]);
 });
 
+test("default OMP runtime settings leave the launch command unresolved", () => {
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime: new FakeOmp() });
+  // Test seam: the constructor's private settings decide whether OmpCliRuntime
+  // skips executable resolution, so inspect the assembled value directly.
+  const clientWithSettings = client as unknown as {
+    readonly runtimeSettings?: { readonly command?: unknown };
+  };
+  expect(clientWithSettings.runtimeSettings?.command).toBeUndefined();
+});
+
+test("OMP keeps an explicit command override", () => {
+  const command = { mode: "replace" as const, argv: ["custom-omp"] };
+  const client = new OmpAgentClient({
+    logger: createTestLogger(),
+    runtime: new FakeOmp(),
+    runtimeSettings: { command },
+  });
+  // Test seam: user overrides must survive the constructor unchanged.
+  const clientWithSettings = client as unknown as {
+    readonly runtimeSettings?: { readonly command?: unknown };
+  };
+  expect(clientWithSettings.runtimeSettings?.command).toEqual(command);
+});
+
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
   expect(resolveOmpProviderOptions({}).runtimeOptions).toMatchObject({
     readyTimeoutMs: 20_000,
