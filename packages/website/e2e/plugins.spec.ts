@@ -181,6 +181,23 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
   );
 });
 
+test("submits the visible search term when its input event was missed", async ({ page }) => {
+  await page.goto("/plugins?window=month");
+  await expect(page.getByRole("button", { name: "Language: English" }).first()).toBeEnabled();
+  await fillSearchWithMissedInputEvent(page, "graphite");
+
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/\/plugins\/all\?q=graphite&window=month$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: /^Results for “graphite”/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "This month" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
 test("searches for a term typed before the page finished loading", async ({ page }) => {
   const loadScripts = await holdScripts(page);
   await page.goto("/plugins?window=month", { waitUntil: "domcontentloaded" });
@@ -417,6 +434,21 @@ async function holdScripts(page: Page): Promise<() => Promise<void>> {
 
 async function searchPlugins(page: Page, term: string) {
   await page.getByRole("searchbox", { name: "Search plugins" }).fill(term);
+}
+
+/** Reproduce text entered before hydration's input listener can observe it, without a clock race. */
+async function fillSearchWithMissedInputEvent(page: Page, term: string) {
+  const search = page.getByRole("searchbox", { name: "Search plugins" });
+  await search.evaluate(() => {
+    for (const eventType of ["input", "change"]) {
+      document.addEventListener(eventType, (event) => event.stopImmediatePropagation(), {
+        capture: true,
+        once: true,
+      });
+    }
+  });
+  await search.fill(term);
+  await expect(search).toHaveValue(term);
 }
 
 async function submitSearch(page: Page, term: string) {
