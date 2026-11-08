@@ -867,10 +867,7 @@ function useNewWorkspaceInitialContext({
   };
 }
 
-interface NewWorkspaceCreationState {
-  placementKey: string;
-  result: WorkspaceCreationResult | { workspace: null };
-}
+const EMPTY_WORKSPACE_CREATION_RESULT = { workspace: null } as const;
 
 function useNewWorkspaceCreationState(input: {
   serverId: string;
@@ -889,22 +886,20 @@ function useNewWorkspaceCreationState(input: {
     }),
     [draftId, input.serverId, projectId],
   );
-  const [state, setState] = useState<NewWorkspaceCreationState>(() => ({
-    placementKey,
-    result: { workspace: null },
-  }));
-  if (state.placementKey !== placementKey) {
-    setState({ placementKey, result: { workspace: null } });
-  }
+  const [resultsByPlacement, setResultsByPlacement] = useState<
+    ReadonlyMap<string, WorkspaceCreationResult>
+  >(() => new Map());
   const setCreationResult = useCallback(
     (result: WorkspaceCreationResult) => {
-      setState((current) =>
-        current.placementKey === placementKey ? { ...current, result } : current,
-      );
+      setResultsByPlacement((current) => new Map(current).set(placementKey, result));
     },
     [placementKey],
   );
-  return { creationIdentity, creationResult: state.result, setCreationResult };
+  return {
+    creationIdentity,
+    creationResult: resultsByPlacement.get(placementKey) ?? EMPTY_WORKSPACE_CREATION_RESULT,
+    setCreationResult,
+  };
 }
 
 export function NewWorkspaceScreen({

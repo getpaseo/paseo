@@ -189,6 +189,57 @@ test.describe("New workspace: launching a terminal", () => {
     }
   });
 
+  for (const roundTrip of [false, true]) {
+    test(`cached terminal retry ${roundTrip ? "after a project round trip" : "without changing project"} reuses the original workspace`, async ({
+      page,
+    }) => {
+      test.setTimeout(90_000);
+      const otherProject = roundTrip
+        ? await seedWorkspace({ repoPrefix: "terminal-placement-roundtrip-" })
+        : undefined;
+      const client = await connectNewWorkspaceDaemonClient();
+      try {
+        await gotoAppShell(page);
+        await waitForSidebarHydration(page);
+        await openNewWorkspaceComposer(page, workspace);
+        await selectLaunchOption(page, MISSING_PROFILE.id);
+        await submitTerminalLaunch(page);
+        await expect(
+          page.getByText(/paseo-e2e-missing-terminal.*command not found/).first(),
+        ).toBeVisible();
+        const cachedWorkspace = (await client.fetchWorkspaces()).entries.find(
+          (entry) => entry.projectId === workspace.projectId && entry.id !== workspace.workspaceId,
+        );
+        expect(cachedWorkspace).toBeDefined();
+        if (otherProject) {
+          await selectNewWorkspaceProject(page, otherProject);
+          await selectNewWorkspaceProject(page, workspace);
+        }
+        await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
+        await selectLaunchOption(page, PROMPT_PROFILE.id);
+        await fillTerminalPrompt(page, "retry the existing workspace with a corrected profile");
+        await submitTerminalLaunch(page);
+        await expectWorkspaceOpensWithTerminalTab(page);
+        await expectTerminalOutputContains(
+          page,
+          "captured: retry the existing workspace with a corrected profile",
+        );
+        const workspaceId = decodeWorkspaceIdFromPathSegment(
+          new URL(page.url()).pathname.split("/").at(-1)!,
+        );
+        expect(workspaceId).toBe(cachedWorkspace!.id);
+        expect(
+          (await client.fetchWorkspaces()).entries.filter(
+            (entry) => entry.projectId === workspace.projectId,
+          ),
+        ).toHaveLength(2);
+      } finally {
+        await client.close();
+        await otherProject?.cleanup();
+      }
+    });
+  }
+
   test("explicit draft retries preserve placement identity after reload", async ({ page }) => {
     test.setTimeout(90_000);
     const otherProject = await seedWorkspace({ repoPrefix: "explicit-draft-retry-" });
