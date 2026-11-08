@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import type { Logger } from "pino";
 
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, ArchiveCascadeOptions } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -33,7 +33,15 @@ export interface ArchiveDependencies {
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "invalidateWorktrees">;
-  agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
+  agentManager: Pick<
+    AgentManager,
+    "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot"
+  > & {
+    // One active-record read for every cascade in this archive request. Optional so archive
+    // dependency stubs and non-workspace archives still work; without it each archive call
+    // reads the active records it needs.
+    listActiveAgentRecords?: AgentManager["listActiveAgentRecords"];
+  };
   agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
@@ -81,6 +89,9 @@ export interface ArchiveByScopeRequest {
   // Aborting cancels the archive at its next checkpoint. Removing the worktree directory is the
   // point of no return: once it starts the archive completes.
   signal?: AbortSignal;
+  // Active workspaces the caller already read in this request, so resolving the archive target
+  // does not read them again. Only the target needs them; the last-reference check reads fresh.
+  activeWorkspaces?: ActiveWorkspaceRef[];
 }
 
 // Cancellation carries the operation stamp even before the workspace record is archived.
@@ -94,14 +105,13 @@ export class WorkspaceArchiveCanceledError extends Error {
 export async function requireActiveWorkspaceForArchive(
   dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
   workspaceId: string,
-): Promise<ActiveWorkspaceRef> {
-  const workspace = (await dependencies.listActiveWorkspaces()).find(
-    (candidate) => candidate.workspaceId === workspaceId,
-  );
+): Promise<{ workspace: ActiveWorkspaceRef; activeWorkspaces: ActiveWorkspaceRef[] }> {
+  const activeWorkspaces = await dependencies.listActiveWorkspaces();
+  const workspace = activeWorkspaces.find((candidate) => candidate.workspaceId === workspaceId);
   if (!workspace) {
     throw new Error(`Workspace not found: ${workspaceId}`);
   }
-  return workspace;
+  return { workspace, activeWorkspaces };
 }
 
 interface BackingDirectory {
@@ -127,18 +137,18 @@ interface ArchiveTarget {
   workspaceIds: string[];
 }
 
-export async function resolveWorkspaceIdAtPath(
+export async function resolveWorkspaceTargetAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
-): Promise<string | null> {
+): Promise<{ workspaceId: string | null; activeWorkspaces: ActiveWorkspaceRef[] }> {
   const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
   const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
   const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
   if (worktreeMatch) {
-    return worktreeMatch.workspaceId;
+    return { workspaceId: worktreeMatch.workspaceId, activeWorkspaces };
   }
-  return dependencies.findWorkspaceIdForCwd(targetPath);
+  return { workspaceId: await dependencies.findWorkspaceIdForCwd(targetPath), activeWorkspaces };
 }
 
 // Resolves the in-scope record set, tears each down
@@ -163,7 +173,10 @@ async function archiveByScopeWithPriority(
   };
 
   checkpoint();
-  const target = await resolveArchiveTarget(dependencies, request.scope);
+  // One active-workspace read per request, shared with target resolution. The last-reference
+  // check reads again on purpose: it must see the registry after this request's records are gone.
+  const activeWorkspaces = request.activeWorkspaces ?? (await dependencies.listActiveWorkspaces());
+  const target = await resolveArchiveTarget(dependencies, request.scope, activeWorkspaces);
   const targetWorkspaceIds = target.workspaceIds;
 
   await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
@@ -189,20 +202,6 @@ async function archiveByScopeWithPriority(
     );
     checkpoint();
 
-    if (target.backing?.mainRepoRoot) {
-      try {
-        await dependencies.workspaceGitService.getSnapshot(target.backing.mainRepoRoot, {
-          force: true,
-          reason: "archive-worktree",
-        });
-      } catch (error) {
-        dependencies.sessionLogger?.warn(
-          { err: error, cwd: target.backing.mainRepoRoot, requestId: request.requestId },
-          "Failed to force-refresh workspace git snapshot after archiving",
-        );
-      }
-    }
-
     if (target.backing !== null) {
       const removal = await maybeRemoveDirectory(
         dependencies,
@@ -221,19 +220,58 @@ async function archiveByScopeWithPriority(
       ...(directoryLeftBehind ? { directoryLeftBehind } : {}),
     };
   } finally {
+    // The marker clears synchronously here, so clients never keep seeing `archiving` and a
+    // canceled or failed archive leaves nothing stuck. The refresh and the final fan-out start
+    // here and are not awaited: the response must not wait on git or on every subscriber.
     if (targetWorkspaceIds.length > 0) {
       dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
-      await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
+    }
+    refreshMainRepoSnapshotAfterArchive(dependencies, target.backing, request.requestId);
+    if (targetWorkspaceIds.length > 0) {
+      emitFinalWorkspaceUpdates(dependencies, targetWorkspaceIds, request.requestId);
     }
   }
+}
+
+// Deliberately longer than the request: a cold snapshot can shell out to git. Started after the
+// worktree is removed so it cannot cache the listing that removal just invalidated.
+function refreshMainRepoSnapshotAfterArchive(
+  dependencies: ArchiveDependencies,
+  backing: BackingDirectory | null,
+  requestId: string,
+): void {
+  const mainRepoRoot = backing?.mainRepoRoot;
+  if (!mainRepoRoot) {
+    return;
+  }
+  void dependencies.workspaceGitService
+    .getSnapshot(mainRepoRoot, { force: true, reason: "archive-worktree" })
+    .catch((error: unknown) => {
+      dependencies.sessionLogger?.warn(
+        { err: error, cwd: mainRepoRoot, requestId },
+        "Failed to force-refresh workspace git snapshot after archiving",
+      );
+    });
+}
+
+function emitFinalWorkspaceUpdates(
+  dependencies: ArchiveDependencies,
+  workspaceIds: string[],
+  requestId: string,
+): void {
+  void dependencies.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds).catch((error: unknown) => {
+    dependencies.sessionLogger?.warn(
+      { err: error, workspaceIds, requestId },
+      "Failed to emit final workspace updates after archiving",
+    );
+  });
 }
 
 async function resolveArchiveTarget(
   dependencies: ArchiveDependencies,
   scope: ArchiveScope,
+  activeWorkspaces: ActiveWorkspaceRef[],
 ): Promise<ArchiveTarget> {
-  const activeWorkspaces = await dependencies.listActiveWorkspaces();
-
   if (scope.kind === "workspace") {
     const workspaceId = scope.workspaceId;
     const record =
@@ -382,6 +420,11 @@ async function archiveTargetRecords(
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  // One active-record snapshot for every cascade in this request. Children archived during the
+  // request are re-read from storage before anything happens to them, so a stale entry is only
+  // ever skipped; the cost saved is a full active scan per archived parent.
+  const activeRecords = await dependencies.agentManager.listActiveAgentRecords?.();
+  const contentsOptions = activeRecords ? { activeRecords } : undefined;
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
@@ -389,6 +432,7 @@ async function archiveTargetRecords(
         dependencies,
         workspaceId,
         options.archivedAt,
+        contentsOptions,
       );
       // Agents and terminals are down, the record is not: an abort here leaves the workspace
       // listed, and cancellation restores agents carrying this operation stamp.
@@ -557,6 +601,7 @@ export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
   archivedAt = new Date().toISOString(),
+  cascade?: ArchiveCascadeOptions,
 ): Promise<Set<string>> {
   const archivedAgents = new Set<string>();
 
@@ -591,8 +636,8 @@ export async function archiveWorkspaceContents(
     Promise.allSettled(
       agentIdsToArchive.map((agentId) =>
         dependencies.agentManager.getAgent(agentId)
-          ? dependencies.agentManager.archiveAgent(agentId, archivedAt)
-          : dependencies.agentManager.archiveSnapshot(agentId, archivedAt),
+          ? dependencies.agentManager.archiveAgent(agentId, archivedAt, cascade)
+          : dependencies.agentManager.archiveSnapshot(agentId, archivedAt, cascade),
       ),
     ),
     Promise.allSettled([dependencies.killTerminalsForWorkspace(workspaceId)]),

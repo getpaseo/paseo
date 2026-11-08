@@ -9824,6 +9824,41 @@ test("archiveAgent cascade archives in-memory children with the full archive con
   expect(storedUnrelated?.archivedAt).toBeUndefined();
 });
 
+test("archiveAgent cascades from a caller-supplied active-record snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-snapshot-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const children = [];
+  for (const title of ["Child one", "Child two"]) {
+    children.push(
+      await manager.createAgent({ provider: "codex", cwd: workdir, title }, undefined, {
+        labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+        workspaceId: undefined,
+      }),
+    );
+  }
+  const activeRecords = await manager.listActiveAgentRecords();
+  const listActive = vi.spyOn(storage, "listActive");
+
+  await manager.archiveAgent(parent.id, undefined, { activeRecords });
+
+  // The parent and every cascaded child come from the one snapshot, with no further scans.
+  expect(listActive).not.toHaveBeenCalled();
+  for (const child of children) {
+    expect((await storage.get(child.id))?.archivedAt).toBeDefined();
+  }
+});
+
 test("archiveAgent detaches an open same-workspace child instead of cascading", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-open-child-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
