@@ -189,6 +189,7 @@ async function archiveByScopeWithPriority(
 
   let removedDirectory = false;
   let directoryLeftBehind: ArchiveResult["directoryLeftBehind"];
+  let completed = false;
 
   try {
     if (targetWorkspaceIds.length > 0) {
@@ -214,6 +215,7 @@ async function archiveByScopeWithPriority(
       directoryLeftBehind = removal.directoryLeftBehind;
     }
 
+    completed = true;
     return {
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
@@ -227,7 +229,9 @@ async function archiveByScopeWithPriority(
     if (targetWorkspaceIds.length > 0) {
       dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
     }
-    refreshMainRepoSnapshotAfterArchive(dependencies, target.backing, request.requestId);
+    if (completed) {
+      refreshMainRepoSnapshotAfterArchive(dependencies, target.backing, request.requestId);
+    }
     if (targetWorkspaceIds.length > 0) {
       emitFinalWorkspaceUpdates(dependencies, targetWorkspaceIds, request.requestId);
     }
@@ -423,7 +427,9 @@ async function archiveTargetRecords(
   const archivedWorkspaceIds: string[] = [];
   // One active-record snapshot for every cascade in this request. Children archived during the
   // request are re-read from storage before anything happens to them, so a stale entry is only
-  // ever skipped; the cost saved is a full active scan per archived parent.
+  // ever skipped; the cost saved is a full active scan per archived parent. Accepted window: a
+  // child created or labelled after this read and before its parent cascades is missed, because
+  // agent storage has no by-parent index and the alternative is a scan per archived parent.
   const activeRecords = await dependencies.agentManager.listActiveAgentRecords?.();
   const contentsOptions = activeRecords ? { activeRecords } : undefined;
 
@@ -521,6 +527,7 @@ async function maybeRemoveDirectory(
     throw error;
   }
 
+  // Fresh read on purpose: it must see the registry after this request's records were archived.
   const remainingActive = await dependencies.listActiveWorkspaces();
   if (
     !(await isDirectoryUnreferenced(
