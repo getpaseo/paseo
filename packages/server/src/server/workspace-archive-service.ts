@@ -203,18 +203,26 @@ async function archiveByScopeWithPriority(
     );
     checkpoint();
 
+    // Past this point the records are archived and the directory is on its way out, so the
+    // main repo's listing must be refreshed even if removal fails. A cancel leaves the
+    // directory in place and skips the refresh.
+    completed = true;
     if (target.backing !== null) {
-      const removal = await maybeRemoveDirectory(
-        dependencies,
-        { requestId: request.requestId, checkpoint },
-        target,
-        archivedWorkspaceIds,
-      );
-      removedDirectory = removal.removedDirectory;
-      directoryLeftBehind = removal.directoryLeftBehind;
+      try {
+        const removal = await maybeRemoveDirectory(
+          dependencies,
+          { requestId: request.requestId, checkpoint },
+          target,
+          archivedWorkspaceIds,
+        );
+        removedDirectory = removal.removedDirectory;
+        directoryLeftBehind = removal.directoryLeftBehind;
+      } catch (error) {
+        if (error instanceof WorkspaceArchiveCanceledError) completed = false;
+        throw error;
+      }
     }
 
-    completed = true;
     return {
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
